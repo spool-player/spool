@@ -1,4 +1,5 @@
 import QtQuick
+import JellyfinWebOS
 import "../primitives"
 import "PageReadiness.js" as PageReadiness
 
@@ -76,6 +77,22 @@ FocusScope {
         if (pages[key]) {
             console.info("route host: hit", key)
             return pages[key]
+        }
+        // A page the type compiler turned into a C++ class is built by asking
+        // for the class, not by handing the engine a URL. Everything else
+        // still goes through the Loader below, so the two coexist while pages
+        // are converted one at a time.
+        if (CompiledPageFactory.canCreate(key)) {
+            const host = compiledPageComponent.createObject(root)
+            host.pageCacheKey = key
+            host.item = CompiledPageFactory.create(key, host, root.shell)
+            if (host.item) {
+                pages[key] = host
+                console.info("route host: construct", key, "(compiled)")
+                Qt.callLater(root.handleLoaded, host)
+                return host
+            }
+            host.destroy()
         }
         const loader = pageLoaderComponent.createObject(root)
         loader.pageCacheKey = key
@@ -352,6 +369,37 @@ FocusScope {
                                 console.info("route host: prewarming", key)
                             }
                             interval = 600
+                        }
+                    }
+
+                    // Stands in for a Loader around a page that was built as a
+                    // C++ class. The route host only ever asks a loader for
+                    // pageCacheKey, item, status and visible, so matching that
+                    // much keeps one lifecycle for both kinds of page.
+                    Component {
+                        id: compiledPageComponent
+
+                        Item {
+                            id: compiledHost
+                            property string pageCacheKey: ""
+                            property Item item: null
+                            readonly property int status: item ? Loader.Ready : Loader.Null
+                            property bool asynchronous: false
+                            anchors.fill: parent
+                            visible: false
+
+                            // A Loader resizes whatever it loads; nothing does
+                            // that for an item handed over from C++. Without
+                            // this the page is built at zero size, lays out
+                            // nothing, and never reports itself ready -- the
+                            // route then waits on a page that is finished but
+                            // cannot say so.
+                            onItemChanged: {
+                                if (!item)
+                                    return
+                                item.width = Qt.binding(() => compiledHost.width)
+                                item.height = Qt.binding(() => compiledHost.height)
+                            }
                         }
                     }
 

@@ -1,6 +1,7 @@
 #include "api/JellyfinApiFacade.h"
 #include "app/AppController.h"
 #include "app/ArtworkImageProvider.h"
+#include "app/CompiledPageFactory.h"
 #include "app/CpuTopology.h"
 #include "app/LocalizationManager.h"
 #include "app/MemoryBudget.h"
@@ -663,6 +664,12 @@ int main(int argc, char **argv)
     qmlRegisterSingletonInstance("JellyfinWebOS", 1, 0, "I18n", localization.get());
     qmlRegisterSingletonInstance("JellyfinWebOS", 1, 0, "Platform", platformInfo);
     qmlRegisterType<JellyfinNative::MpvVideoItem>("JellyfinWebOS", 1, 0, "MpvVideoItem");
+    // Registered the same way as every other singleton above rather than
+    // declaratively with QML_SINGLETON: the declarative registration lands in
+    // the module's type table but does not resolve from QML here, and this is
+    // the mechanism the rest of the shell already relies on.
+    auto compiledPages = std::make_unique<JellyfinNative::CompiledPageFactory>(window.engine());
+    qmlRegisterSingletonInstance("JellyfinWebOS", 1, 0, "CompiledPageFactory", compiledPages.get());
     // Start asynchronous device, settings, account, and discovery reads before
     // QML construction. A sole saved account is resolved before routing begins.
     controller->initialize();

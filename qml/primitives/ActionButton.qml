@@ -10,7 +10,15 @@ T.Control {
     property string text: ""
     signal clicked
 
-    implicitWidth: Math.max(Metrics.scaled(132), buttonContent.implicitWidth + Metrics.scaled(34))
+    // The label is measured here rather than by reading the Row inside
+    // contentItem. contentItem is one of Control's deferred properties, and an
+    // id anywhere under a deferred property forces the assignment to happen
+    // immediately -- which changes when the object is built, and which the QML
+    // type compiler refuses outright (deferred-property-id). Measuring the
+    // text directly keeps the sizing identical without reaching into it.
+    readonly property real iconAdvance: root.iconName.length > 0 ? labelMetrics.iconSize + labelRow.spacing : 0
+
+    implicitWidth: Math.max(Metrics.scaled(132), labelMetrics.width + root.iconAdvance + Metrics.scaled(34))
     implicitHeight: Metrics.controlHeightPx
     focusPolicy: Metrics.keyboardFocusActive ? Qt.StrongFocus : Qt.NoFocus
 
@@ -38,18 +46,33 @@ T.Control {
         antialiasing: true
     }
 
+    // Sizing constants the measurement above and the visible Row below must
+    // agree on, so they cannot drift apart.
+    QtObject {
+        id: labelRow
+        readonly property real spacing: Metrics.scaled(8)
+    }
+
+    TextMetrics {
+        id: labelMetrics
+        readonly property real iconSize: Metrics.bodySizePx + 6
+        font.family: Typography.sans
+        font.pixelSize: Metrics.bodySizePx
+        font.weight: root.kind === "primary" || root.kind === "danger" ? Font.DemiBold : Font.Medium
+        text: root.text
+    }
+
     contentItem: Item {
         clip: true
         Row {
-            id: buttonContent
             anchors.centerIn: parent
-            spacing: Metrics.scaled(8)
+            spacing: labelRow.spacing
 
             MaterialIcon {
                 anchors.verticalCenter: parent.verticalCenter
                 visible: root.iconName.length > 0
                 name: root.iconName
-                iconSize: Metrics.bodySizePx + 6
+                iconSize: labelMetrics.iconSize
                 iconColor: root.enabled ? Theme.textPrimary : Theme.textDisabled
             }
 

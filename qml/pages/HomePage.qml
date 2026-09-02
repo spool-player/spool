@@ -98,7 +98,7 @@ FocusScope {
         return rows.currentItem()
     }
 
-    Component.onCompleted: rebuildSections()
+    Component.onCompleted: root.rebuildSections()
 
     Connections {
         target: Home

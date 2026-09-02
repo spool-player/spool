@@ -64,6 +64,14 @@ set(JELLYFIN_QT_COMPONENTS
     Sql
     OpenGL
     LinguistTools
+    # Required by the code the QML type compiler generates; see the link step.
+    QmlPrivate
+    QuickPrivate
+    QuickLayoutsPrivate
+    QuickEffectsPrivate
+    QuickControls2Private
+    QuickTemplates2Private
+    QuickShapesPrivate
     WebSockets
     Svg
 )
@@ -379,8 +387,45 @@ else()
     list(APPEND JELLYFIN_QML_MODULE_OPTIONS DISCARD_QML_CONTENTS)
 endif()
 
+set_source_files_properties(
+    # ChoiceStrip nests ids under Control's deferred contentItem, which qmltc
+    # refuses (deferred-property-id). Nothing instantiates it -- it is
+    # referenced by no QML in the tree -- so it is skipped rather than
+    # restructured.
+    qml/primitives/ChoiceStrip.qml
+    # SettingRow exposes "property alias trailing: trailingRow.data" so callers
+    # can inject controls -- an alias into the deferred contentItem, so the id
+    # cannot simply be deleted. Removing it means changing SettingRow's public
+    # API, which is more than this proof of concept needs, so it and everything
+    # that instantiates it stay interpreted. None of them are on the HomePage
+    # path, and the pages are only ever reached through the route Loader, so
+    # nothing instantiates them at compile time.
+    qml/primitives/SettingRow.qml
+    qml/primitives/SelectRow.qml
+    qml/primitives/SliderRow.qml
+    qml/primitives/ToggleRow.qml
+    qml/pages/SettingsPage.qml
+    qml/pages/SubtitleSettingsPanel.qml
+    # Contagion from the two above: AppShell instantiates VideoSurface, and
+    # PlayerOverlayPage instantiates SubtitleSettingsPanel. Main instantiates
+    # AppShell. These are constructed once at startup, not per navigation, so
+    # leaving them interpreted costs nothing the benchmark measures.
+    qml/pages/PlayerOverlayPage.qml
+    qml/shell/AppShell.qml
+    qml/Main.qml
+    # VideoSurface hosts MpvVideoItem, whose base class the type compiler
+    # cannot resolve through the foreign registration yet, so it stays
+    # interpreted. Skipping is contagious -- every document that instantiates a
+    # skipped type fails to compile, because the generated subclass has no base
+    # to inherit -- so it only works here because nothing instantiates
+    # VideoSurface but the player shell.
+    qml/shell/VideoSurface.qml
+    PROPERTIES QT_QML_SKIP_TYPE_COMPILER TRUE
+)
+
 qt_add_qml_module(jellyfin-native
     ${JELLYFIN_QML_MODULE_OPTIONS}
+    ENABLE_TYPE_COMPILER
     URI JellyfinWebOS
     VERSION 1.0
     QML_FILES
@@ -483,6 +528,13 @@ qt_add_qml_module(jellyfin-native
         qml/theme/Metrics.qml
         qml/theme/Theme.qml
         qml/theme/Typography.qml
+    # Types the QML above instantiates have to be registered by the module
+    # itself, not by a qmlRegisterType() call at startup: the type compiler
+    # reads the module's static type information and cannot see a registration
+    # that only happens at runtime.
+    SOURCES
+        src/app/CompiledPageFactory.cpp
+        src/app/CompiledPageFactory.h
 )
 if(NOT JELLYFIN_NATIVE_WEBOS)
     qt_target_qml_sources(jellyfin-native
@@ -589,6 +641,7 @@ endif()
 
 target_include_directories(jellyfin-core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/app"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/player"
     "${MPV_ACTIVE_SOURCE_DIR}"
     "${MPV_ACTIVE_SOURCE_DIR}/include"
@@ -610,6 +663,21 @@ target_link_libraries(jellyfin-core PUBLIC
 target_link_libraries(jellyfin-native PRIVATE
     jellyfin-core
     Qt6::Svg
+)
+# The type compiler emits code against Qt's private headers -- each generated
+# document includes the private header of whatever Qt type its QML touches, so
+# this list grows with what the UI uses. It is a build requirement of qmltc
+# rather than our code reaching into Qt internals, but it does mean the build
+# is tied to a specific Qt version: private API is not source-compatible across
+# minor releases.
+target_link_libraries(jellyfin-native PRIVATE
+    Qt6::QmlPrivate
+    Qt6::QuickPrivate
+    Qt6::QuickLayoutsPrivate
+    Qt6::QuickEffectsPrivate
+    Qt6::QuickControls2Private
+    Qt6::QuickTemplates2Private
+    Qt6::QuickShapesPrivate
 )
 
 
