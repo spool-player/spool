@@ -756,6 +756,11 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         native-window-input tests/platform/NativeAppWindowInputTest.cpp
         platform-paths tests/platform/PlatformPathsTest.cpp
     )
+    if(APPLE)
+        list(APPEND JELLYFIN_TESTS_platform
+            macos-titlebar tests/platform/MacOSTitlebarTest.mm
+        )
+    endif()
     set(JELLYFIN_TESTS_player
         playback-timeline tests/player/PlaybackTimelineTest.cpp
         playback-track-parser tests/player/PlaybackTrackParserTest.cpp

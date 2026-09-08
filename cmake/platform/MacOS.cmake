@@ -1,3 +1,9 @@
+if(APPLE)
+    enable_language(OBJCXX)
+    set(CMAKE_OBJCXX_STANDARD ${CMAKE_CXX_STANDARD})
+    set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
+endif()
+
 function(jellyfin_resolve_macos_dependencies)
     pkg_check_modules(MPV REQUIRED IMPORTED_TARGET mpv)
 endfunction()
@@ -13,6 +19,7 @@ function(jellyfin_configure_macos_targets native_target core_target)
         src/platform/macos/MacOSPlatformPaths.cpp
         src/platform/macos/MacOSCredentialStore.cpp
         src/platform/macos/MacOSSystemProbes.cpp
+        src/platform/macos/MacOSTitlebar.mm
         src/platform/desktop/UnsupportedPerformanceSampler.cpp
     )
     target_compile_definitions(${core_target} PRIVATE
@@ -28,7 +35,7 @@ function(jellyfin_configure_macos_targets native_target core_target)
         set_source_files_properties("${JELLYFIN_MACOS_ICON}" PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
         target_sources(${native_target} PRIVATE "${JELLYFIN_MACOS_ICON}")
     endif()
-    target_link_libraries(${core_target} PUBLIC PkgConfig::MPV "-framework Security")
+    target_link_libraries(${core_target} PUBLIC PkgConfig::MPV "-framework Security" "-framework AppKit")
     target_link_libraries(${native_target} PRIVATE "-framework IOKit")
     set_target_properties(${native_target} PROPERTIES
         MACOSX_BUNDLE TRUE

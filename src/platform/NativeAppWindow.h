@@ -97,6 +97,9 @@ public:
     // it. Only a platform where that is a thing a user asks for implements
     // it; elsewhere a window is closed, not exited.
     Q_INVOKABLE void exitToLauncher();
+#ifdef Q_OS_MACOS
+    Q_INVOKABLE void setTitlebarVisible(bool visible);
+#endif
     void clearOverlay();
     QQuickImageProvider *createOverlayImageProvider();
     QImage copyOverlayImage() const;

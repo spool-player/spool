@@ -9,6 +9,11 @@ FocusScope {
     property bool mediaInfoVisible: false
     property bool diagnosticsVisible: false
     readonly property bool directionRelease: true
+    readonly property bool titlebarVisible: !active || playerOverlay.controlsVisible
+    onTitlebarVisibleChanged: {
+        if (Qt.platform.os === "osx")
+            NativeWindow.setTitlebarVisible(titlebarVisible)
+    }
 
     // KeyRouter defers activation to key release for any target that merely
     // owns a longPress member, so this is advertised only while the queue panel

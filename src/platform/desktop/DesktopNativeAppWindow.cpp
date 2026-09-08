@@ -15,6 +15,9 @@ NativeAppWindow::NativeAppWindow(const QString& appId, QWindow *parent)
     setColor(Qt::black);
     setResizeMode(QQuickView::SizeRootObjectToView);
     setTitle(QStringLiteral("Spool for Jellyfin"));
+#ifdef Q_OS_MACOS
+    setFlags(flags() | Qt::ExpandedClientAreaHint | Qt::NoTitleBarBackgroundHint);
+#endif
 
     // SPOOL_WINDOW_SIZE=1200x1200 opens on a shape no window manager will
     // hand you by dragging. The layout is meant to flow into any of them, and
@@ -79,7 +82,7 @@ void NativeAppWindow::exitToLauncher()
 
 QString NativeAppWindow::windowId() const
 {
-    return {};
+    return { };
 }
 
 void NativeAppWindow::exposeEvent(QExposeEvent *event)
