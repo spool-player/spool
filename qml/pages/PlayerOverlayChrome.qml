@@ -467,7 +467,7 @@ Item {
 
         Surface {
             id: menuPanel
-            width: menuDialog.dropdown ? root.dp(360) : Math.min(parent.width - root.dp(64), root.dp(760))
+            width: Math.min(parent.width - root.dp(32), root.dp(menuDialog.dropdown ? 340 : 660))
             height: Math.min(parent.height - root.dp(64), menuBody.implicitHeight + menuBody.anchors.margins * 2)
             // Centre on the button rather than hanging off the screen edge,
             // clamped so the panel stays inside a narrow window.
@@ -498,8 +498,8 @@ Item {
             ColumnLayout {
                 id: menuBody
                 anchors.fill: parent
-                anchors.margins: menuDialog.dropdown ? root.dp(10) : root.dp(24)
-                spacing: menuDialog.dropdown ? root.dp(6) : root.dp(14)
+                anchors.margins: menuDialog.dropdown ? root.dp(10) : root.dp(20)
+                spacing: menuDialog.dropdown ? root.dp(6) : root.dp(12)
 
                 AppText {
                     Layout.fillWidth: true
@@ -523,21 +523,33 @@ Item {
                 MenuListView {
                     id: menuList
                     Layout.fillWidth: true
-                    // The TV sheet has room for every playback setting; only
-                    // unusually long track and queue menus need to scroll.
-                    Layout.preferredHeight: !visible ? 0 : menuDialog.dropdown ? contentHeight : Math.min(contentHeight, root.dp(
-                                                                                                              480))
+                    Layout.fillHeight: true
+                    Layout.minimumHeight: 0
+                    Layout.preferredHeight: visible ? Math.min(contentHeight, root.dp(420)) : 0
                     visible: count > 0
                     model: root.overlay.menuOptions
                     onDismissed: root.overlay.closeMenu()
                     onAccepted: index => root.overlay.activateMenuItem(index)
 
+                    ListScrollBar {
+                        id: menuScrollBar
+                        parent: menuList
+                        anchors.top: parent.top
+                        anchors.right: parent.right
+                        anchors.bottom: parent.bottom
+                        width: implicitWidth
+                        flickable: menuList
+                        z: 2
+                    }
+
                     delegate: MenuRow {
                         required property int index
                         required property var modelData
+                        width: Math.max(0, menuList.width - (menuScrollBar.visible ? menuScrollBar.width + root.dp(4) :
+                                                                                     0))
                         label: root.overlay.menuLabel(modelData)
                         detail: root.overlay.menuDetail(index)
-                        compact: menuDialog.dropdown
+                        compact: menuDialog.dropdown || root.overlay.touchscreenControls
                         checked: root.overlay.menuItemSelected(index)
                         highlighted: menuList.currentIndex === index
                         stepperVisible: root.overlay.debugAction(index) === "speed"

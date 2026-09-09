@@ -708,8 +708,9 @@ FocusScope {
         latencyMonitor: InputLatency
         transitionToken: root.uiTransitionToken
         enabled: Browse.items.count > 0
-        firstIndex: Math.min(grid.count - 1, Math.max(0, Math.floor(grid.contentY / grid.cellHeight) * root.columns))
-        lastIndex: Math.min(grid.count - 1, Math.max(firstIndex, Math.ceil((grid.contentY + grid.height)
+        firstIndex: Math.min(grid.count - 1, Math.max(0, Math.floor((grid.contentY - grid.originY) / grid.cellHeight)
+                                                      * root.columns))
+        lastIndex: Math.min(grid.count - 1, Math.max(firstIndex, Math.ceil((grid.contentY - grid.originY + grid.height)
                                                                            / grid.cellHeight) * root.columns - 1))
         onDelegatesReadyChanged: if (delegatesReady)
         grid.requestMoreIfNeeded()
@@ -1107,7 +1108,6 @@ FocusScope {
 
             NavGrid {
                 id: grid
-                property int artworkWindowRevision: 0
                 readonly property int memoryMiB: NativeWindow.systemMemoryBytes > 0 ? Math.round(
                                                                                           NativeWindow.systemMemoryBytes
                                                                                           / 1048576) : 2048
@@ -1225,7 +1225,7 @@ FocusScope {
                 function lastLikelyVisibleIndex() {
                     if (count <= 0 || cellHeight <= 0 || columns <= 0)
                         return -1
-                    const firstRow = Math.max(0, Math.floor(contentY / cellHeight))
+                    const firstRow = Math.max(0, Math.floor((contentY - originY) / cellHeight))
                     const visibleRows = Math.ceil(height / cellHeight) + 3
                     return Math.min(count - 1, (firstRow + visibleRows) * columns - 1)
                 }
@@ -1233,7 +1233,7 @@ FocusScope {
                 function firstLikelyVisibleIndex() {
                     if (count <= 0 || cellHeight <= 0 || columns <= 0)
                         return -1
-                    return Math.min(count - 1, Math.max(0, Math.floor(contentY / cellHeight) * columns))
+                    return Math.min(count - 1, Math.max(0, Math.floor((contentY - originY) / cellHeight) * columns))
                 }
 
                 function requestMoreIfNeeded() {
@@ -1242,16 +1242,6 @@ FocusScope {
                     const visibleHead = firstLikelyVisibleIndex()
                     const visibleTail = Math.max(currentIndex, lastLikelyVisibleIndex())
                     Browse.prefetchVisibleRange(visibleHead, visibleTail)
-                }
-
-                function artworkIndexResident(index) {
-                    const revision = artworkWindowRevision
-                    if (revision < 0 || index < 0 || count <= 0)
-                        return false
-                    const margin = artworkMarginRows * Math.max(1, columns)
-                    const first = Math.max(0, firstLikelyVisibleIndex() - margin)
-                    const last = Math.min(count - 1, lastLikelyVisibleIndex() + margin)
-                    return index >= first && index <= last
                 }
 
                 function requestPageIfNeeded() {
@@ -1265,7 +1255,6 @@ FocusScope {
                     interval: 60
                     repeat: false
                     onTriggered: {
-                        grid.artworkWindowRevision++
                         grid.requestMoreIfNeeded()
                     }
                 }
@@ -1415,7 +1404,11 @@ FocusScope {
                         focused: Metrics.keyboardFocusActive && root.navigationFocusVisible && grid.activeFocus
                                  && gridDelegate.GridView.isCurrentItem
                         artworkVisible: true
-                        artworkEnabled: grid.artworkIndexResident(index)
+                        // Use the delegate's actual layout coordinates. Model
+                        // resets and list/poster switches can move GridView's
+                        // origin without changing the item's model index.
+                        artworkEnabled: y + height >= grid.contentY - grid.artworkMarginRows * grid.cellHeight && y
+                                        <= grid.contentY + grid.height + grid.artworkMarginRows * grid.cellHeight
 
                         Component.onCompleted: gridReveal.schedule()
                         onArtworkReadyChanged: gridReveal.schedule()

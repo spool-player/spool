@@ -56,7 +56,8 @@ Item {
         width: Math.max(Metrics.scaled(6), 6)
         height: Math.max(root.height * root.minimumSize, root.height * root.visibleFraction)
         x: root.width - (root.visualWidth + width) / 2
-        y: root.scrollRange > 0 ? root.availableTrack * root.flickable.contentY / root.scrollRange : 0
+        y: root.scrollRange > 0 ? root.availableTrack * (root.flickable.contentY - root.flickable.originY)
+                                  / root.scrollRange : 0
         radius: root.cornerRadius(width)
         color: Theme.accent
     }
@@ -75,7 +76,7 @@ Item {
             if (root.availableTrack <= 0)
                 return
             const targetY = Math.max(0, Math.min(root.availableTrack, y - grabOffset))
-            root.setContentY(targetY * root.scrollRange / root.availableTrack)
+            root.setContentY(root.flickable.originY + targetY * root.scrollRange / root.availableTrack)
         }
 
         anchors.fill: parent

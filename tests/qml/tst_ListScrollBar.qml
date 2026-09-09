@@ -11,6 +11,9 @@ TestCase {
     height: 400
 
     property int delegatePresses: 0
+    ListModel {
+        id: shiftedModel
+    }
 
     GridView {
         id: grid
@@ -49,6 +52,7 @@ TestCase {
     }
 
     function init() {
+        grid.model = 400
         grid.contentY = 0
         testCase.delegatePresses = 0
     }
@@ -96,6 +100,26 @@ TestCase {
         mousePress(grid, barX(), grid.height - 2)
         mouseRelease(grid, barX(), grid.height - 2)
         fuzzyCompare(grid.contentY, grid.contentHeight - grid.height, 1, "the bottom of the track is the end")
+    }
+
+    function test_shiftedOriginTrackStillReachesBothEnds() {
+        shiftedModel.clear()
+        for (let index = 0; index < 400; ++index)
+            shiftedModel.append({
+                                    "value": index
+                                })
+        grid.model = shiftedModel
+        grid.forceLayout()
+        grid.contentY = 5000
+        shiftedModel.remove(0, 160)
+        grid.forceLayout()
+        verify(grid.originY > 0)
+        mousePress(grid, barX(), 2)
+        mouseRelease(grid, barX(), 2)
+        fuzzyCompare(grid.contentY, grid.originY, 1)
+        mousePress(grid, barX(), grid.height - 2)
+        mouseRelease(grid, barX(), grid.height - 2)
+        fuzzyCompare(grid.contentY, grid.originY + grid.contentHeight - grid.height, 1)
     }
 
     function test_nonInteractiveBarIgnoresPresses() {

@@ -52,7 +52,7 @@ GridView {
         if (count <= 0 || !Number.isFinite(Number(cellHeight)) || cellHeight <= 0)
             return -1
         const columns = columnCount()
-        const visibleTop = Math.max(0, Number(contentY) - Number(topMargin || 0) - 0.5)
+        const visibleTop = Math.max(0, Number(contentY) - Number(originY) - Number(topMargin || 0) - 0.5)
         const partialRow = Math.max(0, Math.floor(visibleTop / cellHeight))
         const visibleFraction = 1 - (visibleTop - partialRow * cellHeight) / cellHeight
         const row = visibleFraction >= focusRecoveryVisibleThreshold ? partialRow : partialRow + 1

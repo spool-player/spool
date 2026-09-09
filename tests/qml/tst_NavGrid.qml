@@ -104,6 +104,23 @@ TestCase {
         currentIndexSpy.clear()
         pagedModel.clear()
     }
+
+    function test_visibleRecoveryUsesShiftedModelOrigin() {
+        for (let index = 0; index < 300; ++index)
+            pagedModel.append({
+                                  "value": index
+                              })
+        pagedGrid.currentIndex = 0
+        pagedGrid.forceLayout()
+        pagedGrid.contentY = 12000
+        pagedModel.remove(0, 100)
+        pagedGrid.forceLayout()
+        verify(pagedGrid.originY > 0, "removing preceding rows establishes the shifted-origin case")
+        const visibleIndex = pagedGrid.indexAt(50, pagedGrid.contentY + 50)
+        verify(visibleIndex >= 0)
+        compare(pagedGrid.topLeftVisibleIndex(), visibleIndex,
+                "focus recovery must refer to the visible model item, not its old layout offset")
+    }
     function test_focusTransitionIsImmediate() {
         compare(grid.highlightMoveDuration, 0)
     }
