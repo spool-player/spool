@@ -90,7 +90,12 @@ That runs the three cached stages -- `build-dependencies.sh`, `build-qt6.sh`,
 
 It builds `spool-x86_64.apk` under `dist/android`. One package serves both
 phones and televisions -- the form factor is asked of the system at runtime --
-so the only build-time choice is the architecture, set with `ANDROID_ABI`.
+so architecture is selected with `ANDROID_ABI`, not separate phone/TV builds.
+The CMake `TOUCHSCREEN` option defaults on for Android and off elsewhere.
+Enabled builds activate mobile player interactions only on non-TV devices:
+Back exits playback immediately, and tapping the video outside the controls
+toggles the OSD. Android TV retains remote-oriented navigation. Future mobile
+targets can enable the same option without Android-specific QML.
 
 `tools/android/build-universal-apk.sh` merges per-ABI APKs from one build into
 the single `spool-universal.apk` the release page offers, for people who do not

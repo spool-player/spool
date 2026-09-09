@@ -868,6 +868,11 @@ int main(int argc, char **argv)
     platformInfo->insert(QStringLiteral("isWebOS"), capabilities.isWebOS);
     platformInfo->insert(QStringLiteral("isAndroid"), capabilities.isAndroid);
     platformInfo->insert(QStringLiteral("isMobile"), capabilities.isMobile);
+#ifdef TOUCHSCREEN
+    platformInfo->insert(QStringLiteral("touchscreen"), !capabilities.isTV);
+#else
+    platformInfo->insert(QStringLiteral("touchscreen"), false);
+#endif
     platformInfo->insert(QStringLiteral("hasSystemFonts"), capabilities.hasSystemFonts);
     platformInfo->insert(QStringLiteral("hasDesktopPointer"), capabilities.hasDesktopPointer);
     platformInfo->insert(QStringLiteral("hasPointer"), capabilities.hasPointer);

@@ -70,11 +70,13 @@ WheelHandler {
             return
         const animate = pixelDelta === 0
         if (root.horizontal) {
-            const maxX = Math.max(0, flickable.contentWidth - flickable.width)
-            root.moveFlickable("contentX", clamp(root.scrollBase("contentX") - delta, 0, maxX), animate)
+            const minX = Number(flickable.originX) || 0
+            const maxX = minX + Math.max(0, flickable.contentWidth - flickable.width)
+            root.moveFlickable("contentX", clamp(root.scrollBase("contentX") - delta, minX, maxX), animate)
         } else {
-            const maxY = Math.max(0, flickable.contentHeight - flickable.height)
-            root.moveFlickable("contentY", clamp(root.scrollBase("contentY") - delta, 0, maxY), animate)
+            const minY = Number(flickable.originY) || 0
+            const maxY = minY + Math.max(0, flickable.contentHeight - flickable.height)
+            root.moveFlickable("contentY", clamp(root.scrollBase("contentY") - delta, minY, maxY), animate)
         }
         root.scrolled()
         event.accepted = true

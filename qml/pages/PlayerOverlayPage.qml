@@ -11,7 +11,8 @@ FocusScope {
     readonly property var playQueue: PlayQueue
     readonly property bool hasPlayer: player.sessionActive
     readonly property bool smartTvPlatform: Platform.isTV
-    readonly property bool desktopControlsAvailable: !smartTvPlatform && !Platform.isAndroid
+    readonly property bool touchscreenControls: Boolean(Platform.touchscreen)
+    readonly property bool desktopControlsAvailable: !smartTvPlatform && !touchscreenControls
     readonly property int currentSyncDelayMs: syncTarget === "audioOutput" ? Settings.audioDelayMs : syncTarget
                                                                              === "subtitle" ? player.subtitleDelayMs :
                                                                                               player.fileAudioDelayMs
@@ -44,14 +45,6 @@ FocusScope {
     // person who is not looking at this pointer, so hovering must not keep it
     // alive; only real use here promotes it to "local".
     property string controlsReason: ""
-    // When the last Back that reached the chrome was pressed, so a second one
-    // can be recognised as a repeat rather than as a fresh intention.
-    property real lastChromeBackMs: 0
-    readonly property bool doubleBackQuitsPlayback: Platform.isAndroid
-    readonly property int doubleBackQuitMs: 1800
-    // A Back that ended the last item must not count towards leaving the next
-    // one.
-    onHasPlayerChanged: lastChromeBackMs = 0
 
     readonly property bool previewing: input.previewing
     // The same yardstick the pages behind size their cards with, so controls
@@ -845,6 +838,8 @@ FocusScope {
     }
 
     function back() {
+        if (touchscreenControls)
+            return stopPlayback("overlay-back")
         if (desktopControlsAvailable && NativeWindow.fullScreen) {
             toggleFullScreen()
             return true
@@ -880,16 +875,7 @@ FocusScope {
             return true
         }
 
-        // Nothing modal is open, so this Back is about the chrome. On Android
-        // the gesture is easy to repeat by accident, and anything that touches
-        // the screen puts the overlay back, so a second Back can hide chrome
-        // that the first one already dismissed and never leave playback.
-        // Two in quick succession mean it: leave, whatever the overlay did in
-        // between.
-        const now = Date.now()
-        const repeated = now - lastChromeBackMs < doubleBackQuitMs
-        lastChromeBackMs = now
-        if (controlsVisible && !(doubleBackQuitsPlayback && repeated))
+        if (controlsVisible)
             return hideControls()
         return stopPlayback("overlay-back")
     }

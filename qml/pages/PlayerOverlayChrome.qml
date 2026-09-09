@@ -15,6 +15,10 @@ Item {
     property int lastPointerX: -1
     property int lastPointerY: -1
 
+    function containsControl(control, position) {
+        return control.visible && control.contains(control.mapFromItem(root, position.x, position.y))
+    }
+
     function dp(value) {
         return overlay ? overlay.dp(value) : Math.round(value)
     }
@@ -110,9 +114,17 @@ Item {
     }
 
     TapHandler {
+        property bool surfaceTap: false
         acceptedButtons: Qt.LeftButton
         onPressedChanged: {
             if (!pressed)
+            return
+            surfaceTap = root.overlay.touchscreenControls && !root.overlay.audioSyncVisible &&
+            !root.overlay.subtitleSettingsVisible && !root.overlay.queuePanelVisible &&
+            !root.overlay.browsePanelVisible && !root.overlay.isMenuOpen() && !root.syncPlayMenuOpen &&
+            !root.containsControl(backButton, point.position) && !root.containsControl(hud, point.position) &&
+            !root.containsControl(skipSegment, point.position)
+            if (root.overlay.touchscreenControls)
             return
             if (root.syncPlayMenuOpen) {
                 const local = syncPlayMenu.mapFromItem(root, point.position.x, point.position.y)
@@ -128,8 +140,17 @@ Item {
             }
             root.overlay.showControlsFromPointer()
         }
+        onTapped: {
+            if (!surfaceTap)
+            return
+            if (root.overlay.controlsVisible)
+            root.overlay.hideControls()
+            else
+            root.overlay.showControlsFromPointer()
+        }
     }
     HoverHandler {
+        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
         // Entering is presence, not use: it only records where the pointer
         // is. Point changes are where actual movement shows up.
         onHoveredChanged: if (hovered)
@@ -216,6 +237,7 @@ Item {
     }
 
     PlayerSkipSegmentCard {
+        id: skipSegment
         overlay: root.overlay
     }
 

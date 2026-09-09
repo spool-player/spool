@@ -70,7 +70,7 @@ FocusScope {
     function isPopulated(index) {
         const row = rowAt(index)
         if (row)
-            return row.rowVisible
+            return row.count > 0
         const section = sectionAt(index)
         return Boolean(section) && ModelAccess.count(section.model) > 0
     }
@@ -142,7 +142,7 @@ FocusScope {
                 return false
             currentSection = next
         }
-        return activeFocus ? focusCurrentSection() : true
+        return activeFocus && Metrics.keyboardFocusActive && !pointerNavigationPending ? focusCurrentSection() : true
     }
 
     function currentItem() {
@@ -157,6 +157,10 @@ FocusScope {
     }
 
     function beginPointerNavigation(controller) {
+        // A wheel can cross several rows in one gesture. Each row has a
+        // handler, but only one animation may write this page's contentY.
+        if (pendingScrollController && pendingScrollController !== controller)
+            pendingScrollController.stopScrolling()
         if (controller)
             pendingScrollController = controller
         pointerNavigationPending = true
@@ -232,7 +236,7 @@ FocusScope {
 
     onActiveFocusChanged: {
         clearPendingPointerNavigation()
-        if (activeFocus) {
+        if (activeFocus && Metrics.keyboardFocusActive) {
             navigationFocusVisible = true
             Qt.callLater(focusCurrentSection)
         }
@@ -250,6 +254,7 @@ FocusScope {
         reuseItems: true
         cacheBuffer: 0
         boundsBehavior: Flickable.StopAtBounds
+        flickableDirection: Flickable.VerticalFlick
         flickDeceleration: Metrics.flickDecelerationPx
         maximumFlickVelocity: Metrics.maximumFlickVelocityPx
         keyNavigationEnabled: false

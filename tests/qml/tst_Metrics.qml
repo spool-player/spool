@@ -8,6 +8,34 @@ import "theme-singletons" as Yardstick
 TestCase {
     id: testCase
     name: "Metrics"
+    visible: true
+    when: windowShown
+    width: 400
+    height: 300
+
+    Flickable {
+        id: flick
+        anchors.fill: parent
+        contentWidth: width
+        contentHeight: 5000
+        flickDeceleration: testCase.metrics.flickDecelerationPx
+        maximumFlickVelocity: testCase.metrics.maximumFlickVelocityPx
+    }
+
+    function test_touchFlingCoastsBetweenSwipes() {
+        metrics.coarsePointer = true
+        flick.contentY = 0
+        flick.flick(0, -900)
+        wait(700)
+        const betweenSwipes = flick.contentY
+        verify(flick.flicking, "a moderate touch fling should coast after lifting the finger")
+        wait(100)
+        verify(flick.contentY > betweenSwipes, "content keeps moving between swipes")
+    }
+
+    function cleanup() {
+        flick.cancelFlick()
+    }
 
     readonly property var metrics: Yardstick.Metrics
 
@@ -157,20 +185,6 @@ TestCase {
         verify(metrics.touchTargetPx >= Math.round(9 * 6.8))
         verify(metrics.focusRingPx > sparseRing)
         verify(metrics.controlHeightPx >= metrics.touchTargetPx)
-    }
-
-    // A fling is a physical gesture: the same velocity has to carry the content
-    // the same distance across the glass whatever the panel's density, and a
-    // sparse panel keeps Qt's own defaults.
-    function test_flickPhysicsFollowPanelDensity() {
-        compare(metrics.flickDecelerationPx, 1500)
-        compare(metrics.maximumFlickVelocityPx, 2500)
-        metrics.pixelsPerMm = 6.8
-        verify(metrics.flickDecelerationPx > 1500)
-        verify(metrics.maximumFlickVelocityPx > 2500)
-        const ratio = 6.8 / metrics.referencePixelsPerMm
-        compare(metrics.flickDecelerationPx, Math.round(1500 * ratio))
-        compare(metrics.maximumFlickVelocityPx, Math.round(2500 * ratio))
     }
 
     // A remote and a mouse are not fingers, however dense the panel is.

@@ -58,6 +58,14 @@ KeyRouter {
         restoreMode: Binding.RestoreNone
     }
 
+    Binding {
+        target: Metrics
+        property: "coarsePointer"
+        value: true
+        when: Boolean(Platform.touchscreen)
+        restoreMode: Binding.RestoreNone
+    }
+
     // Which kind of pointer last touched the app, watched rather than
     // declared: the same build runs on a television with no pointer at all,
     // a desktop with a mouse, and a phone with neither. Both handlers are
@@ -68,7 +76,6 @@ KeyRouter {
                              Metrics.coarsePointer = true
                              Metrics.keyboardFocusActive = false
                              Metrics.pointerActive = false
-                             root.focus = true
                          }
     }
 
@@ -98,7 +105,8 @@ KeyRouter {
     HoverHandler {
         acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
         onHoveredChanged: if (hovered) {
-                              Metrics.coarsePointer = false
+                              if (!Platform.touchscreen)
+                                  Metrics.coarsePointer = false
                               Metrics.keyboardFocusActive = true
                               Metrics.pointerActive = true
                           }

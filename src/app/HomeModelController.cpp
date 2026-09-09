@@ -177,7 +177,7 @@ QVariantList HomeModelController::latestLibraryRows() const
     rows.reserve(static_cast<qsizetype>(m_latestLibrarySections.size()));
     for (size_t row = 0; row < m_latestLibrarySections.size(); ++row) {
         const LatestLibrarySection& section = m_latestLibrarySections[row];
-        if (!section.model || section.model->rowCount() <= 0)
+        if (!section.model || (section.model->rowCount() <= 0 && !m_refreshInFlight))
             continue;
         const std::vector<MovieItem>& items = section.model->movies();
         rows.push_back(QVariantMap {
@@ -221,7 +221,7 @@ bool HomeModelController::applyCachedPayload(const QJsonObject& payload)
 void HomeModelController::loadCachedPayload()
 {
     Async::runScoped(
-        this, loadCachedPayloadAsync(), []() { },
+        this, loadCachedPayloadAsync(), []() {},
         [](const std::exception_ptr& error) {
             qWarning() << "home: warm payload cache failed" << exceptionMessage(error);
         },
@@ -243,7 +243,7 @@ QCoro::Task<void> HomeModelController::loadCachedPayloadAsync()
 QString HomeModelController::payloadCacheKey() const
 {
     if (!m_api)
-        return { };
+        return {};
     const AuthSession session = m_api->session();
     const QString userKey = session.userId.isEmpty() ? session.userName : session.userId;
     const QString serverKey = session.serverId.isEmpty() ? m_api->serverUrl() : session.serverId;
@@ -268,13 +268,25 @@ void HomeModelController::refresh(const std::vector<LibraryItem>& libraries)
 
     const RequestGeneration::Token generation = m_generation.next();
     m_refreshInFlight = true;
+    if (m_latestLibrarySections.empty()) {
+        std::vector<PendingLatestLibrarySection> sections;
+        for (const LibraryItem& library : libraries) {
+            if (supportsLatestLibraryRow(library))
+                sections.push_back({ static_cast<int>(sections.size()), library, {} });
+        }
+        updateLatestLibraryRows(std::move(sections));
+        emit latestLibraryRowsChanged();
+    }
+    emit loadingChanged();
     m_prefetch->stop();
     Async::runScoped(
-        this, refreshAsync(libraries, generation), []() { },
+        this, refreshAsync(libraries, generation), []() {},
         [this, generation](const std::exception_ptr& error) {
             if (!m_generation.isCurrent(generation))
                 return;
             m_refreshInFlight = false;
+            emit loadingChanged();
+            emit latestLibraryRowsChanged();
             qWarning() << "home: refresh failed" << exceptionMessage(error);
         },
         "home refresh");
@@ -340,6 +352,7 @@ QCoro::Task<void> HomeModelController::refreshAsync(
     m_loaded = true;
     saveCachedPayload(payloadFromSections(resumeItems, nextUpItems, latestSections));
     const bool latestRowsChanged = updateLatestLibraryRows(std::move(latestSections));
+    emit loadingChanged();
 
     m_prefetch->prefetchPosters(resumeItems, 0, 12, LibraryPrefetchController::ImageKind::Landscape);
     m_prefetch->prefetchPosters(nextUpItems, 0, 12, LibraryPrefetchController::ImageKind::Landscape);
@@ -352,7 +365,7 @@ QCoro::Task<void> HomeModelController::refreshAsync(
                 : LibraryPrefetchController::ImageKind::Poster);
     }
     m_prefetch->schedule(libraries, m_recentLibraryIds);
-    if (latestRowsChanged)
+    if (latestRowsChanged || !m_latestLibrarySections.empty())
         emit latestLibraryRowsChanged();
 }
 
@@ -376,7 +389,7 @@ QCoro::Task<std::vector<MovieItem>> HomeModelController::fetchLatestLibraryItems
             co_return groupedItems;
         limit = kMaximumRawItems;
     }
-    co_return std::vector<MovieItem> { };
+    co_return std::vector<MovieItem> {};
 }
 
 void HomeModelController::recordLibraryUse(const LibraryItem& library)
@@ -467,6 +480,7 @@ void HomeModelController::reset()
     m_recentLibraryIds.clear();
     m_latestLibrarySections.clear();
     emit latestLibraryRowsChanged();
+    emit loadingChanged();
 }
 
 bool HomeModelController::updateLatestLibraryRows(std::vector<PendingLatestLibrarySection> sections)

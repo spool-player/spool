@@ -27,12 +27,15 @@ FocusScope {
                           "key": "resumeItems",
                           "title": "Continue Watching",
                           "model": Home.resumeItems,
-                          "kind": "landscape"
+                          "kind": "landscape",
+                          "reserveWhenEmpty": Home.loading
                       }, {
                           "key": "nextUpItems",
                           "title": "Next Up",
                           "model": Home.nextUpItems,
-                          "kind": "landscape"
+                          "kind": "landscape",
+                          "reserveWhenEmpty": Home.loading && (Home.latestLibraryRows || []).some(row => row.collectionType
+                                                                                                         === "tvshows")
                       })
         const latest = Home.latestLibraryRows || []
         for (let index = 0; index < latest.length; ++index) {
@@ -43,6 +46,7 @@ FocusScope {
                               "title": row && row.title ? row.title : "Recently Added",
                               "model": row && row.model ? row.model : null,
                               "kind": row && row.kind ? row.kind : "poster",
+                              "reserveWhenEmpty": Home.loading,
                               "useSeriesPoster": true,
                               "preferEpisodeTitle": true,
                               // The row's position is part of its identity for
@@ -51,11 +55,6 @@ FocusScope {
                           })
         }
         return sections
-    }
-
-    function rebuildSections() {
-        rows.sections = buildSections()
-        rows.reset()
     }
 
     // The two rows that are not simply "open this item": resuming plays
@@ -98,12 +97,12 @@ FocusScope {
         return rows.currentItem()
     }
 
-    Component.onCompleted: rebuildSections()
+    Component.onCompleted: rows.reset()
 
     Connections {
         target: Home
         function onLatestLibraryRowsChanged() {
-            root.rebuildSections()
+            Qt.callLater(rows.repair)
         }
     }
 
@@ -115,6 +114,7 @@ FocusScope {
         anchors.rightMargin: Metrics.pageMarginPx
         anchors.topMargin: Metrics.pageMarginPx
         shell: root.shell
+        sections: root.buildSections()
         contextReturnRoute: "home"
         measureFirstRow: true
         focus: true

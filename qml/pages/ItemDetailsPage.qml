@@ -106,11 +106,17 @@ FocusScope {
     readonly property bool showContextPlaybackActions: contextCount > 0 && typeText !== "Series"
     readonly property bool mediaInfoAvailable: typeText !== "Series" && typeText !== "Season"
     readonly property bool showContextRow: contextCount > 0 || reserveContextRow
-    readonly property bool showSimilarRow: similarCount > 0
+    readonly property bool reserveSimilarRow: loadingDetailRows && (typeText === "Movie" || typeText === "Series" || typeText
+                                                                    === "Episode")
+    readonly property bool showSimilarRow: similarCount > 0 || reserveSimilarRow
     readonly property var metadataPeople: fullDetailItem.people && fullDetailItem.people.length > 0
                                           ? fullDetailItem.people : (item.people || [])
     readonly property var people: metadataPeople
-    readonly property bool showPeopleRow: people.length > 0
+    readonly property bool reservePeopleRow: loadingDetailRows && !fullDetailItem.movieId && (typeText === "Movie"
+                                                                                              || typeText === "Series"
+                                                                                              || typeText === "Episode"
+                                                                                              || typeText === "Season")
+    readonly property bool showPeopleRow: people.length > 0 || reservePeopleRow
     readonly property var genreList: fullDetailItem.genres && fullDetailItem.genres.length > 0 ? fullDetailItem.genres :
                                                                                                  (item.genres || [])
     readonly property var studioList: fullDetailItem.studios && fullDetailItem.studios.length > 0
@@ -1562,6 +1568,7 @@ FocusScope {
                         cardWidth: root.rowPosterWidth
                         cardGap: root.rowGap
                         enabledRow: root.showPeopleRow
+                        reserveWhenEmpty: root.reservePeopleRow
                         onActivated: (index, person) => root.openPerson(person)
                     }
 
@@ -1579,6 +1586,7 @@ FocusScope {
                         cardKind: root.typeText === "Episode" ? "landscape" : "poster"
                         cardGap: root.rowGap
                         enabledRow: root.showSimilarRow
+                        reserveWhenEmpty: root.reserveSimilarRow
                         useSeriesPoster: root.typeText !== "Episode"
                         preferEpisodeTitle: root.typeText === "Episode"
                         onActivated: index => root.openSimilarItem(index)

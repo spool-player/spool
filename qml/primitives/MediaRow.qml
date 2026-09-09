@@ -308,6 +308,7 @@ FocusScope {
         keyNavigationEnabled: false
         clip: true
         orientation: ListView.Horizontal
+        flickableDirection: Flickable.HorizontalFlick
         boundsBehavior: Flickable.StopAtBounds
         flickDeceleration: Metrics.flickDecelerationPx
         maximumFlickVelocity: Metrics.maximumFlickVelocityPx

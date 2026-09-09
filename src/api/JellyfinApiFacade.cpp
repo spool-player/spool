@@ -2122,7 +2122,38 @@ QCoro::Task<QByteArray> JellyfinApiFacade::requestBytes(
         if (networkError == QNetworkReply::NoError && statusCode < 300)
             co_return payload;
 
-        const QString details = payload.isEmpty() ? errorText : QString::fromUtf8(payload);
+        QString details = payload.isEmpty() ? errorText : QString::fromUtf8(payload).trimmed();
+        if (path == QStringLiteral("/Users/AuthenticateByName")) {
+            const QJsonDocument errorDocument = QJsonDocument::fromJson(payload);
+            if (errorDocument.isObject()) {
+                const QJsonObject object = errorDocument.object();
+                details = object.value(QStringLiteral("detail")).toString();
+                if (details.isEmpty())
+                    details = object.value(QStringLiteral("Message")).toString();
+                if (details.isEmpty())
+                    details = object.value(QStringLiteral("message")).toString();
+                if (details.isEmpty())
+                    details = object.value(QStringLiteral("ResponseStatus"))
+                                  .toObject()
+                                  .value(QStringLiteral("Message"))
+                                  .toString();
+                if (details.isEmpty())
+                    details = object.value(QStringLiteral("title")).toString();
+            }
+            const bool generic = details.isEmpty() || details == errorText
+                || details.startsWith(QStringLiteral("Error processing request"), Qt::CaseInsensitive)
+                || details.compare(QStringLiteral("Unauthorized"), Qt::CaseInsensitive) == 0
+                || details.startsWith(QLatin1Char('<'));
+            if (generic) {
+                if (statusCode == 401)
+                    details = QStringLiteral("Incorrect username or password.");
+                else if (statusCode == 403)
+                    details
+                        = QStringLiteral("Sign-in is not allowed for this account. Contact your server administrator.");
+                else
+                    details = errorText;
+            }
+        }
         if (statusCode == 401 && shouldExpireSession(path) && !m_authExpirationReported) {
             m_authExpirationReported = true;
             emit authenticationExpired(QStringLiteral("Your Jellyfin session has expired. Sign in again."));

@@ -24,6 +24,7 @@ class HomeModelController final : public QObject {
     Q_PROPERTY(JellyfinNative::MovieGridModel *resumeItems READ resumeItems CONSTANT)
     Q_PROPERTY(JellyfinNative::MovieGridModel *nextUpItems READ nextUpItems CONSTANT)
     Q_PROPERTY(QVariantList latestLibraryRows READ latestLibraryRows NOTIFY latestLibraryRowsChanged)
+    Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
 
 public:
     HomeModelController(DatabaseManager *database, JellyfinApiFacade *api, LibraryPrefetchController *prefetch,
@@ -38,6 +39,10 @@ public:
         return &m_nextUpItems;
     }
     QVariantList latestLibraryRows() const;
+    bool loading() const
+    {
+        return m_refreshInFlight;
+    }
 
     bool applyCachedPayload(const QJsonObject& payload);
     void loadCachedPayload();
@@ -51,6 +56,7 @@ public:
 
 signals:
     void latestLibraryRowsChanged();
+    void loadingChanged();
 
 private:
     struct LatestLibrarySection {

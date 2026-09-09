@@ -17,6 +17,7 @@ if(CMAKE_CROSSCOMPILING AND NOT ANDROID)
     set(JELLYFIN_NATIVE_WEBOS_DEFAULT ON)
 endif()
 option(JELLYFIN_NATIVE_WEBOS "Build the webOS Starfish/native-surface client" ${JELLYFIN_NATIVE_WEBOS_DEFAULT})
+option(TOUCHSCREEN "Enable mobile touchscreen interactions (runtime-disabled on TVs)" ${ANDROID})
 option(JELLYFIN_NATIVE_DEV_BUILD "Favor faster local development builds over smallest release artifacts" OFF)
 option(JELLYFIN_DIAGNOSTICS "Build debug lifecycle/process/watchdog diagnostics" OFF)
 option(JELLYFIN_DIAGNOSTICS_STACKDUMP "Allow diagnostics to request gdb stack dumps" OFF)
@@ -1029,6 +1030,7 @@ if(UNIX AND NOT APPLE AND NOT ANDROID)
 endif()
 target_compile_definitions(jellyfin-native PRIVATE
     JELLYFIN_VERSION="${PROJECT_VERSION}"
+    $<$<BOOL:${TOUCHSCREEN}>:TOUCHSCREEN>
 )
 
 install(TARGETS jellyfin-native

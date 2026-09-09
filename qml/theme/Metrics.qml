@@ -93,14 +93,11 @@ QtObject {
     readonly property int focusRingPx: Math.max(scaled(2), coarsePointer ? Math.round(0.5 * pixelsPerMm) : 0)
     // The panel density Qt's flick defaults were drawn against, near enough.
     readonly property real referencePixelsPerMm: 3.8
-    // A fling is a physical gesture: the same flick of a finger should carry
-    // the content the same distance across the glass. Qt's defaults are in
-    // pixels, so on a panel nearly twice as dense they carry it half as far
-    // and reading a long row turns into swiping at it. Never below Qt's own
-    // numbers, so a sparse panel is left exactly as it was.
+    // Touch flings need to coast between swipes rather than brake like remote
+    // navigation. Keep the physical distance consistent across panel densities.
     readonly property real densityRatio: Math.max(1, pixelsPerMm / referencePixelsPerMm)
-    readonly property int flickDecelerationPx: Math.round(1500 * densityRatio)
-    readonly property int maximumFlickVelocityPx: Math.round(2500 * densityRatio)
+    readonly property int flickDecelerationPx: Math.round((coarsePointer ? 750 : 1500) * densityRatio)
+    readonly property int maximumFlickVelocityPx: Math.round((coarsePointer ? 6000 : 2500) * densityRatio)
     readonly property int sectionGapPx: scaled(28)
     readonly property int iconSizePx: scaled(22)
     readonly property int titleSizePx: scaled(34)
