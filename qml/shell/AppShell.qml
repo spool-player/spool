@@ -103,10 +103,12 @@ KeyRouter {
     }
 
     HoverHandler {
+        // Android can synthesize mouse hover around a touch sequence. It must
+        // not re-enable keyboard focus or resize controls between swipes.
+        enabled: !Platform.touchscreen
         acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
         onHoveredChanged: if (hovered) {
-                              if (!Platform.touchscreen)
-                                  Metrics.coarsePointer = false
+                              Metrics.coarsePointer = false
                               Metrics.keyboardFocusActive = true
                               Metrics.pointerActive = true
                           }

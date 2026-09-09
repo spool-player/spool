@@ -1,4 +1,5 @@
 import QtQuick
+import "../theme"
 
 Text {
     id: root
@@ -9,9 +10,11 @@ Text {
 
     text: name
     color: iconColor
-    font.family: Typography.material
-    font.pixelSize: iconSize
-    font.hintingPreference: Font.PreferNoHinting
+    font: Qt.font({
+                      "family": Typography.material,
+                      "pixelSize": root.iconSize,
+                      "hintingPreference": Font.PreferNoHinting
+                  })
     renderType: Text.QtRendering
     horizontalAlignment: Text.AlignHCenter
     verticalAlignment: Text.AlignVCenter

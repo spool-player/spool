@@ -11,9 +11,8 @@ T.Control {
     property bool railStyle: false
     property bool chromeless: false
     property bool pointerHovered: hover.hovered && Metrics.pointerActive
-    // The glyph as a share of the button. The defaults reproduce the sizes
-    // these buttons have always drawn at; a caller that makes the button
-    // bigger gets a bigger icon instead of a small one adrift in a large box.
+    // Touch targets may grow without enlarging the glyph. Size from the
+    // visual control scale, bounded by both dimensions of the actual button.
     property real iconRatio: railStyle ? 0.545 : 0.5
     property string accessibleName: ""
     // A click normally leaves the keyboard selection on what was clicked, so
@@ -66,7 +65,7 @@ T.Control {
             anchors.centerIn: parent
             visible: root.iconName.length > 0
             name: root.iconName
-            iconSize: Math.round(root.width * root.iconRatio)
+            iconSize: Math.round(Math.min(root.width, root.height, Metrics.scaled(44)) * root.iconRatio)
             iconColor: Metrics.keyboardFocusActive && root.activeFocus || root.selected ? Theme.accent :
                                                                                           Theme.textSecondary
         }

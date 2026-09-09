@@ -714,24 +714,21 @@ FocusScope {
     }
 
     function activateCurrent() {
-        if (grid.currentIndex < 0)
-            return
-        savedIndex = grid.currentIndex
-        openCurrentDetails()
+        openDetailsAt(grid.currentIndex)
     }
 
-    function openCurrentDetails() {
-        if (grid.currentIndex < 0)
+    function openDetailsAt(index) {
+        if (index < 0 || index >= grid.count)
             return
-        savedIndex = grid.currentIndex
-        const item = Browse.items ? (Browse.items.get(grid.currentIndex) || ({})) : ({});
+        savedIndex = index
+        const item = Browse.items ? (Browse.items.get(index) || ({})) : ({});
         // browseRoute is empty because this page already is the browse route:
         // playing a container here should not push another one on top.
         ItemActivation.open(item, {
                                 "source": "movies",
                                 "returnRoute": "libraryGrid",
                                 "browseRoute": ""
-                            }, App, hasShell() ? shell : null, Browse.items, grid.currentIndex)
+                            }, App, hasShell() ? shell : null, Browse.items, index)
     }
 
     function currentCard() {
@@ -1458,48 +1455,28 @@ FocusScope {
                     }
                 }
 
-                MouseArea {
-                    property int pressedIndex: -1
-                    property bool longPressed: false
-                    property bool pressedCurrent: false
-                    anchors.fill: parent
-                    z: 3
-                    acceptedButtons: Qt.LeftButton | Qt.RightButton
-                    pressAndHoldInterval: 520
-                    onPressed: mouse => {
-                        longPressed = false
-                        pressedCurrent = false
-                        root.navigationFocusVisible = true
-                        pressedIndex = grid.indexAt(mouse.x + grid.contentX, mouse.y + grid.contentY)
-                        pressedCurrent = pressedIndex === grid.currentIndex
-                        if (pressedIndex >= 0) {
+                GridPointerArea {
+                    view: grid
+                    onActivated: (index, button) => {
+                        if (button === Qt.RightButton && root.shell) {
+                            root.shell.openItemMenu(Browse.items.get(index), grid.itemAtIndex(index))
+                        } else if (Metrics.coarsePointer || !root.listMode || index === grid.currentIndex) {
+                            root.openDetailsAt(index)
+                        } else {
                             root.clearPendingPointerNavigation()
-                            grid.currentIndex = pressedIndex
-                            grid.forceActiveFocus()
+                            root.navigationFocusVisible = true
+                            grid.currentIndex = index
+                            InputKeys.focus(grid)
                         }
                     }
-                    onReleased: if (longPressed && root.shell)
-                    root.shell.finishItemMenuOpeningGesture()
-                    onCanceled: if (longPressed && root.shell)
-                    root.shell.finishItemMenuOpeningGesture()
-                    onClicked: mouse => {
-                        if (pressedIndex < 0)
-                            return
-                        if (longPressed) {
-                            longPressed = false
-                            return
-                        }
-                        if (mouse.button === Qt.RightButton && root.shell)
-                            root.shell.openItemMenu(Browse.items.get(pressedIndex), grid.itemAtIndex(pressedIndex))
-                        else if (!root.listMode || pressedCurrent)
-                            root.activateCurrent()
+                    onContextRequested: index => {
+                        if (root.shell)
+                            root.shell.openItemMenu(Browse.items.get(index), grid.itemAtIndex(index), {
+                                                        "deferBackdropDismissal": true
+                                                    })
                     }
-                    onPressAndHold: if (pressedIndex >= 0 && root.shell) {
-                        longPressed = true
-                        root.shell.openItemMenu(Browse.items.get(pressedIndex), grid.itemAtIndex(pressedIndex), {
-                                                    "deferBackdropDismissal": true
-                                                })
-                    }
+                    onContextGestureEnded: if (root.shell)
+                    root.shell.finishItemMenuOpeningGesture()
                 }
             }
         }

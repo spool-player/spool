@@ -483,6 +483,7 @@ qt_add_qml_module(jellyfin-native
         qml/primitives/ConfirmationDialog.qml
         qml/primitives/EmptyPlaceholder.qml
         qml/primitives/FastWheelHandler.qml
+        qml/primitives/GridPointerArea.qml
         qml/primitives/GroupHeader.qml
         qml/primitives/HoldNavigationController.qml
         qml/primitives/InlineSlider.qml
@@ -949,6 +950,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
             model-access tests/qml/tst_ModelAccess.qml
             tls-trust-dialogs tests/qml/tst_TlsTrustDialogs.qml
             nav-grid tests/qml/tst_NavGrid.qml
+            grid-pointer-area tests/qml/tst_GridPointerArea.qml
             viewport-focus-recovery tests/qml/tst_ViewportFocusRecovery.qml
             hold-navigation-controller tests/qml/tst_HoldNavigationController.qml
             library-navigation tests/qml/tst_LibraryNavigation.qml
