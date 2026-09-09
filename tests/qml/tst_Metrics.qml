@@ -189,36 +189,38 @@ TestCase {
         verify(metrics.controlHeightPx >= metrics.touchTargetPx)
     }
 
-    function test_mobileArtworkGrowsWithoutResizingSettings() {
-        viewport(1047, 791, 80)
+    function test_androidReferenceDensityAt100Percent() {
+        viewport(534, 844, 100)
         metrics.baselinePx = 720
         metrics.coarsePointer = true
-        const oldColumns = metrics.columns(1047)
-        const oldCard = metrics.cardWidth(1047)
-        const settingsHeight = metrics.controlHeightPx
-        const settingsText = metrics.bodySizePx
         metrics.mobileLayout = true
-        verify(metrics.columns(1047) < oldColumns)
-        verify(metrics.cardWidth(1047) > oldCard)
-        compare(metrics.controlHeightPx, settingsHeight)
-        compare(metrics.bodySizePx, settingsText)
+        compare(metrics.columns(534), 3, "the cover-screen reference should fit three posters at 100%")
+        const contentWidth = 534 - 2 * metrics.pageMargin(534)
+        compare(metrics.rowCardWidth(contentWidth), metrics.cardWidth(534),
+                "home rows must not deduct the page margins twice")
+        const landscapeWidth = Math.round(metrics.rowCardWidth(contentWidth) * metrics.landscapeCardRatio)
+        verify(landscapeWidth < contentWidth * 0.6, "landscape artwork should not fill the whole cover screen")
+        viewport(1047, 791, 100)
+        verify(metrics.columns(1047) > 3, "wider displays should derive more columns, not use a fixed count")
+        viewport(534, 844, 140)
+        verify(metrics.columns(534) < 3, "zoom must still control density")
     }
 
     function test_foldRoundTripUpdatesWithoutRecreatingMetrics() {
         metrics.mobileLayout = true
         metrics.coarsePointer = true
         metrics.baselinePx = 720
-        viewport(1047, 791, 80)
+        viewport(1047, 791, 100)
         const unfoldedCard = metrics.cardWidth(1047)
         const unfoldedColumns = metrics.columns(1047)
-        viewport(534, 844, 80)
+        viewport(534, 844, 100)
         verify(metrics.columns(534) < unfoldedColumns)
-        verify(metrics.columns(534) >= 2, "folding should retain a usable poster grid")
+        compare(metrics.columns(534), 3)
         metrics.pixelsPerMm = 5
         const coverTarget = metrics.touchTargetPx
         metrics.pixelsPerMm = 7
         verify(metrics.touchTargetPx > coverTarget)
-        viewport(1047, 791, 80)
+        viewport(1047, 791, 100)
         compare(metrics.cardWidth(1047), unfoldedCard)
         compare(metrics.columns(1047), unfoldedColumns)
     }

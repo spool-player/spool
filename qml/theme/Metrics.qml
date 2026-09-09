@@ -41,7 +41,8 @@ QtObject {
     // about — and tested — without the rest of the app standing around it.
     property int zoomPercent: 100
     readonly property int uiScalePercent: Math.max(50, Math.min(180, zoomPercent))
-    readonly property real uiScale: uiScalePercent / 100
+    // Handset 100% is the calibrated dp baseline, not a forced column count.
+    readonly property real uiScale: uiScalePercent / 100 * (mobileLayout ? 0.8 : 1)
 
     // The viewport that scores 1.0, as a geometric mean. A viewport's
     // geometric mean is its shape in one number, so a square panel and a
@@ -73,7 +74,7 @@ QtObject {
     readonly property real artworkScale: Math.max(0.7, Math.min(1.9, Math.pow(viewportRatio, 0.6)))
 
     readonly property real scale: viewportScale * uiScale
-    readonly property real cardScale: artworkScale * uiScale * (mobileLayout ? 1.25 : 1)
+    readonly property real cardScale: artworkScale * uiScale
 
     // Chrome that floats over content sits a little under the page behind it,
     // and is capped so a very large window does not push it out of
@@ -157,18 +158,21 @@ QtObject {
     // home row and the grid behind it land on the same size at any window size
     // rather than each rounding a table of their own.
     function cardWidth(width) {
-        const count = columns(width)
-        const available = Math.max(1, width - pageMargin(width) * 2)
-        return Math.max(1, Math.floor((available - gapPx * (count - 1)) / count))
+        return rowCardWidth(Math.max(1, width - pageMargin(width) * 2))
     }
-    // A 16:9 card beside a 2:3 one at landscapeCardRatio stands exactly three
-    // fifths as tall, which is the proportion the rows have always had.
-    function landscapeCardWidth(width) {
-        return Math.round(cardWidth(width) * landscapeCardRatio)
+    // Rows receive their already-inset content width. Subtracting page
+    // margins again could drop a narrow row to one column and then enlarge
+    // its landscape card beyond the viewport.
+    function rowCardWidth(contentWidth) {
+        const count = contentColumns(contentWidth)
+        return Math.max(1, Math.floor((contentWidth - gapPx * (count - 1)) / count))
     }
     function columns(width) {
+        return contentColumns(width - pageMargin(width) * 2)
+    }
+    function contentColumns(contentWidth) {
         const targetWidth = cardScaled(190)
-        const available = Math.max(targetWidth, width - pageMargin(width) * 2)
+        const available = Math.max(targetWidth, contentWidth)
         return Math.max(1, Math.min(12, Math.floor((available + gapPx) / (targetWidth + gapPx))))
     }
     // Dropdowns and pickers are read at arm's length whatever they hang off,

@@ -287,11 +287,9 @@ FocusScope {
             loading: Boolean(modelData.loading)
             emptyText: String(modelData.emptyText || "")
             focusVisible: root.navigationFocusVisible
-            // Portrait art is one column wide; a still is the same card
-            // turned on its side. Both come off the one card width so a row
-            // and the grid behind it never disagree.
-            cardWidth: cardKind === "poster" || cardKind === "square" ? Metrics.cardWidth(root.width) : Metrics.landscapeCardWidth(
-                                                                            root.width)
+            // This view is already inset by its host; use its usable width.
+            cardWidth: Math.round(Metrics.rowCardWidth(root.width) * (cardKind === "poster" || cardKind === "square"
+                                                                      ? 1 : Metrics.landscapeCardRatio))
 
             cardGap: Metrics.gapPx
             wheelFlickable: sectionList
