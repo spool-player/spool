@@ -19,6 +19,8 @@ QtObject {
     // Set by the shell when the last thing to touch the app was a finger.
     // Taps need a floor that a remote and a mouse do not.
     property bool coarsePointer: false
+    // Stable device layout policy, separate from the last input event.
+    property bool mobileLayout: false
     // A finger-driven app should not paint or retain a keyboard selection.
     // The first directional/key input turns this back on.
     property bool keyboardFocusActive: true
@@ -71,7 +73,7 @@ QtObject {
     readonly property real artworkScale: Math.max(0.7, Math.min(1.9, Math.pow(viewportRatio, 0.6)))
 
     readonly property real scale: viewportScale * uiScale
-    readonly property real cardScale: artworkScale * uiScale
+    readonly property real cardScale: artworkScale * uiScale * (mobileLayout ? 1.25 : 1)
 
     // Chrome that floats over content sits a little under the page behind it,
     // and is capped so a very large window does not push it out of

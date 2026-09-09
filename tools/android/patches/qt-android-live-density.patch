@@ -1,0 +1,43 @@
+diff --git a/src/plugins/platforms/android/androidjnimain.cpp b/src/plugins/platforms/android/androidjnimain.cpp
+--- a/src/plugins/platforms/android/androidjnimain.cpp
++++ b/src/plugins/platforms/android/androidjnimain.cpp
+@@ -42,6 +42,7 @@
+ #include <QtCore/private/qandroiditemmodelproxy_p.h>
+ #include <QtCore/private/qandroidmodelindexproxy_p.h>
+ #include <QtGui/private/qguiapplication_p.h>
++#include <QtGui/qscreen.h>
+ 
+ #include <qpa/qwindowsysteminterface.h>
+ 
+@@ -714,7 +715,20 @@
+ 
+ static void handleScreenDensityChanged(JNIEnv */*env*/, jclass /*cls*/, jdouble density)
+ {
++    if (qFuzzyCompare(m_density, density))
++        return;
+     m_density = density;
++    if (qGuiApp) {
++        QMetaObject::invokeMethod(qGuiApp, [] {
++            // The platform DPI getter alone does not invalidate QScreen's
++            // cached scale. Notify it when a fold/configuration changes dp.
++            for (QScreen *screen : QGuiApplication::screens()) {
++                const QDpi dpi = screen->handle()->logicalDpi();
++                QWindowSystemInterface::handleScreenLogicalDotsPerInchChange(
++                    screen, dpi.first, dpi.second);
++            }
++        }, Qt::QueuedConnection);
++    }
+ }
+ Q_DECLARE_JNI_NATIVE_METHOD(handleScreenDensityChanged)
+ 
+diff --git a/src/android/jar/src/org/qtproject/qt/android/QtRootLayout.java b/src/android/jar/src/org/qtproject/qt/android/QtRootLayout.java
+--- a/src/android/jar/src/org/qtproject/qt/android/QtRootLayout.java
++++ b/src/android/jar/src/org/qtproject/qt/android/QtRootLayout.java
+@@ -39,6 +39,7 @@
+         // Post the orientation handling just in case the onSizeChanged() is
+         // called a bit late (QTBUG-94459).
+         QtNative.runAction(() -> {
++            QtDisplayManager.updateScreenDensity(activity);
+             QtDisplayManager.handleOrientationChange(activity);
+         });
+     }

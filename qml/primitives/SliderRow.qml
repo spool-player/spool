@@ -86,6 +86,7 @@ SettingRow {
             value: root.sliderPosition(root.value)
             barHeight: Metrics.scaled(7)
             handleSize: Metrics.scaled(18)
+            minimumInteractionHeight: Math.max(48, Metrics.touchTargetPx)
             onMoved: newValue => {
                 root.interactionStarted()
                 root.preview(root.valueFromSlider(newValue))

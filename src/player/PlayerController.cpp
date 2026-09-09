@@ -219,8 +219,12 @@ PlayerController::PlayerController(NativeAppWindow *window, JellyfinApiFacade *a
     m_renderStrainTimer.setSingleShot(true);
     m_renderStrainTimer.setInterval(5000);
     connect(&m_renderStrainTimer, &QTimer::timeout, this, [this]() {
-        if (!m_sessionActive || m_renderStrainReported)
+        if (!m_sessionActive || m_renderStrainReported || !m_embeddedVideoOutput)
             return;
+        if (!m_fileLoaded || m_paused || m_buffering || m_seeking) {
+            m_renderStrainTimer.start();
+            return;
+        }
         // Counting dropped frames was not enough, and the Chromecast proved
         // it: a 4K HDR file played visibly slow, the picture dragging behind
         // the sound, while both drop counters sat at zero. With video synced
@@ -1139,6 +1143,7 @@ void PlayerController::play(const PlaybackSession& session, bool startPaused)
         qInfo() << "player: tearing down stale mpv before play";
         teardownMpv();
     }
+    resetRenderStrain();
 
     const bool hadFileAudioDelay = m_fileAudioDelayMs.exchange(0) != 0;
     const bool hadSubtitleDelay = m_subtitleDelayMs.exchange(0) != 0;
@@ -2012,6 +2017,17 @@ void PlayerController::setRenderQuality(MpvOptionProfile::RenderQuality quality)
     qInfo() << "player: render quality" << MpvOptionProfile::renderQualityName(quality).constData();
 }
 
+void PlayerController::resetRenderStrain()
+{
+    m_renderStrainTimer.stop();
+    m_renderStrainReported = false;
+    m_decoderDroppedFrames = 0;
+    m_outputDroppedFrames = 0;
+    m_delayedFrames = 0;
+    m_outputFps = 0.0;
+    m_containerFps = 0.0;
+}
+
 void PlayerController::resetPlaybackUiState()
 {
     releaseMpvKeys();
@@ -2031,13 +2047,7 @@ void PlayerController::resetPlaybackUiState()
     m_pendingSeekFlags.clear();
     m_positionTracker.clear();
     m_debugOsdVisible = false;
-    m_decoderDroppedFrames = 0;
-    m_outputDroppedFrames = 0;
-    m_delayedFrames = 0;
-    m_outputFps = 0.0;
-    m_containerFps = 0.0;
-    m_renderStrainTimer.stop();
-    m_renderStrainReported = false;
+    resetRenderStrain();
     m_timeline.clear();
     rebuildTrickplaySheetUrls();
     m_statusText = QStringLiteral("Ready");

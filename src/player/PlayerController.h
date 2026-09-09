@@ -295,6 +295,7 @@ private:
     double clampedPosition(double seconds) const;
     double seekAnchorPosition();
     void resetPlaybackUiState();
+    void resetRenderStrain();
     void rebuildTrickplaySheetUrls();
     bool applyMpvRuntimeOption(MpvRuntimeOption option, MpvOptionApplyMode mode, mpv_handle *handle);
     bool applyMpvSubtitleOptions(MpvOptionApplyMode mode, mpv_handle *handle, bool preserveTrackSelection = false,

@@ -217,13 +217,26 @@ AppController::AppController(DatabaseManager *database, DiscoveryController *dis
     // the next thing that plays starts where this one ended up rather than
     // dropping frames again on the way to the same conclusion.
     connect(m_player, &PlayerController::renderQualityStrained, this, [this](qint64 droppedFrames) {
-        if (!m_settings)
+        if (!m_settings || !m_player->sessionActive() || !m_player->fileLoaded() || m_busy)
             return;
         const QString lowered = m_settings->stepDownRenderQuality();
         if (lowered.isEmpty())
             return;
         qInfo() << "player: lowering picture quality to" << lowered << "after" << droppedFrames << "dropped frames";
         showToast(QStringLiteral("Switched to faster playback for this device."));
+        const qint64 positionTicks = static_cast<qint64>(m_player->positionSeconds() * 10'000'000.0);
+        const MovieItem resumeItem = PlaybackFailurePolicy::retryItem(m_activePlaybackItem, positionTicks);
+        setBusy(true, QStringLiteral("Switching to faster playback…"));
+        Async::runScoped(
+            this,
+            startPlayback(
+                resumeItem, m_player->paused(), false, m_activeAudioStreamIndex, m_activeSubtitleStreamIndex, true),
+            []() {},
+            [this](const std::exception_ptr& error) {
+                setBusy(false);
+                showToast(exceptionMessage(error));
+            },
+            "render quality fallback");
     });
     connect(m_player, &PlayerController::playbackStateChanged, this, [this]() {
         if (m_player->fileLoaded())
@@ -1341,8 +1354,8 @@ void AppController::handleRemoteGeneralCommand(const QJsonObject& data)
     }
 }
 
-QCoro::Task<void> AppController::startPlayback(
-    MovieItem playItem, bool startPaused, bool forceTranscode, int audioStreamIndex, int subtitleStreamIndex)
+QCoro::Task<void> AppController::startPlayback(MovieItem playItem, bool startPaused, bool forceTranscode,
+    int audioStreamIndex, int subtitleStreamIndex, bool restartActive)
 {
     Diagnostics::Task task(QStringLiteral("playback_negotiate"),
         { { QStringLiteral("itemId"), playItem.id }, { QStringLiteral("title"), playItem.title },
@@ -1376,6 +1389,16 @@ QCoro::Task<void> AppController::startPlayback(
             session.restoreStreamSelection = true;
         }
     }
+    if (restartActive) {
+        // Stop/navigation during negotiation must not resurrect this stream.
+        if (!m_player->sessionActive() || m_activePlaybackItem.id != playItem.id) {
+            setBusy(false);
+            co_return;
+        }
+        startPaused = m_player->paused();
+        audioStreamIndex = m_activeAudioStreamIndex;
+        subtitleStreamIndex = m_activeSubtitleStreamIndex;
+    }
     const std::vector<PlaybackQueueItem> queue = m_playQueue->nowPlayingQueue();
     if (forceTranscode) {
         PlaybackFailurePolicy::prepareFallbackSession(session, queue, audioStreamIndex, subtitleStreamIndex);
@@ -1383,16 +1406,23 @@ QCoro::Task<void> AppController::startPlayback(
         session.nowPlayingQueue = queue;
         // A restart that is not a codec fallback - a quality change - still has
         // to land on the tracks the viewer had chosen.
-        if (audioStreamIndex >= 0 || subtitleStreamIndex >= 0) {
+        if (audioStreamIndex != -2 || subtitleStreamIndex != -2) {
             if (audioStreamIndex >= 0)
                 session.audioStreamIndex = audioStreamIndex;
-            session.subtitleStreamIndex = subtitleStreamIndex;
+            if (subtitleStreamIndex != -2)
+                session.subtitleStreamIndex = subtitleStreamIndex;
             session.restoreStreamSelection = true;
         }
     }
     m_activePlaybackStreams = session.mediaStreams;
+    const int fileAudioDelayMs = restartActive ? m_player->fileAudioDelayMs() : 0;
+    const int subtitleDelayMs = restartActive ? m_player->subtitleDelayMs() : 0;
     setBusy(false);
     m_player->play(session, startPaused);
+    if (restartActive) {
+        m_player->setFileAudioDelayMs(fileAudioDelayMs);
+        m_player->setSubtitleDelayMs(subtitleDelayMs);
+    }
 
     const QString itemId = playItem.id;
     Async::runScoped(

@@ -48,6 +48,8 @@ TestCase {
     function init() {
         viewport(1920, 1080, 100)
         metrics.coarsePointer = false
+        metrics.mobileLayout = false
+        metrics.baselinePx = 1440
         metrics.pixelsPerMm = 3.8
     }
 
@@ -185,6 +187,40 @@ TestCase {
         verify(metrics.touchTargetPx >= Math.round(9 * 6.8))
         verify(metrics.focusRingPx > sparseRing)
         verify(metrics.controlHeightPx >= metrics.touchTargetPx)
+    }
+
+    function test_mobileArtworkGrowsWithoutResizingSettings() {
+        viewport(1047, 791, 80)
+        metrics.baselinePx = 720
+        metrics.coarsePointer = true
+        const oldColumns = metrics.columns(1047)
+        const oldCard = metrics.cardWidth(1047)
+        const settingsHeight = metrics.controlHeightPx
+        const settingsText = metrics.bodySizePx
+        metrics.mobileLayout = true
+        verify(metrics.columns(1047) < oldColumns)
+        verify(metrics.cardWidth(1047) > oldCard)
+        compare(metrics.controlHeightPx, settingsHeight)
+        compare(metrics.bodySizePx, settingsText)
+    }
+
+    function test_foldRoundTripUpdatesWithoutRecreatingMetrics() {
+        metrics.mobileLayout = true
+        metrics.coarsePointer = true
+        metrics.baselinePx = 720
+        viewport(1047, 791, 80)
+        const unfoldedCard = metrics.cardWidth(1047)
+        const unfoldedColumns = metrics.columns(1047)
+        viewport(534, 844, 80)
+        verify(metrics.columns(534) < unfoldedColumns)
+        verify(metrics.columns(534) >= 2, "folding should retain a usable poster grid")
+        metrics.pixelsPerMm = 5
+        const coverTarget = metrics.touchTargetPx
+        metrics.pixelsPerMm = 7
+        verify(metrics.touchTargetPx > coverTarget)
+        viewport(1047, 791, 80)
+        compare(metrics.cardWidth(1047), unfoldedCard)
+        compare(metrics.columns(1047), unfoldedColumns)
     }
 
     // A remote and a mouse are not fingers, however dense the panel is.

@@ -48,6 +48,7 @@ TestCase {
 
     function init() {
         flick.contentY = 0
+        slider.interactionMargin = 16
         testCase.boundValue = 10
         testCase.movedCount = 0
         testCase.committedCount = 0
@@ -99,5 +100,17 @@ TestCase {
         mouseMove(flick, 200, y + 2)
         compare(testCase.movedCount, afterPress, "a pointer that has not changed the value reports nothing")
         mouseRelease(flick, 200, y + 2)
+    }
+
+    function test_touchOutsideVisualTrackStillAdjustsSlider() {
+        slider.interactionMargin = 0
+        const touch = touchEvent(slider)
+        const y = slider.height / 2 + 18
+        verify(y > slider.height, "the touch is outside the drawn slider")
+        touch.press(0, slider, 250, y).commit()
+        touch.release(0, slider, 250, y).commit()
+        compare(testCase.committedCount, 1)
+        verify(testCase.lastCommitted > 70)
+        compare(flick.contentY, 0)
     }
 }

@@ -11,6 +11,7 @@ Item {
     property real barHeight: 6
     property real handleSize: 16
     property real interactionMargin: 0
+    property real minimumInteractionHeight: 48
     // Set when the owning row has focus, so the track reads as the thing the
     // remote is about to change.
     property bool highlighted: false
@@ -82,8 +83,10 @@ Item {
     }
 
     MouseArea {
-        anchors.fill: parent
-        anchors.margins: -root.interactionMargin
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.verticalCenter: parent.verticalCenter
+        width: root.width + root.interactionMargin * 2
+        height: Math.max(root.height + root.interactionMargin * 2, root.minimumInteractionHeight)
         acceptedButtons: Qt.LeftButton
         preventStealing: true
 

@@ -207,7 +207,7 @@ private:
     void loadLibraryFilterOptions(RequestGeneration::Token generation, const LibraryItem& library);
     RequestGeneration::Token beginBrowse(bool useWarmCache = false);
     QCoro::Task<void> startPlayback(MovieItem playItem, bool startPaused = false, bool forceTranscode = false,
-        int audioStreamIndex = -2, int subtitleStreamIndex = -2);
+        int audioStreamIndex = -2, int subtitleStreamIndex = -2, bool restartActive = false);
     void playQueuedItems(const std::vector<MovieItem>& items, int startIndex, bool fromStart = false);
     bool modelIsOrderedList(MovieGridModel *model) const;
     void playAlbumFrom(const MovieItem& track, bool fromStart);

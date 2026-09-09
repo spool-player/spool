@@ -97,6 +97,13 @@ Back exits playback immediately, and tapping the video outside the controls
 toggles the OSD. Android TV retains remote-oriented navigation. Future mobile
 targets can enable the same option without Android-specific QML.
 
+Automatic picture-quality adjustment restarts an active stream at its saved
+position, retaining pause, selected tracks and per-file sync delays. On Android,
+the ladder can ultimately switch from Enhanced to Direct MediaCodec output.
+Handset artwork is sized separately from settings controls. The Android Qt build
+also carries a live-density notification patch so fold/configuration changes
+update the UI without requiring an app restart.
+
 `tools/android/build-universal-apk.sh` merges per-ABI APKs from one build into
 the single `spool-universal.apk` the release page offers, for people who do not
 know their device's architecture. The in-app updater never fetches it: the
