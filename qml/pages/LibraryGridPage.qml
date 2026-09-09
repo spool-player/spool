@@ -13,6 +13,7 @@ FocusScope {
     property var shell
     property var uiTransitionToken: 0
     property bool listMode: false
+    property string touchPreviewItemId: ""
     readonly property string lane: Metrics.lane(width)
     property int columns: listMode ? 1 : Metrics.columns(width)
     readonly property bool largeZoom: Metrics.uiScalePercent >= 150
@@ -673,6 +674,7 @@ FocusScope {
     }
 
     onListModeChanged: {
+        touchPreviewItemId = ""
         Qt.callLater(function () {
             grid.forceLayout()
             grid.ensureCurrentVisible()
@@ -715,6 +717,32 @@ FocusScope {
 
     function activateCurrent() {
         openDetailsAt(grid.currentIndex)
+    }
+
+    function activatePointerIndex(index, button) {
+        if (index < 0 || index >= grid.count)
+            return
+        const item = Browse.items.get(index)
+        if (button === Qt.RightButton && root.shell) {
+            root.shell.openItemMenu(item, grid.itemAtIndex(index))
+            return
+        }
+        const itemId = String(item.movieId || "")
+        const selected = index === grid.currentIndex && (!Metrics.coarsePointer || (itemId.length > 0
+                                                                                    && touchPreviewItemId === itemId))
+        if (!listMode || selected) {
+            openDetailsAt(index)
+            return
+        }
+        touchPreviewItemId = Metrics.coarsePointer ? itemId : ""
+        // List selection feeds the bio pane, but is not global navigation
+        // focus. Preserve the viewport even for a partly visible tapped row.
+        const contentY = grid.contentY
+        clearPendingPointerNavigation()
+        navigationFocusVisible = true
+        grid.currentIndex = index
+        InputKeys.focus(grid)
+        grid.contentY = contentY
     }
 
     function openDetailsAt(index) {
@@ -1450,25 +1478,19 @@ FocusScope {
                         color: "transparent"
                         radius: Math.max(0, Theme.radiusMedium - Theme.focusBorderWidth)
                         border.width: Theme.focusBorderWidth
-                        border.color: Metrics.keyboardFocusActive && root.navigationFocusVisible && grid.activeFocus
-                                      ? Theme.accent : "transparent"
+                        border.color: root.navigationFocusVisible && ((Metrics.keyboardFocusActive && grid.activeFocus)
+                                                                      || (root.listMode && Metrics.coarsePointer
+                                                                          && root.touchPreviewItemId.length > 0
+                                                                          && root.touchPreviewItemId === String(
+                                                                              root.paneItem ? root.paneItem.movieId :
+                                                                                              ""))) ? Theme.accent :
+                                                                                                      "transparent"
                     }
                 }
 
                 GridPointerArea {
                     view: grid
-                    onActivated: (index, button) => {
-                        if (button === Qt.RightButton && root.shell) {
-                            root.shell.openItemMenu(Browse.items.get(index), grid.itemAtIndex(index))
-                        } else if (Metrics.coarsePointer || !root.listMode || index === grid.currentIndex) {
-                            root.openDetailsAt(index)
-                        } else {
-                            root.clearPendingPointerNavigation()
-                            root.navigationFocusVisible = true
-                            grid.currentIndex = index
-                            InputKeys.focus(grid)
-                        }
-                    }
+                    onActivated: (index, button) => root.activatePointerIndex(index, button)
                     onContextRequested: index => {
                         if (root.shell)
                             root.shell.openItemMenu(Browse.items.get(index), grid.itemAtIndex(index), {
