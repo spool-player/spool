@@ -475,10 +475,14 @@ FocusScope {
     }
 
     onActiveFocusChanged: {
-        if (activeFocus)
-        focusDefaultAction()
-        else
-        rowHold.stopTracking()
+        if (activeFocus) {
+            Qt.callLater(function () {
+                if (root.routeActive && root.activeFocus)
+                    root.focusDefaultAction()
+            })
+        } else {
+            rowHold.stopTracking()
+        }
     }
     function currentMediaItem() {
         return item
@@ -1375,6 +1379,11 @@ FocusScope {
                             primary: true
                             visible: root.showPrimaryAction
                             enabledButton: root.showPrimaryAction && !App.busy
+                            // Cold route activation can select Play before it is
+                            // enabled. Keep its local focus aligned with the
+                            // action Enter will activate once loading finishes.
+                            focus: root.routeActive && root.focusZone === "actions" && root.actionIndex === 0
+                                   && Metrics.keyboardFocusActive && enabled
                             onActivated: root.activatePrimary(false)
                         }
 
