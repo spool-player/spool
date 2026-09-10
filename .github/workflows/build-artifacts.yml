@@ -406,12 +406,10 @@ jobs:
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
           skipPush: true
       - name: Build and cache tailored Qt
-        env:
-          ARCH: ${{ matrix.arch }}
         run: |
           nix build --accept-flake-config .#native-qt-cache \
             --out-link "$RUNNER_TEMP/spool-native-qt" --print-build-logs
-          if [[ "$ARCH" == arm64 && -n "$CACHIX_AUTH_TOKEN" ]]; then
+          if [[ -n "$CACHIX_AUTH_TOKEN" ]]; then
             cachix push spool "$(readlink "$RUNNER_TEMP/spool-native-qt")"
           fi
       - name: Publish cached nix run package
