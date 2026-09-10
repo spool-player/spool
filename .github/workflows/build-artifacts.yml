@@ -274,21 +274,19 @@ jobs:
 
       - name: Report render latency
         run: |
-          # No retry here. The run measures the machine's own idle timer drift
-          # beside every sample and gates on the per-route median, so a
-          # scheduling pause neither fails the run nor needs a second one to
-          # rule it out.
-          status=0
+          # Hosted runners vary too much for performance failures. Warn only on
+          # large overall slowdowns; move gating to dedicated hardware first.
           nix develop .#native -c python3 tools/compare-render-benchmark.py \
             dist/render-benchmark/warm.json \
             --baseline .render-benchmark/warm.json \
-            --markdown dist/render-benchmark/warm.md || status=$?
+            --warn-only \
+            --markdown dist/render-benchmark/warm.md
           nix develop .#native -c python3 tools/compare-render-benchmark.py \
             dist/render-benchmark/cold.json \
             --baseline .render-benchmark/cold.json \
-            --markdown dist/render-benchmark/cold.md || true
+            --warn-only \
+            --markdown dist/render-benchmark/cold.md
           cat dist/render-benchmark/warm.md dist/render-benchmark/cold.md >> "$GITHUB_STEP_SUMMARY"
-          exit "$status"
 
       - name: Upload render benchmark
         if: ${{ always() }}

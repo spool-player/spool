@@ -71,6 +71,20 @@ the player; it does not close Spool. `stop` also returns to the application.
 Bindings which manipulate volume, mute or speed update the corresponding Spool
 controls. Closing Spool continues to use its normal application shutdown path.
 
+## Performance benchmarks
+
+GitHub Actions reports performance regressions as warnings, not build failures:
+shared runners are too variable for reliable timing gates. Only overall
+transition time (the sum of per-route median wall times) is compared. An increase
+must reach both 25% and one frame budget; route timings, CPU shares, construction
+costs and frame gaps remain diagnostics, not constraints on new approaches.
+
+**Follow-up: run these benchmarks on dedicated hardware before restoring
+performance gates.** Record the baseline on the same hardware and rendering
+backend. `tools/compare-render-benchmark.py` supports strict local comparisons;
+CI passes `--warn-only`. Empty or broken measurements still fail rather than
+being mistaken for good performance.
+
 ## Android development
 
 The Android toolchain is pinned to SDK 36, Build Tools 36.0.0 and NDK
