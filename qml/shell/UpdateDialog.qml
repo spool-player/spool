@@ -8,6 +8,7 @@ FocusScope {
 
     required property var updater
     readonly property string stage: updater ? updater.stage : "idle"
+    readonly property bool testMode: updater ? updater.testMode : false
     readonly property string updateVersion: updater ? updater.version : ""
     readonly property string updateErrorText: updater ? updater.errorText : ""
     readonly property real updateProgress: updater ? updater.progress : 0
@@ -15,7 +16,7 @@ FocusScope {
     readonly property double updateTotalBytes: updater ? updater.totalBytes : 0
     readonly property double updateBytesPerSecond: updater ? updater.bytesPerSecond : 0
     readonly property bool open: stage === "available" || stage === "downloading" || stage === "ready" || stage === "permission"
-                                 || stage === "error"
+                                 || stage === "error" || stage === "installing" || stage === "installed"
     property int actionIndex: 0
 
     // An update is a chore, so the words are kept to what the reader has to
@@ -25,13 +26,17 @@ FocusScope {
     readonly property string titleText: {
         switch (stage) {
         case "available":
-            return "Quick update"
+            return testMode ? "Test webOS update" : "Quick update"
         case "downloading":
             return "Updating"
         case "ready":
             return "Ready to install"
         case "permission":
             return "One-time permission"
+        case "installing":
+            return "Installing update"
+        case "installed":
+            return "Update installed"
         default:
             return "Update failed"
         }
@@ -39,13 +44,19 @@ FocusScope {
     readonly property string bodyText: {
         switch (stage) {
         case "available":
-            return "Spool " + updateVersion + " is ready. This takes about 30 seconds."
+            return testMode ? "Try installing Spool " + updateVersion
+                              + " without root. This test offers the published package even if this build is newer." :
+                              "Spool " + updateVersion + " is ready. This takes about 30 seconds."
         case "downloading":
             return ""
         case "ready":
             return "Spool " + updateVersion + " is verified and ready to install."
         case "permission":
             return "Android needs permission to install Spool updates. Turn it on, then come back."
+        case "installing":
+            return "webOS is installing Spool. Keep the TV on; the app may close during installation."
+        case "installed":
+            return "webOS reported a successful installation. Reopen Spool to use the installed version."
         default:
             return updateErrorText
         }
@@ -60,6 +71,8 @@ FocusScope {
             return "Install"
         case "permission":
             return "Open settings"
+        case "installed":
+            return "Close"
         default:
             return "Try again"
         }
@@ -137,7 +150,7 @@ FocusScope {
     }
 
     function back() {
-        if (!updater)
+        if (!updater || stage === "installing")
             return true
         if (stage === "downloading")
             updater.cancelDownload()
@@ -291,7 +304,7 @@ FocusScope {
 
                 ActionButton {
                     id: secondaryButton
-                    visible: root.stage !== "downloading"
+                    visible: root.stage !== "downloading" && root.stage !== "installing" && root.stage !== "installed"
                     text: root.secondaryText
                     onActiveFocusChanged: if (activeFocus)
                                               root.actionIndex = root.stage === "available" ? 1 : 0
@@ -305,12 +318,11 @@ FocusScope {
 
                 ActionButton {
                     id: primaryButton
-                    visible: true
+                    visible: root.stage !== "installing"
                     text: root.primaryText
                     kind: root.stage === "downloading" ? "secondary" : "primary"
                     onActiveFocusChanged: if (activeFocus)
-                                              root.actionIndex = root.stage === "available" ? 2 : root.stage
-                                                                                              === "downloading" ? 0 : 1
+                                              root.actionIndex = root.visibleActions().indexOf(primaryButton)
                     onClicked: {
                         if (root.stage === "available")
                             root.updater.download()
@@ -320,6 +332,8 @@ FocusScope {
                             root.updater.install()
                         else if (root.stage === "permission")
                             root.updater.openInstallSettings()
+                        else if (root.stage === "installed")
+                            root.updater.decline()
                         else
                             root.updater.retry()
                     }

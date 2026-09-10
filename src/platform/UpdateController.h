@@ -4,6 +4,7 @@
 
 #include <QByteArray>
 #include <QElapsedTimer>
+#include <QJsonArray>
 #include <QObject>
 #include <QPointer>
 #include <QTimer>
@@ -14,10 +15,15 @@ class QCryptographicHash;
 class QNetworkAccessManager;
 class QNetworkReply;
 class QSaveFile;
+class QTemporaryDir;
 
 namespace JellyfinNative {
 
-class AndroidUpdateController final : public QObject {
+#if defined(JELLYFIN_NATIVE_WEBOS)
+class WebOSUpdateInstaller;
+#endif
+
+class UpdateController final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString stage READ stage NOTIFY changed)
     Q_PROPERTY(QString version READ version NOTIFY changed)
@@ -29,10 +35,12 @@ class AndroidUpdateController final : public QObject {
     Q_PROPERTY(double progress READ progress NOTIFY progressChanged)
     Q_PROPERTY(QString errorText READ errorText NOTIFY changed)
     Q_PROPERTY(bool allowPrerelease READ allowPrerelease WRITE setAllowPrerelease NOTIFY allowPrereleaseChanged)
+    Q_PROPERTY(bool testMode READ testMode CONSTANT)
+    Q_PROPERTY(QString statusText READ statusText NOTIFY changed)
 
 public:
-    AndroidUpdateController(QNetworkAccessManager *network, QString cacheRoot, QObject *parent = nullptr);
-    ~AndroidUpdateController() override;
+    UpdateController(QNetworkAccessManager *network, QString cacheRoot, QObject *parent = nullptr);
+    ~UpdateController() override;
 
     QString stage() const;
     QString version() const;
@@ -44,6 +52,8 @@ public:
     double progress() const;
     QString errorText() const;
     bool allowPrerelease() const;
+    bool testMode() const;
+    QString statusText() const;
     void setAllowPrerelease(bool allow);
 
     // Whether the app checks for updates on its own. Settings owns the
@@ -71,19 +81,22 @@ private:
         Downloading,
         Ready,
         PermissionRequired,
+        Installing,
+        Installed,
         Error,
     };
 
     void checkForUpdate();
     void finishManifestRequest();
+    void requestMetadata(const QUrl& url);
+    void consumeMetadata();
+    void offerRelease();
     void consumeDownloadData();
     void finishDownload();
     void setStage(Stage stage);
     void fail(QString message);
     void resetDownload();
-    bool canRequestPackageInstalls() const;
-    bool launchInstaller() const;
-    QString assetKey() const;
+    QString packagePath() const;
 
     QNetworkAccessManager *m_network = nullptr;
     QString m_cacheRoot;
@@ -91,9 +104,14 @@ private:
     bool m_allowPrerelease = false;
     bool m_automaticUpdates = false;
     bool m_waitingForPermission = false;
-    AndroidUpdateRelease m_release;
+    UpdateRelease m_release;
     QString m_errorText;
+    QString m_statusText;
     QByteArray m_manifestBytes;
+    QJsonArray m_publishedReleases;
+    qint64 m_metadataBytes = 0;
+    int m_releasePage = 1;
+    bool m_fetchingChecksums = false;
     QPointer<QNetworkReply> m_reply;
     std::unique_ptr<QSaveFile> m_output;
     std::unique_ptr<QCryptographicHash> m_hash;
@@ -104,7 +122,11 @@ private:
     qint64 m_bytesPerSecond = 0;
     qint64 m_lastSpeedBytes = 0;
     qint64 m_lastSpeedMs = 0;
-    bool m_apkReady = false;
+    bool m_packageReady = false;
+#if defined(JELLYFIN_NATIVE_WEBOS)
+    WebOSUpdateInstaller *m_installer = nullptr;
+    std::unique_ptr<QTemporaryDir> m_packageDirectory;
+#endif
 };
 
 } // namespace JellyfinNative

@@ -39,8 +39,10 @@ function(jellyfin_configure_android_targets native_target core_target)
         src/platform/android/AndroidNativeAppWindow.cpp
         src/platform/android/AndroidApplicationServices.cpp
         src/platform/android/AndroidProcessIntegration.cpp
-        src/platform/android/AndroidUpdateController.cpp
-        src/platform/android/AndroidUpdateController.h
+        src/platform/UpdateController.cpp
+        src/platform/UpdateController.h
+        src/platform/android/AndroidUpdateInstaller.cpp
+        src/platform/android/AndroidUpdateInstaller.h
         src/platform/desktop/DesktopPlaybackRuntime.cpp
     )
     target_link_libraries(${core_target} PUBLIC MPV::MPV)

@@ -99,6 +99,10 @@ function(jellyfin_configure_webos_targets native_target core_target)
         src/platform/common/LinuxPerformanceSampler.cpp
     )
     target_sources(${native_target} PRIVATE
+        src/platform/UpdateController.cpp
+        src/platform/UpdateController.h
+        src/platform/webos/WebOSUpdateInstaller.cpp
+        src/platform/webos/WebOSUpdateInstaller.h
         src/platform/webos/WebOSNativeAppWindow.cpp
         src/platform/webos/WebOSApplicationServices.cpp
         src/platform/webos/WebOSAudioRoute.cpp

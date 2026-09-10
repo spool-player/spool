@@ -115,6 +115,98 @@ void untrustedOrIncompleteAssetsAreRejected()
         "short SHA-256 was accepted");
 }
 
+QJsonObject webOSRelease(const QString& version, bool withDigest = true)
+{
+    const QString tag = QStringLiteral("v") + version;
+    const QString base = QStringLiteral("https://github.com/sachk/spool/releases/download/") + tag + QLatin1Char('/');
+    return {
+        { QStringLiteral("tag_name"), tag },
+        { QStringLiteral("draft"), false },
+        { QStringLiteral("prerelease"), true },
+        { QStringLiteral("published_at"), QStringLiteral("2026-09-04T19:07:35Z") },
+        { QStringLiteral("html_url"), QStringLiteral("https://github.com/sachk/spool/releases/tag/") + tag },
+        { QStringLiteral("assets"),
+            QJsonArray {
+                QJsonObject {
+                    { QStringLiteral("name"),
+                        QStringLiteral("com.sachk.spool_") + version + QStringLiteral("_arm.ipk") },
+                    { QStringLiteral("browser_download_url"),
+                        base + QStringLiteral("com.sachk.spool_") + version + QStringLiteral("_arm.ipk") },
+                    { QStringLiteral("state"), QStringLiteral("uploaded") },
+                    { QStringLiteral("size"), 12345 },
+                    { QStringLiteral("digest"),
+                        withDigest ? QStringLiteral("sha256:") + QString(64, QLatin1Char('a')) : QString() },
+                },
+                QJsonObject {
+                    { QStringLiteral("name"), QStringLiteral("SHA256SUMS.txt") },
+                    { QStringLiteral("browser_download_url"), base + QStringLiteral("SHA256SUMS.txt") },
+                    { QStringLiteral("state"), QStringLiteral("uploaded") },
+                    { QStringLiteral("size"), 512 },
+                },
+            } },
+    };
+}
+
+void webOSSelectsSemanticVersionIncludingPrereleases()
+{
+    QJsonObject draft = webOSRelease(QStringLiteral("9.0.0"));
+    draft.insert(QStringLiteral("draft"), true);
+    const auto result = selectWebOSUpdate(QJsonDocument(QJsonArray {
+                                                            webOSRelease(QStringLiteral("0.9.0")),
+                                                            webOSRelease(QStringLiteral("0.10.0-beta.2")),
+                                                            draft,
+                                                            webOSRelease(QStringLiteral("0.10.0-beta.10")),
+                                                        })
+            .toJson());
+    require(result.error.isEmpty() && result.release && result.release->version == QStringLiteral("0.10.0-beta.10"),
+        "webOS did not select highest published semantic prerelease");
+    const auto stable = selectWebOSUpdate(QJsonDocument(QJsonArray {
+                                                            webOSRelease(QStringLiteral("0.10.0")),
+                                                            webOSRelease(QStringLiteral("0.10.0-rc.99")),
+                                                        })
+            .toJson());
+    require(stable.release && stable.release->version == QStringLiteral("0.10.0"),
+        "webOS ranked prerelease above final version");
+}
+
+void webOSRejectsUntrustedMetadata()
+{
+    QJsonObject item = webOSRelease(QStringLiteral("0.7.13"));
+    QJsonArray assets = item.value(QStringLiteral("assets")).toArray();
+    QJsonObject ipk = assets[0].toObject();
+    ipk.insert(
+        QStringLiteral("browser_download_url"), QStringLiteral("https://example.com/com.sachk.spool_0.7.13_arm.ipk"));
+    assets[0] = ipk;
+    item.insert(QStringLiteral("assets"), assets);
+    require(!selectWebOSUpdate(QJsonDocument(QJsonArray { item }).toJson()).error.isEmpty(),
+        "webOS accepted an off-repository IPK");
+    item = webOSRelease(QStringLiteral("0.7.13"), false);
+    assets = item.value(QStringLiteral("assets")).toArray();
+    assets.removeLast();
+    item.insert(QStringLiteral("assets"), assets);
+    const auto unhashed = selectWebOSUpdate(QJsonDocument(QJsonArray { item }).toJson());
+    require(!unhashed.release, "webOS offered an IPK without a trusted hash source");
+}
+
+void webOSChecksumsBindExactAsset()
+{
+    const auto result = selectWebOSUpdate(QJsonDocument(QJsonArray {
+                                                            webOSRelease(QStringLiteral("0.7.13"), false),
+                                                        })
+            .toJson());
+    require(result.release.has_value(), "webOS rejected a release with checksum metadata");
+    const QByteArray name = result.release->packageName.toUtf8();
+    const QByteArray hash(64, 'b');
+    require(webOSPackageSha256(hash + "  " + name + "\n", result.release->packageName) == hash,
+        "webOS did not accept the exact SHA256SUMS entry");
+    require(webOSPackageSha256(hash + "  other_arm.ipk\n", result.release->packageName).isEmpty(),
+        "webOS accepted another package's checksum");
+    require(webOSPackageSha256(
+                hash + "  " + name + "\n" + QByteArray(64, 'c') + "  " + name + "\n", result.release->packageName)
+                .isEmpty(),
+        "webOS accepted conflicting duplicate checksums");
+}
+
 } // namespace
 
 JELLYFIN_TEST_MAIN("update-manifest")
@@ -124,5 +216,8 @@ JELLYFIN_TEST_MAIN("update-manifest")
     prereleaseChannelSelectsLargestEligibleBuild();
     currentOrOlderBuildsAreIgnored();
     untrustedOrIncompleteAssetsAreRejected();
+    webOSSelectsSemanticVersionIncludingPrereleases();
+    webOSRejectsUntrustedMetadata();
+    webOSChecksumsBindExactAsset();
     return EXIT_SUCCESS;
 }

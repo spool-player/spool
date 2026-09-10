@@ -28,8 +28,10 @@
 #include "player/MpvVideoItem.h"
 #include "player/PlayerController.h"
 #include "player/RenderTargetProfile.h"
+#if defined(SPOOL_ANDROID) || defined(JELLYFIN_NATIVE_WEBOS)
+#include "platform/UpdateController.h"
+#endif
 #if defined(SPOOL_ANDROID)
-#include "platform/android/AndroidUpdateController.h"
 #include <QJniObject>
 #endif
 #if defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID) && !defined(JELLYFIN_NATIVE_WEBOS)
@@ -700,12 +702,10 @@ int main(int argc, char **argv)
     diskCache->setMaximumCacheSize(memoryBudget.networkDiskCacheBytes);
     networkAccessManager->setCache(diskCache);
     QObject *platformUpdateController = nullptr;
-#if defined(SPOOL_ANDROID)
-    // Constructed here because QML binds to it before the shell exists, but
-    // deliberately not started here: the first check waits for settings to
-    // load, so the toggle governs it from the very first launch rather than
-    // after an update dialog has already appeared. See the connection below.
-    auto updateController = std::make_unique<JellyfinNative::AndroidUpdateController>(networkAccessManager, cachePath);
+#if defined(SPOOL_ANDROID) || defined(JELLYFIN_NATIVE_WEBOS)
+    // QML binds before the shell exists. Android waits for its settings;
+    // the webOS experiment starts its unconditional check in the event loop.
+    auto updateController = std::make_unique<JellyfinNative::UpdateController>(networkAccessManager, cachePath);
     platformUpdateController = updateController.get();
 #endif
 
@@ -1066,6 +1066,12 @@ int main(int argc, char **argv)
     }
 
     QTimer::singleShot(1000, router.get(), [router = router.get()] { router->beginSession(false); });
+#if defined(JELLYFIN_NATIVE_WEBOS)
+    // Rootless self-update experiment: offer the latest published package on
+    // every launch, even when this checkout is newer or updates are disabled.
+    QTimer::singleShot(
+        0, updateController.get(), [updater = updateController.get()] { updater->setAutomaticUpdatesEnabled(true); });
+#endif
 
     QTimer::singleShot(0, &window, [&startupTimer]() {
         logLine("startup: first event-loop turn at %lld ms", static_cast<long long>(startupTimer.elapsed()));
