@@ -1,10 +1,7 @@
 diff --git a/src/android/jar/src/org/qtproject/qt/android/QtActivityBase.java b/src/android/jar/src/org/qtproject/qt/android/QtActivityBase.java
 --- a/src/android/jar/src/org/qtproject/qt/android/QtActivityBase.java
 +++ b/src/android/jar/src/org/qtproject/qt/android/QtActivityBase.java
-@@ -111,10 +111,12 @@
-             setTheme(themeId);
-         }
- 
+@@ -114,6 +114,8 @@
 -        if (QtNative.getStateDetails().isStarted) {
 +        if (QtNative.getStateDetails().isStarted || getLastNonConfigurationInstance() != null) {
              // We don't yet have a reliable way to keep the app
@@ -14,4 +11,3 @@ diff --git a/src/android/jar/src/org/qtproject/qt/android/QtActivityBase.java b/
 +            // Its libraries are already loaded, so the new delegate cannot start it.
              restartApplication();
          }
- 
