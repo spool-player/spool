@@ -81,7 +81,8 @@ require_environment() {
 apply_qt_patches() {
   local patch_file
   for patch_file in "$ROOT/tools/android/patches/qt-android-tv-keyboard.patch" \
-                    "$ROOT/tools/android/patches/qt-android-live-density.patch"; do
+                    "$ROOT/tools/android/patches/qt-android-live-density.patch" \
+                    "$ROOT/tools/android/patches/qt-android-early-recreation.patch"; do
     if patch --dry-run --forward --silent -d "$SOURCE_ROOT/qtbase" -p1 <"$patch_file" >/dev/null 2>&1; then
       patch --forward --silent -d "$SOURCE_ROOT/qtbase" -p1 <"$patch_file"
     elif ! patch --dry-run --reverse --silent -d "$SOURCE_ROOT/qtbase" -p1 <"$patch_file" >/dev/null 2>&1; then
@@ -112,7 +113,7 @@ fetch_sources() {
 qt_prefix_current() {
   [[ -f "$PREFIX/lib/cmake/Qt6/Qt6ConfigVersionImpl.cmake" ]] || return 1
   grep -Fqx "set(PACKAGE_VERSION \"$QT_VERSION\")" "$PREFIX/lib/cmake/Qt6/Qt6ConfigVersionImpl.cmake"
-  [[ -f "$PREFIX/.spool-android-qt-$ABI-api-$ANDROID_API-tv-keyboard-v1-density-v1" ]]
+  [[ -f "$PREFIX/.spool-android-qt-$ABI-api-$ANDROID_API-tv-keyboard-v1-density-v1-recreation-v1" ]]
 }
 
 build_qtbase() {
@@ -155,7 +156,7 @@ build_qtbase() {
   )
   cmake --build "$BUILD_ROOT/qtbase" --parallel "$JOBS"
   cmake --install "$BUILD_ROOT/qtbase"
-  printf '1\n' >"$PREFIX/.spool-android-qt-$ABI-api-$ANDROID_API-tv-keyboard-v1-density-v1"
+  printf '1\n' >"$PREFIX/.spool-android-qt-$ABI-api-$ANDROID_API-tv-keyboard-v1-density-v1-recreation-v1"
 }
 
 module_marker() {
