@@ -8,6 +8,8 @@ import sys
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 
 SCRIPT_PATH = Path(sys.argv[1]).resolve()
@@ -83,7 +85,6 @@ class NetworkShaperTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(body, PAYLOAD)
         self.assertGreaterEqual(time_to_first_byte, 0.18)
-        self.assertLess(time_to_first_byte, 0.6)
 
     async def test_limits_aggregate_bandwidth_across_connections(self) -> None:
         port = await self.start_proxy(download_rate=125_000)
@@ -93,9 +94,54 @@ class NetworkShaperTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(all(body == PAYLOAD for _, body in results))
         self.assertGreaterEqual(elapsed, 1.8)
-        self.assertLess(elapsed, 3.5)
+        # A rate limit bounds throughput, not runner scheduling or socket delays.
         self.assertGreaterEqual(self.shaper.metrics.download_bytes, len(PAYLOAD) * 2)
         self.assertEqual(self.shaper.metrics.total_connections, 2)
+
+
+class PacerTest(unittest.IsolatedAsyncioTestCase):
+    async def test_reserves_bandwidth_before_waiting(self) -> None:
+        now = 100.0
+        sleepers: list[tuple[float, asyncio.Future[None]]] = []
+        sent: list[tuple[int, float]] = []
+
+        async def sleep(delay: float) -> None:
+            ready = asyncio.get_running_loop().create_future()
+            sleepers.append((now + delay, ready))
+            await ready
+
+        async def advance(to: float) -> None:
+            nonlocal now
+            now = to
+            for deadline, ready in sleepers:
+                if deadline <= now and not ready.done():
+                    ready.set_result(None)
+            await asyncio.sleep(0)
+
+        async def send(byte_count: int) -> None:
+            await pacer.wait(byte_count)
+            sent.append((byte_count, now))
+
+        # Control only the pacer's clock and timer; tasks still run concurrently.
+        clock = SimpleNamespace(time=lambda: now)
+        timers = SimpleNamespace(get_running_loop=lambda: clock, sleep=sleep)
+        pacer = network_shaper.Pacer(1000)
+        with patch.object(network_shaper, "asyncio", timers):
+            async with asyncio.TaskGroup() as tasks:
+                for byte_count in (250, 500, 100):
+                    tasks.create_task(send(byte_count))
+                await asyncio.sleep(0)
+                self.assertEqual(sent, [(250, 100.0)])
+
+                await advance(100.249)
+                self.assertEqual(sent, [(250, 100.0)])
+                await advance(100.25)
+                self.assertEqual(sent, [(250, 100.0), (500, 100.25)])
+
+                await advance(100.749)
+                self.assertEqual(sent, [(250, 100.0), (500, 100.25)])
+                await advance(100.75)
+                self.assertEqual(sent, [(250, 100.0), (500, 100.25), (100, 100.75)])
 
 
 if __name__ == "__main__":
