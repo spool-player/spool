@@ -22,6 +22,10 @@ ADB="$ANDROID_HOME/platform-tools/adb"
   exit 1
 }
 
+# Realize the emulator and system image before the adb registration deadline.
+# A cold CI runner may spend minutes downloading them.
+nix build --no-link "$ROOT#android-emulator"
+
 cleanup() {
   "$ADB" emu kill >/dev/null 2>&1 || true
 }

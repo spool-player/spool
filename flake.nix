@@ -289,8 +289,6 @@
           overlays = [ pinnedQtOverlay libplaceboOverlay tailoredQtOverlay qcoroOverlay cacheDependencyOverlay ];
         };
 
-      forAllCacheSystems = f:
-        nixpkgs.lib.genAttrs systems (system: f (cachePkgsFor system));
 
 
       # Shared build/media dependencies. Intentionally contains no qt6.* packages.
@@ -676,10 +674,14 @@
 
     in
     {
-      packages = forAllCacheSystems (pkgs: {
-        default = cachedNativePackage pkgs;
-        native-cache = cachedNativePackage pkgs;
-        native-qt-cache = cachedNativeQtPackage pkgs;
+      packages = forAllSystems (pkgs: let
+        cachedPkgs = cachePkgsFor pkgs.stdenv.hostPlatform.system;
+      in {
+        default = cachedNativePackage cachedPkgs;
+        native-cache = cachedNativePackage cachedPkgs;
+        native-qt-cache = cachedNativeQtPackage cachedPkgs;
+      } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+        android-emulator = (androidEnvironment pkgs).emulator;
       });
 
       devShells = forAllSystems (pkgs:
