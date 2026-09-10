@@ -88,7 +88,13 @@ nix develop .#android -c bash tools/android/build.sh
 That runs the three cached stages -- `build-dependencies.sh`, `build-qt6.sh`,
 `build-apks.sh` -- which can also be invoked on their own.
 
-It builds `spool-x86_64.apk` under `dist/android`. One package serves both
+Entering the Android shell may build native Qt host tools before the Android
+cross-build starts. These must match the pinned Qt version: `moc`, QML generators,
+`qsb` and translation tools run on the build machine. The host profile omits
+Quick/Controls and desktop-only dependencies; Qt GUI libraries remain necessary
+for the generators. The emulator is provided separately by `nix run .#android-emulator`.
+
+The build produces `spool-x86_64.apk` under `dist/android`. One package serves both
 phones and televisions -- the form factor is asked of the system at runtime --
 so architecture is selected with `ANDROID_ABI`, not separate phone/TV builds.
 The CMake `TOUCHSCREEN` option defaults on for Android and off elsewhere.

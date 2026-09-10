@@ -843,7 +843,7 @@ usage() {
 usage: $0 [fetch|host|target|all|clean-host|clean-target|clean|summary]
 
 Environment knobs:
-  QT_VERSION=6.11.1
+  QT_VERSION=$QT_VERSION
   QT_STATIC=0|1
   JOBS=N                       explicit parallel job count
   QT_BUILD_MEMORY_PER_JOB_MIB=1536

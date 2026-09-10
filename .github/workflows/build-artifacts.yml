@@ -750,11 +750,11 @@ jobs:
         with:
           nix_conf: |
             experimental-features = nix-command flakes
-      # The Android dev shell closure is around 9 GB. Keeping it in the
-      # Actions cache consumed most of the repository quota and evicted the
-      # toolchain cache below -- the small one that saves an hour
-      # of Qt and mpv builds. Cachix holds the store instead, which is what it
-      # is for, and leaves the quota to the things only this repository has.
+      # Keep the SDK/NDK and Qt host-tools closure in Cachix rather than
+      # consuming Actions cache quota needed by the source-built target
+      # toolchains below. The shell excludes the emulator (launch tests use
+      # #android-emulator) and native Qt Quick/desktop-only modules, but still
+      # needs matching host code generators to cross-compile Qt and the app.
       - uses: cachix/cachix-action@3ba601ff5bbb07c7220846facfa2cd81eeee15a1 # v16
         if: ${{ env.CACHIX_AUTH_TOKEN != '' }}
         with:

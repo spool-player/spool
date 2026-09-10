@@ -1,43 +1,43 @@
 {
-  "version": "6.11.1",
+  "version": "6.11.2",
   "architecture": "msvc2022_64",
-  "repository": "https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_6111/qt6_6111_msvc2022_64",
-  "packageVersion": "6.11.1-0-202605090529",
+  "repository": "https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_6112/qt6_6112_msvc2022_64",
+  "packageVersion": "6.11.2-0-202608131017",
   "archives": [
     {
-      "package": "qt.qt6.6111.win64_msvc2022_64",
+      "package": "qt.qt6.6112.win64_msvc2022_64",
       "file": "qtbase-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z",
-      "sha1": "6f554628540ab947d48294e208cc3caae7f023d2"
+      "sha1": "1fca9483183d426c1a3a984f1382382fa51f48de"
     },
     {
-      "package": "qt.qt6.6111.win64_msvc2022_64",
+      "package": "qt.qt6.6112.win64_msvc2022_64",
       "file": "qtdeclarative-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z",
-      "sha1": "7fb3f0f07ddcdb491c39f5dd4e42e0f0f07d2d72"
+      "sha1": "f3ac5149eb76cb0279ba84e126734cf520214519"
     },
     {
-      "package": "qt.qt6.6111.win64_msvc2022_64",
+      "package": "qt.qt6.6112.win64_msvc2022_64",
       "file": "qttools-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z",
-      "sha1": "f8f33d511bbf38b85aa701425b41455b3512b36d"
+      "sha1": "0a94da47fb97103660b5bfec7361ae51b05f7323"
     },
     {
-      "package": "qt.qt6.6111.win64_msvc2022_64",
+      "package": "qt.qt6.6112.win64_msvc2022_64",
       "file": "qtsvg-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z",
-      "sha1": "353d70f58e5cd55d4217e3ec806a4b5dad4d320b"
+      "sha1": "f458d7f238795d61a3e53fa5211cf2d6b1aa08ef"
     },
     {
-      "package": "qt.qt6.6111.addons.qtshadertools.win64_msvc2022_64",
+      "package": "qt.qt6.6112.addons.qtshadertools.win64_msvc2022_64",
       "file": "qtshadertools-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z",
-      "sha1": "1c193b587c1a73622338378c3c95dc84f5865955"
+      "sha1": "27f32f1cc715f91e95802e654f585e0dd42c558a"
     },
     {
-      "package": "qt.qt6.6111.addons.qtimageformats.win64_msvc2022_64",
+      "package": "qt.qt6.6112.addons.qtimageformats.win64_msvc2022_64",
       "file": "qtimageformats-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z",
-      "sha1": "50ef50e84bf83ce1a3125572c15f729f1c5470ee"
+      "sha1": "00fb138473510e065753e6576e8cc4ab4625d662"
     },
     {
-      "package": "qt.qt6.6111.addons.qtwebsockets.win64_msvc2022_64",
+      "package": "qt.qt6.6112.addons.qtwebsockets.win64_msvc2022_64",
       "file": "qtwebsockets-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z",
-      "sha1": "23de94ad3c83b161a374b2504a590877ee64e5cd"
+      "sha1": "f0f2935f47e4bebc1046441bf2e4d367dd28e1f0"
     }
   ]
 }

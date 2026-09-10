@@ -157,8 +157,28 @@
             '';
           });
       };
+      pinnedQtOverlay = final: prev:
+        let
+          srcs = builtins.mapAttrs (name: sha256: {
+            version = toolchain.qt.version;
+            src = final.fetchurl {
+              url = "${toolchain.qt.baseUrl}/${name}-everywhere-src-${toolchain.qt.version}.tar.xz";
+              inherit sha256;
+            };
+          }) toolchain.qt.sources;
+        in {
+          qt6 = (prev.qt6.overrideScope (_qtFinal: qtPrev: {
+            inherit srcs;
+            # qtbase takes its source directly; the other modules use qtModule.
+            qtbase = qtPrev.qtbase.override { inherit (srcs.qtbase) src version; };
+            qtModule = qtPrev.qtModule.override { inherit srcs; };
+          })) // {
+            override = prev.qt6.override;
+          };
+        };
+
       tailoredQtOverlay = final: prev: {
-        spoolQt6 = (prev.qt6.overrideScope (_qtFinal: qtPrev: {
+        spoolQt6 = (prev.qt6.overrideScope (qtFinal: qtPrev: {
           qtbase = (qtPrev.qtbase.override {
             systemdSupport = false;
             withGtk3 = false;
@@ -208,6 +228,13 @@
               ''patchelf --add-rpath "${final.vulkan-loader}/lib" --add-needed "libvulkan.so" $out/lib/libQt6Gui.so'')
               ([ "" ] ++ final.lib.optional (!keepVulkan) "") (old.postFixup or "");
           });
+          qtdeclarative = qtPrev.qtdeclarative.overrideAttrs (old: {
+            # The channel explicitly names its untailored host qsb. Use this
+            # scope's tool so building QML does not build a second native Qt.
+            cmakeFlags = builtins.filter (flag:
+              !final.lib.hasPrefix "-DQt6ShaderToolsTools_DIR=" flag) old.cmakeFlags
+              ++ [ "-DQt6ShaderToolsTools_DIR=${qtFinal.qtshadertools}/lib/cmake/Qt6ShaderToolsTools" ];
+          });
         })) // {
           # pythonPackages.qt6 expects this secondary package scope.
           override = prev.qt6.override;
@@ -242,7 +269,7 @@
               allowUnfree = true;
               android_sdk.accept_license = true;
             };
-            overlays = [ libplaceboOverlay ffmpegSlimOverlay tailoredQtOverlay qcoroOverlay ];
+            overlays = [ pinnedQtOverlay libplaceboOverlay ffmpegSlimOverlay tailoredQtOverlay qcoroOverlay ];
           }));
       # Native artifacts use a tailored Qt without ICU, Vulkan, foreign SQL
       # drivers or GTK. Release jobs retain the full build closure in GitHub
@@ -252,7 +279,7 @@
         import (nixpkgsFor system) {
           inherit system;
           config.allowUnfree = true;
-          overlays = [ libplaceboOverlay tailoredQtOverlay qcoroOverlay cacheDependencyOverlay ];
+          overlays = [ pinnedQtOverlay libplaceboOverlay tailoredQtOverlay qcoroOverlay cacheDependencyOverlay ];
         };
 
       forAllCacheSystems = f:
@@ -545,6 +572,41 @@
           paths = pkgs.lib.unique (packages ++ map pkgs.lib.getDev packages);
         };
 
+      androidQtHostPackage = pkgs:
+        let
+          qt = pkgs.spoolQt6.overrideScope (_qtFinal: qtPrev: {
+            qtdeclarative = qtPrev.qtdeclarative.overrideAttrs (old: {
+              # Match the webOS host-tools profile: without an imported qsb,
+              # qtdeclarative skips Quick, Controls and styles, not QML tools.
+              cmakeFlags = builtins.filter (flag:
+                !pkgs.lib.hasPrefix "-DQt6ShaderToolsTools_DIR=" flag) old.cmakeFlags ++ [
+                "-DCMAKE_DISABLE_FIND_PACKAGE_Qt6ShaderToolsTools=TRUE"
+                "-DFEATURE_quick_vectorimage=OFF"
+              ];
+            });
+            qttools = qtPrev.qttools.overrideAttrs (old: {
+              cmakeFlags = old.cmakeFlags ++ [
+                "-DFEATURE_linguist=ON"
+                "-DFEATURE_assistant=OFF"
+                "-DFEATURE_designer=OFF"
+                "-DFEATURE_distancefieldgenerator=OFF"
+                "-DFEATURE_pixeltool=OFF"
+                "-DFEATURE_qdoc=OFF"
+                "-DFEATURE_qtattributionsscanner=OFF"
+                "-DFEATURE_qtdiag=OFF"
+                "-DFEATURE_qtplugininfo=OFF"
+              ];
+            });
+          });
+          # moc/rcc/androiddeployqt, QML generators, qsb and translation tools.
+          # QtGui remains a dependency of the shader and QML tools; native
+          # QCoro, WebSockets, image-format plugins and Wayland do not.
+          packages = with qt; [ qtbase qtdeclarative qtshadertools qttools ];
+        in pkgs.symlinkJoin {
+          name = "spool-android-qt-host-${toolchain.qt.version}";
+          paths = pkgs.lib.unique (packages ++ map pkgs.lib.getDev packages);
+        };
+
       cachedNativePackage = pkgs:
         pkgs.stdenv.mkDerivation {
           pname = "spool";
@@ -616,9 +678,12 @@
       devShells = forAllSystems (pkgs:
         let
           system = pkgs.stdenv.hostPlatform.system;
-          lintPkgs = import (nixpkgsFor system) { inherit system; };
+          lintPkgs = import (nixpkgsFor system) {
+            inherit system;
+            overlays = [ pinnedQtOverlay ];
+          };
           android = androidEnvironment pkgs;
-          androidQtHost = cachedNativeQtPackage pkgs;
+          androidQtHost = androidQtHostPackage pkgs;
         in {
         default = pkgs.mkShell {
           packages = sourceBuildPackages pkgs;
@@ -647,7 +712,6 @@
         android = pkgs.mkShell {
           packages = with pkgs; [
             android.sdk
-            android.emulator
             androidQtHost
             autoconf
             automake

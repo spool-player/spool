@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
-  "qtVersion": "6.11.1",
+  "qtVersion": "6.11.2",
   "series": "6.11",
-  "baseUrl": "https://download.qt.io/official_releases/qt/6.11/6.11.1/submodules",
+  "baseUrl": "https://download.qt.io/official_releases/qt/6.11/6.11.2/submodules",
   "modules": [
-    {"name": "qtbase", "sha256": "d9594a31228aa23ad6b531719a29b45f0f3989fe6c136d45767ea179f233c1ac"},
-    {"name": "qtshadertools", "sha256": "2075052f9b23bcf9de045bbd180037084942f82cce870aab14a1454902c982fc"},
-    {"name": "qtdeclarative", "sha256": "52e670f670b0304f534b24f98c47ceb8a41bb710464414ebc9527ec71cc86aa4"},
-    {"name": "qtsvg", "sha256": "7f3cf02f4824bf03c2c5859ea6db173bf1482a1daf24e6cdf7bc78cfa26a8a94"},
-    {"name": "qtimageformats", "sha256": "b2bf6c6845ac175ed7f819145483ba4676f617aaa6a5012c8efee63c8bbac413"},
-    {"name": "qtwebsockets", "sha256": "243e3aa11924c8c5c1645e892f62d013caa3766c57512ca926d5b58146646fbf"}
+    {"name": "qtbase", "sha256": "5b2e00eccaf5a4d8c14134ffa0ea8dfd0a35ae1ffc7f8d87fa4305a1ed23cf22"},
+    {"name": "qtshadertools", "sha256": "805046b8b7757665586890b375940047e874ae3ab00adb6d3f2b38fc6b200b1c"},
+    {"name": "qtdeclarative", "sha256": "215b7b70517e380123eabc6b92243f3c47b6f016a91d126057dbe53551c6b430"},
+    {"name": "qtsvg", "sha256": "d594337feca84c26fb67fe87b85e6a5c12fda404b611d905f9d138210c311876"},
+    {"name": "qtimageformats", "sha256": "cecd8900f34b6550076309bc94f62f828008b633a4239e0a08c86788f41001f8"},
+    {"name": "qtwebsockets", "sha256": "2bfe25c383c37f7690e3c59b02c9907d2744cf8527b1f3f1fc2c785b2ff3c9a3"}
   ],
   "android": {
     "compileSdk": "36",

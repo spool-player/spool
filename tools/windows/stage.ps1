@@ -74,7 +74,7 @@ Get-ChildItem -LiteralPath $stageDir -Filter '*.qmltypes' -File -Recurse |
 
 $webpPlugin = Join-Path $stageDir 'imageformats\qwebp.dll'
 if (-not (Test-Path -LiteralPath $webpPlugin)) {
-    throw 'Qt WebP support was not deployed. Install qt.qt6.6111.addons.qtimageformats with MaintenanceTool.'
+    throw 'Qt WebP support was not deployed. Reinstall the pinned Qt imageformats archives with tools\windows\install-qt.ps1 -Force.'
 }
 
 $mpvBin = Join-Path $env:JELLYFIN_MPV_ROOT 'bin'
