@@ -388,9 +388,15 @@ jobs:
             connect-timeout = 30
             download-attempts = 5
 
+      - name: Resolve tailored Qt cache key
+        id: qt-cache-inputs
+        run: |
+          qt_derivation="$(nix eval --raw .#native-qt-cache.drvPath)"
+          echo "key=${qt_derivation##*/}" >>"$GITHUB_OUTPUT"
+
       - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.1
         with:
-          primary-key: nix-native-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          primary-key: nix-native-${{ runner.os }}-${{ matrix.arch }}-${{ steps.qt-cache-inputs.outputs.key }}
           restore-prefixes-first-match: nix-native-${{ runner.os }}-${{ matrix.arch }}-
           gc-max-store-size-macos: 8G
           # Cache hygiene: see the lint job above.
