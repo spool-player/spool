@@ -172,6 +172,13 @@
             # qtbase takes its source directly; the other modules use qtModule.
             qtbase = qtPrev.qtbase.override { inherit (srcs.qtbase) src version; };
             qtModule = qtPrev.qtModule.override { inherit srcs; };
+            qtdeclarative = qtPrev.qtdeclarative.overrideAttrs (old: {
+              # The Intel maintenance channel backports this TableView fix.
+              # It is already in the pinned Qt release; applying it again fails.
+              patches = builtins.filter (patch:
+                !final.lib.hasSuffix "8a2c82be6ad90e3f2a0760d8bab1e3a8cdb2473a.diff" (toString patch))
+                (old.patches or []);
+            });
           })) // {
             override = prev.qt6.override;
           };
