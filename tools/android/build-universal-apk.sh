@@ -57,7 +57,8 @@ python3 "$ROOT/tools/android/universal_project.py" \
   --output "$project" --inputs "$INPUTS" "$@"
 
 printf 'sdk.dir=%s\n' "$ANDROID_HOME" >"$project/local.properties"
-(cd "$project" && ./gradlew --no-daemon assembleRelease)
+# Compress the multi-ABI download; Android extracts only the device's ABI.
+(cd "$project" && ./gradlew --no-daemon -PlegacyPackaging=true assembleRelease)
 
 # AGP names the output after the project directory, so find it rather than
 # spell it: exactly one release APK is expected, and two would mean the project
@@ -70,9 +71,8 @@ mapfile -t built < <(find "$project/build/outputs/apk/release" -maxdepth 1 -name
 unsigned="${built[0]}"
 
 prepare_keystore
-# Plain 4-byte alignment, not -p: the native libraries are deflated, as Qt
-# packaged them, so there is nothing to map on a page boundary. resources.arsc
-# is the entry the platform requires to be stored and aligned, and it is.
+# Plain 4-byte alignment, not -p: the native libraries are deflated, so there
+# is nothing to map on a page boundary. resources.arsc remains stored/aligned.
 "$BUILD_TOOLS/zipalign" -f 4 "$unsigned" "$project/aligned.apk"
 "$BUILD_TOOLS/apksigner" sign \
   --ks "$QT_ANDROID_KEYSTORE_PATH" \
