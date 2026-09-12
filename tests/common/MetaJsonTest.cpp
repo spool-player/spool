@@ -14,6 +14,7 @@
 using JellyfinNative::DiscoveredServer;
 using JellyfinNative::episodicPlaybackStartIndex;
 using JellyfinNative::ExternalUrlInfo;
+using JellyfinNative::formatMediaInfo;
 using JellyfinNative::isGenericEpisodeTitle;
 using JellyfinNative::isPlayableItem;
 using JellyfinNative::itemEpisodeCode;
@@ -84,6 +85,7 @@ void requireMediaStreamInfo(const MediaStreamInfo& actual, const MediaStreamInfo
     require(actual.language == expected.language, message);
     require(actual.pixelFormat == expected.pixelFormat, message);
     require(actual.videoRange == expected.videoRange, message);
+    require(actual.videoRangeType == expected.videoRangeType, message);
     require(actual.colorPrimaries == expected.colorPrimaries, message);
     require(actual.colorTransfer == expected.colorTransfer, message);
     require(actual.colorSpace == expected.colorSpace, message);
@@ -190,6 +192,7 @@ MediaStreamInfo videoStream()
     stream.language = QStringLiteral("eng");
     stream.pixelFormat = QStringLiteral("yuv420p10le");
     stream.videoRange = QStringLiteral("HDR");
+    stream.videoRangeType = QStringLiteral("HDR10");
     stream.colorPrimaries = QStringLiteral("bt2020");
     stream.colorTransfer = QStringLiteral("smpte2084");
     stream.colorSpace = QStringLiteral("bt2020nc");
@@ -519,6 +522,59 @@ void testPascalCaseApiParsing()
         "MetaJson did not flatten nested string paths");
 }
 
+void testHdrMetadataFormatting()
+{
+    MovieItem item;
+    item.id = QStringLiteral("hdr-movie");
+    MediaSourceInfo source;
+    source.streams.push_back(
+        metaFromJson<MediaStreamInfo>(QJsonObject { { QStringLiteral("Type"), QStringLiteral("Video") },
+                                          { QStringLiteral("VideoRange"), QStringLiteral("HDR") },
+                                          { QStringLiteral("VideoRangeType"), QStringLiteral("HDR10Plus") },
+                                          { QStringLiteral("ColorTransfer"), QStringLiteral("smpte2084") } },
+            MetaJsonKeyPolicy::PascalCase));
+    item.mediaSources.push_back(source);
+    const auto hdrLabel = [&item] { return formatMediaInfo(item, {}).value(QStringLiteral("hdr")).toString(); };
+    require(hdrLabel() == QStringLiteral("HDR10+"),
+        "Specific server HDR format must survive API parsing and take precedence over PQ");
+
+    MediaStreamInfo& stream = item.mediaSources[0].streams[0];
+    stream.videoRangeType = QStringLiteral("DOVIWithSDR");
+    stream.videoRange = QStringLiteral("SDR");
+    stream.colorTransfer = QStringLiteral("bt709");
+    require(hdrLabel() == QStringLiteral("Dolby Vision"),
+        "Dolby Vision with an SDR base layer must retain its specific format");
+
+    stream.videoRangeType.clear();
+    stream.videoRange = QStringLiteral("HDR");
+    stream.colorTransfer.clear();
+    require(hdrLabel() == QStringLiteral("HDR"), "Generic HDR must not invent HDR10 or Dolby Vision metadata");
+
+    stream.videoRange.clear();
+    stream.colorTransfer = QStringLiteral("smpte2084");
+    require(hdrLabel() == QStringLiteral("HDR"), "PQ alone must not imply HDR10 mastering metadata");
+
+    stream.colorTransfer = QStringLiteral("arib-std-b67");
+    require(hdrLabel() == QStringLiteral("HLG"), "HLG transfer must identify HDR without VideoRangeType");
+
+    stream.colorTransfer = QStringLiteral("bt709");
+    stream.colorPrimaries = QStringLiteral("bt2020");
+    stream.profile = QStringLiteral("Main 10");
+    stream.bitDepth = 10;
+    require(hdrLabel().isEmpty(), "Wide-gamut primaries and ten-bit encoding must not mislabel SDR as HDR");
+
+    stream.videoRangeType = QStringLiteral("DOVIInvalid");
+    require(hdrLabel().isEmpty(), "Invalid Dolby Vision metadata must not advertise a Dolby Vision format");
+
+    stream.videoRangeType = QStringLiteral("SDR");
+    item.mediaSources.push_back(source);
+    require(hdrLabel().isEmpty(), "HDR from an alternate source must not be combined with the selected SDR source");
+
+    item.mediaSources[0].streams[0].type = QStringLiteral("Audio");
+    item.mediaSources[0].streams[0].videoRangeType = QStringLiteral("HDR10");
+    require(hdrLabel().isEmpty(), "Non-video streams must not supply the technical bar's HDR label");
+}
+
 void testEpisodePlaybackMetadata()
 {
     MovieItem episode;
@@ -595,6 +651,7 @@ JELLYFIN_TEST_MAIN("meta-json")
     testLegacyStringTicksAndUnknownKeys();
     testPascalCaseApiParsing();
     testSeriesYearLabels();
+    testHdrMetadataFormatting();
     testEpisodePlaybackMetadata();
     return EXIT_SUCCESS;
 }

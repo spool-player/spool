@@ -63,20 +63,20 @@ struct BrowseDescriptor {
     QString seriesId;
     QString seasonId;
 
-    static BrowseDescriptor library(QString libraryId, QString collectionType, QString name = { });
-    static BrowseDescriptor folderChildren(QString folderId, QString name = { });
-    static BrowseDescriptor person(QString personId, QString name = { });
-    static BrowseDescriptor genre(QString name, QString collectionType = { });
+    static BrowseDescriptor library(QString libraryId, QString collectionType, QString name = {});
+    static BrowseDescriptor folderChildren(QString folderId, QString name = {});
+    static BrowseDescriptor person(QString personId, QString name = {});
+    static BrowseDescriptor genre(QString name, QString collectionType = {});
     static BrowseDescriptor studio(QString name);
-    static BrowseDescriptor seriesSeasons(QString seriesId, QString seriesName = { });
-    static BrowseDescriptor seasonEpisodes(QString seriesId, QString seasonId = { }, QString seasonName = { });
-    static BrowseDescriptor playlist(QString playlistId, QString name = { });
-    static BrowseDescriptor boxSet(QString boxSetId, QString name = { });
-    static BrowseDescriptor artistAlbums(QString artistId, QString artistName = { });
+    static BrowseDescriptor seriesSeasons(QString seriesId, QString seriesName = {});
+    static BrowseDescriptor seasonEpisodes(QString seriesId, QString seasonId = {}, QString seasonName = {});
+    static BrowseDescriptor playlist(QString playlistId, QString name = {});
+    static BrowseDescriptor boxSet(QString boxSetId, QString name = {});
+    static BrowseDescriptor artistAlbums(QString artistId, QString artistName = {});
 
     bool isValid() const;
     QString kindKey() const;
-    QString cacheKey(const QVariantMap& query = { }) const;
+    QString cacheKey(const QVariantMap& query = {}) const;
 };
 
 struct PersonItem {
@@ -108,6 +108,7 @@ struct MediaStreamInfo {
     Q_PROPERTY(QString language MEMBER language)
     Q_PROPERTY(QString pixelFormat MEMBER pixelFormat)
     Q_PROPERTY(QString videoRange MEMBER videoRange)
+    Q_PROPERTY(QString videoRangeType MEMBER videoRangeType)
     Q_PROPERTY(QString colorPrimaries MEMBER colorPrimaries)
     Q_PROPERTY(QString colorTransfer MEMBER colorTransfer)
     Q_PROPERTY(QString colorSpace MEMBER colorSpace)
@@ -134,6 +135,7 @@ public:
     QString language;
     QString pixelFormat;
     QString videoRange;
+    QString videoRangeType;
     QString colorPrimaries;
     QString colorTransfer;
     QString colorSpace;

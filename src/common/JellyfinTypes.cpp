@@ -69,6 +69,48 @@ namespace {
         return QStringLiteral("SD");
     }
 
+    QString hdrTypeLabel(const QString& value)
+    {
+        const QString type = value.trimmed().toUpper();
+        if (type == QStringLiteral("HDR10"))
+            return QStringLiteral("HDR10");
+        if (type == QStringLiteral("HDR10PLUS") || type == QStringLiteral("HDR10+"))
+            return QStringLiteral("HDR10+");
+        if (type == QStringLiteral("HLG"))
+            return QStringLiteral("HLG");
+        if (type == QStringLiteral("DOVIWITHHDR10PLUS") || type == QStringLiteral("DOVIWITHELHDR10PLUS"))
+            return QStringLiteral("Dolby Vision / HDR10+");
+        if (type == QStringLiteral("DOVI") || type == QStringLiteral("DOLBY VISION")
+            || type == QStringLiteral("DOVIWITHHDR10") || type == QStringLiteral("DOVIWITHHLG")
+            || type == QStringLiteral("DOVIWITHSDR") || type == QStringLiteral("DOVIWITHEL"))
+            return QStringLiteral("Dolby Vision");
+        return {};
+    }
+
+    QString hdrFormatLabel(const MediaStreamInfo& stream)
+    {
+        const QString format = hdrTypeLabel(stream.videoRangeType);
+        if (!format.isEmpty())
+            return format;
+        if (stream.videoRangeType.trimmed().compare(QStringLiteral("SDR"), Qt::CaseInsensitive) == 0)
+            return {};
+        const QString rangeFormat = hdrTypeLabel(stream.videoRange);
+        if (!rangeFormat.isEmpty())
+            return rangeFormat;
+        if (stream.videoRange.trimmed().compare(QStringLiteral("SDR"), Qt::CaseInsensitive) == 0)
+            return {};
+
+        // Match the PQ/HLG transfer identifiers used by playback HDR detection.
+        // PQ alone establishes HDR, not HDR10 mastering or dynamic metadata.
+        const QString transfer = stream.colorTransfer.trimmed().toLower();
+        if (transfer == QStringLiteral("hlg") || transfer.contains(QStringLiteral("b67")))
+            return QStringLiteral("HLG");
+        if (transfer == QStringLiteral("pq") || transfer.contains(QStringLiteral("2084"))
+            || stream.videoRange.trimmed().compare(QStringLiteral("HDR"), Qt::CaseInsensitive) == 0)
+            return QStringLiteral("HDR");
+        return {};
+    }
+
     QString runtimeLabel(qint64 runtimeTicks)
     {
         const qint64 totalSeconds = runtimeTicks / kTicksPerSecond;
@@ -496,6 +538,7 @@ QVariantMap formatMediaInfo(const MovieItem& item, const QString& preferredAudio
         return info;
 
     const MediaStreamInfo *selectedAudio = nullptr;
+    const MediaStreamInfo *selectedVideo = nullptr;
     const MediaStreamInfo *defaultAudio = nullptr;
     QStringList audioLanguages;
     QStringList subtitleLanguages;
@@ -503,6 +546,8 @@ QVariantMap formatMediaInfo(const MovieItem& item, const QString& preferredAudio
     QString resolution;
     for (const MediaStreamInfo& stream : source->streams) {
         if (stream.type.compare(QStringLiteral("Video"), Qt::CaseInsensitive) == 0) {
+            if (!selectedVideo)
+                selectedVideo = &stream;
             if (resolution.isEmpty())
                 resolution = resolutionLabel(stream.width, stream.height);
         } else if (stream.type.compare(QStringLiteral("Audio"), Qt::CaseInsensitive) == 0) {
@@ -523,6 +568,8 @@ QVariantMap formatMediaInfo(const MovieItem& item, const QString& preferredAudio
         selectedAudio = defaultAudio;
 
     info.insert(QStringLiteral("resolution"), resolution);
+    if (selectedVideo)
+        info.insert(QStringLiteral("hdr"), hdrFormatLabel(*selectedVideo));
 
     if (selectedAudio) {
         const QString selectedLanguage = languageTag(selectedAudio->language);

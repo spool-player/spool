@@ -79,6 +79,15 @@ Item {
             }
         }
 
+        SecondaryText {
+            text: String(infoLineRow.values.hdr || "")
+            visible: text.length > 0
+            anchors.verticalCenter: parent.verticalCenter
+            color: Theme.textPrimary
+            font.pixelSize: Metrics.metaSizePx
+            maximumLineCount: 1
+        }
+
         InfoSegment {
             iconName: "graphic_eq"
             text: String(infoLineRow.values.audio || "")
