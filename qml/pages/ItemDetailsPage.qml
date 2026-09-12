@@ -41,17 +41,17 @@ FocusScope {
             const name = String(source[index].name || "").trim()
             const url = String(source[index].url || "").trim()
             if (name.length > 0 && url.toLowerCase().indexOf("https://") === 0)
-            links.push({
-                           "name": name,
-                           "url": url
-                       })
+                links.push({
+                               "name": name,
+                               "url": url
+                           })
         }
         return links
     }
     readonly property string letterboxdUrl: {
         const tmdbId = String(item.tmdbId || "").trim()
         if (tmdbId.length > 0)
-        return "https://letterboxd.com/tmdb/" + encodeURIComponent(tmdbId) + "/"
+            return "https://letterboxd.com/tmdb/" + encodeURIComponent(tmdbId) + "/"
         const imdbId = String(item.imdbId || "").trim()
         return imdbId.length > 0 ? "https://letterboxd.com/imdb/" + encodeURIComponent(imdbId) + "/" : ""
     }
@@ -88,7 +88,7 @@ FocusScope {
         // the same rule the media-info overlay uses. Series and Season are the
         // only kinds that are containers rather than something with streams.
         if (!fullDetailItem.movieId || !mediaInfoAvailable)
-        return null
+            return null
         const smart = String(Settings.values["audio/trackMode"] || "Default") === "Smart"
         return Content.detailMediaInfo(smart ? String(Settings.values["subtitles/language"] || "") : "")
     }
@@ -145,23 +145,6 @@ FocusScope {
     property bool routeRefreshScheduled: false
 
     focus: true
-    readonly property bool directionRelease: true
-
-    HoldNavigationController {
-        id: rowHold
-        initialRate: 3
-        maximumRate: {
-            const row = root.focusedMediaRow()
-            return row ? Math.max(12, row.count / 5) : 12
-        }
-        cruiseDuration: 2000
-        rampDuration: 500
-        stepCallback: function (key, steps) {
-            const row = root.focusedMediaRow()
-            if (row)
-                row.moveBy((key === Qt.Key_Left ? -1 : 1) * steps)
-        }
-    }
 
     component DetailAction: ActionButton {
         property string label: ""
@@ -469,9 +452,9 @@ FocusScope {
 
     onRouteActiveChanged: {
         if (routeActive)
-        enterRoute(false)
+            enterRoute(false)
         else
-        App.cancelEpisodicPlaybackSelection()
+            App.cancelEpisodicPlaybackSelection()
     }
 
     onActiveFocusChanged: {
@@ -480,8 +463,6 @@ FocusScope {
                 if (root.routeActive && root.activeFocus)
                     root.focusDefaultAction()
             })
-        } else {
-            rowHold.stopTracking()
         }
     }
     function currentMediaItem() {
@@ -492,7 +473,7 @@ FocusScope {
         seasonPickerOpen = false
         overflowOpen = false
         if (routeActive)
-        enterRoute(true)
+            enterRoute(true)
     }
     function enterRoute(resetFocus) {
         syncUserState()
@@ -724,21 +705,10 @@ FocusScope {
         return similarRow
     }
 
-    function focusedMediaRow() {
-        if (focusZone === "context")
-            return contextRow
-        if (focusZone === "people")
-            return peopleRow
-        if (focusZone === "similar")
-            return similarRow
-        return null
-    }
-
     function focusNamedZone(zone) {
         const target = zoneTarget(zone)
         if (!target)
             return false
-        rowHold.stopTracking()
         focusZone = zone
         if (zone === "actions")
             focusActionIndex(actionIndex)
@@ -951,13 +921,9 @@ FocusScope {
     function routeKey(key, phase, repeat) {
         if (seasonPickerOpen)
             return seasonPickerList ? seasonPickerList.routeKey(key, phase, repeat) : true
-        if (phase === "release") {
-            if (rowHold.active)
-                return rowHold.routeKey(key, phase, repeat)
+        if (phase === "release")
             return true
-        }
         if (focusZone === "overflow") {
-            rowHold.stopTracking()
             const options = overflowOptions()
             if (key === Qt.Key_Up && overflowIndex > 0) {
                 focusOverflow(overflowIndex - 1)
@@ -976,11 +942,9 @@ FocusScope {
             return true
         }
         if (focusZone === "metadata") {
-            rowHold.stopTracking()
             return metadataPanel.routeKey(key, phase, repeat)
         }
         if (InputKeys.isVertical(key)) {
-            rowHold.stopTracking()
             if (focusZone === "actions" && key === Qt.Key_Down && overflowOpen && orderedActions()[actionIndex]
                     === menuAction) {
                 focusOverflow(0)
@@ -989,7 +953,6 @@ FocusScope {
             return moveFocusZone(key === Qt.Key_Down ? 1 : -1)
         }
         if (focusZone === "actions") {
-            rowHold.stopTracking()
             if (key === Qt.Key_Left)
                 return focusNextAction(-1)
             if (key === Qt.Key_Right)
@@ -997,13 +960,10 @@ FocusScope {
             return false
         }
         if (focusZone === "series" || focusZone === "season") {
-            rowHold.stopTracking()
             return InputKeys.isHorizontal(key)
         }
-        const row = focusedMediaRow()
-        if (row && InputKeys.isHorizontal(key))
-            return rowHold.routeKey(key, phase, repeat)
-        rowHold.stopTracking()
+        // All media rows use the same normalized key repeats as the home page.
+        // A second hold timer here used to throttle only detail rows.
         const target = zoneTarget(focusZone)
         return Boolean(target && target.routeKey && target.routeKey(key, phase, repeat))
     }
