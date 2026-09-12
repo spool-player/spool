@@ -174,7 +174,7 @@ jobs:
             --notes-file release-notes.md \
             --prerelease \
             --latest=false
-      - name: Generate Android update metadata
+      - name: Generate platform update metadata
         env:
           TAG: ${{ github.ref_name }}
           REPO: ${{ github.repository }}
@@ -186,40 +186,50 @@ jobs:
           base="https://github.com/$REPO/releases/download/$TAG"
           mkdir -p update-pages/updates
 
-          # Keyed by ABI alone: one package now serves both form factors, so
-          # the architecture is the whole of the choice. This is the same key
-          # AndroidUpdateController::assetKey() builds from SPOOL_ANDROID_ABI.
-          assets='{}'
-          for abi in arm64-v8a armeabi-v7a x86_64; do
-            apk="release-assets/spool-$abi.apk"
-            test -f "$apk"
-            assets="$(jq -n \
-              --argjson acc "$assets" \
-              --arg key "$abi" \
-              --arg url "$base/$(basename "$apk")" \
-              --arg sha "$(sha256sum "$apk" | cut -d' ' -f1)" \
-              --argjson size "$(stat -c%s "$apk")" \
-              '$acc + {($key): {url: $url, sha256: $sha, size: $size}}')"
-          done
+          for platform in android webos; do
+            assets='{}'
+            if [[ "$platform" = android ]]; then
+              # Android uses only per-ABI packages, never the universal APK.
+              for abi in arm64-v8a armeabi-v7a x86_64; do
+                apk="release-assets/spool-$abi.apk"
+                test -f "$apk"
+                assets="$(jq -n \
+                  --argjson acc "$assets" \
+                  --arg key "$abi" \
+                  --arg url "$base/$(basename "$apk")" \
+                  --arg sha "$(sha256sum "$apk" | cut -d' ' -f1)" \
+                  --argjson size "$(stat -c%s "$apk")" \
+                  '$acc + {($key): {url: $url, sha256: $sha, size: $size}}')"
+              done
+            else
+              ipk="release-assets/com.sachk.spool_${version}_arm.ipk"
+              test -f "$ipk"
+              assets="$(jq -n \
+                --arg url "$base/$(basename "$ipk")" \
+                --arg sha "$(sha256sum "$ipk" | cut -d' ' -f1)" \
+                --argjson size "$(stat -c%s "$ipk")" \
+                '{arm: {url: $url, sha256: $sha, size: $size}}')"
+            fi
 
-          jq -n \
-            --arg version "$version" \
-            --argjson versionCode "$version_code" \
-            --arg releaseUrl "https://github.com/$REPO/releases/tag/$TAG" \
-            --rawfile notes generated-notes.md \
-            --argjson assets "$assets" \
-            '{
-              schemaVersion: 1,
-              releases: [{
-                channel: "release",
-                version: $version,
-                versionCode: $versionCode,
-                releaseUrl: $releaseUrl,
-                notes: $notes,
-                assets: $assets
-              }]
-            }' >update-pages/updates/android.json
-          jq -e '.schemaVersion == 1 and (.releases | length) == 1' update-pages/updates/android.json
+            jq -n \
+              --arg version "$version" \
+              --argjson versionCode "$version_code" \
+              --arg releaseUrl "https://github.com/$REPO/releases/tag/$TAG" \
+              --rawfile notes generated-notes.md \
+              --argjson assets "$assets" \
+              '{
+                schemaVersion: 1,
+                releases: [{
+                  channel: "release",
+                  version: $version,
+                  versionCode: $versionCode,
+                  releaseUrl: $releaseUrl,
+                  notes: $notes,
+                  assets: $assets
+                }]
+              }' >"update-pages/updates/$platform.json"
+            jq -e '.schemaVersion == 1 and (.releases | length) == 1' "update-pages/updates/$platform.json"
+          done
 
           # The universal APK is for people choosing a download by hand. An
           # installed build must never be offered it: it carries a second
@@ -230,12 +240,12 @@ jobs:
             update-pages/updates/android.json >/dev/null
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
         with:
-          name: spool-android-update-pages
+          name: spool-update-pages
           path: update-pages
           retention-days: 1
 
   deploy-update-metadata:
-    name: Publish Android update metadata
+    name: Publish platform update metadata
     needs: publish
     runs-on: ubuntu-24.04
     permissions:
@@ -248,7 +258,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: spool-android-update-pages
+          name: spool-update-pages
           path: update-pages
       - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
         with:

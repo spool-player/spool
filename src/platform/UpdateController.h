@@ -4,7 +4,6 @@
 
 #include <QByteArray>
 #include <QElapsedTimer>
-#include <QJsonArray>
 #include <QObject>
 #include <QPointer>
 #include <QTimer>
@@ -35,8 +34,6 @@ class UpdateController final : public QObject {
     Q_PROPERTY(double progress READ progress NOTIFY progressChanged)
     Q_PROPERTY(QString errorText READ errorText NOTIFY changed)
     Q_PROPERTY(bool allowPrerelease READ allowPrerelease WRITE setAllowPrerelease NOTIFY allowPrereleaseChanged)
-    Q_PROPERTY(bool testMode READ testMode CONSTANT)
-    Q_PROPERTY(QString statusText READ statusText NOTIFY changed)
 
 public:
     UpdateController(QNetworkAccessManager *network, QString cacheRoot, QObject *parent = nullptr);
@@ -52,8 +49,6 @@ public:
     double progress() const;
     QString errorText() const;
     bool allowPrerelease() const;
-    bool testMode() const;
-    QString statusText() const;
     void setAllowPrerelease(bool allow);
 
     // Whether the app checks for updates on its own. Settings owns the
@@ -106,12 +101,7 @@ private:
     bool m_waitingForPermission = false;
     UpdateRelease m_release;
     QString m_errorText;
-    QString m_statusText;
     QByteArray m_manifestBytes;
-    QJsonArray m_publishedReleases;
-    qint64 m_metadataBytes = 0;
-    int m_releasePage = 1;
-    bool m_fetchingChecksums = false;
     QPointer<QNetworkReply> m_reply;
     std::unique_ptr<QSaveFile> m_output;
     std::unique_ptr<QCryptographicHash> m_hash;

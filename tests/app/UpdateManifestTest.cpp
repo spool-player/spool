@@ -22,9 +22,12 @@ void require(bool condition, const char *message)
     std::exit(EXIT_FAILURE);
 }
 
-QJsonObject release(const QString& channel, int versionCode, const QString& version)
+QJsonObject release(const QString& channel, int versionCode, const QString& version, const QString& assetKey)
 {
     const QString tag = QStringLiteral("v") + version;
+    const QString packageName = assetKey == QStringLiteral("arm")
+        ? QStringLiteral("com.sachk.spool_") + version + QStringLiteral("_arm.ipk")
+        : QStringLiteral("spool-") + assetKey + QStringLiteral(".apk");
     return {
         { QStringLiteral("channel"), channel },
         { QStringLiteral("version"), version },
@@ -33,11 +36,11 @@ QJsonObject release(const QString& channel, int versionCode, const QString& vers
         { QStringLiteral("releaseUrl"), QStringLiteral("https://github.com/sachk/spool/releases/tag/") + tag },
         { QStringLiteral("assets"),
             QJsonObject {
-                { QStringLiteral("arm64-v8a"),
+                { assetKey,
                     QJsonObject {
                         { QStringLiteral("url"),
-                            QStringLiteral("https://github.com/sachk/spool/releases/download/") + tag
-                                + QStringLiteral("/spool-arm64-v8a.apk") },
+                            QStringLiteral("https://github.com/sachk/spool/releases/download/") + tag + QLatin1Char('/')
+                                + packageName },
                         { QStringLiteral("sha256"), QString(64, QLatin1Char('a')) },
                         { QStringLiteral("size"), 12000000 },
                     } },
@@ -57,154 +60,115 @@ QByteArray manifest(std::initializer_list<QJsonObject> releases)
         .toJson(QJsonDocument::Compact);
 }
 
-void stableChannelExcludesPrereleases()
+void stableChannelExcludesPrereleases(const QString& assetKey)
 {
     const UpdateManifestResult result
-        = selectAndroidUpdate(manifest({ release(QStringLiteral("release"), 700099, QStringLiteral("0.7.0")),
-                                  release(QStringLiteral("prerelease"), 800001, QStringLiteral("0.8.0-beta.1")) }),
-            600099, false, QStringLiteral("arm64-v8a"));
+        = selectUpdate(manifest({ release(QStringLiteral("release"), 700099, QStringLiteral("0.7.0"), assetKey),
+                           release(QStringLiteral("prerelease"), 800001, QStringLiteral("0.8.0-beta.1"), assetKey) }),
+            600099, false, assetKey);
     require(result.error.isEmpty(), "valid stable manifest was rejected");
     require(result.release.has_value(), "stable update was not selected");
     require(result.release->versionCode == 700099, "stable channel selected a prerelease");
 }
 
-void prereleaseChannelSelectsLargestEligibleBuild()
+void prereleaseChannelSelectsLargestEligibleBuild(const QString& assetKey)
 {
-    UpdateManifestResult result
-        = selectAndroidUpdate(manifest({ release(QStringLiteral("prerelease"), 800001, QStringLiteral("0.8.0-beta.1")),
-                                  release(QStringLiteral("release"), 700099, QStringLiteral("0.7.0")) }),
-            600099, true, QStringLiteral("arm64-v8a"));
-    require(result.release && result.release->versionCode == 800001,
+    UpdateManifestResult result = selectUpdate(
+        manifest({ release(QStringLiteral("prerelease"), 800001, QStringLiteral("0.8.0-beta.1"), assetKey),
+            release(QStringLiteral("release"), 700099, QStringLiteral("0.7.0"), assetKey) }),
+        600099, true, assetKey);
+    require(result.error.isEmpty() && result.release && result.release->versionCode == 800001,
         "prerelease channel did not choose the largest eligible build");
 
-    result
-        = selectAndroidUpdate(manifest({ release(QStringLiteral("prerelease"), 800001, QStringLiteral("0.8.0-beta.1")),
-                                  release(QStringLiteral("release"), 800099, QStringLiteral("0.8.0")) }),
-            800001, true, QStringLiteral("arm64-v8a"));
-    require(result.release && result.release->versionCode == 800099,
+    result = selectUpdate(
+        manifest({ release(QStringLiteral("prerelease"), 800001, QStringLiteral("0.8.0-beta.1"), assetKey),
+            release(QStringLiteral("release"), 800099, QStringLiteral("0.8.0"), assetKey) }),
+        800001, true, assetKey);
+    require(result.error.isEmpty() && result.release && result.release->versionCode == 800099,
         "prerelease channel did not upgrade to a larger release build");
 }
 
-void currentOrOlderBuildsAreIgnored()
+void currentOrOlderBuildsAreIgnored(const QString& assetKey)
 {
-    const UpdateManifestResult result
-        = selectAndroidUpdate(manifest({ release(QStringLiteral("release"), 700099, QStringLiteral("0.7.0")) }), 700099,
-            false, QStringLiteral("arm64-v8a"));
-    require(result.error.isEmpty(), "current release produced a manifest error");
-    require(!result.release, "current release was offered as an update");
+    const QByteArray releases
+        = manifest({ release(QStringLiteral("release"), 700099, QStringLiteral("0.7.0"), assetKey),
+            release(QStringLiteral("prerelease"), 700001, QStringLiteral("0.7.0-beta.1"), assetKey),
+            release(QStringLiteral("release"), 600099, QStringLiteral("0.6.0"), assetKey) });
+    for (const bool allowPrerelease : { false, true }) {
+        const UpdateManifestResult result = selectUpdate(releases, 700099, allowPrerelease, assetKey);
+        require(result.error.isEmpty(), "current or older release produced a manifest error");
+        require(!result.release, "current or older release was offered as an update");
+    }
 }
 
-void untrustedOrIncompleteAssetsAreRejected()
+void missingDeviceAssetIsRejected(const QString& assetKey)
 {
-    QJsonObject item = release(QStringLiteral("release"), 700099, QStringLiteral("0.7.0"));
+    const QJsonObject item
+        = release(QStringLiteral("release"), 700099, QStringLiteral("0.7.0"), QStringLiteral("universal"));
+    const auto result = selectUpdate(manifest({ item }), 600099, false, assetKey);
+    require(!result.release && !result.error.isEmpty(), "missing device package fell back to the universal package");
+}
+
+void untrustedUrlsAreRejected(const QString& assetKey)
+{
+    const QString trustedAsset = QStringLiteral("https://github.com/sachk/spool/releases/download/v0.7.0/package");
+    for (const QString& url : {
+             QStringLiteral("https://example.com/package"),
+             QStringLiteral("https://github.com/other/spool/releases/download/v0.7.0/package"),
+             QStringLiteral("http://github.com/sachk/spool/releases/download/v0.7.0/package"),
+             QStringLiteral("https://user@github.com/sachk/spool/releases/download/v0.7.0/package"),
+             QStringLiteral("https://github.com:444/sachk/spool/releases/download/v0.7.0/package"),
+             trustedAsset + QStringLiteral("?download=1"),
+             trustedAsset + QStringLiteral("#fragment"),
+         }) {
+        QJsonObject item = release(QStringLiteral("release"), 700099, QStringLiteral("0.7.0"), assetKey);
+        QJsonObject assets = item.value(QStringLiteral("assets")).toObject();
+        QJsonObject package = assets.value(assetKey).toObject();
+        package.insert(QStringLiteral("url"), url);
+        assets.insert(assetKey, package);
+        item.insert(QStringLiteral("assets"), assets);
+        const auto result = selectUpdate(manifest({ item }), 600099, false, assetKey);
+        require(!result.release && !result.error.isEmpty(), "untrusted package URL was accepted");
+    }
+
+    QJsonObject item = release(QStringLiteral("release"), 700099, QStringLiteral("0.7.0"), assetKey);
+    item.insert(QStringLiteral("releaseUrl"), QStringLiteral("https://github.com/other/spool/releases/tag/v0.7.0"));
+    const auto result = selectUpdate(manifest({ item }), 600099, false, assetKey);
+    require(!result.release && !result.error.isEmpty(), "off-repository release URL was accepted");
+}
+
+void incompleteAssetsAreRejected(const QString& assetKey)
+{
+    const QJsonObject valid = release(QStringLiteral("release"), 700099, QStringLiteral("0.7.0"), assetKey);
+    const QJsonObject validPackage = valid.value(QStringLiteral("assets")).toObject().value(assetKey).toObject();
+    QJsonObject missingHash = validPackage;
+    missingHash.remove(QStringLiteral("sha256"));
+    QJsonObject shortHash = validPackage;
+    shortHash.insert(QStringLiteral("sha256"), QStringLiteral("abcd"));
+    QJsonObject nonHexHash = validPackage;
+    nonHexHash.insert(QStringLiteral("sha256"), QString(64, QLatin1Char('g')));
+    QJsonObject emptyPackage = validPackage;
+    emptyPackage.insert(QStringLiteral("size"), 0);
+    for (const QJsonObject& package : { missingHash, shortHash, nonHexHash, emptyPackage }) {
+        QJsonObject item = valid;
+        item.insert(QStringLiteral("assets"), QJsonObject { { assetKey, package } });
+        const auto result = selectUpdate(manifest({ item }), 600099, false, assetKey);
+        require(!result.release && !result.error.isEmpty(), "incomplete package details were accepted");
+    }
+}
+
+void webOSSelectsArmPackage()
+{
+    QJsonObject item = release(QStringLiteral("release"), 701399, QStringLiteral("0.7.13"), QStringLiteral("arm"));
     QJsonObject assets = item.value(QStringLiteral("assets")).toObject();
-    QJsonObject apk = assets.value(QStringLiteral("arm64-v8a")).toObject();
-    apk.insert(QStringLiteral("url"), QStringLiteral("https://example.com/spool.apk"));
-    assets.insert(QStringLiteral("arm64-v8a"), apk);
+    assets.insert(QStringLiteral("arm64-v8a"), QJsonObject {});
     item.insert(QStringLiteral("assets"), assets);
-    require(!selectAndroidUpdate(manifest({ item }), 600099, false, QStringLiteral("arm64-v8a")).error.isEmpty(),
-        "off-repository APK URL was accepted");
-
-    item = release(QStringLiteral("release"), 700099, QStringLiteral("0.7.0"));
-    assets = item.value(QStringLiteral("assets")).toObject();
-    apk = assets.value(QStringLiteral("arm64-v8a")).toObject();
-    apk.insert(QStringLiteral("sha256"), QStringLiteral("abcd"));
-    assets.insert(QStringLiteral("arm64-v8a"), apk);
-    item.insert(QStringLiteral("assets"), assets);
-    require(!selectAndroidUpdate(manifest({ item }), 600099, false, QStringLiteral("arm64-v8a")).error.isEmpty(),
-        "short SHA-256 was accepted");
-}
-
-QJsonObject webOSRelease(const QString& version, bool withDigest = true)
-{
-    const QString tag = QStringLiteral("v") + version;
-    const QString base = QStringLiteral("https://github.com/sachk/spool/releases/download/") + tag + QLatin1Char('/');
-    return {
-        { QStringLiteral("tag_name"), tag },
-        { QStringLiteral("draft"), false },
-        { QStringLiteral("prerelease"), true },
-        { QStringLiteral("published_at"), QStringLiteral("2026-09-04T19:07:35Z") },
-        { QStringLiteral("html_url"), QStringLiteral("https://github.com/sachk/spool/releases/tag/") + tag },
-        { QStringLiteral("assets"),
-            QJsonArray {
-                QJsonObject {
-                    { QStringLiteral("name"),
-                        QStringLiteral("com.sachk.spool_") + version + QStringLiteral("_arm.ipk") },
-                    { QStringLiteral("browser_download_url"),
-                        base + QStringLiteral("com.sachk.spool_") + version + QStringLiteral("_arm.ipk") },
-                    { QStringLiteral("state"), QStringLiteral("uploaded") },
-                    { QStringLiteral("size"), 12345 },
-                    { QStringLiteral("digest"),
-                        withDigest ? QStringLiteral("sha256:") + QString(64, QLatin1Char('a')) : QString() },
-                },
-                QJsonObject {
-                    { QStringLiteral("name"), QStringLiteral("SHA256SUMS.txt") },
-                    { QStringLiteral("browser_download_url"), base + QStringLiteral("SHA256SUMS.txt") },
-                    { QStringLiteral("state"), QStringLiteral("uploaded") },
-                    { QStringLiteral("size"), 512 },
-                },
-            } },
-    };
-}
-
-void webOSSelectsSemanticVersionIncludingPrereleases()
-{
-    QJsonObject draft = webOSRelease(QStringLiteral("9.0.0"));
-    draft.insert(QStringLiteral("draft"), true);
-    const auto result = selectWebOSUpdate(QJsonDocument(QJsonArray {
-                                                            webOSRelease(QStringLiteral("0.9.0")),
-                                                            webOSRelease(QStringLiteral("0.10.0-beta.2")),
-                                                            draft,
-                                                            webOSRelease(QStringLiteral("0.10.0-beta.10")),
-                                                        })
-            .toJson());
-    require(result.error.isEmpty() && result.release && result.release->version == QStringLiteral("0.10.0-beta.10"),
-        "webOS did not select highest published semantic prerelease");
-    const auto stable = selectWebOSUpdate(QJsonDocument(QJsonArray {
-                                                            webOSRelease(QStringLiteral("0.10.0")),
-                                                            webOSRelease(QStringLiteral("0.10.0-rc.99")),
-                                                        })
-            .toJson());
-    require(stable.release && stable.release->version == QStringLiteral("0.10.0"),
-        "webOS ranked prerelease above final version");
-}
-
-void webOSRejectsUntrustedMetadata()
-{
-    QJsonObject item = webOSRelease(QStringLiteral("0.7.13"));
-    QJsonArray assets = item.value(QStringLiteral("assets")).toArray();
-    QJsonObject ipk = assets[0].toObject();
-    ipk.insert(
-        QStringLiteral("browser_download_url"), QStringLiteral("https://example.com/com.sachk.spool_0.7.13_arm.ipk"));
-    assets[0] = ipk;
-    item.insert(QStringLiteral("assets"), assets);
-    require(!selectWebOSUpdate(QJsonDocument(QJsonArray { item }).toJson()).error.isEmpty(),
-        "webOS accepted an off-repository IPK");
-    item = webOSRelease(QStringLiteral("0.7.13"), false);
-    assets = item.value(QStringLiteral("assets")).toArray();
-    assets.removeLast();
-    item.insert(QStringLiteral("assets"), assets);
-    const auto unhashed = selectWebOSUpdate(QJsonDocument(QJsonArray { item }).toJson());
-    require(!unhashed.release, "webOS offered an IPK without a trusted hash source");
-}
-
-void webOSChecksumsBindExactAsset()
-{
-    const auto result = selectWebOSUpdate(QJsonDocument(QJsonArray {
-                                                            webOSRelease(QStringLiteral("0.7.13"), false),
-                                                        })
-            .toJson());
-    require(result.release.has_value(), "webOS rejected a release with checksum metadata");
-    const QByteArray name = result.release->packageName.toUtf8();
-    const QByteArray hash(64, 'b');
-    require(webOSPackageSha256(hash + "  " + name + "\n", result.release->packageName) == hash,
-        "webOS did not accept the exact SHA256SUMS entry");
-    require(webOSPackageSha256(hash + "  other_arm.ipk\n", result.release->packageName).isEmpty(),
-        "webOS accepted another package's checksum");
-    require(webOSPackageSha256(
-                hash + "  " + name + "\n" + QByteArray(64, 'c') + "  " + name + "\n", result.release->packageName)
-                .isEmpty(),
-        "webOS accepted conflicting duplicate checksums");
+    const auto result = selectUpdate(manifest({ item }), 701299, false, QStringLiteral("arm"));
+    require(result.error.isEmpty() && result.release, "webOS ARM update was not selected");
+    require(result.release->packageUrl
+            == QUrl(QStringLiteral(
+                "https://github.com/sachk/spool/releases/download/v0.7.13/com.sachk.spool_0.7.13_arm.ipk")),
+        "webOS selected another platform's package");
 }
 
 } // namespace
@@ -212,12 +176,13 @@ void webOSChecksumsBindExactAsset()
 JELLYFIN_TEST_MAIN("update-manifest")
 {
     QCoreApplication app(argc, argv);
-    stableChannelExcludesPrereleases();
-    prereleaseChannelSelectsLargestEligibleBuild();
-    currentOrOlderBuildsAreIgnored();
-    untrustedOrIncompleteAssetsAreRejected();
-    webOSSelectsSemanticVersionIncludingPrereleases();
-    webOSRejectsUntrustedMetadata();
-    webOSChecksumsBindExactAsset();
+    const QString assetKey = QStringLiteral("arm64-v8a");
+    stableChannelExcludesPrereleases(assetKey);
+    prereleaseChannelSelectsLargestEligibleBuild(assetKey);
+    currentOrOlderBuildsAreIgnored(assetKey);
+    missingDeviceAssetIsRejected(assetKey);
+    untrustedUrlsAreRejected(assetKey);
+    incompleteAssetsAreRejected(assetKey);
+    webOSSelectsArmPackage();
     return EXIT_SUCCESS;
 }

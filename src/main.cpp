@@ -55,9 +55,6 @@
 #if defined(JELLYFIN_NATIVE_WEBOS)
 #include "platform/webos/WebOSDeviceName.h"
 #endif
-#if defined(SPOOL_WEBOS_SELFUPDATE_PROBE)
-#include "platform/webos/WebOSSelfUpdateProbe.h"
-#endif
 #include <QMessageLogContext>
 #include <QMetaObject>
 #include <QNetworkAccessManager>
@@ -774,10 +771,8 @@ int main(int argc, char **argv)
 #endif
     auto controller = std::make_unique<JellyfinNative::AppController>(
         &database, discovery.get(), api.get(), artworkService.get(), player.get(), &tlsTrust);
-#if defined(SPOOL_ANDROID)
-    // Settings decide whether the app looks for its own updates; the platform
-    // controller decides what looking means. Joining them here keeps the
-    // settings layer free of any knowledge of Android.
+#if defined(SPOOL_ANDROID) || defined(JELLYFIN_NATIVE_WEBOS)
+    // Settings own the update preference; platform installers own installation.
     QObject::connect(controller->settings(), &JellyfinNative::SettingsController::automaticUpdatesChanged,
         updateController.get(),
         [updater = updateController.get()](bool enabled) { updater->setAutomaticUpdatesEnabled(enabled); });
@@ -975,13 +970,6 @@ int main(int argc, char **argv)
         },
         static_cast<Qt::ConnectionType>(Qt::QueuedConnection | Qt::SingleShotConnection));
 
-#if defined(SPOOL_WEBOS_SELFUPDATE_PROBE)
-    // Diagnostic builds only. Runs five seconds in, once the app is up and
-    // behaving normally, so the bus sees the calls from a settled app rather
-    // than from something still starting.
-    JellyfinNative::startSelfUpdateProbe();
-#endif
-
     // Inert unless SPOOL_BENCH names a script. When it does, the app comes up
     // as it always does and is then walked through a set of route switches
     // with what each one cost written out, so page-switch cost is a number in
@@ -1066,12 +1054,6 @@ int main(int argc, char **argv)
     }
 
     QTimer::singleShot(1000, router.get(), [router = router.get()] { router->beginSession(false); });
-#if defined(JELLYFIN_NATIVE_WEBOS)
-    // Rootless self-update experiment: offer the latest published package on
-    // every launch, even when this checkout is newer or updates are disabled.
-    QTimer::singleShot(
-        0, updateController.get(), [updater = updateController.get()] { updater->setAutomaticUpdatesEnabled(true); });
-#endif
 
     QTimer::singleShot(0, &window, [&startupTimer]() {
         logLine("startup: first event-loop turn at %lld ms", static_cast<long long>(startupTimer.elapsed()));

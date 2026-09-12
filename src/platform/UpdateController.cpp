@@ -12,25 +12,34 @@
 #include <QDir>
 #include <QFile>
 #include <QGuiApplication>
-#include <QJsonDocument>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QSaveFile>
+#include <QVersionNumber>
 
 namespace JellyfinNative {
 
 namespace {
 
+#if defined(SPOOL_ANDROID)
     constexpr auto kManifestUrl = "https://sachk.github.io/spool/updates/android.json";
+    constexpr auto kAssetKey = SPOOL_ANDROID_ABI;
+#else
+    constexpr auto kManifestUrl = "https://sachk.github.io/spool/updates/webos.json";
+    constexpr auto kAssetKey = "arm";
+#endif
     constexpr qsizetype kMaximumManifestBytes = 512 * 1024;
-    constexpr qsizetype kMaximumReleasePageBytes = 4 * 1024 * 1024;
-    constexpr qint64 kMaximumMetadataBytes = 16 * 1024 * 1024;
     constexpr qint64 kReadBufferBytes = 64 * 1024;
 
-    QUrl releasesUrl(int page)
+    int currentVersionCode()
     {
-        return QUrl(QStringLiteral("https://api.github.com/repos/sachk/spool/releases?per_page=100&page=%1").arg(page));
+#if defined(SPOOL_ANDROID)
+        return SPOOL_ANDROID_VERSION_CODE;
+#else
+        const QVersionNumber version = QVersionNumber::fromString(QStringLiteral(JELLYFIN_VERSION));
+        return version.majorVersion() * 100000000 + version.minorVersion() * 100000 + version.microVersion() * 100 + 99;
+#endif
     }
 
     bool trustedRedirect(const QUrl& url)
@@ -45,8 +54,6 @@ namespace {
             return true;
         if (host == QStringLiteral("github.com"))
             return url.path().startsWith(QStringLiteral("/sachk/spool/releases/download/"));
-        if (host == QStringLiteral("api.github.com"))
-            return url.path() == QStringLiteral("/repos/sachk/spool/releases");
         return url == QUrl(QString::fromLatin1(kManifestUrl));
     }
 
@@ -100,11 +107,8 @@ UpdateController::UpdateController(QNetworkAccessManager *network, QString cache
     });
 #elif defined(JELLYFIN_NATIVE_WEBOS)
     m_installer = new WebOSUpdateInstaller(this);
-    connect(m_installer, &WebOSUpdateInstaller::statusChanged, this, [this](const QString& message) {
-        qInfo() << "update: webOS installer:" << message;
-        m_statusText = message;
-        emit changed();
-    });
+    connect(m_installer, &WebOSUpdateInstaller::statusChanged, this,
+        [this](const QString& message) { qInfo() << "update: webOS installer:" << message; });
     connect(m_installer, &WebOSUpdateInstaller::finished, this, [this] {
         if (m_stage != Stage::Installing)
             return;
@@ -181,10 +185,6 @@ QString UpdateController::errorText() const
 {
     return m_errorText;
 }
-QString UpdateController::statusText() const
-{
-    return m_statusText;
-}
 bool UpdateController::allowPrerelease() const
 {
     return m_allowPrerelease;
@@ -193,15 +193,6 @@ bool UpdateController::allowPrerelease() const
 double UpdateController::progress() const
 {
     return m_totalBytes > 0 ? qBound(0.0, static_cast<double>(m_receivedBytes) / m_totalBytes, 1.0) : 0.0;
-}
-
-bool UpdateController::testMode() const
-{
-#if defined(JELLYFIN_NATIVE_WEBOS)
-    return true;
-#else
-    return false;
-#endif
 }
 
 void UpdateController::setAllowPrerelease(bool allow)
@@ -231,18 +222,9 @@ void UpdateController::checkForUpdate()
     if (!m_network || m_reply || m_stage == Stage::Installing)
         return;
     m_release = {};
-    m_publishedReleases = {};
-    m_metadataBytes = 0;
-    m_releasePage = 1;
-    m_fetchingChecksums = false;
     m_errorText.clear();
-    m_statusText.clear();
     setStage(Stage::Checking);
-#if defined(JELLYFIN_NATIVE_WEBOS)
-    requestMetadata(releasesUrl(m_releasePage));
-#else
     requestMetadata(QUrl(QString::fromLatin1(kManifestUrl)));
-#endif
 }
 
 void UpdateController::requestMetadata(const QUrl& url)
@@ -250,7 +232,7 @@ void UpdateController::requestMetadata(const QUrl& url)
     m_manifestBytes.clear();
     QNetworkRequest request(url);
     configureRequest(request, 15000);
-    request.setRawHeader("Accept", m_fetchingChecksums ? "text/plain" : "application/json");
+    request.setRawHeader("Accept", "application/json");
     m_reply = m_network->get(request);
     restrictRedirects(m_reply);
     connect(m_reply, &QNetworkReply::readyRead, this, &UpdateController::consumeMetadata);
@@ -261,21 +243,17 @@ void UpdateController::consumeMetadata()
 {
     if (!m_reply)
         return;
-    const qsizetype limit = testMode() && !m_fetchingChecksums ? kMaximumReleasePageBytes : kMaximumManifestBytes;
     while (m_reply->bytesAvailable() > 0) {
-        const QByteArray bytes = m_reply->read(qMin<qint64>(kReadBufferBytes, limit - m_manifestBytes.size() + 1));
+        const QByteArray bytes
+            = m_reply->read(qMin<qint64>(kReadBufferBytes, kMaximumManifestBytes - m_manifestBytes.size() + 1));
         if (bytes.isEmpty())
             break;
         m_manifestBytes += bytes;
-        m_metadataBytes += bytes.size();
-        if (m_manifestBytes.size() > limit || m_metadataBytes > kMaximumMetadataBytes) {
+        if (m_manifestBytes.size() > kMaximumManifestBytes) {
             resetDownload();
             m_manifestBytes.clear();
-            m_publishedReleases = {};
-            if (testMode())
-                fail(QStringLiteral("The update metadata exceeds the safe size limit."));
-            else
-                setStage(Stage::Idle);
+            qWarning() << "update: metadata exceeds the safe size limit";
+            setStage(Stage::Idle);
             return;
         }
     }
@@ -296,75 +274,23 @@ void UpdateController::finishManifestRequest()
         return;
     if (!validResponse) {
         qWarning() << "update check failed:" << status << networkError;
-        m_publishedReleases = {};
-        if (testMode())
-            fail(QStringLiteral("Could not fetch update information (HTTP %1): %2").arg(status).arg(networkError));
-        else
-            setStage(Stage::Idle);
+        setStage(Stage::Idle);
         return;
     }
 
-    UpdateManifestResult result;
-#if defined(JELLYFIN_NATIVE_WEBOS)
-    if (m_fetchingChecksums) {
-        m_release.packageSha256 = webOSPackageSha256(m_manifestBytes, m_release.packageName);
-        m_manifestBytes.clear();
-        if (m_release.packageSha256.isEmpty()) {
-            fail(QStringLiteral("The release checksum file has no unambiguous SHA-256 for this IPK."));
-            return;
-        }
-        offerRelease();
-        return;
-    }
-    QJsonParseError error;
-    const QJsonDocument page = QJsonDocument::fromJson(m_manifestBytes, &error);
+    UpdateManifestResult result
+        = selectUpdate(m_manifestBytes, currentVersionCode(), m_allowPrerelease, QString::fromLatin1(kAssetKey));
     m_manifestBytes.clear();
-    if (error.error != QJsonParseError::NoError || !page.isArray()) {
-        fail(QStringLiteral("GitHub returned invalid release information."));
-        return;
-    }
-    const QJsonArray releases = page.array();
-    for (const QJsonValue& release : releases)
-        m_publishedReleases.append(release);
-    // Fetch fixed repository pages, never a URL supplied by the Link header.
-    // A bound hit fails closed instead of silently offering an older page's release.
-    if (releases.size() == 100) {
-        if (++m_releasePage > 10) {
-            fail(QStringLiteral("The published release list exceeds the safe page limit."));
-            return;
-        }
-        requestMetadata(releasesUrl(m_releasePage));
-        return;
-    }
-    result = selectWebOSUpdate(QJsonDocument(m_publishedReleases).toJson(QJsonDocument::Compact));
-    m_publishedReleases = {};
-#elif defined(SPOOL_ANDROID)
-    // Only the running ABI is eligible; the universal APK is not in this manifest.
-    result = selectAndroidUpdate(
-        m_manifestBytes, SPOOL_ANDROID_VERSION_CODE, m_allowPrerelease, QStringLiteral(SPOOL_ANDROID_ABI));
-    m_manifestBytes.clear();
-#endif
     if (!result.error.isEmpty()) {
         qWarning() << "update manifest rejected:" << result.error;
-        if (testMode())
-            fail(result.error);
-        else
-            setStage(Stage::Idle);
+        setStage(Stage::Idle);
         return;
     }
     if (!result.release) {
-        if (testMode())
-            fail(QStringLiteral("No published Spool ARM IPK with trusted checksum metadata is available."));
-        else
-            setStage(Stage::Idle);
+        setStage(Stage::Idle);
         return;
     }
     m_release = std::move(*result.release);
-    if (testMode() && m_release.packageSha256.isEmpty()) {
-        m_fetchingChecksums = true;
-        requestMetadata(m_release.checksumsUrl);
-        return;
-    }
     offerRelease();
 }
 
@@ -393,7 +319,6 @@ void UpdateController::decline()
     // Disconnect before abort: a cancelled metadata request must never reopen the dialog.
     resetDownload();
     m_manifestBytes.clear();
-    m_publishedReleases = {};
     m_waitingForPermission = false;
     if (m_packageReady) {
         QFile::remove(packagePath());
@@ -403,7 +328,6 @@ void UpdateController::decline()
     m_packageDirectory.reset();
 #endif
     m_errorText.clear();
-    m_statusText.clear();
     setStage(Stage::Idle);
 }
 
@@ -415,7 +339,6 @@ void UpdateController::download()
     resetDownload();
     m_packageReady = false;
     m_errorText.clear();
-    m_statusText.clear();
 #if defined(JELLYFIN_NATIVE_WEBOS)
     // Only this application's freshly created directory is made traversable.
     // /tmp avoids permissions on app-cache ancestors owned by another service.
@@ -447,7 +370,7 @@ void UpdateController::download()
 
     QNetworkRequest request(m_release.packageUrl);
     configureRequest(request, 30000);
-    request.setRawHeader("Accept", testMode() ? "application/octet-stream" : "application/vnd.android.package-archive");
+    request.setRawHeader("Accept", "application/octet-stream");
     m_reply = m_network->get(request);
     restrictRedirects(m_reply);
     connect(m_reply, &QNetworkReply::readyRead, this, &UpdateController::consumeDownloadData);
@@ -551,7 +474,6 @@ void UpdateController::install()
     // The service may terminate this process to replace the application. Do not
     // remove the file during application teardown while the service still uses it.
     m_packageDirectory->setAutoRemove(false);
-    m_statusText = QStringLiteral("Starting the webOS package installer…");
     setStage(Stage::Installing);
     m_installer->install(packagePath());
 #endif
@@ -576,7 +498,6 @@ void UpdateController::retry()
         return;
     if (m_packageReady) {
         m_errorText.clear();
-        m_statusText.clear();
         setStage(Stage::Ready);
         return;
     }

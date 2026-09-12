@@ -117,24 +117,6 @@ function(jellyfin_configure_webos_targets native_target core_target)
         src/platform/webos/WebOSScreenSaverInhibitor.cpp
         src/platform/common/UnixProcessIntegration.cpp
     )
-    # A diagnostic build that asks the television whether an app may install an
-    # IPK by itself. It is not a feature and never ships; see
-    # src/platform/webos/WebOSSelfUpdateProbe.h.
-    option(SPOOL_WEBOS_SELFUPDATE_PROBE "Build the webOS self-install permission probe" OFF)
-    if(SPOOL_WEBOS_SELFUPDATE_PROBE)
-        target_sources(${native_target} PRIVATE
-            src/platform/webos/WebOSSelfUpdateProbe.cpp
-            src/platform/webos/WebOSSelfUpdateProbe.h
-        )
-        set(SPOOL_WEBOS_SELFUPDATE_PROBE_TARGET "" CACHE STRING
-            "IPK URL the webOS self-install probe asks the television to install")
-        target_compile_definitions(${native_target} PRIVATE SPOOL_WEBOS_SELFUPDATE_PROBE=1)
-        if(SPOOL_WEBOS_SELFUPDATE_PROBE_TARGET)
-            target_compile_definitions(${native_target} PRIVATE
-                SPOOL_WEBOS_SELFUPDATE_PROBE_TARGET="${SPOOL_WEBOS_SELFUPDATE_PROBE_TARGET}")
-        endif()
-        message(WARNING "Building the webOS self-install probe; this must not be released")
-    endif()
     foreach(target IN LISTS JELLYFIN_NATIVE_TARGETS)
         target_compile_definitions(${target} PRIVATE JELLYFIN_NATIVE_WEBOS=1)
     endforeach()

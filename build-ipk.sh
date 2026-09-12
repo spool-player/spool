@@ -247,15 +247,6 @@ if [[ -n "$APP_PGO_FLAGS" ]]; then
   export LDFLAGS="$LDFLAGS $APP_PGO_FLAGS"
 fi
 
-# tools/webos/selfupdate-probe.sh turns this on to build the throwaway
-# diagnostic that asks the television whether an app may install an IPK.
-SELFUPDATE_PROBE_ARGS=()
-if [[ -n "${SPOOL_WEBOS_SELFUPDATE_PROBE:-}" ]]; then
-  SELFUPDATE_PROBE_ARGS+=("-DSPOOL_WEBOS_SELFUPDATE_PROBE=ON")
-  [[ -n "${SPOOL_WEBOS_SELFUPDATE_PROBE_TARGET:-}" ]] \
-    && SELFUPDATE_PROBE_ARGS+=("-DSPOOL_WEBOS_SELFUPDATE_PROBE_TARGET=$SPOOL_WEBOS_SELFUPDATE_PROBE_TARGET")
-fi
-
 cmake -S "$ROOT" -B "$CMAKE_BUILD_DIR" -GNinja \
   --fresh \
   -DCMAKE_BUILD_TYPE=MinSizeRel \
@@ -268,8 +259,7 @@ cmake -S "$ROOT" -B "$CMAKE_BUILD_DIR" -GNinja \
   -DQt6_DIR="$QT6_PREFIX/lib/cmake/Qt6" \
   -DQT_HOST_PATH="$QT6_HOST_PREFIX" \
   -DCMAKE_INSTALL_PREFIX=/usr/palm/applications/com.sachk.spool \
-  -DJELLYFIN_IMAGE_SUBTITLE_DIAGNOSTICS="$CMAKE_IMAGE_SUBTITLE_DIAGNOSTICS" \
-  "${SELFUPDATE_PROBE_ARGS[@]}"
+  -DJELLYFIN_IMAGE_SUBTITLE_DIAGNOSTICS="$CMAKE_IMAGE_SUBTITLE_DIAGNOSTICS"
 
 cmake --build "$CMAKE_BUILD_DIR" --parallel "$WEBOS_BUILD_JOBS"
 cmake --install "$CMAKE_BUILD_DIR" --prefix "$INSTALL_DIR"

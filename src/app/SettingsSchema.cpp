@@ -531,11 +531,14 @@ const QVector<SettingSpec>& settingSpecs()
             .expert()
             .onWebOS(),
 
-        // Android is the only platform that can install its own update, so
-        // this is the only one where the choice means anything.
-        toggleSpec("updates/automatic", "Updates", "Automatic updates",
-            "Check for new versions and offer a quick update", true, SettingTarget::AutomaticUpdates)
+        // Only platforms with an in-app installer expose this preference.
+        toggleSpec("updates/automatic", "Updates", "Automatic updates", "Check for new versions", true,
+            SettingTarget::AutomaticUpdates)
+#if defined(JELLYFIN_NATIVE_WEBOS)
+            .onWebOS(),
+#else
             .onAndroid(),
+#endif
 
         pageSpec("session/account", "Account", "Signed in as", "", SettingType::ReadOnly),
         pageSpec("action/switchUser", "Account", "Switch profile", "", SettingType::Action),

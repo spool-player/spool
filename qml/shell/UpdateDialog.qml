@@ -8,7 +8,6 @@ FocusScope {
 
     required property var updater
     readonly property string stage: updater ? updater.stage : "idle"
-    readonly property bool testMode: updater ? updater.testMode : false
     readonly property string updateVersion: updater ? updater.version : ""
     readonly property string updateErrorText: updater ? updater.errorText : ""
     readonly property real updateProgress: updater ? updater.progress : 0
@@ -19,20 +18,16 @@ FocusScope {
                                  || stage === "error" || stage === "installing" || stage === "installed"
     property int actionIndex: 0
 
-    // An update is a chore, so the words are kept to what the reader has to
-    // decide: what this is, roughly how long it takes, and what to press.
-    // Checksum verification still happens on every download; saying so only
-    // asks the reader to care about something they cannot act on.
     readonly property string titleText: {
         switch (stage) {
         case "available":
-            return testMode ? "Test webOS update" : "Quick update"
+            return "Update available"
         case "downloading":
-            return "Updating"
+            return "Downloading update"
         case "ready":
             return "Ready to install"
         case "permission":
-            return "One-time permission"
+            return "Allow installation"
         case "installing":
             return "Installing update"
         case "installed":
@@ -44,19 +39,15 @@ FocusScope {
     readonly property string bodyText: {
         switch (stage) {
         case "available":
-            return testMode ? "Try installing Spool " + updateVersion
-                              + " without root. This test offers the published package even if this build is newer." :
-                              "Spool " + updateVersion + " is ready. This takes about 30 seconds."
         case "downloading":
-            return ""
         case "ready":
-            return "Spool " + updateVersion + " is verified and ready to install."
+            return "Spool " + updateVersion
         case "permission":
             return "Android needs permission to install Spool updates. Turn it on, then come back."
         case "installing":
-            return "webOS is installing Spool. Keep the TV on; the app may close during installation."
+            return "Keep your device on. Spool may close during installation."
         case "installed":
-            return "webOS reported a successful installation. Reopen Spool to use the installed version."
+            return "Reopen Spool to use the new version."
         default:
             return updateErrorText
         }
@@ -97,19 +88,19 @@ FocusScope {
     }
 
     function visibleActions() {
-        if (stage === "available")
-            return [changelogButton, secondaryButton, primaryButton]
-        return [secondaryButton, primaryButton].filter(function (button) {
+        return [changelogButton, secondaryButton, primaryButton].filter(function (button) {
             return button.visible
         })
     }
 
     function focusSafeAction() {
         const actions = visibleActions()
-        if (actions.length === 0)
+        if (actions.length === 0) {
+            root.forceActiveFocus()
             return
-        actionIndex = stage === "available" ? 1 : 0
-        InputKeys.focus(actions[Math.min(actionIndex, actions.length - 1)])
+        }
+        actionIndex = Math.max(0, actions.indexOf(secondaryButton))
+        InputKeys.focus(actions[actionIndex])
     }
 
     function routeKey(key, phase, repeat) {
@@ -125,7 +116,8 @@ FocusScope {
         const actions = visibleActions()
         if (actions.length === 0)
             return true
-        if (stage === "available" && actionIndex === 0 && (key === Qt.Key_Up || key === Qt.Key_Down)) {
+        if (stage === "available" && notesText.text.trim().length > 0 && actionIndex === 0 && (key === Qt.Key_Up || key
+                                                                                               === Qt.Key_Down)) {
             const maximumY = Math.max(0, notesFlickable.contentHeight - notesFlickable.height)
             notesFlickable.contentY = Math.max(0, Math.min(maximumY, notesFlickable.contentY + (key === Qt.Key_Up ?
                                                                                                     -Metrics.scaled(72) :
@@ -159,8 +151,10 @@ FocusScope {
         return true
     }
 
-    onStageChanged: if (open)
-                        Qt.callLater(focusSafeAction)
+    onStageChanged: Qt.callLater(function () {
+        if (root.open)
+            root.focusSafeAction()
+    })
 
     Rectangle {
         anchors.fill: parent
@@ -213,6 +207,7 @@ FocusScope {
 
                 ActionButton {
                     id: changelogButton
+                    visible: root.stage === "available" && !!root.updater && String(root.updater.releaseUrl).length > 0
                     text: "Changelog"
                     kind: "flat"
                     iconName: "open_in_new"
@@ -226,7 +221,7 @@ FocusScope {
                 Layout.fillWidth: true
                 Layout.preferredHeight: Math.min(Metrics.scaled(250), Math.max(Metrics.scaled(120), notesText.contentHeight
                                                                                + Metrics.scaled(24)))
-                visible: root.stage === "available"
+                visible: root.stage === "available" && notesText.text.trim().length > 0
                 radius: Theme.radiusMedium
                 color: Theme.bgRaised
                 border.width: 1
@@ -281,12 +276,14 @@ FocusScope {
 
                 AppText {
                     Layout.fillWidth: true
-                    text: root.formatMegabytes(root.updateReceivedBytes) + " of " + root.formatMegabytes(
-                              root.updateTotalBytes) + "  ·  " + (root.updateBytesPerSecond > 0 ? (
-                                                                                                      root.updateBytesPerSecond
-                                                                                                      / 1000000).toFixed(
-                                                                                                      1) + " MB/s" :
-                                                                                                  "Starting…")
+                    text: root.formatMegabytes(root.updateReceivedBytes) + (root.updateTotalBytes > 0 ? " of " + root.formatMegabytes(
+                                                                                                            root.updateTotalBytes) :
+                                                                                                        "") + (root.updateBytesPerSecond
+                                                                                                               > 0 ? "  ·  "
+                                                                                                                     + (root.updateBytesPerSecond
+                                                                                                                        / 1000000).toFixed(
+                                                                                                                         1) + " MB/s" :
+                                                                                                                     "")
                     color: Theme.textMuted
                     font.pixelSize: Metrics.metaSizePx
                     horizontalAlignment: Text.AlignHCenter
@@ -307,13 +304,8 @@ FocusScope {
                     visible: root.stage !== "downloading" && root.stage !== "installing" && root.stage !== "installed"
                     text: root.secondaryText
                     onActiveFocusChanged: if (activeFocus)
-                                              root.actionIndex = root.stage === "available" ? 1 : 0
-                    onClicked: {
-                        if (root.stage === "downloading")
-                            root.updater.cancelDownload()
-                        else
-                            root.updater.decline()
-                    }
+                                              root.actionIndex = root.visibleActions().indexOf(secondaryButton)
+                    onClicked: root.updater.decline()
                 }
 
                 ActionButton {

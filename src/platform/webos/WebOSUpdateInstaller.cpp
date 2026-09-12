@@ -71,11 +71,9 @@ void WebOSUpdateInstaller::install(const QString& packagePath)
     process->setArguments({ QStringLiteral("-i"), QStringLiteral("luna://com.webos.appInstallService/dev/install"),
         QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact)) });
 
-    // Keep the interactive helper and its subscription alive until a terminal
-    // response. An app-owned process is deliberately not detached: -i does not
-    // exit on install completion without an observer to stop it. Whether webOS
-    // continues an accepted self-update after terminating Spool needs a TV test.
-    // The package is never deleted here, including during QObject teardown.
+    // Keep the subscription alive until a terminal response. webOS may stop
+    // Spool to replace it after accepting the update; the package must survive
+    // application teardown so the installer can finish.
     connect(process, &QProcess::readyReadStandardOutput, this, [this] { readStandardOutput(); });
     connect(process, &QProcess::readyReadStandardError, this, &WebOSUpdateInstaller::readStandardError);
     connect(process, &QProcess::started, this,
