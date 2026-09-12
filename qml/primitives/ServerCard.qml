@@ -116,14 +116,28 @@ FocusScope {
             }
         }
 
-        AppText {
+        RowLayout {
             Layout.alignment: Qt.AlignVCenter
             visible: root.status.length > 0
-            text: root.status
-            color: root.toneColor
-            font.pixelSize: Metrics.metaSizePx
-            font.weight: Font.Medium
-            maximumLineCount: 1
+            spacing: Metrics.scaled(7)
+
+            Rectangle {
+                Layout.alignment: Qt.AlignVCenter
+                Layout.preferredWidth: Metrics.scaled(6)
+                Layout.preferredHeight: Metrics.scaled(6)
+                radius: width / 2
+                visible: root.tone === "positive"
+                color: root.toneColor
+                antialiasing: true
+            }
+
+            AppText {
+                text: root.status
+                color: root.tone === "positive" ? Theme.textSecondary : root.toneColor
+                font.pixelSize: Metrics.metaSizePx
+                font.weight: Font.Medium
+                maximumLineCount: 1
+            }
         }
 
         MaterialIcon {

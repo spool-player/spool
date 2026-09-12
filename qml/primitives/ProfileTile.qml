@@ -21,10 +21,10 @@ FocusScope {
         const name = String(username).trim()
         return name.length > 0 ? name.charAt(0).toUpperCase() : "?"
     }
-    // A stable per-account tint keeps a wall of same-shaped tiles telling
-    // itself apart before any of the labels are readable across a room.
+    // Stable decorative tints distinguish accounts, not network or connection
+    // state. Keep them separate from the green used for online feedback.
     readonly property color avatarColor: {
-        const palette = ["#1F4631", "#314026", "#243F46", "#3E3147", "#49352B", "#2D3D55"]
+        const palette = ["#303B4A", "#35394B", "#2D3D55", "#3E3549", "#343D43", "#393849"]
         const name = String(username)
         let hash = 0
         for (let i = 0; i < name.length; ++i)
