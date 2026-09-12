@@ -6,11 +6,14 @@ Item {
     id: root
 
     required property var overlay
+    readonly property bool localHovering: overlay.timelineHovering && overlay.controlsReason !== "remote"
     readonly property bool active: overlay.hasPlayer && overlay.controlsVisible && overlay.player.trickplayAvailable && (
-                                       overlay.scrubbing || overlay.timelineHovering || overlay.previewing)
-    readonly property double previewSeconds: overlay.scrubbing ? overlay.scrubSeconds : overlay.timelineHovering
-                                                                 ? overlay.timelineHoverSeconds :
-                                                                   overlay.positionSeconds()
+                                       overlay.scrubbing || overlay.remoteScrubbing || localHovering
+                                       || overlay.previewing)
+    readonly property double previewSeconds: overlay.scrubbing || overlay.remoteScrubbing ? overlay.scrubSeconds :
+                                                                                            localHovering
+                                                                                            ? overlay.timelineHoverSeconds :
+                                                                                              overlay.positionSeconds()
     readonly property var trickplayData: active ? overlay.player.trickplayForSeconds(previewSeconds) : ({})
     readonly property bool ready: trickplayData && trickplayData.available === true
     readonly property real scaleFactor: overlay.uiScale * 1.4

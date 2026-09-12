@@ -257,7 +257,7 @@ FocusScope {
     }
 
     function positionSeconds() {
-        return scrubbing ? scrubSeconds : hasPlayer ? player.positionSeconds : 0
+        return scrubbing || remoteScrubbing ? scrubSeconds : hasPlayer ? player.positionSeconds : 0
     }
 
     function positionRatio() {
@@ -269,20 +269,17 @@ FocusScope {
         return menuKind.length > 0 || syncPlayMenuOpen
     }
 
-    // Raise the controls and say who they belong to. Only the remote-scrub
-    // path needs this; everything else is local by definition.
     function raiseControls(reason, preferredZone) {
-        showControls(preferredZone)
+        if (preferredZone)
+            focusZone = preferredZone
         controlsReason = reason
-    }
-
-    // Hover is the one signal that says nothing about who is watching, so a
-    // renewal that came from it is dropped while the overlay belongs to
-    // another device's scrubbing.
-    function maybeRestartAutohideFromHover() {
-        if (controlsReason === "remote")
-            return
-        maybeRestartAutohide()
+        if (reason === "local")
+            remoteScrubbing = false
+        controlsVisible = true
+        if (isPinned())
+            autohide.stop()
+        else
+            restartAutohide()
     }
 
     function isPinned() {
@@ -299,17 +296,7 @@ FocusScope {
     }
 
     function showControls(preferredZone) {
-        if (preferredZone)
-            focusZone = preferredZone
-        // Every direct caller is somebody at this screen -- a key, a click, a
-        // wheel, a menu closing. The remote path goes through raiseControls,
-        // which overrides this afterwards.
-        controlsReason = "local"
-        controlsVisible = true
-        if (isPinned())
-            autohide.stop()
-        else
-            restartAutohide()
+        raiseControls("local", preferredZone)
     }
 
     // Called only for real pointer movement, never for mere presence. A
@@ -321,8 +308,7 @@ FocusScope {
             raiseControls("local", "timeline")
             return
         }
-        controlsReason = "local"
-        maybeRestartAutohide()
+        showControls(focusZone)
     }
 
     function maybeRestartAutohide() {
@@ -335,6 +321,8 @@ FocusScope {
             return false
         input.reset()
         autohide.stop()
+        remoteScrubbing = false
+        timelineHovering = false
         controlsVisible = false
         controlsReason = ""
         focusZone = "timeline"
@@ -374,20 +362,19 @@ FocusScope {
             if (!remoteScrubbing)
                 return
             remoteScrubbing = false
-            scrubbing = false
-            // Unpinned now, so the timer runs again -- and because the reason
-            // is still "remote", a pointer parked on the chrome cannot keep
-            // renewing it.
+            // Only the remote preview ends here; a local drag owns its own pin.
             maybeRestartAutohide()
             return
         }
-        if (!hasPlayer)
+        if (!hasPlayer || isPinned())
             return
-        remoteScrubbing = true
+        // Remote previews lease the existing inactivity deadline rather than
+        // becoming local scrubs. If the sender disappears before teardown,
+        // the last sample still expires without a second timer or polling.
         raiseControls("remote", "timeline")
+        remoteScrubbing = true
+        timelineHovering = false
         scrubSeconds = clampSeconds(seconds)
-        scrubbing = true
-        autohide.stop()
     }
 
     function commitSeekPreview() {
@@ -502,7 +489,7 @@ FocusScope {
                 return
             App.selectStreamingQuality(option.bitrate, option.height || 0)
         } else if (kind === "debug") {
-            const action = debugAction(index);
+            const action = debugAction(index)
             // The speed row is a stepper, not a destination.
             if (action === "" || action === "speed")
                 return
@@ -955,6 +942,9 @@ FocusScope {
         input.reset()
         autohide.stop()
         scrubbing = false
+        remoteScrubbing = false
+        timelineHovering = false
+        controlsReason = visible ? "local" : ""
         menuKind = ""
         chrome.closeSyncPlayMenu()
         audioSyncVisible = false

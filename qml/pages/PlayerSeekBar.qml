@@ -140,20 +140,16 @@ Item {
 
         function updatePosition(mouse) {
             root.overlay.timelineHovering = false
-            root.overlay.focusZone = "timeline"
-            root.overlay.controlsVisible = true
+            root.overlay.showControls("timeline")
             root.overlay.scrubbing = true
             root.overlay.scrubSeconds = secondsForX(mouse.x)
         }
 
         onEntered: updateHover(mouseX)
-        onExited: {
-            root.overlay.timelineHovering = false
-            root.overlay.maybeRestartAutohideFromHover()
-        }
+        onExited: root.overlay.timelineHovering = false
         onPressed: mouse => updatePosition(mouse)
         onPositionChanged: mouse => {
-            if (pressed || root.overlay.scrubbing)
+            if (pressed)
                 updatePosition(mouse)
             else
                 updateHover(mouse.x)
@@ -167,7 +163,7 @@ Item {
         onCanceled: {
             root.overlay.scrubbing = false
             if (containsMouse)
-            updateHover(mouseX)
+                updateHover(mouseX)
         }
     }
 }
