@@ -104,6 +104,7 @@ void RemoteControlController::start()
 void RemoteControlController::stop()
 {
     m_refreshTimer.stop();
+    m_sessionsGeneration.invalidate();
     m_sessions.clear();
     m_targets.clear();
     clearTarget();
@@ -139,12 +140,14 @@ void RemoteControlController::refreshTargets()
 {
     if (!m_api || m_api->session().accessToken.isEmpty() || m_busy)
         return;
+    const RequestGeneration::Token generation = m_sessionsGeneration.current();
     setBusy(true);
     Async::runScoped(
         this, m_api->fetchControllableSessions(),
-        [this](const QJsonArray& sessions) {
+        [this, generation](const QJsonArray& sessions) {
             setBusy(false);
-            applySessions(sessions);
+            if (m_sessionsGeneration.isCurrent(generation))
+                applySessions(sessions);
         },
         [this](const std::exception_ptr& error) {
             setBusy(false);
@@ -155,6 +158,8 @@ void RemoteControlController::refreshTargets()
 
 void RemoteControlController::applySessions(const QJsonArray& sessions)
 {
+    // A pushed session snapshot supersedes an HTTP refresh already in flight.
+    m_sessionsGeneration.invalidate();
     QHash<QString, QJsonObject> nextSessions;
     QVariantList nextTargets;
     const QString localDeviceId = m_api ? m_api->deviceId() : QString();
@@ -225,14 +230,10 @@ void RemoteControlController::selectTarget(const QString& sessionId)
         applySelectedSession();
         return;
     }
-    m_playGeneration.invalidate();
-    setPlaybackPending(false);
+    clearSelectedState(false);
     m_selectedSessionId = normalized;
     m_link->connectToPeer(normalized);
-    applySelectedSession();
-    // The shell announces this one, so it can time it with the matching
-    // disconnect notice rather than at the generic toast duration.
-    emit targetChanged();
+    applySelectedSession(true);
 }
 
 void RemoteControlController::clearTarget()
@@ -249,16 +250,21 @@ void RemoteControlController::clearTarget()
     emit targetChanged();
 }
 
-void RemoteControlController::clearSelectedState()
+void RemoteControlController::clearPendingCommands()
 {
-    m_queueGeneration.invalidate();
-    m_playGeneration.invalidate();
     m_pauseGeneration.invalidate();
     m_pendingPaused.reset();
     m_pendingPauseDeadlineMs = 0;
     m_pendingSeekTicks.reset();
     m_pendingSeekAtMs = 0;
     m_pendingSeekDeadlineMs = 0;
+}
+
+void RemoteControlController::clearSelectedState(bool notify)
+{
+    m_queueGeneration.invalidate();
+    m_playGeneration.invalidate();
+    clearPendingCommands();
     setPlaybackPending(false);
     m_trickplayGeneration.invalidate();
     m_trickplayTimeline.clear();
@@ -266,7 +272,8 @@ void RemoteControlController::clearSelectedState()
     m_trickplayMediaSourceId.clear();
     m_previewSentTicks = -1;
     m_previewSentActive = false;
-    emit trickplayChanged();
+    if (notify)
+        emit trickplayChanged();
     m_nowPlayingItem.clear();
     m_queue.clear();
     m_audioTracks.clear();
@@ -282,12 +289,14 @@ void RemoteControlController::clearSelectedState()
     m_muted = false;
     m_shuffled = false;
     m_repeatMode = QStringLiteral("RepeatNone");
-    if (m_mediaSession)
-        m_mediaSession->clear();
-    emit stateChanged();
+    if (notify) {
+        if (m_mediaSession)
+            m_mediaSession->clear();
+        emit stateChanged();
+    }
 }
 
-void RemoteControlController::applySelectedSession()
+void RemoteControlController::applySelectedSession(bool selectionChanged)
 {
     const QJsonObject session = m_sessions.value(m_selectedSessionId);
     if (session.isEmpty())
@@ -332,6 +341,9 @@ void RemoteControlController::applySelectedSession()
             setPlaybackPending(false);
         }
     }
+    if (nowPlaying.value(QStringLiteral("Id")).toString()
+        != m_nowPlayingItem.value(QStringLiteral("movieId")).toString())
+        clearPendingCommands();
     m_nowPlayingItem = normalizedNowPlayingItem(nowPlaying);
     loadTrickplay(nowPlaying.value(QStringLiteral("Id")).toString(),
         nowPlaying.value(QStringLiteral("MediaSourceId")).toString());
@@ -361,7 +373,7 @@ void RemoteControlController::applySelectedSession()
         m_stateReceivedAtMs = nowMs;
     }
     const bool reportedPaused = playState.value(QStringLiteral("IsPaused")).toBool(true);
-    if (m_pendingPaused && m_stateReceivedAtMs <= m_pendingPauseDeadlineMs) {
+    if (m_pendingPaused && nowMs <= m_pendingPauseDeadlineMs) {
         if (reportedPaused == *m_pendingPaused) {
             m_pendingPaused.reset();
             m_pendingPauseDeadlineMs = 0;
@@ -418,7 +430,9 @@ void RemoteControlController::applySelectedSession()
     m_rawQueue = session.value(QStringLiteral("NowPlayingQueue")).toArray();
     refreshQueueDetails(m_rawQueue);
     updateMediaSession();
-    if (targetInfoChanged)
+    if (selectionChanged)
+        emit trickplayChanged();
+    if (selectionChanged || targetInfoChanged)
         emit targetChanged();
     emit stateChanged();
 }
@@ -662,6 +676,7 @@ bool RemoteControlController::playItems(
 
 void RemoteControlController::beginPendingPlayback(const QString& target, const QString& itemId, const QString& title)
 {
+    clearPendingCommands();
     m_pendingPreviousItemId = m_nowPlayingItem.value(QStringLiteral("movieId")).toString();
     m_pendingTargetSessionId = target;
     m_pendingItemId = itemId;

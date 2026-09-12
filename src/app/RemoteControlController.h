@@ -194,8 +194,9 @@ private:
     void requestPaused(bool paused);
     void stagePendingPlayback(const std::vector<MovieItem>& items, qint64 startPositionTicks, const QString& command);
     void beginPendingPlayback(const QString& target, const QString& itemId, const QString& title);
-    void applySelectedSession();
-    void clearSelectedState();
+    void applySelectedSession(bool selectionChanged = false);
+    void clearPendingCommands();
+    void clearSelectedState(bool notify = true);
     void refreshQueueDetails(const QJsonArray& rawQueue);
     void loadTrickplay(const QString& itemId, const QString& mediaSourceId = {});
     void updateMediaSession();
@@ -227,6 +228,7 @@ private:
     // somebody has driven it directly and this device should follow.
     QString m_pendingPreviousItemId;
     QString m_pendingTitle;
+    RequestGeneration m_sessionsGeneration;
     RequestGeneration m_queueGeneration;
     RequestGeneration m_playGeneration;
     RequestGeneration m_pauseGeneration;
