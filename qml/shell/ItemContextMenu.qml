@@ -20,13 +20,14 @@ FocusScope {
     signal closed
     readonly property int windowWidth: root.Window.window ? root.Window.window.width : 1920
     readonly property int menuEdgeMargin: Math.max(12, Metrics.gapPx)
-    readonly property int menuRowHeight: Metrics.scaled(36)
+    readonly property int menuRowHeight: Math.max(Metrics.touchTargetPx, Metrics.scaled(36))
     readonly property int menuPanelWidth: Math.min(windowWidth - menuEdgeMargin * 2, Math.max(280, Math.min(320,
                                                                                                             Math.round(
                                                                                                                 windowWidth
                                                                                                                 * 0.18))))
-    readonly property int menuPanelHeight: menuOptions.length <= 0 ? 0 : menuOptions.length * menuRowHeight + (
-                                                                         menuOptions.length - 1) * 2 + 12
+    readonly property int menuPanelHeight: menuOptions.length <= 0 ? 0 : Math.min(Math.max(0, height - menuEdgeMargin
+                                                                                           * 2), menuOptions.length
+                                                                                  * menuRowHeight + 12)
     readonly property string itemId: item && item.movieId ? String(item.movieId) : ""
     readonly property string itemType: item && item.itemType ? String(item.itemType) : ""
     readonly property bool episodeOrSeason: itemType === "Episode" || itemType === "Season"
@@ -332,14 +333,14 @@ FocusScope {
     MouseArea {
         anchors.fill: parent
         onClicked: if (root.backdropDismissArmed)
-        root.closeMenu()
+                       root.closeMenu()
     }
 
     Timer {
         id: backdropArmTimer
         repeat: false
         onTriggered: if (root.opened)
-        root.backdropDismissArmed = true
+                         root.backdropDismissArmed = true
     }
 
     PopupMenuPanel {
@@ -353,7 +354,6 @@ FocusScope {
             id: menuList
             anchors.fill: parent
             anchors.margins: 6
-            spacing: 2
             model: root.menuOptions
             currentIndex: root.menuIndex
             onCurrentIndexChanged: root.menuIndex = currentIndex

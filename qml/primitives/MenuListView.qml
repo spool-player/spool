@@ -12,7 +12,7 @@ ListView {
     // Supply a lookup callback when navigation needs to inspect their entries.
     property var entryProvider: null
     property var rowEnabled: function (entry, index) {
-        return !(entry && entry.section === true)
+        return !(entry && (entry.section || entry.enabled === false || entry.actionable === false))
     }
 
     signal edgeUp
@@ -23,6 +23,9 @@ ListView {
     focus: true
     clip: true
     keyNavigationEnabled: false
+    // Menu delegates own their visual inset; spacing here leaves untappable
+    // strips between rows. Non-menu lists may still choose their own spacing.
+    spacing: 0
     boundsBehavior: Flickable.StopAtBounds
     flickDeceleration: Metrics.flickDecelerationPx
     maximumFlickVelocity: Metrics.maximumFlickVelocityPx

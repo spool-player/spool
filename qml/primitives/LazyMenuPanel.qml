@@ -64,11 +64,9 @@ Loader {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 model: root.model
+                entryProvider: index => root.model[index]
                 currentIndex: root.currentIndex
                 edgeEscapeItem: root.edgeEscapeItem
-                rowEnabled: function (entry, index) {
-                    return !(entry && entry.section)
-                }
                 onCurrentIndexChanged: root.currentIndex = currentIndex
                 onDismissed: root.dismissed()
                 onAccepted: index => root.accepted(root.model[index], index)
@@ -79,6 +77,7 @@ Loader {
                     readonly property bool rowChecked: root.checkedFor(modelData)
                     width: list.width
                     section: Boolean(modelData && modelData.section)
+                    actionable: !(modelData && (modelData.enabled === false || modelData.actionable === false))
                     label: modelData && modelData.label ? modelData.label : ""
                     detail: modelData && modelData.detail ? modelData.detail : ""
                     checked: rowChecked

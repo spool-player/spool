@@ -147,6 +147,10 @@ FocusScope {
         baseColor: Theme.bgRaised
         clip: true
 
+        MouseArea {
+            anchors.fill: parent
+        }
+
         ColumnLayout {
             id: contentColumn
             anchors.fill: parent
@@ -168,7 +172,6 @@ FocusScope {
                 Layout.preferredHeight: Math.min(contentHeight, Metrics.scaled(470))
                 model: menu.entries
                 currentIndex: menu.currentIndex
-                spacing: Metrics.scaled(2)
                 rowEnabled: function (entry, index) {
                     return menu.actionable(menu.entries[index])
                 }

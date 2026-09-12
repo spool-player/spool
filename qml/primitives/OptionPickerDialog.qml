@@ -123,16 +123,11 @@ FocusScope {
         openHeight: root.panelHeight
         baseColor: Theme.floatingPanel
 
-        MouseArea {
-            anchors.fill: parent
-        }
-
         MenuListView {
             id: optionList
             objectName: "optionPickerList"
             anchors.fill: parent
-            anchors.margins: Metrics.scaled(8)
-            spacing: Metrics.scaled(2)
+            anchors.margins: root.metrics.scaled(8)
             model: root.options
             currentIndex: root.currentIndex
             onDismissed: root.dismissed()
@@ -143,25 +138,12 @@ FocusScope {
                 required property var modelData
                 width: optionList.width
                 rowHeight: root.rowHeight
+                minimumRowHeight: root.metrics.controlHeightPx
                 label: String(modelData)
                 checked: index === root.currentIndex
                 highlighted: optionList.activeFocus && optionList.currentIndex === index
-                pointerActivationEnabled: false
                 onHovered: optionList.currentIndex = index
                 onActivated: root.selected(index)
-                MouseArea {
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    preventStealing: true
-                    propagateComposedEvents: false
-                    onEntered: optionList.currentIndex = index
-                    onPressed: mouse => mouse.accepted = true
-                    onReleased: mouse => mouse.accepted = true
-                    onClicked: mouse => {
-                        mouse.accepted = true
-                        root.selected(index)
-                    }
-                }
             }
         }
     }

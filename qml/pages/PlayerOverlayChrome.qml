@@ -118,35 +118,35 @@ Item {
         acceptedButtons: Qt.LeftButton
         onPressedChanged: {
             if (!pressed)
-            return
+                return
             surfaceTap = root.overlay.touchscreenControls && !root.overlay.audioSyncVisible &&
-            !root.overlay.subtitleSettingsVisible && !root.overlay.queuePanelVisible &&
-            !root.overlay.browsePanelVisible && !root.overlay.isMenuOpen() && !root.syncPlayMenuOpen &&
-            !root.containsControl(backButton, point.position) && !root.containsControl(hud, point.position) &&
-            !root.containsControl(skipSegment, point.position)
+                    !root.overlay.subtitleSettingsVisible && !root.overlay.queuePanelVisible &&
+                    !root.overlay.browsePanelVisible && !root.overlay.isMenuOpen() && !root.syncPlayMenuOpen &&
+                    !root.containsControl(backButton, point.position) && !root.containsControl(hud, point.position) &&
+                    !root.containsControl(skipSegment, point.position)
             if (root.overlay.touchscreenControls)
-            return
+                return
             if (root.syncPlayMenuOpen) {
                 const local = syncPlayMenu.mapFromItem(root, point.position.x, point.position.y)
                 const syncTarget = actionRow.actionTarget("syncplay")
                 if (syncTarget) {
                     const syncLocal = syncTarget.mapFromItem(root, point.position.x, point.position.y)
                     if (syncTarget.contains(syncLocal))
-                    return
+                        return
                 }
                 if (!syncPlayMenu.contains(local))
-                root.overlay.closeMenu()
+                    root.overlay.closeMenu()
                 return
             }
             root.overlay.showControlsFromPointer()
         }
         onTapped: {
             if (!surfaceTap)
-            return
+                return
             if (root.overlay.controlsVisible)
-            root.overlay.hideControls()
+                root.overlay.hideControls()
             else
-            root.overlay.showControlsFromPointer()
+                root.overlay.showControlsFromPointer()
         }
     }
     HoverHandler {
@@ -154,9 +154,9 @@ Item {
         // Entering is presence, not use: it only records where the pointer
         // is. Point changes are where actual movement shows up.
         onHoveredChanged: if (hovered)
-        root.notePointer(point.position)
+                              root.notePointer(point.position)
         onPointChanged: if (hovered)
-        root.handlePointerMove(point.position)
+                            root.handlePointerMove(point.position)
     }
     WheelHandler {
         target: null
@@ -460,7 +460,7 @@ Item {
         readonly property rect settingsButton: {
             const target = actionRow.actionTarget("debug")
             if (!menuDialog.visible || !target)
-            return Qt.rect(0, 0, 0, 0)
+                return Qt.rect(0, 0, 0, 0)
             const origin = target.mapToItem(menuDialog, 0, 0)
             return Qt.rect(origin.x, origin.y, target.width, target.height)
         }
@@ -473,16 +473,16 @@ Item {
             // clamped so the panel stays inside a narrow window.
             x: {
                 if (!menuDialog.dropdown)
-                return (parent.width - width) / 2
+                    return (parent.width - width) / 2
                 const button = menuDialog.settingsButton
                 if (button.width <= 0)
-                return parent.width - width - root.dp(52)
+                    return parent.width - width - root.dp(52)
                 const centred = button.x + (button.width - width) / 2
                 return Math.max(root.dp(16), Math.min(centred, parent.width - width - root.dp(16)))
             }
             y: {
                 if (!menuDialog.dropdown)
-                return (parent.height - height) / 2
+                    return (parent.height - height) / 2
                 const button = menuDialog.settingsButton
                 const bottom = button.height > 0 ? button.y : hud.y
                 return Math.max(root.dp(16), bottom - height - root.dp(10))
@@ -545,8 +545,7 @@ Item {
                     delegate: MenuRow {
                         required property int index
                         required property var modelData
-                        width: Math.max(0, menuList.width - (menuScrollBar.visible ? menuScrollBar.width + root.dp(4) :
-                                                                                     0))
+                        width: Math.max(0, menuList.width - (menuScrollBar.visible ? menuScrollBar.width : 0))
                         label: root.overlay.menuLabel(modelData)
                         detail: root.overlay.menuDetail(index)
                         compact: menuDialog.dropdown || root.overlay.touchscreenControls

@@ -22,6 +22,7 @@ Item {
     property bool compact: false
     property int rowHeight: Math.max(Metrics.touchTargetPx, Metrics.scaled(detail.length > 0 ? (compact ? 44 : 54) : (compact
                                                                                                                       ? 36 : 46)))
+    property int minimumRowHeight: Metrics.touchTargetPx
     property string checkIconName: "done"
     property bool stepperVisible: false
     property bool stepperEnabled: true
@@ -37,7 +38,9 @@ Item {
     signal stepperAccepted(string text)
 
     width: parent ? parent.width : Metrics.scaled(320)
-    height: section ? Metrics.scaled(34) : rowHeight
+    // Keep padding inside each delegate: adjacent rows share an edge, not a
+    // dead strip. Explicit row heights must still respect the touch minimum.
+    height: section ? Metrics.scaled(34) : Math.max(minimumRowHeight, rowHeight)
 
     AppText {
         anchors.left: parent.left
@@ -54,6 +57,8 @@ Item {
 
     Rectangle {
         anchors.fill: parent
+        anchors.topMargin: Metrics.scaled(1)
+        anchors.bottomMargin: Metrics.scaled(1)
         visible: !root.section
         radius: Theme.radiusSmall
         color: root.highlighted ? Theme.focusedFill : hover.hovered && root.actionable ? Theme.bgHover : root.checked
@@ -108,15 +113,22 @@ Item {
 
         RowLayout {
             visible: root.stepperVisible
-            spacing: Metrics.scaled(root.compact ? 4 : 6)
+            spacing: 0
 
-            Rectangle {
-                Layout.preferredWidth: Metrics.scaled(root.compact ? 30 : 38)
-                Layout.preferredHeight: Metrics.scaled(root.compact ? 26 : 34)
-                radius: Theme.radiusSmall
-                color: minusHover.hovered && root.stepperEnabled ? Theme.bgHover : Theme.bgPanel
-                border.width: Theme.hoverBorderWidth
-                border.color: root.stepperEnabled ? Theme.borderStrong : Theme.border
+            Item {
+                Layout.preferredWidth: Math.max(Metrics.touchTargetPx, Metrics.scaled(root.compact ? 34 : 44))
+                Layout.minimumWidth: Metrics.touchTargetPx
+                Layout.preferredHeight: root.height
+
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: parent.width - Metrics.scaled(4)
+                    height: Metrics.scaled(root.compact ? 26 : 34)
+                    radius: Theme.radiusSmall
+                    color: minusHover.hovered && root.stepperEnabled ? Theme.bgHover : Theme.bgPanel
+                    border.width: Theme.hoverBorderWidth
+                    border.color: root.stepperEnabled ? Theme.borderStrong : Theme.border
+                }
 
                 AppText {
                     anchors.centerIn: parent
@@ -127,6 +139,7 @@ Item {
                 }
                 TapHandler {
                     enabled: root.stepperEnabled
+                    gesturePolicy: TapHandler.DragThreshold
                     onTapped: root.decreaseRequested()
                 }
                 HoverHandler {
@@ -136,8 +149,10 @@ Item {
             }
 
             Rectangle {
-                Layout.preferredWidth: Metrics.scaled(root.compact ? 54 : 68)
-                Layout.preferredHeight: Metrics.scaled(root.compact ? 26 : 34)
+                Layout.preferredWidth: Math.max(root.stepperEditable ? Metrics.touchTargetPx : 0, Metrics.scaled(
+                                                    root.compact ? 54 : 68))
+                Layout.minimumWidth: root.stepperEditable ? Metrics.touchTargetPx : 0
+                Layout.preferredHeight: root.height
                 radius: Theme.radiusSmall
                 color: speedInput.activeFocus ? Theme.bgPanel : "transparent"
                 border.width: root.stepperInvalid ? Theme.focusBorderWidth : 0
@@ -200,13 +215,20 @@ Item {
                 }
             }
 
-            Rectangle {
-                Layout.preferredWidth: Metrics.scaled(root.compact ? 30 : 38)
-                Layout.preferredHeight: Metrics.scaled(root.compact ? 26 : 34)
-                radius: Theme.radiusSmall
-                color: plusHover.hovered && root.stepperEnabled ? Theme.bgHover : Theme.bgPanel
-                border.width: Theme.hoverBorderWidth
-                border.color: root.stepperEnabled ? Theme.borderStrong : Theme.border
+            Item {
+                Layout.preferredWidth: Math.max(Metrics.touchTargetPx, Metrics.scaled(root.compact ? 34 : 44))
+                Layout.minimumWidth: Metrics.touchTargetPx
+                Layout.preferredHeight: root.height
+
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: parent.width - Metrics.scaled(4)
+                    height: Metrics.scaled(root.compact ? 26 : 34)
+                    radius: Theme.radiusSmall
+                    color: plusHover.hovered && root.stepperEnabled ? Theme.bgHover : Theme.bgPanel
+                    border.width: Theme.hoverBorderWidth
+                    border.color: root.stepperEnabled ? Theme.borderStrong : Theme.border
+                }
 
                 AppText {
                     anchors.centerIn: parent
@@ -217,6 +239,7 @@ Item {
                 }
                 TapHandler {
                     enabled: root.stepperEnabled
+                    gesturePolicy: TapHandler.DragThreshold
                     onTapped: root.increaseRequested()
                 }
                 HoverHandler {
@@ -242,9 +265,9 @@ Item {
         onHoveredChanged: if (hovered)
                               root.hovered()
     }
-
     TapHandler {
-        enabled: root.pointerActivationEnabled && root.actionable && !root.section
+        enabled: root.pointerActivationEnabled && root.actionable && !root.section && !root.stepperVisible
+        gesturePolicy: TapHandler.DragThreshold
         onTapped: root.activated()
     }
 }

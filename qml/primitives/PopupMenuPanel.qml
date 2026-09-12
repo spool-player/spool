@@ -14,6 +14,12 @@ Surface {
     elevated: true
     clip: true
 
+    // Inert rows and panel padding belong to the popup, not its dismiss
+    // backdrop. Row handlers remain free to give a drag to their Flickable.
+    MouseArea {
+        anchors.fill: parent
+    }
+
     Item {
         id: body
         anchors.fill: parent
