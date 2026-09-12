@@ -837,6 +837,27 @@ jobs:
           ANDROID_ABI: ${{ matrix.abi }}
         run: nix develop .#android -c bash tools/android/build-apks.sh
 
+      - name: Verify native libraries stay compressed
+        env:
+          ANDROID_ABI: ${{ matrix.abi }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import zipfile
+
+          path = f"dist/android/spool-{os.environ['ANDROID_ABI']}.apk"
+          with zipfile.ZipFile(path) as apk:
+              libraries = [entry for entry in apk.infolist()
+                           if entry.filename.startswith("lib/") and entry.filename.endswith(".so")]
+              if not libraries:
+                  raise SystemExit(f"{path}: no native libraries")
+              uncompressed = [entry.filename for entry in libraries
+                              if entry.compress_type != zipfile.ZIP_DEFLATED]
+              if uncompressed:
+                  raise SystemExit(f"{path}: native libraries are not compressed: {uncompressed}")
+          print(f"{path}: native libraries are compressed ({os.path.getsize(path)} bytes)")
+          PY
+
       - name: Verify Android release signing identity
         if: ${{ inputs.release }}
         env:

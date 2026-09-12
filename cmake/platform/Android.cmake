@@ -79,6 +79,10 @@ function(jellyfin_configure_android_targets native_target core_target)
     # from the Android dependency prefix.
     file(GLOB ANDROID_EXTRA_LIBS "${ANDROID_DEPS_PREFIX}/lib/*.so")
     set_property(TARGET ${native_target} PROPERTY QT_ANDROID_EXTRA_LIBS "${ANDROID_EXTRA_LIBS}")
+    # APKs are direct downloads, not Play-delivered splits. Compress native
+    # libraries and let Android extract them at install time; storing them
+    # uncompressed more than doubles the per-ABI download.
+    set_property(TARGET ${native_target} PROPERTY QT_ANDROID_LEGACY_PACKAGING TRUE)
     set_property(TARGET ${native_target} PROPERTY QT_ANDROID_PACKAGE_SOURCE_DIR "${android_package_source}")
     set_property(TARGET ${native_target} PROPERTY QT_ANDROID_PACKAGE_NAME "${android_package_name}")
     set_property(TARGET ${native_target} PROPERTY QT_ANDROID_APP_NAME "Spool for Jellyfin")
