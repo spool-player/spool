@@ -341,6 +341,14 @@ void ContentModelController::prepareLinkedItem(const QString& itemId, const QStr
 
 void ContentModelController::updateResumeTicks(const QString& itemId, qint64 positionTicks)
 {
+    if (!itemId.isEmpty() && m_detailItem.id == itemId) {
+        const qint64 ticks = normalizedResumeTicks(positionTicks, m_detailItem.runtimeTicks);
+        if (m_detailItem.resumeTicks != ticks) {
+            m_detailItem.resumeTicks = ticks;
+            emit detailItemChanged();
+        }
+    }
+    m_linkedItems.updateResumeTicks(itemId, positionTicks);
     m_detailSeasons.updateResumeTicks(itemId, positionTicks);
     m_detailSeasonOptions.updateResumeTicks(itemId, positionTicks);
     m_detailSimilarItems.updateResumeTicks(itemId, positionTicks);
@@ -350,6 +358,11 @@ void ContentModelController::updateResumeTicks(const QString& itemId, qint64 pos
 
 void ContentModelController::updateFavorite(const QString& itemId, bool favorite)
 {
+    if (!itemId.isEmpty() && m_detailItem.id == itemId && m_detailItem.favorite != favorite) {
+        m_detailItem.favorite = favorite;
+        emit detailItemChanged();
+    }
+    m_linkedItems.updateFavorite(itemId, favorite);
     m_detailSeasons.updateFavorite(itemId, favorite);
     m_detailSeasonOptions.updateFavorite(itemId, favorite);
     m_detailSimilarItems.updateFavorite(itemId, favorite);
@@ -359,6 +372,13 @@ void ContentModelController::updateFavorite(const QString& itemId, bool favorite
 
 void ContentModelController::updatePlayed(const QString& itemId, bool played)
 {
+    if (!itemId.isEmpty() && m_detailItem.id == itemId
+        && (m_detailItem.played != played || m_detailItem.resumeTicks != 0)) {
+        m_detailItem.played = played;
+        m_detailItem.resumeTicks = 0;
+        emit detailItemChanged();
+    }
+    m_linkedItems.updatePlayed(itemId, played);
     m_detailSeasons.updatePlayed(itemId, played);
     m_detailSeasonOptions.updatePlayed(itemId, played);
     m_detailSimilarItems.updatePlayed(itemId, played);

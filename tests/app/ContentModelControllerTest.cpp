@@ -234,6 +234,11 @@ protected:
 
         const QUrl url = request.url();
         const QUrlQuery query(url);
+        if (operation == GetOperation && url.path() == QStringLiteral("/Users/user-1/Items/movie-1")) {
+            QJsonObject item = movieObject();
+            item.insert(QStringLiteral("RunTimeTicks"), 1200LL * 10'000'000);
+            return new MemoryReply(request, operation, jsonBytes(item), 200, this);
+        }
         if (operation == GetOperation && url.path() == QStringLiteral("/Items")
             && query.queryItemValue(QStringLiteral("personIds")) == QStringLiteral("person-1")) {
             const int startIndex = query.queryItemValue(QStringLiteral("startIndex")).toInt();
@@ -577,6 +582,41 @@ JELLYFIN_TEST_MAIN("content-model-controller")
         QStringLiteral("user-1"), QStringLiteral("Tester"), QStringLiteral("token-1"), QStringLiteral("server-1") });
     LibraryPrefetchController prefetch(&api);
     ContentModelController controller(&api, &prefetch);
+    MovieItem displayedDetail;
+    QObject::connect(&controller, &ContentModelController::detailItemChanged, &controller,
+        [&] { displayedDetail = controller.detailItem(); });
+    {
+        QEventLoop loop;
+        QTimer timeout;
+        timeout.setSingleShot(true);
+        QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+        QObject::connect(&controller, &ContentModelController::detailItemChanged, &loop, [&] {
+            if (displayedDetail.id == QStringLiteral("movie-1"))
+                loop.quit();
+        });
+        controller.loadItemDetail(QStringLiteral("movie-1"));
+        timeout.start(1000);
+        loop.exec();
+    }
+    require(displayedDetail.id == QStringLiteral("movie-1"), "item details did not finish loading");
+    controller.updateResumeTicks(QStringLiteral("movie-1"), 120LL * 10'000'000);
+    require(displayedDetail.resumeTicks == 120LL * 10'000'000,
+        "first playback did not refresh the displayed detail position");
+    controller.updateResumeTicks(QStringLiteral("movie-1"), 240LL * 10'000'000);
+    require(
+        displayedDetail.resumeTicks == 240LL * 10'000'000, "resumed playback left the displayed detail position stale");
+    controller.updateResumeTicks(QStringLiteral("another-movie"), 360LL * 10'000'000);
+    require(displayedDetail.resumeTicks == 240LL * 10'000'000,
+        "another item's playback changed the displayed detail position");
+    controller.updatePlayed(QStringLiteral("movie-1"), true);
+    require(displayedDetail.played && displayedDetail.resumeTicks == 0,
+        "completed playback left resumable progress in item details");
+    controller.updatePlayed(QStringLiteral("movie-1"), false);
+    require(!displayedDetail.played && displayedDetail.resumeTicks == 0,
+        "marking an item unwatched left stale detail state");
+    controller.updateFavorite(QStringLiteral("movie-1"), true);
+    require(displayedDetail.favorite, "favorite update left stale detail state");
+
     SearchController search(&api, &prefetch);
     require(waitForSearch(search, 1000), "mixed search did not finish with all result types");
     require(searchRequestCount(network.requestedUrls) == 2,
