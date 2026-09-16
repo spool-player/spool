@@ -41,7 +41,13 @@ export PROTON_ENABLE_WAYLAND=${SPOOL_PROTON_WAYLAND:-1}
 # every exception. It is measured in hundreds of megabytes and it dominates
 # runtime, so state the quiet default rather than inheriting whatever is set.
 export WINEDEBUG=${WINEDEBUG:--all}
-export LD_PRELOAD='' SPOOL_RENDER_API=d3d11
+export LD_PRELOAD=''
+# D3D11 is the default because it is Qt's own on Windows, but the colour
+# space does not survive winevulkan on that path: DXVK negotiates
+# EXTENDED_SRGB_LINEAR and the layer below still gets PASS_THROUGH.
+# SPOOL_RENDER_API=vulkan puts Qt and mpv on winevulkan directly, with no
+# D3D11 translation in between for the colour space to be lost in.
+export SPOOL_RENDER_API=${SPOOL_RENDER_API:-d3d11}
 unset PROTON_USE_NTSYNC PROTON_NO_NTSYNC PROTON_NO_FSYNC PROTON_NO_ESYNC
 if [[ ! -r /dev/ntsync || ! -w /dev/ntsync ]]; then
     export PROTON_NO_NTSYNC=1
