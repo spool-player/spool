@@ -60,6 +60,25 @@ function Get-Msys2Root {
     return $root
 }
 
+function Expand-WindowsSourceArchive {
+    param(
+        [Parameter(Mandatory)] [string] $Archive,
+        [Parameter(Mandatory)] [string] $Destination,
+        [int] $StripComponents = 0
+    )
+    $tar = Join-Path $env:SystemRoot 'System32\tar.exe'
+    if (-not (Test-Path -LiteralPath $tar)) {
+        # Wine lacks inbox bsdtar, and MSYS tar's compression subprocess
+        # cannot run reliably there. Python is already a build prerequisite.
+        & python (Join-Path $PSScriptRoot 'extract-archive.py') `
+            $Archive $Destination --strip-components $StripComponents
+        if ($LASTEXITCODE -ne 0) { throw "Extracting $Archive failed." }
+        return
+    }
+    & $tar -xf $Archive -C $Destination "--strip-components=$StripComponents"
+    if ($LASTEXITCODE -ne 0) { throw "Extracting $Archive failed." }
+}
+
 # tools\manifests\toolchain.json is the single place the Qt and FFmpeg
 # versions are set; nothing here should repeat one.
 function Get-ToolchainManifest {
@@ -76,21 +95,45 @@ function Get-DefaultQCoroRoot {
     return "C:\Qt\$((Get-ToolchainManifest).qcoro.windowsPrefix)"
 }
 
-# A built libmpv is only as current as the mpv submodule it came from, and
-# neither the import library nor the disposable source mirror says which
-# revision that was. Record it, so a moved submodule rebuilds instead of being
-# linked against silently -- the failure mode is a missing symbol at link time,
-# or worse, an API that quietly behaves like the older fork.
+# Include the working tree and build contract, not just the submodule commit:
+# local edits must never reuse a DLL or disposable source mirror from before them.
 function Get-MpvSourceRevision {
-    $mpv = Join-Path (Get-RepositoryRoot) 'mpv'
-    if (-not (Test-Path -LiteralPath $mpv)) {
-        return $null
-    }
+    $root = Get-RepositoryRoot
+    $mpv = Join-Path $root 'mpv'
     $revision = & git -C $mpv rev-parse HEAD 2>$null
     if ($LASTEXITCODE -ne 0 -or -not $revision) {
-        return $null
+        throw 'Cannot establish the libmpv source identity; a Git checkout is required.'
     }
-    return $revision.Trim()
+    $files = & git -C $mpv -c core.quotePath=false ls-files --cached --others --exclude-standard
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot enumerate the libmpv working tree.' }
+    $inputs = [Collections.Generic.List[string]]::new()
+    $inputs.Add($revision.Trim())
+    foreach ($file in ($files | Sort-Object -Unique)) {
+        $path = Join-Path $mpv $file
+        $hash = if (Test-Path -LiteralPath $path -PathType Leaf) {
+            (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+        } else { 'deleted' }
+        $inputs.Add("$file=$hash")
+    }
+    foreach ($file in @(
+        'tools/windows/build-mpv.ps1', 'tools/windows/common.ps1',
+        'tools/windows/build-ffmpeg.ps1', 'tools/windows/build-ffmpeg.sh',
+        'tools/windows/check-ffmpeg.py', 'tools/windows/build-shader-tools.ps1',
+        'tools/windows/extract-archive.py',
+        'tools/manifests/mpv-native.json', 'tools/manifests/ffmpeg-capabilities.json',
+        'tools/manifests/toolchain.json', 'tools/ffmpeg-capabilities.py'
+    )) {
+        $inputs.Add("$file=$((Get-FileHash -LiteralPath (Join-Path $root $file) -Algorithm SHA256).Hash)")
+    }
+    foreach ($name in @('cl.exe', 'clang.exe', 'lld-link.exe')) {
+        $tool = Get-Command $name -ErrorAction Stop
+        $inputs.Add("$name=$((Get-FileHash -LiteralPath $tool.Source -Algorithm SHA256).Hash)")
+    }
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        return [Convert]::ToHexString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes(
+            ($inputs -join "`n")))).ToLowerInvariant()
+    } finally { $sha.Dispose() }
 }
 
 function Get-MpvRevisionStampPath {
@@ -120,17 +163,13 @@ function Write-MpvRevisionStamp {
 }
 
 # True when $Prefix holds a libmpv built from the submodule as it stands now.
-# A repository with no usable git information cannot answer that, and says so
-# by accepting what is already built rather than rebuilding on every run.
+# Missing source identity is an error, never permission to accept an old DLL.
 function Test-MpvBuildCurrent {
     param([Parameter(Mandatory)] [string] $Prefix)
     if (-not (Test-Path -LiteralPath (Join-Path $Prefix 'lib\mpv.lib'))) {
         return $false
     }
     $revision = Get-MpvSourceRevision
-    if (-not $revision) {
-        return $true
-    }
     return ((Read-MpvRevisionStamp -Directory $Prefix) -eq $revision)
 }
 

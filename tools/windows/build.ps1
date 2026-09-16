@@ -1,5 +1,6 @@
 param(
-    [switch]$Clean
+    [switch]$Clean,
+    [string[]]$CMakeArguments = @()
 )
 
 . (Join-Path $PSScriptRoot 'common.ps1')
@@ -24,7 +25,7 @@ if ($Clean -and (Test-Path -LiteralPath $buildDir)) {
 
 Push-Location $root
 try {
-    cmake --preset windows-release
+    cmake --preset windows-release @CMakeArguments
     if ($LASTEXITCODE -ne 0) { throw 'CMake configuration failed.' }
     $ninjaCommands = Get-Content -LiteralPath (Join-Path $buildDir 'build.ninja') -Raw
     foreach ($requiredFlag in @('/GL', '/LTCG', '/OPT:REF', '/OPT:ICF')) {

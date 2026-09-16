@@ -26,7 +26,7 @@ function Test-QtInstallation {
 
 if ((Test-QtInstallation) -and -not $Force) {
     Write-Host "Qt $($manifest.version) is already installed at $qtRoot"
-    exit 0
+    return
 }
 
 if ($Force -and (Test-Path -LiteralPath $qtRoot)) {

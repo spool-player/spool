@@ -1,0 +1,132 @@
+{
+  "runtime": "runtimes/GE-Proton11-6-x86_64",
+  "msvcRevision": "514f8ea34842cd6d831804d0e9658d3a32870ae1",
+  "msvcManifest": {
+    "fileName": "VisualStudio.vsman",
+    "sha256": "469b3396a3493df91870ce13c52015a92283a2d1c6fd12e5f7e55669be8050ca",
+    "size": 30442868,
+    "url": "https://download.visualstudio.microsoft.com/download/pr/f8d58e41-102a-4347-a567-60d7235da3b5/469b3396a3493df91870ce13c52015a92283a2d1c6fd12e5f7e55669be8050ca/VisualStudio.vsman"
+  },
+  "assets": [
+    {
+      "file": "powershell-7.4.13.zip",
+      "url": "https://github.com/PowerShell/PowerShell/releases/download/v7.4.13/PowerShell-7.4.13-win-x64.zip",
+      "sha256": "8fb52d2172d285b230c2857a90ba4dd28ecf6477ba4a91f91b6854a647b33b65",
+      "kind": "zip",
+      "destination": "powershell-7.4.13"
+    },
+    {
+      "file": "cmake.zip",
+      "url": "https://github.com/Kitware/CMake/releases/download/v4.4.3/cmake-4.4.3-windows-x86_64.zip",
+      "sha256": "4d52ebab7193a698651639ed80d8d04fd903358843572cf44c7fd234cb7c26ab",
+      "kind": "zip",
+      "destination": "cmake"
+    },
+    {
+      "file": "ninja.zip",
+      "url": "https://github.com/ninja-build/ninja/releases/download/v1.13.2/ninja-win.zip",
+      "sha256": "07fc8261b42b20e71d1720b39068c2e14ffcee6396b76fb7a795fb460b78dc65",
+      "kind": "zip",
+      "destination": "ninja"
+    },
+    {
+      "file": "git.zip",
+      "url": "https://github.com/git-for-windows/git/releases/download/v2.55.0.windows.5/MinGit-2.55.0.5-64-bit.zip",
+      "sha256": "56d7b226b7693196cfc71fef26568f536c4a021ab6c37ff2db4287bed908e96e",
+      "kind": "zip",
+      "destination": "git"
+    },
+    {
+      "file": "LLVM-21.1.8-win64.exe",
+      "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.8/LLVM-21.1.8-win64.exe",
+      "sha256": "7a5386c26497db1691f320121e5b113364dd0274b98e55f15f4dbc00c0450113",
+      "kind": "7z",
+      "destination": "llvm"
+    },
+    {
+      "file": "nasm.zip",
+      "url": "https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/win64/nasm-2.16.03-win64.zip",
+      "sha256": "3ee4782247bcb874378d02f7eab4e294a84d3d15f3f6ee2de2f47a46aa7226e6",
+      "kind": "zip",
+      "destination": "nasm"
+    },
+    {
+      "file": "python.zip",
+      "url": "https://www.python.org/ftp/python/3.13.7/python-3.13.7-embed-amd64.zip",
+      "sha256": "f6cca216a359be84797cabb54149ce5e062afb16cc7567eb7fc51cacb2d86b65",
+      "kind": "zip",
+      "destination": "python"
+    },
+    {
+      "file": "curl.zip",
+      "url": "https://curl.se/windows/dl-8.22.0_1/curl-8.22.0_1-win64-mingw.zip",
+      "sha256": "7f23b039f6ea4197362d4468e1a0e71428201222e1bef3b680d5ef7b2aefb714",
+      "kind": "zip",
+      "destination": "curl"
+    },
+    {
+      "file": "7zr.exe",
+      "url": "https://www.7-zip.org/a/7zr.exe",
+      "sha256": "ad4c82fadcbdf93c03b4fc440f300509c7d60c5c2f4d183e35d9d70d6957037d",
+      "kind": "file",
+      "destination": "7z.exe"
+    },
+    {
+      "file": "imagemagick.7z",
+      "url": "https://github.com/ImageMagick/ImageMagick/releases/download/7.1.2-31/ImageMagick-7.1.2-31-portable-Q16-x64.7z",
+      "sha256": "33d8b47bb404a6b30c672195795e64a8ce0c807f9bba084e359ff086d6c5d50d",
+      "kind": "7z",
+      "destination": "imagemagick"
+    },
+    {
+      "file": "msys2-base-x86_64-20260611.tar.xz",
+      "url": "https://github.com/msys2/msys2-installer/releases/download/2026-06-11/msys2-base-x86_64-20260611.tar.xz",
+      "sha256": "a2d047e8ee213c3c6a49a8de427eb1069df12207c0422ff1b3cbb5c905c34221",
+      "kind": "tar",
+      "destination": "msys-dated"
+    },
+    {
+      "file": "GE-Proton11-6-x86_64.tar.gz",
+      "url": "https://github.com/GloriousEggroll/proton-ge-custom/releases/download/GE-Proton11-6/GE-Proton11-6-x86_64.tar.gz",
+      "sha256": "659f8d71f2f78659340120b20c1c5a1464aa138939332a1376dea22f6d2dc2e4",
+      "kind": "tar",
+      "destination": "runtimes"
+    },
+    {
+      "file": "msys-packages/make-4.4.1-3-x86_64.pkg.tar.zst",
+      "url": "https://repo.msys2.org/msys/x86_64/make-4.4.1-3-x86_64.pkg.tar.zst",
+      "sha256": "af0bdba17f06fe037f0194069adaa31a8fe45f1a11381501896aea1fae37bd5d",
+      "kind": "tar",
+      "destination": "msys-dated/msys64"
+    },
+    {
+      "file": "msys-packages/diffutils-3.12-1-x86_64.pkg.tar.zst",
+      "url": "https://repo.msys2.org/msys/x86_64/diffutils-3.12-1-x86_64.pkg.tar.zst",
+      "sha256": "7902c8ce3d4dd69a0f5e98dc9d5c83c17b23314ba486169db57ef6e2835ce3b6",
+      "kind": "tar",
+      "destination": "msys-dated/msys64"
+    },
+    {
+      "file": "msys-packages/pkgconf-3.0.7-1-x86_64.pkg.tar.zst",
+      "url": "https://repo.msys2.org/msys/x86_64/pkgconf-3.0.7-1-x86_64.pkg.tar.zst",
+      "sha256": "5e051b9623f7e539515f8c42430bf4bd1e377a459e810faea4358f48c3115199",
+      "kind": "tar",
+      "destination": "msys-dated/msys64"
+    },
+    {
+      "file": "wheels/pip-26.2.1-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/f3/6e/1736e5b4ae2b778ef2f81c47d797de9f891d4d8acb047a24ca37a60294dd/pip-26.2.1-py3-none-any.whl",
+      "sha256": "71138adf1f4ca900cdb7d289c21b7494329f2332b6d85f0e1c42108c0384ed3e",
+      "kind": "zip",
+      "destination": "python/Lib/site-packages"
+    },
+    {
+      "file": "wheels/meson-1.9.1-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/9c/07/b48592d325cb86682829f05216e4efb2dc881762b8f1bafb48b57442307a/meson-1.9.1-py3-none-any.whl",
+      "sha256": "f824ab770c041a202f532f69e114c971918ed2daff7ea56583d80642564598d0",
+      "kind": "file",
+      "destination": "wheels/meson-1.9.1-py3-none-any.whl"
+    }
+  ],
+  "buildImage": "ghcr.io/msys2/msys2-docker-experimental@sha256:127da4b502598d0e0913b761f9e18584f0423f39dae9f3c9d653f24ccf8690f9"
+}

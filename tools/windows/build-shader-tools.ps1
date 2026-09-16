@@ -19,13 +19,25 @@ $pin = (Get-ToolchainManifest).shaderTools
 $prefix = Join-Path $deps 'shader-tools'
 New-Item -ItemType Directory -Force $deps | Out-Null
 
-if ($Clean -and (Test-Path $prefix)) { Remove-Item -LiteralPath $prefix -Recurse -Force }
+$stamp = Join-Path $prefix '.spool-shader-inputs'
+$identity = (@(
+    $PSCommandPath,
+    (Join-Path $PSScriptRoot 'common.ps1'),
+    (Join-Path $PSScriptRoot 'extract-archive.py'),
+    (Join-Path $root 'tools\manifests\toolchain.json'),
+    (Get-Command clang.exe -ErrorAction Stop).Source
+) | ForEach-Object { (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash }) -join "`n"
+$current = (Test-Path -LiteralPath $stamp) -and
+    ((Get-Content -LiteralPath $stamp -Raw) -eq $identity)
+if (($Clean -or -not $current) -and (Test-Path $prefix)) {
+    Remove-Item -LiteralPath $prefix -Recurse -Force
+}
 
 function Get-Pinned {
     param([string] $Name, [object] $Source)
 
-    $archive = Join-Path $deps "$Name-$($pin.version).tar.gz"
-    $extracted = Join-Path $deps "$Name-$($pin.version)"
+    $archive = Join-Path $deps "$Name-$($Source.sha256).tar.gz"
+    $extracted = Join-Path $deps "$Name-$($Source.sha256)"
     if (-not (Test-Path $archive)) { Invoke-WebRequest $Source.url -OutFile $archive }
     if ((Get-FileHash $archive -Algorithm SHA256).Hash -ine $Source.sha256) {
         throw "$Name source checksum mismatch: $archive"
@@ -33,8 +45,7 @@ function Get-Pinned {
     if (-not (Test-Path $extracted)) {
         New-Item -ItemType Directory -Force $extracted | Out-Null
         # One directory deep in the tarball, named for the tag.
-        & "$env:SystemRoot\System32\tar.exe" -xf $archive -C $extracted --strip-components=1
-        if ($LASTEXITCODE -ne 0) { throw "Extracting $Name failed." }
+        Expand-WindowsSourceArchive -Archive $archive -Destination $extracted -StripComponents 1
     }
     return $extracted
 }
@@ -116,4 +127,5 @@ if (-not (Test-Path $vulkanMarker)) {
 # detects its compiler from scratch, so hand it back the one it expects --
 # the same reason build-ffmpeg.ps1 ends this way.
 Initialize-WindowsMpvBuildEnvironment
+[IO.File]::WriteAllText($stamp, $identity, [Text.UTF8Encoding]::new($false))
 Write-Host "shader tools: $prefix"

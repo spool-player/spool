@@ -9,7 +9,8 @@
 # which is the only place any toolchain version is named.
 param(
     [string] $SourceDirectory,
-    [switch] $Force
+    [switch] $Force,
+    [string[]] $CMakeArguments = @()
 )
 
 . (Join-Path $PSScriptRoot 'common.ps1')
@@ -20,7 +21,7 @@ $qcoroRoot = if ($env:JELLYFIN_QCORO_ROOT) { $env:JELLYFIN_QCORO_ROOT } else { G
 
 if ((Test-Path -LiteralPath (Join-Path $qcoroRoot 'include')) -and -not $Force) {
     Write-Host "QCoro $($manifest.version) is already installed at $qcoroRoot"
-    exit 0
+    return
 }
 
 if (-not (Test-Path -LiteralPath $qtRoot)) {
@@ -61,7 +62,7 @@ cmake -S $scratch -B $build -G Ninja `
     -DQCORO_WITH_QML=OFF `
     -DQCORO_WITH_QTQUICK=OFF `
     -DQCORO_WITH_QTTEST=OFF `
-    -DQCORO_WITH_QTWEBSOCKETS=OFF
+    -DQCORO_WITH_QTWEBSOCKETS=OFF @CMakeArguments
 if ($LASTEXITCODE -ne 0) { throw 'QCoro configuration failed.' }
 cmake --build $build
 if ($LASTEXITCODE -ne 0) { throw 'QCoro build failed.' }
