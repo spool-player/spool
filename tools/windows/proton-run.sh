@@ -39,7 +39,10 @@ if [[ ! -r /dev/ntsync || ! -w /dev/ntsync ]]; then
 fi
 mkdir -p "$state/logs"
 export DXVK_LOG_PATH="$state/logs"
-export DXVK_LOG_LEVEL=${DXVK_LOG_LEVEL:-warn}
+# Keep DXVK at info: it states the swapchain format, colour space and
+# present mode on every recreate, which is the only record of what the
+# HDR path actually negotiated. It is a few kilobytes a run.
+export DXVK_LOG_LEVEL=${DXVK_LOG_LEVEL:-info}
 if [[ -d "$state/playback-profile" ]]; then
     profile="Z:${state//\//\\}\\playback-profile"
     export JELLYFIN_CREDENTIAL_STORE_DIR="$profile\\credentials"
