@@ -423,7 +423,9 @@
       nativeLinuxPackages = pkgs:
         (builtins.filter (package: package != pkgs.appimage-run)
           (sourceLinuxPackages pkgs))
-        ++ [ pkgs.elfutils pkgs.vulkan-loader ];
+        # zstd compresses the portable Linux tarball; see
+        # tools/package-linux-bundle.sh.
+        ++ [ pkgs.elfutils pkgs.vulkan-loader pkgs.zstd ];
 
 
       qmlToolWrappers = pkgs: qt:

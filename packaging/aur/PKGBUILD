@@ -1,0 +1,61 @@
+# Maintainer: Sacha Korban <sachakorban@gmail.com>
+
+pkgname=spool-bin
+pkgver=0.7.13
+pkgrel=1
+pkgdesc='Jellyfin client for desktop and TV, built on Qt Quick and mpv'
+arch=('x86_64')
+url='https://github.com/sachk/spool'
+license=('MPL-2.0')
+# Qt, mpv and FFmpeg are bundled. These are the libraries upstream packaging
+# deliberately leaves to the host, because a bundled copy of the graphics stack
+# is the one thing that reliably breaks: libGLESv2 comes from libglvnd, and
+# libgbm and libglapi from mesa.
+depends=('bash' 'glibc' 'libglvnd' 'mesa')
+provides=("spool=${pkgver}")
+conflicts=('spool')
+# Already stripped, and patchelf has set the RPATHs the bundle needs.
+options=('!strip' '!debug' '!lto')
+_bundle="Spool-for-Jellyfin-${pkgver}-linux-x86_64"
+source=("https://github.com/sachk/spool/releases/download/v${pkgver}/${_bundle}.tar.zst")
+# Written by tools/update-aur-checksums.sh from SHA256SUMS.txt once the release
+# above is published; SKIP until then.
+sha256sums=('SKIP')
+
+package() {
+    install -dm755 "$pkgdir/opt/spool"
+    cp -a "$_bundle/." "$pkgdir/opt/spool/"
+    # Top-level icon and desktop entry are symlinks the AppImage runtime reads.
+    # The real files are installed below, where a desktop actually looks.
+    rm -f "$pkgdir/opt/spool/com.sachk.spool.png" \
+        "$pkgdir/opt/spool/com.sachk.spool.desktop"
+
+    # Not a symlink: AppRun resolves its own directory to find the bundle, so it
+    # has to be invoked by its real path. The flag tells it that this copy is
+    # installed rather than mounted, which is what keeps it on native Wayland.
+    install -Dm755 /dev/stdin "$pkgdir/usr/bin/spool" <<'LAUNCHER'
+#!/usr/bin/env bash
+export SPOOL_PORTABLE_BUNDLE=1
+exec /opt/spool/AppRun "$@"
+LAUNCHER
+
+    sed 's|^Exec=.*|Exec=spool|' \
+        "$_bundle/usr/share/applications/com.sachk.spool.desktop" \
+        | install -Dm644 /dev/stdin "$pkgdir/usr/share/applications/com.sachk.spool.desktop"
+    install -Dm644 "$_bundle/usr/share/metainfo/com.sachk.spool.appdata.xml" \
+        "$pkgdir/usr/share/metainfo/com.sachk.spool.appdata.xml"
+
+    install -Dm644 "$_bundle/usr/share/icons/hicolor/scalable/apps/com.sachk.spool.svg" \
+        "$pkgdir/usr/share/icons/hicolor/scalable/apps/com.sachk.spool.svg"
+    local size
+    for size in 16 22 24 32 48 64 128 256 512; do
+        install -Dm644 \
+            "$_bundle/usr/share/icons/hicolor/${size}x${size}/apps/com.sachk.spool.png" \
+            "$pkgdir/usr/share/icons/hicolor/${size}x${size}/apps/com.sachk.spool.png"
+    done
+
+    install -Dm644 "$_bundle/usr/share/jellyfin-native/notices/LICENSE" \
+        "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    install -Dm644 "$_bundle/usr/share/jellyfin-native/notices/OPEN_SOURCE_NOTICES.txt" \
+        "$pkgdir/usr/share/licenses/$pkgname/OPEN_SOURCE_NOTICES.txt"
+}

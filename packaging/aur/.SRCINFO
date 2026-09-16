@@ -1,0 +1,20 @@
+pkgbase = spool-bin
+	pkgdesc = Jellyfin client for desktop and TV, built on Qt Quick and mpv
+	pkgver = 0.7.13
+	pkgrel = 1
+	url = https://github.com/sachk/spool
+	arch = x86_64
+	license = MPL-2.0
+	depends = bash
+	depends = glibc
+	depends = libglvnd
+	depends = mesa
+	provides = spool=0.7.13
+	conflicts = spool
+	options = !strip
+	options = !debug
+	options = !lto
+	source = https://github.com/sachk/spool/releases/download/v0.7.13/Spool-for-Jellyfin-0.7.13-linux-x86_64.tar.zst
+	sha256sums = SKIP
+
+pkgname = spool-bin

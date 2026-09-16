@@ -111,7 +111,9 @@ jobs:
           # files people actually install. Build the table from what is really
           # on disk so a renamed or dropped package leaves no dead link. Every
           # sidecar ends in .json, so matching each package's own suffix keeps
-          # them out without naming them.
+          # them out without naming them. The Arch package ships as an asset
+          # with no row of its own: docs/install/arch.md is where somebody
+          # arrives at it from.
           rows=()
           add_row() {
             local label="$1" pattern="$2" name
@@ -125,6 +127,7 @@ jobs:
           add_row 'Windows — installer' '*-Windows-x64-Setup.exe'
           add_row 'Windows — portable' '*-Windows-x64-Portable.exe'
           add_row 'Linux — AppImage' '*-x86_64.AppImage'
+          add_row 'Linux — portable tarball' '*-linux-x86_64.tar.zst'
           add_row 'LG webOS TV' '*_arm.ipk'
           # One package serves phones and televisions, so the only remaining
           # choice is architecture -- and the universal APK exists so that
@@ -146,13 +149,8 @@ jobs:
               printf '%s\n' "${rows[@]}"
               echo
               echo "Checksums: [\`SHA256SUMS.txt\`]($base/SHA256SUMS.txt)."
-              echo "The \`.spdx.json\`, \`.cdx.json\` and \`.grype.json\` assets are per-package SBOMs and vulnerability scans — nothing you need in order to install."
               echo
             fi
-            echo '## Alpha installation trust'
-            echo
-            echo "This is prerelease software. Verify \`SHA256SUMS.txt\` and the GitHub artifact attestations before use."
-            echo 'The Windows installer and portable executable are **not Authenticode signed**.'
             if [[ "$MACOS_SIGNED" != true ]]; then
               echo 'The macOS DMG is **not Developer ID signed or notarized**.'
             fi
@@ -238,6 +236,57 @@ jobs:
           name: spool-update-pages
           path: update-pages
           retention-days: 1
+
+  update-aur-recipe:
+    name: Record the release checksum in the AUR recipe
+    needs: publish
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      # master, not the tag: the recipe an AUR user builds from is the one on
+      # the branch, and the checksum cannot exist until the assets are up.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
+        with:
+          ref: master
+      - name: Record the published tarball's checksum
+        env:
+          TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          # master can already be on the next version by the time a tag
+          # finishes. A checksum for a release the recipe no longer names
+          # would be worse than the one it has.
+          if ! grep -Fqx "pkgver=$version" packaging/aur/PKGBUILD; then
+            echo "::notice::packaging/aur is past $version on master; left alone"
+            exit 0
+          fi
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern SHA256SUMS.txt --dir "$RUNNER_TEMP"
+          bundle="Spool-for-Jellyfin-$version-linux-x86_64.tar.zst"
+          checksum="$(awk -v want="$bundle" \
+            '{ sub(/^\*/, "", $2); if ($2 == want) print $1 }' \
+            "$RUNNER_TEMP/SHA256SUMS.txt")"
+          [[ "$checksum" =~ ^[0-9a-f]{64}$ ]] || {
+            printf 'no checksum for %s in the release\n' "$bundle" >&2
+            exit 1
+          }
+          bash tools/update-aur-checksums.sh "$checksum"
+      - name: Commit the recipe
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- packaging/aur; then
+            echo "::notice::the recipe already carries this checksum"
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m "chore(aur): record the $TAG tarball checksum" -- packaging/aur
+          git push origin HEAD:master
 
   deploy-update-metadata:
     name: Publish platform update metadata
