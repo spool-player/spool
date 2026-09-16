@@ -17,13 +17,22 @@ unset QT_PLUGIN_PATH QT_QPA_PLATFORM_PLUGIN_PATH QML_IMPORT_PATH QML2_IMPORT_PAT
 unset QT_QPA_PLATFORM QT_QUICK_BACKEND QSG_RHI_BACKEND LD_LIBRARY_PATH
 unset PROTON_USE_WINED3D PROTON_NO_D3D11 PROTON_NO_D3D10
 export WINEPREFIX="$state/prefix" PROTONPATH="$proton" GAMEID=umu-default
-export ENABLE_HDR_WSI=1 PROTON_ENABLE_HDR=1
-# DXVK reports the scRGB colour space to D3D11 only when HDR is enabled here.
-# Without it CheckColorSpaceSupport still succeeds through the HDR WSI layer,
-# but the Vulkan swapchain is created VK_COLOR_SPACE_PASS_THROUGH_EXT, which
-# the layer reports as untagged and the compositor reads as sRGB -- linear FP16
-# pixels shown through an sRGB transfer, which is the washed-out result.
-export DXVK_HDR=${DXVK_HDR:-1}
+# The HDR path is the one under suspicion for both the colour cast and the
+# present stalls, so it is switchable as a unit: SPOOL_PROTON_HDR=0 takes the
+# layer, Proton's HDR and DXVK's HDR out together, leaving an SDR swapchain the
+# compositor can scan out directly. That is the A/B that says whether a slow
+# frame is the HDR path or something else.
+if [[ ${SPOOL_PROTON_HDR:-1} == 0 ]]; then
+    unset ENABLE_HDR_WSI PROTON_ENABLE_HDR DXVK_HDR
+else
+    export ENABLE_HDR_WSI=1 PROTON_ENABLE_HDR=1
+    # DXVK negotiates EXTENDED_SRGB_LINEAR inside Wine and its presenter says
+    # so, but the layer below still creates the surface PASS_THROUGH and calls
+    # it untagged: the colour space is not surviving winevulkan, which also
+    # reports extSwapchainColorSpace 0. Setting this does not fix that on its
+    # own -- it is kept so the Wine side asks for the right thing.
+    export DXVK_HDR=${DXVK_HDR:-1}
+fi
 # Proton's native Wayland backend is the newer WSI path and the one that
 # changed under us. Keep it the default, but leave it switchable: exporting
 # SPOOL_PROTON_WAYLAND=0 falls back to Xwayland without editing this file.
