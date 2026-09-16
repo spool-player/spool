@@ -22,4 +22,8 @@ grep -Fq 'VIProductVersion "${VERSION}.0"' "$root/tools/windows/portable.nsi"
 grep -Fq 'read_project_version "$APP_ROOT"' "$root/tools/package-appimage.sh"
 grep -Fq 'read_project_version "$APP_ROOT"' "$root/tools/package-macos-dmg.sh"
 grep -Fq "(Join-Path \$root 'VERSION')" "$root/tools/windows/package.ps1"
-printf 'validated release version %s across native, webOS, macOS, AppImage, and Windows metadata\n' "$expected"
+# The AUR recipe names the release it downloads rather than reading VERSION,
+# so it is the one file a bump can silently leave behind.
+grep -Fqx "pkgver=$expected" "$root/packaging/aur/PKGBUILD"
+grep -Fqx "	pkgver = $expected" "$root/packaging/aur/.SRCINFO"
+printf 'validated release version %s across native, webOS, macOS, AppImage, Arch, and Windows metadata\n' "$expected"

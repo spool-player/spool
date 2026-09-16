@@ -3,4 +3,5 @@ set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
 "$ROOT/tools/check-submodule-flake-sync.sh" --staged
+"$ROOT/tools/check-version-sync.sh" --staged
 exec "$ROOT/tools/format-staged.sh"

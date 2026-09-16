@@ -242,6 +242,13 @@
               !final.lib.hasPrefix "-DQt6ShaderToolsTools_DIR=" flag) old.cmakeFlags
               ++ [ "-DQt6ShaderToolsTools_DIR=${qtFinal.qtshadertools}/lib/cmake/Qt6ShaderToolsTools" ];
           });
+          qtdeclarative = qtPrev.qtdeclarative.overrideAttrs (old: {
+            # The channel explicitly names its untailored host qsb. Use this
+            # scope's tool so building QML does not build a second native Qt.
+            cmakeFlags = builtins.filter (flag:
+              !final.lib.hasPrefix "-DQt6ShaderToolsTools_DIR=" flag) old.cmakeFlags
+              ++ [ "-DQt6ShaderToolsTools_DIR=${qtFinal.qtshadertools}/lib/cmake/Qt6ShaderToolsTools" ];
+          });
         })) // {
           # pythonPackages.qt6 expects this secondary package scope.
           override = prev.qt6.override;
@@ -441,7 +448,9 @@
       nativeLinuxPackages = pkgs:
         (builtins.filter (package: package != pkgs.appimage-run)
           (sourceLinuxPackages pkgs))
-        ++ [ pkgs.elfutils pkgs.vulkan-loader ];
+        # zstd compresses the portable Linux tarball; see
+        # tools/package-linux-bundle.sh.
+        ++ [ pkgs.elfutils pkgs.vulkan-loader pkgs.zstd ];
 
 
       qmlToolWrappers = pkgs: qt:

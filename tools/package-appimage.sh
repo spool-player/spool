@@ -409,7 +409,10 @@ export QML2_IMPORT_PATH="$HERE/usr/qml"
 export QML_IMPORT_PATH="$HERE/usr/qml"
 # NixOS appimage-run's FHS container cannot initialize the host Wayland EGL
 # vendor stack reliably. XWayland uses GLX and avoids that mixed-driver path.
-if [[ "$HERE" != /tmp/.mount_* && -n "${DISPLAY:-}" ]]; then
+# An installed bundle (/opt/spool, from the portable tarball or the Arch
+# package) is not that container, so it says so and keeps native Wayland.
+if [[ "${SPOOL_PORTABLE_BUNDLE:-0}" != 1 \
+  && "$HERE" != /tmp/.mount_* && -n "${DISPLAY:-}" ]]; then
   export QT_QPA_PLATFORM=xcb
 else
   export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland;xcb}"

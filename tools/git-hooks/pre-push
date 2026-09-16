@@ -2,4 +2,22 @@
 set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
-exec "$ROOT/tools/check-submodule-remote-refs.sh" --pre-push "$@"
+
+# Git feeds the refs being pushed on stdin, and it can only be read once, so
+# take it here and hand the same text to both checks.
+refs="$(cat)"
+
+# A release tag is the thing that publishes a version: once it is pushed the
+# workflow builds from it and the AUR recipe points at its assets. Check the
+# files as they are at the commit being tagged, which is not always HEAD.
+# local_ref and remote_sha are read only to consume their fields.
+# shellcheck disable=SC2034
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [[ -n "${remote_ref:-}" ]] || continue
+  [[ "$remote_ref" == refs/tags/* ]] || continue
+  # Deleting a tag pushes the zero sha and has no tree to check.
+  [[ -n "${local_sha:-}" && "$local_sha" != "0000000000000000000000000000000000000000" ]] || continue
+  "$ROOT/tools/check-version-sync.sh" --rev "$local_sha" --tag "$remote_ref"
+done <<<"$refs"
+
+printf '%s\n' "$refs" | exec "$ROOT/tools/check-submodule-remote-refs.sh" --pre-push "$@"
