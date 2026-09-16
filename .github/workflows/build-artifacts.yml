@@ -535,6 +535,38 @@ jobs:
       - name: Lint compiled QML
         run: nix develop .#native --no-write-lock-file -c cmake --build build/macos/app --target jellyfin-native_qmllint_strict
 
+      - name: Load bundled Vulkan runtime
+        run: |
+          python3 - <<'PY'
+          import ctypes
+          import os
+          from pathlib import Path
+
+          contents = Path("build/macos/install/Spool.app/Contents").resolve()
+          os.environ["VK_DRIVER_FILES"] = str(contents / "Resources/vulkan/icd.d/MoltenVK_icd.json")
+          # Exercise dyld, not merely the symbolic dependency audit. Neither
+          # load may fall back to a Nix/Homebrew library outside the bundle.
+          ctypes.CDLL(str(contents / "Frameworks/libMoltenVK.dylib"))
+          loader = ctypes.CDLL(str(contents / "Frameworks/libvulkan.1.dylib"))
+          class Extension(ctypes.Structure):
+              _fields_ = [("name", ctypes.c_char * 256), ("version", ctypes.c_uint32)]
+          enumerate_extensions = loader.vkEnumerateInstanceExtensionProperties
+          enumerate_extensions.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(Extension)]
+          enumerate_extensions.restype = ctypes.c_int32
+          count = ctypes.c_uint32()
+          result = enumerate_extensions(None, ctypes.byref(count), None)
+          if result != 0:
+              raise SystemExit(f"Vulkan extension enumeration failed: {result}")
+          extensions = (Extension * count.value)()
+          result = enumerate_extensions(None, ctypes.byref(count), extensions)
+          if result != 0:
+              raise SystemExit(f"Vulkan extension enumeration failed: {result}")
+          names = {entry.name.decode() for entry in extensions}
+          if "VK_EXT_metal_surface" not in names:
+              raise SystemExit(f"MoltenVK Metal surface extension missing: {sorted(names)}")
+          print("Bundled Vulkan loader and MoltenVK load successfully; Metal surface extension available")
+          PY
+
       - name: Launch-test macOS app UI
         env:
           JELLYFIN_LAUNCH_TEST_QPA_PLATFORM: cocoa
