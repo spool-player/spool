@@ -8,6 +8,9 @@ ABI="${ANDROID_ABI:-x86_64}"
 QT_VERSION="${QT_VERSION:-$(toolchain_field "$ROOT" qt.version)}"
 DEPS_PREFIX="${ANDROID_DEPS_PREFIX:-$ROOT/build/android/deps/$ABI}"
 JOBS="${ANDROID_BUILD_JOBS:-$(nproc)}"
+# RCC embeds source mtimes, including generated files and cached Qt resources.
+# Give every ABI the same timestamp without weakening the universal input check.
+export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "$ROOT" log -1 --format=%ct)}"
 # The Nix setup hooks export every host build input through these variables, and
 # Qt's Android toolchain folds QT_ADDITIONAL_PACKAGES_PREFIX_PATH into
 # CMAKE_FIND_ROOT_PATH, which androiddeployqt then scans for libraries to bundle.
@@ -104,6 +107,20 @@ build_app() {
     -DANDROID_PLATFORM=android-28 \
     -DANDROID_DEPS_PREFIX="$DEPS_PREFIX" \
     -DQT_ANDROID_SIGN_APK=ON
+  # androiddeployqt scans SOURCE_DIR recursively and does not forward
+  # QT_QML_IMPORT_SCANNER_EXTRA_ARGS. A cache miss leaves Qt's sources under
+  # build/, so scanning the repository deploys imports from Qt's own tests.
+  # Restrict its scan to application QML; generated resources remain in qrcFiles.
+  python3 - "$build/android-jellyfin-native-deployment-settings.json" "$ROOT/qml" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+settings = json.loads(path.read_text())
+settings["qml-root-path"] = [sys.argv[2]]
+path.write_text(json.dumps(settings, indent=2) + "\n")
+PY
   cmake --build "$build" --target jellyfin-native_make_apk --parallel "$JOBS"
 
   local apk="$build/android-build/jellyfin-native.apk"
