@@ -76,7 +76,7 @@ if [[ "$DEPLOY_APP" == "1" ]]; then
     moltenvk_driver="$(dirname "$moltenvk_icd")/$moltenvk_driver"
   fi
   for library in "$vulkan_loader" "$moltenvk_driver"; do
-    if [[ ! -f "$library" ]] || [[ "$(file -b "$library")" != *"Mach-O"*"dynamically linked shared library"* ]]; then
+    if [[ ! -f "$library" ]] || [[ "$(file -bL "$library")" != *"Mach-O"*"dynamically linked shared library"* ]]; then
       echo "error: required Vulkan runtime is not a Mach-O dylib: $library" >&2
       exit 1
     fi
