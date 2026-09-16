@@ -544,15 +544,29 @@ cmake_build_app() {
   mkdir -p "$build"
 
   # Reconfiguring costs a couple of seconds on every launch and only matters
-  # when the arguments move. Edits to CMakeLists.txt still land: the generated
-  # ninja file reruns cmake itself.
+  # when the arguments move. The project's own CMakeLists.txt is folded in as
+  # well: the generated ninja file does rerun cmake when it changes, but only
+  # a reconfigure here tells us that the build tree's moc output may have been
+  # generated under different settings, which is what the autogen reset below
+  # exists for.
   local configure_fingerprint configure_marker cached_configure=""
   configure_marker="$build/.jellyfin-configure-args"
-  configure_fingerprint="$(printf '%s\n' "${cmake_args[*]}" | sha256sum)"
+  configure_fingerprint="$({
+    printf '%s\n' "${cmake_args[*]}"
+    sha256sum <"$src/CMakeLists.txt"
+  } | sha256sum)"
   configure_fingerprint="${configure_fingerprint%% *}"
   [[ -f "$configure_marker" ]] && read -r cached_configure <"$configure_marker"
   if [[ ! -f "$build/build.ninja" || "$cached_configure" != "$configure_fingerprint" ]]; then
     cmake -S "$src" -B "$build" -GNinja "${cmake_args[@]}"
+    # Compile definitions and include paths reach moc through autogen's own
+    # settings file, which is not an input the generator tracks: a build tree
+    # carried over from an earlier configure (a restored CI cache, a tree that
+    # changed branches) can recompile every source against new flags while
+    # keeping moc output generated under the old ones. Dropping the timestamps
+    # makes the next build regenerate it. Costs seconds, and only when the
+    # configuration actually moved.
+    rm -f "$build"/*_autogen/timestamp
     printf '%s\n' "$configure_fingerprint" >"$configure_marker"
   fi
   local jobs

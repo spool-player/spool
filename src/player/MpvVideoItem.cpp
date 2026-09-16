@@ -13,7 +13,7 @@
 #include <QTimer>
 #include <QtDebug>
 
-#if defined(JELLYFIN_MPV_ITEM_RHI)
+#if JELLYFIN_MPV_ITEM_RHI
 #include <QSGRendererInterface>
 #include <rhi/qrhi.h>
 #include <rhi/qrhi_platform.h>
@@ -61,7 +61,7 @@ namespace {
         return reinterpret_cast<void *>(gl->getProcAddress(QByteArray(name)));
     }
 
-#if !defined(JELLYFIN_MPV_ITEM_RHI)
+#if !JELLYFIN_MPV_ITEM_RHI
 
     class MpvFboRenderer final : public QQuickFramebufferObject::Renderer {
     public:
@@ -889,7 +889,7 @@ MpvVideoItem *MpvVideoItem::s_instance = nullptr;
 MpvVideoItem::MpvVideoItem(QQuickItem *parent)
     : JELLYFIN_MPV_ITEM_BASE(parent)
 {
-#if defined(JELLYFIN_MPV_ITEM_RHI)
+#if JELLYFIN_MPV_ITEM_RHI
     // A floating-point target is what an HDR swapchain can be handed, and it
     // costs little when the swapchain is SDR: the extra precision is discarded
     // once at the end rather than at every step before it.
@@ -980,7 +980,7 @@ bool MpvVideoItem::releaseMpvHandle(int timeoutMs)
     return completed->load();
 }
 
-#if defined(JELLYFIN_MPV_ITEM_RHI)
+#if JELLYFIN_MPV_ITEM_RHI
 QQuickRhiItemRenderer *MpvVideoItem::createRenderer()
 {
     return new MpvRhiRenderer(this);

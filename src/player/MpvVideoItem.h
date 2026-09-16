@@ -7,10 +7,17 @@
 #include <atomic>
 #include <memory>
 
-// JELLYFIN_MPV_ITEM_RHI comes from CMake, which knows the platform before any
-// Qt header does -- and so does moc, which would otherwise disagree with the
-// compiler about which class this derives from.
-#if defined(JELLYFIN_MPV_ITEM_RHI)
+// JELLYFIN_MPV_ITEM_RHI comes from a header CMake generates, which knows the
+// platform before any Qt header does -- and so does moc, which would otherwise
+// disagree with the compiler about which class this derives from. A generated
+// header rather than a compile definition so that changing the answer is a
+// file change both of them depend on; see the comment in CMakeLists.txt.
+#include "MpvVideoItemBase.h"
+#if !defined(JELLYFIN_MPV_ITEM_RHI)
+#error "MpvVideoItemBase.h was not found on the include path"
+#endif
+
+#if JELLYFIN_MPV_ITEM_RHI
 #include <QQuickRhiItem>
 #define JELLYFIN_MPV_ITEM_BASE QQuickRhiItem
 #else
@@ -55,7 +62,7 @@ public:
 
     static MpvVideoItem *instance();
 
-#if defined(JELLYFIN_MPV_ITEM_RHI)
+#if JELLYFIN_MPV_ITEM_RHI
     QQuickRhiItemRenderer *createRenderer() override;
 #else
     Renderer *createRenderer() const override;
