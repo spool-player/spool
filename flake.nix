@@ -523,7 +523,10 @@
           export GNU_ICONV_DYLIB="${pkgs.libiconvReal}/lib/libiconv.2.dylib"
           export SPOOL_MOLTENVK_ICD="${pkgs.moltenvk}/share/vulkan/icd.d/MoltenVK_icd.json"
           export SPOOL_VULKAN_LOADER="${pkgs.vulkan-loader}/lib/libvulkan.1.dylib"
-          export VK_DRIVER_FILES="''${VK_DRIVER_FILES:-$SPOOL_MOLTENVK_ICD}"
+          export QT_VULKAN_LIB="''${QT_VULKAN_LIB-$SPOOL_VULKAN_LOADER}"
+          if [ -z "''${VK_DRIVER_FILES+x}''${VK_ICD_FILENAMES+x}''${VK_ADD_DRIVER_FILES+x}" ]; then
+            export VK_DRIVER_FILES="$SPOOL_MOLTENVK_ICD"
+          fi
         ''}
       '';
 
@@ -988,6 +991,10 @@
               export DYLD_LIBRARY_PATH="$CACHED_OUT/lib:${cachedRuntimeLibPath}''${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
               export QT_PLUGIN_PATH="${cachedQtPluginPath}"
               export QML2_IMPORT_PATH="${cachedQmlImportPath}"
+              export QT_VULKAN_LIB="''${QT_VULKAN_LIB-${cachedPkgs.vulkan-loader}/lib/libvulkan.1.dylib}"
+              if [ -z "''${VK_DRIVER_FILES+x}''${VK_ICD_FILENAMES+x}''${VK_ADD_DRIVER_FILES+x}" ]; then
+                export VK_DRIVER_FILES="${cachedPkgs.moltenvk}/share/vulkan/icd.d/MoltenVK_icd.json"
+              fi
               export QML_IMPORT_PATH="$QML2_IMPORT_PATH"
               exec "$CACHED_OUT/Applications/Spool.app/Contents/MacOS/Spool" "$@"
             '' else ''
