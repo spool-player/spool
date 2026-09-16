@@ -17,11 +17,11 @@ unset QT_PLUGIN_PATH QT_QPA_PLATFORM_PLUGIN_PATH QML_IMPORT_PATH QML2_IMPORT_PAT
 unset QT_QPA_PLATFORM QT_QUICK_BACKEND QSG_RHI_BACKEND LD_LIBRARY_PATH
 unset PROTON_USE_WINED3D PROTON_NO_D3D11 PROTON_NO_D3D10
 export WINEPREFIX="$state/prefix" PROTONPATH="$proton" GAMEID=umu-default
-# The HDR path is the one under suspicion for both the colour cast and the
-# present stalls, so it is switchable as a unit: SPOOL_PROTON_HDR=0 takes the
-# layer, Proton's HDR and DXVK's HDR out together, leaving an SDR swapchain the
-# compositor can scan out directly. That is the A/B that says whether a slow
-# frame is the HDR path or something else.
+# SPOOL_PROTON_HDR=0 takes the layer, Proton's HDR and DXVK's HDR out
+# together. An SDR run gets an R8G8B8A8_UNORM SRGB_NONLINEAR swapchain and
+# correct colour, which is what says the purple cast belongs to this path. It
+# does not recover the frame rate: SDR measured slower than HDR, with the GPU
+# idle either way, so whatever blocks presentation is somewhere else.
 if [[ ${SPOOL_PROTON_HDR:-1} == 0 ]]; then
     unset ENABLE_HDR_WSI PROTON_ENABLE_HDR DXVK_HDR
 else
