@@ -11,15 +11,20 @@ TestCase {
     height: 480
 
     property int underlayClicks: 0
+    property int underlayPresses: 0
     property int rowActivations: 0
     property int buttonClicks: 0
     property int remoteActivations: 0
+    property int plainShieldButtonClicks: 0
+    property int backdropClicks: 0
 
     Item {
         anchors.fill: parent
 
         TapHandler {
             onTapped: testCase.underlayClicks++
+            onPressedChanged: if (pressed)
+                                  testCase.underlayPresses++
         }
     }
 
@@ -89,11 +94,51 @@ TestCase {
         }
     }
 
+    // OverlayDialog / RemoteControlMenu / SyncPlayMenu shape: a dismiss backdrop
+    // MouseArea, then a plain surface carrying PopupShield directly.
+    Item {
+        id: dialog
+        x: 20
+        y: 340
+        width: 400
+        height: 120
+
+        MouseArea {
+            anchors.fill: parent
+            onClicked: testCase.backdropClicks++
+        }
+
+        Item {
+            id: plainSurface
+            x: 100
+            y: 10
+            width: 200
+            height: 100
+
+            Primitives.PopupShield {}
+
+            Item {
+                id: plainShieldButton
+                x: 10
+                y: 10
+                width: 120
+                height: 40
+
+                TapHandler {
+                    onTapped: testCase.plainShieldButtonClicks++
+                }
+            }
+        }
+    }
+
     function init() {
         underlayClicks = 0
+        underlayPresses = 0
         rowActivations = 0
         buttonClicks = 0
         remoteActivations = 0
+        plainShieldButtonClicks = 0
+        backdropClicks = 0
         menuFlickable.cancelFlick()
         menuFlickable.contentY = 0
     }
@@ -190,5 +235,33 @@ TestCase {
         verify(!panel.contains(panel.mapFromItem(testCase, 20, 20)))
         mouseClick(testCase, 20, 20, Qt.LeftButton)
         compare(underlayClicks, 1)
+        compare(underlayPresses, 1)
+    }
+
+    function test_plainShieldButtonDoesNotReachUnderlayOrBackdrop() {
+        const point = plainShieldButton.mapToItem(testCase, plainShieldButton.width / 2, plainShieldButton.height / 2)
+        mouseClick(testCase, point.x, point.y, Qt.LeftButton)
+        compare(plainShieldButtonClicks, 1)
+        compare(backdropClicks, 0)
+        compare(underlayClicks, 0)
+        // Press-level too: a passive handler beneath must not even see pressed,
+        // since PlayerOverlayChrome acts on press, not tap.
+        compare(underlayPresses, 0)
+    }
+
+    function test_plainShieldEmptySpaceDoesNotReachUnderlayOrBackdrop() {
+        const point = plainSurface.mapToItem(testCase, plainSurface.width - 5, plainSurface.height - 5)
+        mouseClick(testCase, point.x, point.y, Qt.LeftButton)
+        compare(plainShieldButtonClicks, 0)
+        compare(backdropClicks, 0)
+        compare(underlayClicks, 0)
+    }
+
+    function test_plainShieldBackdropStillDismisses() {
+        const point = dialog.mapToItem(testCase, 20, dialog.height / 2)
+        verify(!plainSurface.contains(plainSurface.mapFromItem(testCase, point.x, point.y)))
+        mouseClick(testCase, point.x, point.y, Qt.LeftButton)
+        compare(backdropClicks, 1)
+        compare(plainShieldButtonClicks, 0)
     }
 }

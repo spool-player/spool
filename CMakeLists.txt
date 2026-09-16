@@ -483,6 +483,7 @@ qt_add_qml_module(jellyfin-native
         qml/primitives/NavGrid.qml
         qml/primitives/MaterialIcon.qml
         qml/primitives/PopupMenuPanel.qml
+        qml/primitives/PopupShield.qml
         qml/primitives/ProfileTile.qml
         qml/primitives/SectionHeader.qml
         qml/primitives/ServerCard.qml

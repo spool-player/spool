@@ -14,16 +14,9 @@ Surface {
     elevated: true
     clip: true
 
-    // Inert rows and panel padding belong to popup, not its dismiss backdrop.
-    // Block pointer handlers behind panel while keeping content handlers above
-    // this shield free to give drags to their Flickables.
-    MouseArea {
-        anchors.fill: parent
-
-        TapHandler {
-            gesturePolicy: TapHandler.ReleaseWithinBounds
-        }
-    }
+    // Inert rows and panel padding belong to the popup, not its dismiss
+    // backdrop. Row handlers remain free to give a drag to their Flickable.
+    PopupShield {}
 
     Item {
         id: body

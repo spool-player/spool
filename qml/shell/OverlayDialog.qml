@@ -35,9 +35,7 @@ FocusScope {
         elevated: true
         baseColor: root.panelColor
 
-        MouseArea {
-            anchors.fill: parent
-        }
+        PopupShield {}
 
         ColumnLayout {
             id: body
