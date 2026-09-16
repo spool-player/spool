@@ -132,7 +132,7 @@
       "macos-media-player=disabled",
       "videotoolbox-gl=disabled",
       "videotoolbox-pl=disabled",
-      "vulkan=disabled"
+      "vulkan=enabled"
     ],
     "webos": [
       "gpl=true",

@@ -33,6 +33,8 @@ Major bundled components
   QCoro                       MIT
   libass                      ISC
   libplacebo                  LGPL-2.1-or-later
+  Vulkan Loader               Apache-2.0
+  MoltenVK                    Apache-2.0
   libdovi                     MIT
   curl                        curl license
   FriBidi                     LGPL-2.1-or-later
@@ -48,6 +50,12 @@ Major bundled components
 The exact runtime set varies by platform and build configuration. Copyright
 remains with each project's authors and contributors. Project names are used
 only for attribution and do not imply endorsement.
+
+macOS packages include the Vulkan Loader and MoltenVK, which implements Vulkan
+over Apple's Metal API. Their source and license notices are available at:
+
+  https://github.com/KhronosGroup/Vulkan-Loader
+  https://github.com/KhronosGroup/MoltenVK
 
 MIT components
 

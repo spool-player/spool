@@ -1,0 +1,175 @@
+name: MoltenVK arm64 preview
+
+on:
+  push:
+    branches: [feature/desktop-embedded-hdr]
+    paths: [.github/workflows/moltenvk-preview.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: moltenvk-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos-dmg:
+    name: macOS DMG (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    # Public repositories receive unlimited standard GitHub-hosted runner
+    # minutes, so pushes, pull requests, and releases exercise macOS too.
+    env:
+      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+    strategy:
+      # Apple Silicon and Intel Macs each get a native build; one failing
+      # architecture should still let the other produce its DMG.
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-14
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
+        with:
+          submodules: recursive
+
+      - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035 # v34
+        with:
+          nix_conf: |
+            experimental-features = nix-command flakes
+            keep-env-derivations = true
+            keep-outputs = true
+            # Relocking fetches every input afresh, and nixpkgs tarballs are
+            # large enough that the default five-second connect timeout trips
+            # on a slow runner.
+            connect-timeout = 30
+            download-attempts = 5
+
+      - name: Resolve tailored Qt cache key
+        id: qt-cache-inputs
+        run: |
+          qt_derivation="$(nix eval --raw .#native-qt-cache.drvPath)"
+          echo "key=${qt_derivation##*/}" >>"$GITHUB_OUTPUT"
+
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.1
+        with:
+          primary-key: nix-native-${{ runner.os }}-${{ matrix.arch }}-${{ steps.qt-cache-inputs.outputs.key }}
+          restore-prefixes-first-match: nix-native-${{ runner.os }}-${{ matrix.arch }}-
+          gc-max-store-size-macos: 8G
+          # Cache hygiene: see the lint job above.
+          save: true
+          purge: true
+          purge-prefixes: nix-native-${{ runner.os }}-${{ matrix.arch }}-
+          purge-created: P7D
+          purge-primary-key: never
+      - uses: cachix/cachix-action@3ba601ff5bbb07c7220846facfa2cd81eeee15a1 # v16
+        if: ${{ env.CACHIX_AUTH_TOKEN != '' }}
+        with:
+          name: spool
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          skipPush: true
+      - name: Build and cache tailored Qt
+        run: |
+          nix build --accept-flake-config .#native-qt-cache \
+            --out-link "$RUNNER_TEMP/spool-native-qt" --print-build-logs
+          if [[ -n "$CACHIX_AUTH_TOKEN" ]]; then
+            cachix push spool "$(readlink "$RUNNER_TEMP/spool-native-qt")"
+          fi
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
+        with:
+          path: |
+            build/macos/mpv
+            build/macos/mpv-prefix
+            build/macos/app
+            ~/Library/Caches/ccache
+          key: macos-${{ matrix.arch }}-${{ hashFiles('flake.nix', 'flake.lock', 'mpv/meson.build', 'tools/manifests/mpv-native.json', 'tools/manifests/ffmpeg-capabilities.json', 'tools/manifests/toolchain.json', 'tools/ffmpeg-capabilities.py', 'tools/package-audit.py', 'tools/build-macos.sh', 'tools/package-macos-dmg.sh', 'tools/sign-macos.sh', 'tools/lib/build-common.sh', 'tools/lib/qt-deploy.sh', 'CMakeLists.txt') }}
+          restore-keys: |
+            macos-${{ matrix.arch }}-
+
+      # Older Nix releases reject the relative path input recorded by newer
+      # lock files when the root flake comes from a shallow Git checkout.
+      # Override only the evaluator input with the exact checked-out submodule
+      # revision; explicitly retain its shallow status rather than asking Nix
+      # to treat the CI checkout as a complete repository. The build scripts
+      # still compile the local mpv/ checkout.
+      - name: Resolve checked-out mpv input
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          revision="$(git -C mpv rev-parse HEAD)"
+          overrides=()
+          # `nix develop` builds bashInteractive from the flake's own `nixpkgs`
+          # input. On Intel that input evaluates to a release which dropped
+          # x86_64-darwin, and nix answers the failure by silently falling back
+          # to the system bash 3.2, which cannot parse the environment script
+          # it generates. Point the input at the same pin this system's shell
+          # already uses, read from the lock so the two cannot drift.
+          if [[ "$ARCH" == "x86_64" ]]; then
+            url="$(jq -r '.nodes["nixpkgs-x86-darwin"].locked
+              | "github:\(.owner)/\(.repo)/\(.rev)"' flake.lock)"
+            printf 'overriding nixpkgs with %s\n' "$url"
+            overrides=(--override-input nixpkgs "$url")
+          fi
+          mv flake.lock flake.lock.repository
+          # Every input is refetched here, so a single dropped connection
+          # would otherwise fail the build before it starts compiling.
+          for attempt in 1 2 3; do
+            if nix flake lock --override-input mpv-src "git+file:$PWD/mpv?rev=$revision&shallow=1" \
+              ${overrides[@]+"${overrides[@]}"}; then
+              exit 0
+            fi
+            printf 'flake lock attempt %d failed; retrying\n' "$attempt" >&2
+            sleep $((attempt * 20))
+          done
+          exit 1
+
+      - name: Build macOS app
+        env:
+          SPOOL_MACOS_CREDENTIAL_SERVICE: ''
+        run: nix develop .#native --no-write-lock-file -c bash tools/build-macos.sh
+
+      - name: Run native tests
+        run: |
+          nix develop .#native --no-write-lock-file -c ctest --test-dir build/macos/app \
+            --parallel "$(sysctl -n hw.ncpu)" --output-on-failure
+
+      - name: Lint compiled QML
+        run: nix develop .#native --no-write-lock-file -c cmake --build build/macos/app --target jellyfin-native_qmllint_strict
+
+      - name: Launch-test macOS app UI
+        env:
+          JELLYFIN_LAUNCH_TEST_QPA_PLATFORM: cocoa
+        run: nix develop .#native --no-write-lock-file -c bash tools/launch-native-app.sh build/macos/install/Spool.app
+
+      - name: Package DMG
+        run: nix develop .#native --no-write-lock-file -c bash tools/package-macos-dmg.sh
+      - name: Audit mounted DMG
+        run: |
+          set -euo pipefail
+          mountpoint="$RUNNER_TEMP/spool-dmg"
+          mkdir -p "$mountpoint"
+          hdiutil attach -readonly -nobrowse -mountpoint "$mountpoint" dist/*.dmg
+          trap 'bash tools/detach-dmg.sh "$mountpoint"' EXIT
+          app="$(find "$mountpoint" -maxdepth 1 -name '*.app' -print -quit)"
+          test -n "$app"
+          python3 tools/package-audit.py inventory "$app" --output "$RUNNER_TEMP/macos-dmg.inventory.tsv"
+          python3 tools/package-audit.py macho "$app" \
+            --root Contents/Frameworks/libvulkan.1.dylib \
+            --root Contents/Frameworks/libMoltenVK.dylib
+          test -z "$(find "$app" -name '*.qmltypes' -print -quit)"
+          JELLYFIN_LAUNCH_TEST_QPA_PLATFORM=cocoa \
+            bash tools/launch-native-app.sh "$app"
+          bash tools/detach-dmg.sh "$mountpoint"
+          trap - EXIT
+      - name: Package macOS analysis input
+        run: |
+          dmg="$(printf '%s\n' dist/*.dmg)"
+          tar -czf "${dmg}.app.tar.gz" -C build/macos/install Spool.app
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: spool-for-jellyfin-macos-dmg-${{ matrix.arch }}
+          path: |
+            dist/*.dmg
+            dist/*.dmg.app.tar.gz
+          retention-days: 7

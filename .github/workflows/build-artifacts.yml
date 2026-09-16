@@ -531,7 +531,9 @@ jobs:
           app="$(find "$mountpoint" -maxdepth 1 -name '*.app' -print -quit)"
           test -n "$app"
           python3 tools/package-audit.py inventory "$app" --output "$RUNNER_TEMP/macos-dmg.inventory.tsv"
-          python3 tools/package-audit.py macho "$app"
+          python3 tools/package-audit.py macho "$app" \
+            --root Contents/Frameworks/libvulkan.1.dylib \
+            --root Contents/Frameworks/libMoltenVK.dylib
           test -z "$(find "$app" -name '*.qmltypes' -print -quit)"
           if [[ '${{ inputs.enable_macos_signing }}' == true ]]; then
             codesign --verify --strict --deep --verbose=2 "$app"

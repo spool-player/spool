@@ -269,6 +269,11 @@ def audit_macho(args: argparse.Namespace) -> int:
         or info.kind == "executable"
         or relative(info.path, app).startswith(("Contents/PlugIns/", "Contents/Resources/qml/"))
     }
+    for root in args.root_binary:
+        path = (app / root).resolve()
+        if not path.is_relative_to(app) or path not in by_path:
+            raise AuditError(f"Mach-O root is not a bundled binary: {root}")
+        roots.add(path)
     reachable: set[Path] = set()
     pending = deque(sorted(roots))
     for info in files:
@@ -340,6 +345,7 @@ def parser() -> argparse.ArgumentParser:
     elf_parser.set_defaults(handler=audit_elf)
     macho_parser = commands.add_parser("macho")
     macho_parser.add_argument("app", type=Path)
+    macho_parser.add_argument("--root", dest="root_binary", action="append", default=[], metavar="RELATIVE")
     macho_parser.add_argument("--architecture", action="append", default=[])
     macho_parser.add_argument("--file-tool", default="file")
     macho_parser.add_argument("--lipo", default="lipo")

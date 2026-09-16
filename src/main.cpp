@@ -451,10 +451,13 @@ int main(int argc, char **argv)
     // software renderer.
     //
     // Keep the renderer and Qt on the same API. Linux uses Vulkan for Wayland
-    // HDR; OpenGL remains an explicit SDR compatibility choice.
+    // HDR and macOS uses it through MoltenVK; OpenGL remains an explicit SDR
+    // compatibility choice.
 #if defined(Q_OS_WIN)
     QSGRendererInterface::GraphicsApi graphicsApi = QSGRendererInterface::Direct3D11;
 #elif defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID) && !defined(JELLYFIN_NATIVE_WEBOS) && QT_CONFIG(vulkan)
+    QSGRendererInterface::GraphicsApi graphicsApi = QSGRendererInterface::Vulkan;
+#elif defined(Q_OS_MACOS) && QT_CONFIG(vulkan)
     QSGRendererInterface::GraphicsApi graphicsApi = QSGRendererInterface::Vulkan;
 #else
     QSGRendererInterface::GraphicsApi graphicsApi = QSGRendererInterface::OpenGL;
