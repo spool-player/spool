@@ -80,6 +80,9 @@ on:
 
 permissions:
   contents: read
+env:
+  # PRs consume public caches but never receive publishing credentials.
+  SPOOL_CACHE_WRITE: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
 concurrency:
   group: build-artifacts-${{ github.ref }}
   cancel-in-progress: true
@@ -97,6 +100,8 @@ jobs:
       qcoro_windows_prefix: ${{ steps.versions.outputs.qcoro_windows_prefix }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
+        with:
+          persist-credentials: false
       - name: Read the pinned Qt and FFmpeg versions
         id: versions
         run: |
@@ -109,6 +114,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
         with:
+          persist-credentials: false
           fetch-depth: 2
           submodules: recursive
       - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035 # v34
@@ -122,10 +128,10 @@ jobs:
           gc-max-store-size-linux: 2G
           # Stale entries under the same prefix are dead weight against the
           # shared repository quota, and nothing restores them once the key moves.
-          # A tag run does not write at all: it can read master's copy, and a
-          # second scoped copy is what filled the quota before.
-          save: ${{ !inputs.release }}
-          purge: true
+          # Release tags and PR merge refs only restore; trusted branch builds
+          # can save and prune their own GitHub cache scope.
+          save: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release }}
+          purge: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release }}
           purge-prefixes: nix-lint-${{ runner.os }}-
           purge-created: P7D
           purge-primary-key: never
@@ -178,50 +184,65 @@ jobs:
     runs-on: ubuntu-24.04
     needs: lint
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_linux }}
-    env:
-      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
         with:
+          persist-credentials: false
           submodules: recursive
 
       - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035 # v34
         with:
           nix_conf: |
             experimental-features = nix-command flakes
+      - name: Resolve tailored Qt cache key
+        id: qt-cache-inputs
+        run: |
+          qt_derivation="$(nix eval --raw .#native-qt-cache.drvPath)"
+          echo "key=${qt_derivation##*/}" >>"$GITHUB_OUTPUT"
       - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.1
         with:
-          primary-key: nix-native-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          primary-key: nix-native-${{ runner.os }}-${{ steps.qt-cache-inputs.outputs.key }}
           restore-prefixes-first-match: nix-native-${{ runner.os }}-
           gc-max-store-size-linux: 4G
           # Cache hygiene: see the lint job above.
-          save: ${{ !inputs.release }}
-          purge: true
+          save: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release }}
+          purge: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release }}
           purge-prefixes: nix-native-${{ runner.os }}-
           purge-created: P7D
           purge-primary-key: never
       - uses: cachix/cachix-action@3ba601ff5bbb07c7220846facfa2cd81eeee15a1 # v16
-        if: ${{ env.CACHIX_AUTH_TOKEN != '' }}
         with:
           name: spool
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
           skipPush: true
-      - name: Build and cache tailored Qt
+      - name: Build tailored Qt
         run: |
           nix build --accept-flake-config .#native-qt-cache \
             --out-link "$RUNNER_TEMP/spool-native-qt" --print-build-logs
+      - name: Publish tailored Qt
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' }}
+        env:
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        run: |
           if [[ -n "$CACHIX_AUTH_TOKEN" ]]; then
-            cachix push spool "$(readlink "$RUNNER_TEMP/spool-native-qt")"
+            cachix push spool "$RUNNER_TEMP/spool-native-qt"
           fi
-      - name: Publish cached nix run package
-        if: ${{ env.CACHIX_AUTH_TOKEN != '' }}
+      - name: Build cached nix run package
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' }}
         run: |
           nix build --accept-flake-config .#native-cache \
             --out-link "$RUNNER_TEMP/spool-native" --print-build-logs
-          cachix push spool "$(readlink "$RUNNER_TEMP/spool-native")"
+      - name: Publish native cache
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' }}
+        env:
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        run: |
+          if [[ -n "$CACHIX_AUTH_TOKEN" ]]; then
+            cachix push spool "$RUNNER_TEMP/spool-native"
+          fi
 
 
-      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
+      - uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
+        id: linux-build-cache
         with:
           path: .ccache
           key: linux5-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock', 'mpv/meson.build', 'mpv/meson.options', 'tools/manifests/mpv-native.json', 'tools/manifests/ffmpeg-capabilities.json', 'tools/manifests/toolchain.json', 'tools/manifests/linuxdeploy.json', 'tools/ffmpeg-capabilities.py', 'tools/package-audit.py', 'tools/build-linux-release.sh', 'tools/package-appimage.sh', 'tools/package-linux-bundle.sh', 'tools/lib/build-common.sh', 'tools/lib/qt-deploy.sh', 'CMakeLists.txt') }}
@@ -363,6 +384,13 @@ jobs:
             dist/*.pkg.tar.zst
           retention-days: 1
 
+      - name: Save Linux build cache
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release && steps.linux-build-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
+        with:
+          path: .ccache
+          key: ${{ steps.linux-build-cache.outputs.cache-primary-key }}
+
   macos-dmg:
     name: macOS DMG (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
@@ -370,8 +398,6 @@ jobs:
     # Public repositories receive unlimited standard GitHub-hosted runner
     # minutes, so pushes, pull requests, and releases exercise macOS too.
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_macos }}
-    env:
-      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
     strategy:
       # Apple Silicon and Intel Macs each get a native build; one failing
       # architecture should still let the other produce its DMG.
@@ -385,6 +411,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
         with:
+          persist-credentials: false
           submodules: recursive
 
       - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035 # v34
@@ -393,9 +420,8 @@ jobs:
             experimental-features = nix-command flakes
             keep-env-derivations = true
             keep-outputs = true
-            # Relocking fetches every input afresh, and nixpkgs tarballs are
-            # large enough that the default five-second connect timeout trips
-            # on a slow runner.
+            # Pinned nixpkgs archives still need a reasonable connect timeout
+            # when a runner has no local copy.
             connect-timeout = 30
             download-attempts = 5
 
@@ -411,34 +437,45 @@ jobs:
           restore-prefixes-first-match: nix-native-${{ runner.os }}-${{ matrix.arch }}-
           gc-max-store-size-macos: 8G
           # Cache hygiene: see the lint job above.
-          save: ${{ !inputs.release }}
-          purge: true
+          save: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release }}
+          purge: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release }}
           purge-prefixes: nix-native-${{ runner.os }}-${{ matrix.arch }}-
           purge-created: P7D
           purge-primary-key: never
       - uses: cachix/cachix-action@3ba601ff5bbb07c7220846facfa2cd81eeee15a1 # v16
-        if: ${{ env.CACHIX_AUTH_TOKEN != '' }}
         with:
           name: spool
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
           skipPush: true
-      - name: Build and cache tailored Qt
+      - name: Build tailored Qt
         run: |
           nix build --accept-flake-config .#native-qt-cache \
             --out-link "$RUNNER_TEMP/spool-native-qt" --print-build-logs
+      - name: Publish tailored Qt
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' }}
+        env:
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        run: |
           if [[ -n "$CACHIX_AUTH_TOKEN" ]]; then
-            cachix push spool "$(readlink "$RUNNER_TEMP/spool-native-qt")"
+            cachix push spool "$RUNNER_TEMP/spool-native-qt"
           fi
-      - name: Publish cached nix run package
-        if: ${{ env.CACHIX_AUTH_TOKEN != '' }}
+      - name: Build cached nix run package
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' }}
         run: |
           nix build --accept-flake-config .#native-cache \
             --out-link "$RUNNER_TEMP/spool-native" --print-build-logs
-          cachix push spool "$(readlink "$RUNNER_TEMP/spool-native")"
+      - name: Publish native cache
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' }}
+        env:
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        run: |
+          if [[ -n "$CACHIX_AUTH_TOKEN" ]]; then
+            cachix push spool "$RUNNER_TEMP/spool-native"
+          fi
 
 
 
-      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
+      - uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
+        id: macos-build-cache
         with:
           path: |
             build/macos/mpv
@@ -473,9 +510,8 @@ jobs:
             printf 'overriding nixpkgs with %s\n' "$url"
             overrides=(--override-input nixpkgs "$url")
           fi
-          mv flake.lock flake.lock.repository
-          # Every input is refetched here, so a single dropped connection
-          # would otherwise fail the build before it starts compiling.
+          # Preserve all unrelated pins: removing the lock refetched Qt's
+          # dependencies after the cache build and produced a different Qt.
           for attempt in 1 2 3; do
             if nix flake lock --override-input mpv-src "git+file:$PWD/mpv?rev=$revision&shallow=1" \
               ${overrides[@]+"${overrides[@]}"}; then
@@ -505,7 +541,7 @@ jobs:
         run: nix develop .#native --no-write-lock-file -c bash tools/launch-native-app.sh build/macos/install/Spool.app
 
       - name: Sign macOS application
-        if: ${{ inputs.enable_macos_signing }}
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.enable_macos_signing }}
         env:
           MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
@@ -515,7 +551,7 @@ jobs:
       - name: Package DMG
         run: nix develop .#native --no-write-lock-file -c bash tools/package-macos-dmg.sh
       - name: Sign macOS disk image
-        if: ${{ inputs.enable_macos_signing }}
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.enable_macos_signing }}
         env:
           MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
@@ -547,7 +583,7 @@ jobs:
           dmg="$(printf '%s\n' dist/*.dmg)"
           tar -czf "${dmg}.app.tar.gz" -C build/macos/install Spool.app
       - name: Notarize and staple DMG
-        if: ${{ inputs.enable_macos_signing }}
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.enable_macos_signing }}
         timeout-minutes: 20
         continue-on-error: true
         env:
@@ -565,6 +601,17 @@ jobs:
             dist/*.dmg.app.tar.gz
           retention-days: 1
 
+      - name: Save macOS build cache
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release && steps.macos-build-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
+        with:
+          path: |
+            build/macos/mpv
+            build/macos/mpv-prefix
+            build/macos/app
+            ~/Library/Caches/ccache
+          key: ${{ steps.macos-build-cache.outputs.cache-primary-key }}
+
   webos-ipk:
     name: webOS IPK
     runs-on: ubuntu-24.04
@@ -573,6 +620,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
         with:
+          persist-credentials: false
           submodules: recursive
 
       - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035 # v34
@@ -585,8 +633,8 @@ jobs:
           restore-prefixes-first-match: nix-${{ runner.os }}-
           gc-max-store-size-linux: 4G
           # Cache hygiene: see the lint job above.
-          save: ${{ !inputs.release }}
-          purge: true
+          save: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release }}
+          purge: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release }}
           purge-prefixes: nix-${{ runner.os }}-
           purge-created: P7D
           purge-primary-key: never
@@ -628,12 +676,9 @@ jobs:
             nix develop -c bash tools/webos-native/build-webos.sh "$phase"
           done
 
-      # A release runs on a tag, and a tag gets its own cache scope: anything
-      # saved here is a second copy of what master already holds, against a
-      # quota both share. A tag run can still restore master's copy, so master
-      # is left as the only writer.
+      # Tags and PR merge refs restore without creating duplicate cache copies.
       - name: Save webOS dependency cache
-        if: ${{ steps.webos-cache.outputs.cache-hit != 'true' && !inputs.release }}
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && steps.webos-cache.outputs.cache-hit != 'true' && !inputs.release }}
         uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
         with:
           path: |
@@ -754,11 +799,10 @@ jobs:
         abi: [arm64-v8a, armeabi-v7a, x86_64]
     needs: lint
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_android }}
-    env:
-      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
         with:
+          persist-credentials: false
           submodules: recursive
 
       - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035 # v34
@@ -771,18 +815,21 @@ jobs:
       # #android-emulator) and native Qt Quick/desktop-only modules, but still
       # needs matching host code generators to cross-compile Qt and the app.
       - uses: cachix/cachix-action@3ba601ff5bbb07c7220846facfa2cd81eeee15a1 # v16
-        if: ${{ env.CACHIX_AUTH_TOKEN != '' }}
         with:
           name: spool
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
           skipPush: true
 
       # Realising the shell into a profile is what makes its closure a root
       # that can be pushed; without one there is nothing to name.
-      - name: Materialise and publish the Android dev shell
+      - name: Materialise the Android dev shell
         run: |
           nix develop --accept-flake-config .#android \
             --profile "$RUNNER_TEMP/android-shell" -c true
+      - name: Publish the Android dev shell
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' }}
+        env:
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        run: |
           if [[ -n "$CACHIX_AUTH_TOKEN" ]]; then
             cachix push spool "$RUNNER_TEMP/android-shell"
           fi
@@ -832,7 +879,7 @@ jobs:
             '
 
       - name: Prepare Android release keystore
-        if: ${{ inputs.release }}
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release }}
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
         run: |
@@ -843,10 +890,10 @@ jobs:
 
       - name: Build the Android APK
         env:
-          SPOOL_ANDROID_KEYSTORE_PATH: ${{ inputs.release && format('{0}/spool-release.p12', runner.temp) || '' }}
-          SPOOL_ANDROID_KEYSTORE_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
-          SPOOL_ANDROID_KEYSTORE_STORE_PASS: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
-          SPOOL_ANDROID_KEYSTORE_KEY_PASS: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
+          SPOOL_ANDROID_KEYSTORE_PATH: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release && format('{0}/spool-release.p12', runner.temp) || '' }}
+          SPOOL_ANDROID_KEYSTORE_ALIAS: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release && secrets.ANDROID_RELEASE_KEY_ALIAS || '' }}
+          SPOOL_ANDROID_KEYSTORE_STORE_PASS: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release && secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD || '' }}
+          SPOOL_ANDROID_KEYSTORE_KEY_PASS: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release && secrets.ANDROID_RELEASE_KEY_PASSWORD || '' }}
           ANDROID_ABI: ${{ matrix.abi }}
         run: nix develop .#android -c bash tools/android/build-apks.sh
 
@@ -872,7 +919,7 @@ jobs:
           PY
 
       - name: Verify Android release signing identity
-        if: ${{ inputs.release }}
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release }}
         env:
           EXPECTED_CERT_SHA256: 0c9deff0513eed6d43521df31ad6d2d8e928c029b146d902f4bcc25a883c1fb8
         run: |
@@ -886,7 +933,7 @@ jobs:
           "
 
       - name: Save Android toolchain cache
-        if: ${{ steps.android-cache.outputs.cache-hit != 'true' && !inputs.release }}
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && steps.android-cache.outputs.cache-hit != 'true' && !inputs.release }}
         uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
         with:
           path: |
@@ -939,10 +986,10 @@ jobs:
     # them and then packages the two that a real device can run.
     needs: android-apks
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_android }}
-    env:
-      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
+        with:
+          persist-credentials: false
 
       - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035 # v34
         with:
@@ -950,10 +997,8 @@ jobs:
             experimental-features = nix-command flakes
 
       - uses: cachix/cachix-action@3ba601ff5bbb07c7220846facfa2cd81eeee15a1 # v16
-        if: ${{ env.CACHIX_AUTH_TOKEN != '' }}
         with:
           name: spool
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
           skipPush: true
 
       # No x86_64: nothing that reaches a living room or a pocket runs it, and
@@ -980,7 +1025,7 @@ jobs:
           path: dist/android/universal-inputs/armeabi-v7a
 
       - name: Prepare Android release keystore
-        if: ${{ inputs.release }}
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release }}
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
         run: |
@@ -991,10 +1036,10 @@ jobs:
 
       - name: Package the universal APK
         env:
-          SPOOL_ANDROID_KEYSTORE_PATH: ${{ inputs.release && format('{0}/spool-release.p12', runner.temp) || '' }}
-          SPOOL_ANDROID_KEYSTORE_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
-          SPOOL_ANDROID_KEYSTORE_STORE_PASS: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
-          SPOOL_ANDROID_KEYSTORE_KEY_PASS: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
+          SPOOL_ANDROID_KEYSTORE_PATH: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release && format('{0}/spool-release.p12', runner.temp) || '' }}
+          SPOOL_ANDROID_KEYSTORE_ALIAS: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release && secrets.ANDROID_RELEASE_KEY_ALIAS || '' }}
+          SPOOL_ANDROID_KEYSTORE_STORE_PASS: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release && secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD || '' }}
+          SPOOL_ANDROID_KEYSTORE_KEY_PASS: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release && secrets.ANDROID_RELEASE_KEY_PASSWORD || '' }}
         run: |
           nix develop .#android -c bash tools/android/build-universal-apk.sh \
             dist/android/spool-universal.apk \
@@ -1003,7 +1048,7 @@ jobs:
             dist/android/spool-armeabi-v7a.apk
 
       - name: Verify Android release signing identity
-        if: ${{ inputs.release }}
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release }}
         env:
           EXPECTED_CERT_SHA256: 0c9deff0513eed6d43521df31ad6d2d8e928c029b146d902f4bcc25a883c1fb8
         run: |
@@ -1049,6 +1094,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
         with:
+          persist-credentials: false
           submodules: recursive
 
       - name: Install upstream FFmpeg build environment
@@ -1085,7 +1131,7 @@ jobs:
         run: tools\windows\install-qcoro.ps1 -Force
 
       - name: Save Qt and QCoro
-        if: ${{ steps.qt-cache.outputs.cache-hit != 'true' && !inputs.release }}
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && steps.qt-cache.outputs.cache-hit != 'true' && !inputs.release }}
         uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
         with:
           path: |
@@ -1115,7 +1161,7 @@ jobs:
         run: tools\windows\build-mpv.ps1 -Clean
 
       - name: Save source-built libmpv
-        if: ${{ steps.mpv-cache.outputs.cache-hit != 'true' && !inputs.release }}
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && steps.mpv-cache.outputs.cache-hit != 'true' && !inputs.release }}
         uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
         with:
           path: build/windows-deps/mpv
