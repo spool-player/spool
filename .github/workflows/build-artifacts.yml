@@ -527,7 +527,7 @@ jobs:
           mountpoint="$RUNNER_TEMP/spool-dmg"
           mkdir -p "$mountpoint"
           hdiutil attach -readonly -nobrowse -mountpoint "$mountpoint" dist/*.dmg
-          trap 'hdiutil detach "$mountpoint"' EXIT
+          trap 'bash tools/detach-dmg.sh "$mountpoint"' EXIT
           app="$(find "$mountpoint" -maxdepth 1 -name '*.app' -print -quit)"
           test -n "$app"
           python3 tools/package-audit.py inventory "$app" --output "$RUNNER_TEMP/macos-dmg.inventory.tsv"
@@ -538,7 +538,7 @@ jobs:
           fi
           JELLYFIN_LAUNCH_TEST_QPA_PLATFORM=cocoa \
             bash tools/launch-native-app.sh "$app"
-          hdiutil detach "$mountpoint"
+          bash tools/detach-dmg.sh "$mountpoint"
           trap - EXIT
       - name: Package macOS analysis input
         run: |
