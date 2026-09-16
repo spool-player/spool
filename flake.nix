@@ -242,13 +242,6 @@
               !final.lib.hasPrefix "-DQt6ShaderToolsTools_DIR=" flag) old.cmakeFlags
               ++ [ "-DQt6ShaderToolsTools_DIR=${qtFinal.qtshadertools}/lib/cmake/Qt6ShaderToolsTools" ];
           });
-          qtdeclarative = qtPrev.qtdeclarative.overrideAttrs (old: {
-            # The channel explicitly names its untailored host qsb. Use this
-            # scope's tool so building QML does not build a second native Qt.
-            cmakeFlags = builtins.filter (flag:
-              !final.lib.hasPrefix "-DQt6ShaderToolsTools_DIR=" flag) old.cmakeFlags
-              ++ [ "-DQt6ShaderToolsTools_DIR=${qtFinal.qtshadertools}/lib/cmake/Qt6ShaderToolsTools" ];
-          });
         })) // {
           # pythonPackages.qt6 expects this secondary package scope.
           override = prev.qt6.override;
