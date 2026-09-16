@@ -135,7 +135,10 @@ JELLYFIN_TEST_MAIN("mpv-video-item")
     std::setlocale(LC_NUMERIC, "C");
     mpv_handle *handle = mpv_create();
     const bool verbose = !qgetenv("SPOOL_TEST_MPV_LOG").isEmpty();
-    if (verbose
+    // mpv_create can fail, and the check for that is below: setting options on
+    // its result first would crash instead of reporting it, but only for a run
+    // that asked for logging.
+    if (handle && verbose
         && (mpv_set_option_string(handle, "terminal", "yes") < 0
             || mpv_set_option_string(handle, "msg-level", "all=debug") < 0)) {
         std::fprintf(stderr, "failed to enable mpv logging\n");

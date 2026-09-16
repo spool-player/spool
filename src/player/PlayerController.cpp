@@ -467,28 +467,21 @@ bool PlayerController::configureAndInitializeMpv(mpv_handle *handle, bool embedd
     for (size_t i = 0; i < std::size(embeddingOptions); ++i)
         embeddingArguments[i] = embeddingOptions[i];
     // --gpu-api picks one of mpv's own ra_ctx backends: a native context and
-    // swapchain of its own. The embedded path has neither -- it renders into
-    // the texture Qt owns, through libplacebo, and which backend that is comes
-    // from the render API the video item asks for. Naming an API here only
-    // constrains contexts that are never created, and names one this build may
-    // not have: Windows builds libmpv without its D3D11 context (libplacebo
-    // carries D3D11 instead), so --gpu-api=d3d11 is an unknown value there and
-    // mpv_initialize_opts fails on it. Leave the option at auto when mpv owns
-    // no surface.
-    QByteArray graphicsApiOption = QByteArrayLiteral("--gpu-api=opengl");
-    if (!embeddedVideo) {
-        switch (QQuickWindow::graphicsApi()) {
-        case QSGRendererInterface::Vulkan:
-            graphicsApiOption = QByteArrayLiteral("--gpu-api=vulkan");
-            break;
-        case QSGRendererInterface::Direct3D11:
-            graphicsApiOption = QByteArrayLiteral("--gpu-api=d3d11");
-            break;
-        default:
-            break;
-        }
-        embeddingArguments[1] = graphicsApiOption.data();
-    }
+    // swapchain of its own. Neither handle this function builds has one. Both
+    // are --vo=libmpv --wid=-1 --force-window=no, so mpv never owns a surface
+    // on desktop: the embedded handle renders into the texture Qt owns through
+    // libplacebo, and the idle handle renders nothing until it is adopted as
+    // that one. Which backend libplacebo uses comes from the render API the
+    // video item asks for, not from here.
+    //
+    // Naming an API would only constrain contexts that are never created, and
+    // would name one this build may not have. Windows builds libmpv without its
+    // D3D11 and Vulkan contexts -- libplacebo carries both instead -- so
+    // --gpu-api=d3d11 is an unknown value there and mpv_initialize_opts fails
+    // on it. That is not hypothetical: keying this off embeddedVideo left the
+    // idle handle, which passes false, naming d3d11 on Windows and failing to
+    // initialise, losing the pre-warm silently for want of an option that had
+    // nothing to constrain. The option stays at auto for both.
     QByteArray softwareDecodeOption = QByteArrayLiteral("--hwdec=no");
     if (!m_hardwareDecoding)
         embeddingArguments[std::size(embeddingOptions)] = softwareDecodeOption.data();
