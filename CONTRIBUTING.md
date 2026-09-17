@@ -29,4 +29,16 @@ Keep changes small and cohesive. Add tests for new observable contracts. Run the
 
 Describe the problem, the chosen behavior, affected platforms, privacy/security implications, and exact verification performed. Preserve TV D-pad behavior when changing QML navigation. Platform packaging changes must retain pinned inputs, checksums, license material, and package smoke checks.
 
+CI restores public caches for every PR. Only push and manually dispatched
+builds publish to Cachix or save/prune GitHub caches; publishing tokens are
+limited to the upload steps, and signing credentials to release builds.
+Qt cache keys use the pinned derivation, not the branch or application source.
+Cachix shares identical native Qt builds across branches; GitHub caches are
+branch-scoped and fall back to the default branch, so a PR cannot warm master's
+GitHub cache. macOS input overrides retain the remaining lock-file pins.
+Different Qt profiles, architectures, or dependency pins still require distinct
+builds. Fork PRs receive no repository secrets. GitHub may permit a modified PR
+workflow to create caches in its own merge-ref scope, but those cannot replace
+master's cache or publish to Cachix.
+
 By participating, you agree to follow `CODE_OF_CONDUCT.md`.

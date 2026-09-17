@@ -67,6 +67,11 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: release-assets
+          # Everything that lands here is flattened together, checksummed,
+          # attested and published, so only what a person should be offered
+          # may arrive. Build inputs for other jobs are named internal-* and
+          # this is what keeps them out.
+          pattern: spool-*
           merge-multiple: true
       - name: Install analysis prerequisites
         run: |
