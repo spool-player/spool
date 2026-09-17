@@ -743,6 +743,14 @@
           SPOOL_ANDROID_QT_HOST = "${androidQtHost}";
           shellHook = gitHooksShellHook;
         };
+      } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+        windows-proton = pkgs.mkShell {
+          packages = with pkgs; [
+            umu-launcher vulkan-tools python3 msitools gcab p7zip
+            curl git jq
+            podman util-linux
+          ];
+        };
       });
 
       apps = forAllSystems (pkgs:
@@ -1068,6 +1076,25 @@
             program = "${imageDebugBuilder}/bin/jellyfin-native-image-debug-build";
           };
         } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          windows-proton-build = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "spool-windows-proton-build";
+              runtimeInputs = with pkgs; [
+                umu-launcher python3 msitools gcab p7zip curl git jq
+                podman util-linux
+              ];
+              text = builtins.readFile ./tools/windows/proton-build.sh;
+            }}/bin/spool-windows-proton-build";
+          };
+          windows-proton-run = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "spool-windows-proton-run";
+              runtimeInputs = [ pkgs.umu-launcher pkgs.git ];
+              text = builtins.readFile ./tools/windows/proton-run.sh;
+            }}/bin/spool-windows-proton-run";
+          };
           android-emulator = {
             type = "app";
             program = "${android.emulator}/bin/run-test-emulator";
