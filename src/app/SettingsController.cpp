@@ -538,6 +538,10 @@ void SettingsController::applySchemaValue(const SettingSpec& spec, const QVarian
         if (m_player)
             m_player->setDirectVideoOutput(m_videoOutputMode == QLatin1String("direct"));
         break;
+    case SettingTarget::SoftwareRenderer:
+        if (m_player)
+            m_player->setSoftwareRenderer(value.toString().toLatin1());
+        break;
     case SettingTarget::AutoAdjustRenderQuality:
         m_autoAdjustRenderQuality = value.toBool();
         break;

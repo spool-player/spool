@@ -71,11 +71,13 @@ FocusScope {
         playerOverlay.showRemoteSeekPreview(seconds, active)
     }
 
-    // Solid black background behind the video surface and across letterbox
-    // bars, so closing performance stats or dialogs clears cleanly every frame.
+    // Clear letterbox bars for embedded video and the audio stage. Native
+    // video (Starfish or direct MediaCodec) sits beneath the Qt window, so
+    // even a negative QML z would cover it: that path must stay transparent.
     Rectangle {
         anchors.fill: parent
         color: "black"
+        visible: Player.embeddedVideoOutput || Player.mediaKind === "audio"
         z: -1
     }
 

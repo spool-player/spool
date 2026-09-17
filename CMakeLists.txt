@@ -309,6 +309,8 @@ add_library(jellyfin-core STATIC ${JELLYFIN_CORE_SOURCES})
 
 qt_add_executable(jellyfin-native
     src/main.cpp
+    src/app/GraphicsStartup.cpp
+    src/app/GraphicsStartup.h
 )
 
 set(JELLYFIN_NATIVE_TARGETS jellyfin-core jellyfin-native)

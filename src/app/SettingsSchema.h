@@ -90,6 +90,7 @@ enum class SettingTarget {
     GraphicsApi,
     HdrPeakBrightness,
     VideoOutputMode,
+    SoftwareRenderer,
 };
 
 enum class SettingNormalizer {

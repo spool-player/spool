@@ -185,6 +185,10 @@ public:
     {
         m_hardwareDecoding = enabled;
     }
+    void setSoftwareRenderer(const QByteArray& backend)
+    {
+        m_softwareRenderer = backend;
+    }
     // Direct output keeps video off the Qt scene graph entirely. Applies to
     // the next thing that plays, like the quality profile.
     void setDirectVideoOutput(bool direct);
@@ -360,6 +364,7 @@ private:
     MpvOptionProfile::RenderQuality m_renderQuality = MpvOptionProfile::RenderQuality::Balanced;
     bool m_directVideoOutput = false;
     bool m_hardwareDecoding = true;
+    QByteArray m_softwareRenderer;
     // The opening seconds are where a device that cannot keep up says so:
     // the picture is being scaled and tone-mapped from the first frame, and
     // nothing has warmed a cache yet.

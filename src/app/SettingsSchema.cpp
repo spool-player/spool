@@ -29,11 +29,12 @@ namespace {
         { "balanced", "Balanced" },
         { "fast", "Fast" },
     };
+    constexpr SettingChoice kSoftwareRendererChoices[] = {
+        { "auto", "Automatic" },
+        { "gpu", "OpenGL (gpu)" },
+        { "gpu-next", "OpenGL (gpu-next, experimental)" },
+    };
     constexpr SettingChoice kHdrOutputChoices[] = {
-        // "Auto" does not yet turn the swapchain over. Qt Quick colour-manages
-        // nothing, so an HDR window changes how the whole interface looks as
-        // well as the video, and that is not something to do to somebody who
-        // only left the setting alone.
         { "auto", "Automatic" },
         { "always", "Always" },
         { "never", "Never" },
@@ -351,6 +352,12 @@ const QVector<SettingSpec>& settingSpecs()
             "Enhanced processes each frame on the GPU. Direct sends it straight to the display", "enhanced",
             kVideoOutputChoices, SettingTarget::VideoOutputMode)
             .onAndroid()
+            .advanced(),
+        selectSpec("playback/softwareRenderer", "Playback", "Software video renderer",
+            "For codecs Starfish cannot decode. Automatic uses gpu; gpu-next is experimental. "
+            "Keeps lightweight rendering settings. Applies to the next playback",
+            "auto", kSoftwareRendererChoices, SettingTarget::SoftwareRenderer)
+            .onWebOS()
             .advanced(),
         toggleSpec("playback/hardwareDecoding", "Playback", "Hardware decoding",
             "Use the GPU to decode video when supported. Turn off to use the CPU. Applies to the next playback", true,

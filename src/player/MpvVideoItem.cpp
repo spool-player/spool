@@ -35,6 +35,7 @@
 #endif
 #endif
 
+#include <utility>
 #include <vector>
 
 extern "C" {
@@ -61,27 +62,190 @@ namespace {
         return reinterpret_cast<void *>(gl->getProcAddress(QByteArray(name)));
     }
 
-#if !JELLYFIN_MPV_ITEM_RHI
-
-    class MpvFboRenderer final : public QQuickFramebufferObject::Renderer {
+    // Render-thread ownership shared by both Qt item backends. GPU work stays
+    // in the renderers, including the external-command boundary around a handoff.
+    class RenderLifecycle final {
     public:
-        explicit MpvFboRenderer(MpvVideoItem *item)
+        explicit RenderLifecycle(MpvVideoItem *item)
             : m_item(item)
         {
         }
 
-        ~MpvFboRenderer() override
+        ~RenderLifecycle()
         {
-            QObject::disconnect(m_frameSwappedConnection);
-            releaseRenderContext();
+            disconnectWindow();
+            releaseContext();
         }
 
-        QOpenGLFramebufferObject *createFramebufferObject(const QSize& size) override
+        RenderLifecycle(const RenderLifecycle&) = delete;
+        RenderLifecycle& operator=(const RenderLifecycle&) = delete;
+
+        MpvVideoItem *item() const
+        {
+            return m_item;
+        }
+        QQuickWindow *window() const
+        {
+            return m_window;
+        }
+        mpv_render_context *context() const
+        {
+            return m_item ? m_item->m_renderCtxAtomic.load() : nullptr;
+        }
+
+        void synchronize(MpvVideoItem *item)
+        {
+            setWindow(item->window());
+            m_item = item;
+            auto pending = item->takePendingHandle();
+            if (pending.dirty)
+                m_pending = std::move(pending);
+        }
+
+        bool hasPendingHandle() const
+        {
+            return m_pending.dirty;
+        }
+        mpv_handle *nextHandle() const
+        {
+            return m_pending.handle;
+        }
+        const QByteArray& nextRenderBackend() const
+        {
+            return m_pending.renderBackend;
+        }
+
+        // Call only after backend creation/destruction and external commands
+        // have finished: the GUI thread may destroy the mpv core when woken.
+        void completeHandoff()
+        {
+            m_pending.handle = nullptr;
+            m_pending.dirty = false;
+            if (m_pending.releaseCompleted) {
+                m_pending.releaseCompleted->store(true);
+                if (m_pending.releaseWaiter)
+                    QMetaObject::invokeMethod(m_pending.releaseWaiter, "quit", Qt::QueuedConnection);
+                m_pending.releaseWaiter = nullptr;
+                m_pending.releaseCompleted.reset();
+            }
+            if (m_pending.attachCompleted) {
+                m_pending.attachCompleted->store(true);
+                m_pending.attachCompleted.reset();
+                if (m_item)
+                    QMetaObject::invokeMethod(m_item, "renderContextHandoffCompleted", Qt::QueuedConnection);
+            }
+        }
+
+        void publishContext(mpv_render_context *context)
+        {
+            mpv_render_context_set_update_callback(context, &RenderLifecycle::onMpvUpdate, m_item);
+            m_item->m_renderCtxAtomic.store(context);
+        }
+
+        void releaseContext()
+        {
+            resetFrames();
+            if (!m_item)
+                return;
+            if (auto *context = m_item->m_renderCtxAtomic.exchange(nullptr)) {
+                mpv_render_context_set_update_callback(context, nullptr, nullptr);
+                mpv_render_context_free(context);
+            }
+        }
+
+        void invalidateFrame()
+        {
+            m_hasRenderedFrame = false;
+        }
+
+        void resetFrames()
         {
             m_hasRenderedFrame = false;
             m_hasRenderedVideoFrame = false;
             m_swapPending = false;
             m_firstVideoFrameSwapPending = false;
+        }
+
+        bool needsFrame(uint64_t updateFlags) const
+        {
+            return !m_hasRenderedFrame || (updateFlags & MPV_RENDER_UPDATE_FRAME);
+        }
+
+        void frameRendered(uint64_t updateFlags)
+        {
+            m_hasRenderedFrame = true;
+            m_swapPending = true;
+            if (!m_hasRenderedVideoFrame && (updateFlags & MPV_RENDER_UPDATE_FRAME)) {
+                m_hasRenderedVideoFrame = true;
+                m_firstVideoFrameSwapPending = true;
+                qInfo() << "player: first video frame rendered";
+            }
+        }
+
+        // RHI disconnects before destroying its GL framebuffer; context
+        // destruction still follows that backend-specific cleanup.
+        void disconnectWindow()
+        {
+            QObject::disconnect(m_frameSwappedConnection);
+        }
+
+    private:
+        void setWindow(QQuickWindow *window)
+        {
+            if (m_window == window)
+                return;
+
+            disconnectWindow();
+            m_window = window;
+            if (!m_window)
+                return;
+
+            m_frameSwappedConnection = QObject::connect(
+                m_window, &QQuickWindow::frameSwapped, m_window,
+                [this] {
+                    if (!m_item || !m_swapPending)
+                        return;
+
+                    m_swapPending = false;
+                    if (auto *ctx = context()) {
+                        mpv_render_context_report_swap(ctx);
+                        if (m_firstVideoFrameSwapPending) {
+                            m_firstVideoFrameSwapPending = false;
+                            qInfo() << "player: first video frame swapped";
+                        }
+                    }
+                },
+                Qt::DirectConnection);
+        }
+
+        static void onMpvUpdate(void *ctx)
+        {
+            auto *item = static_cast<MpvVideoItem *>(ctx);
+            QMetaObject::invokeMethod(item, "update", Qt::QueuedConnection);
+        }
+
+        QMetaObject::Connection m_frameSwappedConnection;
+        MpvVideoItem *m_item = nullptr;
+        QQuickWindow *m_window = nullptr;
+        MpvVideoItem::HandleSnapshot m_pending {};
+        bool m_hasRenderedFrame = false;
+        bool m_hasRenderedVideoFrame = false;
+        bool m_swapPending = false;
+        bool m_firstVideoFrameSwapPending = false;
+    };
+
+#if !JELLYFIN_MPV_ITEM_RHI
+
+    class MpvFboRenderer final : public QQuickFramebufferObject::Renderer {
+    public:
+        explicit MpvFboRenderer(MpvVideoItem *item)
+            : m_lifecycle(item)
+        {
+        }
+
+        QOpenGLFramebufferObject *createFramebufferObject(const QSize& size) override
+        {
+            m_lifecycle.resetFrames();
             QOpenGLFramebufferObjectFormat fmt;
             fmt.setAttachment(QOpenGLFramebufferObject::CombinedDepthStencil);
             return new QOpenGLFramebufferObject(size, fmt);
@@ -89,44 +253,28 @@ namespace {
 
         void synchronize(QQuickFramebufferObject *fbo) override
         {
-            setWindow(fbo->window());
-            auto *item = static_cast<MpvVideoItem *>(fbo);
-            m_item = item;
-            const auto snap = item->takePendingHandle();
-            if (!snap.dirty)
-                return;
-
-            m_nextHandle = snap.handle;
-            m_handleDirty = true;
-            m_releaseWaiter = snap.releaseWaiter;
-            m_releaseCompleted = snap.releaseCompleted;
-            m_attachCompleted = snap.attachCompleted;
+            m_lifecycle.synchronize(static_cast<MpvVideoItem *>(fbo));
         }
 
         void render() override
         {
-            if (!m_item)
+            if (!m_lifecycle.item())
                 return;
 
-            if (m_handleDirty) {
-                releaseRenderContext();
-                if (m_nextHandle)
-                    createRenderContext(m_nextHandle);
-                m_nextHandle = nullptr;
-                m_handleDirty = false;
-                completeReleaseWaiter();
-                completeAttachHandoff();
+            if (m_lifecycle.hasPendingHandle()) {
+                m_lifecycle.releaseContext();
+                if (auto *next = m_lifecycle.nextHandle())
+                    createRenderContext(next);
+                m_lifecycle.completeHandoff();
             }
 
-            mpv_render_context *ctx = m_item->m_renderCtxAtomic.load();
+            mpv_render_context *ctx = m_lifecycle.context();
             if (!ctx)
                 return;
 
             const uint64_t updateFlags = mpv_render_context_update(ctx);
-            if (m_hasRenderedFrame && !(updateFlags & MPV_RENDER_UPDATE_FRAME))
+            if (!m_lifecycle.needsFrame(updateFlags))
                 return;
-
-            const bool firstVideoFrame = !m_hasRenderedVideoFrame && (updateFlags & MPV_RENDER_UPDATE_FRAME);
 
             QOpenGLFramebufferObject *fbo = framebufferObject();
             if (!fbo)
@@ -143,49 +291,15 @@ namespace {
                 { MPV_RENDER_PARAM_INVALID, nullptr },
             };
 
-            if (m_window)
-                m_window->beginExternalCommands();
+            if (auto *window = m_lifecycle.window())
+                window->beginExternalCommands();
             mpv_render_context_render(ctx, params);
-            if (m_window)
-                m_window->endExternalCommands();
-            m_hasRenderedFrame = true;
-            m_swapPending = true;
-            if (firstVideoFrame) {
-                m_hasRenderedVideoFrame = true;
-                m_firstVideoFrameSwapPending = true;
-                qInfo() << "player: first video frame rendered";
-            }
+            if (auto *window = m_lifecycle.window())
+                window->endExternalCommands();
+            m_lifecycle.frameRendered(updateFlags);
         }
 
     private:
-        void setWindow(QQuickWindow *window)
-        {
-            if (m_window == window)
-                return;
-
-            QObject::disconnect(m_frameSwappedConnection);
-            m_window = window;
-            if (!m_window)
-                return;
-
-            m_frameSwappedConnection = QObject::connect(
-                m_window, &QQuickWindow::frameSwapped, m_window,
-                [this] {
-                    if (!m_item || !m_swapPending)
-                        return;
-
-                    m_swapPending = false;
-                    if (auto *ctx = m_item->m_renderCtxAtomic.load()) {
-                        mpv_render_context_report_swap(ctx);
-                        if (m_firstVideoFrameSwapPending) {
-                            m_firstVideoFrameSwapPending = false;
-                            qInfo() << "player: first video frame swapped";
-                        }
-                    }
-                },
-                Qt::DirectConnection);
-        }
-
         void createRenderContext(mpv_handle *next)
         {
             if (auto *gl = QOpenGLContext::currentContext()) {
@@ -212,7 +326,9 @@ namespace {
             // simply don't show GPU pass timings, and direct rendering / mpv
             // screenshots are disabled, neither of which we use.
 #ifdef JELLYFIN_NATIVE_WEBOS
-            static constexpr const char *backends[] = { "gpu" };
+            const QByteArray& requestedBackend = m_lifecycle.nextRenderBackend();
+            const char *backends[]
+                = { requestedBackend.isEmpty() || requestedBackend == "auto" ? "gpu" : requestedBackend.constData() };
 #else
             static constexpr const char *backends[] = { "gpu-next", "gpu" };
 #endif
@@ -239,9 +355,9 @@ namespace {
                 const QString message = QStringLiteral("Failed to initialize video rendering: %1")
                                             .arg(QString::fromUtf8(mpv_error_string(err)));
                 qCritical() << "MpvVideoItem:" << message;
-                const QPointer<MpvVideoItem> guardedItem(m_item);
+                const QPointer<MpvVideoItem> guardedItem(m_lifecycle.item());
                 QMetaObject::invokeMethod(
-                    m_item,
+                    m_lifecycle.item(),
                     [guardedItem, message]() {
                         if (guardedItem)
                             emit guardedItem->renderError(message);
@@ -249,84 +365,28 @@ namespace {
                     Qt::QueuedConnection);
                 return;
             }
-            mpv_render_context_set_update_callback(newCtx, &MpvFboRenderer::onMpvUpdate, static_cast<void *>(m_item));
-            m_item->m_renderCtxAtomic.store(newCtx);
+            m_lifecycle.publishContext(newCtx);
         }
 
-        void releaseRenderContext()
-        {
-            m_hasRenderedFrame = false;
-            m_hasRenderedVideoFrame = false;
-            m_swapPending = false;
-            m_firstVideoFrameSwapPending = false;
-            if (!m_item)
-                return;
-            if (auto *ctx = m_item->m_renderCtxAtomic.exchange(nullptr)) {
-                mpv_render_context_set_update_callback(ctx, nullptr, nullptr);
-                mpv_render_context_free(ctx);
-            }
-        }
-
-        void completeReleaseWaiter()
-        {
-            if (!m_releaseCompleted)
-                return;
-            m_releaseCompleted->store(true);
-            if (m_releaseWaiter)
-                QMetaObject::invokeMethod(m_releaseWaiter, "quit", Qt::QueuedConnection);
-            m_releaseWaiter = nullptr;
-            m_releaseCompleted.reset();
-        }
-
-        void completeAttachHandoff()
-        {
-            if (!m_attachCompleted)
-                return;
-            m_attachCompleted->store(true);
-            m_attachCompleted.reset();
-            if (m_item)
-                QMetaObject::invokeMethod(m_item, "renderContextHandoffCompleted", Qt::QueuedConnection);
-        }
-
-        static void onMpvUpdate(void *ctx)
-        {
-            auto *item = static_cast<MpvVideoItem *>(ctx);
-            QMetaObject::invokeMethod(item, "update", Qt::QueuedConnection);
-        }
-
-        QMetaObject::Connection m_frameSwappedConnection;
-        MpvVideoItem *m_item = nullptr;
-        QQuickWindow *m_window = nullptr;
-        mpv_handle *m_nextHandle = nullptr;
-        bool m_handleDirty = false;
-        bool m_hasRenderedFrame = false;
-        bool m_hasRenderedVideoFrame = false;
-        bool m_swapPending = false;
-        bool m_firstVideoFrameSwapPending = false;
-        QPointer<QObject> m_releaseWaiter;
-        std::shared_ptr<std::atomic_bool> m_releaseCompleted;
-        std::shared_ptr<std::atomic_bool> m_attachCompleted;
+        RenderLifecycle m_lifecycle;
     };
 
 #else // JELLYFIN_MPV_ITEM_RHI
 
-    // The same lifecycle as the framebuffer renderer above, written out rather
-    // than shared with it. Only one of the two is ever compiled, so a common
-    // base would put the platforms that keep the framebuffer -- Android and
-    // webOS, neither testable from here -- behind a class that nothing builds
-    // on the one platform whose tests actually run this code.
     class MpvRhiRenderer final : public QQuickRhiItemRenderer {
     public:
         explicit MpvRhiRenderer(MpvVideoItem *item)
-            : m_item(item)
+            : m_lifecycle(item)
         {
         }
 
         ~MpvRhiRenderer() override
         {
-            QObject::disconnect(m_frameSwappedConnection);
+            m_lifecycle.disconnectWindow();
             destroyGlFramebuffer();
-            releaseRenderContext();
+            // Release while backend-owned state (including Vulkan features)
+            // is still alive, before member destruction reaches the lifecycle.
+            m_lifecycle.releaseContext();
         }
 
     protected:
@@ -342,59 +402,44 @@ namespace {
                 m_targetObject = object;
                 m_targetSize = size;
                 m_targetFormat = format;
-                m_hasRenderedFrame = false;
+                m_lifecycle.invalidateFrame();
                 destroyGlFramebuffer();
             }
         }
 
         void synchronize(QQuickRhiItem *rhiItem) override
         {
-            auto *item = static_cast<MpvVideoItem *>(rhiItem);
-            setWindow(item->window());
-            m_item = item;
-            const auto snap = item->takePendingHandle();
-            if (!snap.dirty)
-                return;
-
-            m_nextHandle = snap.handle;
-            m_handleDirty = true;
-            m_releaseWaiter = snap.releaseWaiter;
-            m_releaseCompleted = snap.releaseCompleted;
-            m_attachCompleted = snap.attachCompleted;
+            m_lifecycle.synchronize(static_cast<MpvVideoItem *>(rhiItem));
         }
 
         void render(QRhiCommandBuffer *cb) override
         {
-            if (!m_item)
+            if (!m_lifecycle.item())
                 return;
 
             // libplacebo initialization and destruction also touch the D3D11
             // immediate context (destruction clears its state). Execute Qt's
             // pending commands first and invalidate its state cache afterwards.
-            const bool d3d11Handoff = m_handleDirty && cb && rhi() && rhi()->backend() == QRhi::D3D11;
+            const bool d3d11Handoff = m_lifecycle.hasPendingHandle() && cb && rhi() && rhi()->backend() == QRhi::D3D11;
             if (d3d11Handoff)
                 cb->beginExternal();
-            if (m_handleDirty) {
-                releaseRenderContext();
-                if (m_nextHandle)
-                    createRenderContext(m_nextHandle);
-                m_nextHandle = nullptr;
-                m_handleDirty = false;
+            if (m_lifecycle.hasPendingHandle()) {
+                m_renderFailed = false;
+                m_lifecycle.releaseContext();
+                if (auto *next = m_lifecycle.nextHandle())
+                    createRenderContext(next);
                 if (d3d11Handoff)
                     cb->endExternal();
-                completeReleaseWaiter();
-                completeAttachHandoff();
+                m_lifecycle.completeHandoff();
             }
 
-            mpv_render_context *ctx = m_item->m_renderCtxAtomic.load();
+            mpv_render_context *ctx = m_lifecycle.context();
             if (!ctx || m_renderFailed)
                 return;
 
             const uint64_t updateFlags = mpv_render_context_update(ctx);
-            if (m_hasRenderedFrame && !(updateFlags & MPV_RENDER_UPDATE_FRAME))
+            if (!m_lifecycle.needsFrame(updateFlags))
                 return;
-
-            const bool firstVideoFrame = !m_hasRenderedVideoFrame && (updateFlags & MPV_RENDER_UPDATE_FRAME);
 
             QRhiTexture *target = colorTexture();
             if (!target || !cb)
@@ -426,13 +471,7 @@ namespace {
             if (!drew)
                 return;
 
-            m_hasRenderedFrame = true;
-            m_swapPending = true;
-            if (firstVideoFrame) {
-                m_hasRenderedVideoFrame = true;
-                m_firstVideoFrameSwapPending = true;
-                qInfo() << "player: first video frame rendered";
-            }
+            m_lifecycle.frameRendered(updateFlags);
         }
 
     private:
@@ -522,9 +561,9 @@ namespace {
                 = QStringLiteral("Video rendering failed on %1: %2")
                       .arg(QString::fromLatin1(graphicsApiName()), QString::fromUtf8(mpv_error_string(err)));
             qCritical() << "MpvVideoItem:" << message;
-            const QPointer<MpvVideoItem> guardedItem(m_item);
+            const QPointer<MpvVideoItem> guardedItem(m_lifecycle.item());
             QMetaObject::invokeMethod(
-                m_item,
+                m_lifecycle.item(),
                 [guardedItem, message]() {
                     if (guardedItem)
                         emit guardedItem->renderError(message);
@@ -572,34 +611,6 @@ namespace {
             m_glFbo = 0;
             m_glFboTexture = 0;
             m_glFboSize = QSize();
-        }
-
-        void setWindow(QQuickWindow *window)
-        {
-            if (m_window == window)
-                return;
-
-            QObject::disconnect(m_frameSwappedConnection);
-            m_window = window;
-            if (!m_window)
-                return;
-
-            m_frameSwappedConnection = QObject::connect(
-                m_window, &QQuickWindow::frameSwapped, m_window,
-                [this] {
-                    if (!m_item || !m_swapPending)
-                        return;
-
-                    m_swapPending = false;
-                    if (auto *ctx = m_item->m_renderCtxAtomic.load()) {
-                        mpv_render_context_report_swap(ctx);
-                        if (m_firstVideoFrameSwapPending) {
-                            m_firstVideoFrameSwapPending = false;
-                            qInfo() << "player: first video frame swapped";
-                        }
-                    }
-                },
-                Qt::DirectConnection);
         }
 
         void createRenderContext(mpv_handle *next)
@@ -719,9 +730,9 @@ namespace {
                 const QString message = QStringLiteral("Failed to initialize video rendering: %1")
                                             .arg(QString::fromUtf8(mpv_error_string(err)));
                 qCritical() << "MpvVideoItem:" << message;
-                const QPointer<MpvVideoItem> guardedItem(m_item);
+                const QPointer<MpvVideoItem> guardedItem(m_lifecycle.item());
                 QMetaObject::invokeMethod(
-                    m_item,
+                    m_lifecycle.item(),
                     [guardedItem, message]() {
                         if (guardedItem)
                             emit guardedItem->renderError(message);
@@ -729,8 +740,7 @@ namespace {
                     Qt::QueuedConnection);
                 return;
             }
-            mpv_render_context_set_update_callback(newCtx, &MpvRhiRenderer::onMpvUpdate, static_cast<void *>(m_item));
-            m_item->m_renderCtxAtomic.store(newCtx);
+            m_lifecycle.publishContext(newCtx);
         }
 
 #if defined(JELLYFIN_MPV_ITEM_VULKAN)
@@ -798,57 +808,7 @@ namespace {
         }
 #endif
 
-        void releaseRenderContext()
-        {
-            m_hasRenderedFrame = false;
-            m_hasRenderedVideoFrame = false;
-            m_swapPending = false;
-            m_firstVideoFrameSwapPending = false;
-            m_renderFailed = false;
-            if (!m_item)
-                return;
-            if (auto *ctx = m_item->m_renderCtxAtomic.exchange(nullptr)) {
-                mpv_render_context_set_update_callback(ctx, nullptr, nullptr);
-                mpv_render_context_free(ctx);
-            }
-        }
-
-        void completeReleaseWaiter()
-        {
-            if (!m_releaseCompleted)
-                return;
-            m_releaseCompleted->store(true);
-            if (m_releaseWaiter)
-                QMetaObject::invokeMethod(m_releaseWaiter, "quit", Qt::QueuedConnection);
-            m_releaseWaiter = nullptr;
-            m_releaseCompleted.reset();
-        }
-
-        void completeAttachHandoff()
-        {
-            if (!m_attachCompleted)
-                return;
-            m_attachCompleted->store(true);
-            m_attachCompleted.reset();
-            if (m_item)
-                QMetaObject::invokeMethod(m_item, "renderContextHandoffCompleted", Qt::QueuedConnection);
-        }
-
-        static void onMpvUpdate(void *ctx)
-        {
-            auto *item = static_cast<MpvVideoItem *>(ctx);
-            QMetaObject::invokeMethod(item, "update", Qt::QueuedConnection);
-        }
-
-        QMetaObject::Connection m_frameSwappedConnection;
-        MpvVideoItem *m_item = nullptr;
-        QQuickWindow *m_window = nullptr;
-        mpv_handle *m_nextHandle = nullptr;
-        bool m_handleDirty = false;
-        bool m_hasRenderedFrame = false;
-        bool m_hasRenderedVideoFrame = false;
-        bool m_swapPending = false;
-        bool m_firstVideoFrameSwapPending = false;
+        RenderLifecycle m_lifecycle;
         bool m_renderFailed = false;
         quint64 m_targetObject = 0;
         QSize m_targetSize;
@@ -877,9 +837,6 @@ namespace {
         GLuint m_glFbo = 0;
         GLuint m_glFboTexture = 0;
         QSize m_glFboSize;
-        QPointer<QObject> m_releaseWaiter;
-        std::shared_ptr<std::atomic_bool> m_releaseCompleted;
-        std::shared_ptr<std::atomic_bool> m_attachCompleted;
     };
 #endif // JELLYFIN_MPV_ITEM_RHI
 } // namespace
@@ -918,12 +875,18 @@ void MpvVideoItem::setMpvHandle(mpv_handle *handle)
     {
         QMutexLocker locker(&m_handleMutex);
         m_pendingHandle = handle;
+        m_pendingRenderBackend = m_renderBackend;
         m_handleDirty = true;
         m_releaseWaiter = nullptr;
         m_releaseCompleted.reset();
         m_attachCompleted = std::make_shared<std::atomic_bool>(false);
     }
     update();
+}
+
+void MpvVideoItem::setRenderBackend(const QByteArray& backend)
+{
+    m_renderBackend = backend;
 }
 
 bool MpvVideoItem::waitForRenderContext(int timeoutMs)
@@ -995,7 +958,8 @@ QQuickFramebufferObject::Renderer *MpvVideoItem::createRenderer() const
 MpvVideoItem::HandleSnapshot MpvVideoItem::takePendingHandle()
 {
     QMutexLocker locker(&m_handleMutex);
-    HandleSnapshot snap { m_pendingHandle, m_handleDirty, m_releaseWaiter, m_releaseCompleted, m_attachCompleted };
+    HandleSnapshot snap { m_pendingHandle, m_handleDirty, m_releaseWaiter, m_releaseCompleted, m_attachCompleted,
+        m_pendingRenderBackend };
     m_handleDirty = false;
     m_releaseWaiter = nullptr;
     m_releaseCompleted.reset();

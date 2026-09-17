@@ -1,0 +1,11 @@
+Upstream: Wayland wayland-protocols
+Release: 1.49
+Commit: ee78491a237eaff9389a0ccf8680521d074407d3
+Path: staging/color-management/color-management-v1.xml
+Source: https://gitlab.freedesktop.org/wayland/wayland-protocols/-/raw/ee78491a237eaff9389a0ccf8680521d074407d3/staging/color-management/color-management-v1.xml
+SHA256: 18a2678e3352c3be3fbeed20005d48852b7235d0d78f08b9c987a0b8e91449f9
+License: MIT; full copyright and permission notice retained in the XML.
+
+Vendored without modifications. Interfaces match the former checked-in bindings:
+version 3, except wp_image_description_reference_v1 (version 1).
+The client continues to bind wp_color_manager_v1 at version 1.

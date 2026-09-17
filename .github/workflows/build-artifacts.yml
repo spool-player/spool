@@ -3,10 +3,7 @@ name: build artifacts
 on:
   push:
     branches:
-      - master
-      # Feature branches get the same run master does, so that what a merge
-      # would do to CI is known before the merge rather than after it.
-      - "feature/**"
+      - "**"
   pull_request:
   workflow_dispatch:
     inputs:
@@ -88,9 +85,54 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  build-policy:
+    name: Select artifact build
+    runs-on: ubuntu-24.04
+    permissions:
+      pull-requests: read
+    outputs:
+      build: ${{ steps.policy.outputs.build }}
+    steps:
+      # No checkout or repository code: this token only reads PR metadata.
+      - name: Avoid duplicate branch and PR builds
+        id: policy
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          HEAD_OWNER: ${{ github.repository_owner }}
+          HEAD_BRANCH: ${{ github.ref_name }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          RELEASE_BUILD: ${{ inputs.release }}
+        run: |
+          set -euo pipefail
+          build=true
+          if [[ "$EVENT_NAME" == push && "$REF_TYPE" == branch &&
+                "$HEAD_BRANCH" != master && "$RELEASE_BUILD" != true ]]; then
+            if prs="$(gh api --method GET --paginate --slurp \
+              "repos/$GH_REPO/pulls" \
+              -f state=open -f head="$HEAD_OWNER:$HEAD_BRANCH" -f per_page=100)"; then
+              # Match both repositories and the full branch name, not just
+              # the owner's label. Do not require a SHA match: PR metadata
+              # can lag the push while its synchronize run is being queued.
+              if jq -e --arg repo "$GH_REPO" --arg head "$HEAD_BRANCH" \
+                'any(.[][]; .state == "open" and .base.repo.full_name == $repo
+                  and .head.repo.full_name == $repo and .head.ref == $head)' \
+                <<<"$prs" >/dev/null; then
+                build=false
+                echo "::notice::An open PR owns this branch's artifact build."
+              fi
+            else
+              echo "::warning::Could not query open PRs; running the branch build rather than skipping coverage."
+            fi
+          fi
+          echo "build=$build" >>"$GITHUB_OUTPUT"
+
   toolchain:
     name: Toolchain versions
     runs-on: ubuntu-24.04
+    needs: build-policy
+    if: ${{ needs.build-policy.outputs.build == 'true' }}
     outputs:
       qt_version: ${{ steps.versions.outputs.qt_version }}
       qt_series: ${{ steps.versions.outputs.qt_series }}
@@ -111,6 +153,8 @@ jobs:
   lint:
     name: Lint scripts
     runs-on: ubuntu-24.04
+    needs: build-policy
+    if: ${{ needs.build-policy.outputs.build == 'true' }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
         with:
@@ -375,14 +419,14 @@ jobs:
         run: bash tools/package-arch.sh
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
-        if: ${{ inputs.release || github.event_name == 'workflow_dispatch' }}
         with:
           name: spool-for-jellyfin-linux
           path: |
             dist/*.AppImage
             dist/*-linux-x86_64.tar.zst
             dist/*.pkg.tar.zst
-          retention-days: 1
+          if-no-files-found: error
+          retention-days: ${{ inputs.release && 1 || 7 }}
 
       - name: Save Linux build cache
         if: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release && steps.linux-build-cache.outputs.cache-hit != 'true' }}
@@ -625,13 +669,13 @@ jobs:
         run: tools/notarize-macos.sh dist/*.dmg
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
-        if: ${{ inputs.release || github.event_name == 'workflow_dispatch' }}
         with:
           name: spool-for-jellyfin-macos-dmg-${{ matrix.arch }}
           path: |
             dist/*.dmg
             dist/*.dmg.app.tar.gz
-          retention-days: 1
+          if-no-files-found: error
+          retention-days: ${{ inputs.release && 1 || 7 }}
 
       - name: Save macOS build cache
         if: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release && steps.macos-build-cache.outputs.cache-hit != 'true' }}
@@ -815,11 +859,11 @@ jobs:
           PY
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
-        if: ${{ inputs.release || github.event_name == 'workflow_dispatch' }}
         with:
           name: spool-for-jellyfin-webos-ipk
           path: build/*.ipk
-          retention-days: 1
+          if-no-files-found: error
+          retention-days: ${{ inputs.release && 1 || 7 }}
 
   android-apks:
     name: Android ${{ matrix.abi }} APK
@@ -994,7 +1038,8 @@ jobs:
         with:
           name: spool-for-jellyfin-android-apks-${{ matrix.abi }}
           path: dist/android/*.apk
-          retention-days: 1
+          if-no-files-found: error
+          retention-days: ${{ inputs.release && 1 || 7 }}
 
       # The Gradle project this ABI was packaged from, without its native
       # libraries. The universal job puts the union of every ABI's libs.xml
@@ -1109,7 +1154,8 @@ jobs:
         with:
           name: spool-for-jellyfin-android-apk-universal
           path: dist/android/spool-universal.apk
-          retention-days: 1
+          if-no-files-found: error
+          retention-days: ${{ inputs.release && 1 || 7 }}
 
   windows-x64:
     name: Windows x64 portable and installer
@@ -1213,26 +1259,23 @@ jobs:
 
 
       - name: Build portable and installer packages
-        if: ${{ inputs.release || github.event_name == 'workflow_dispatch' }}
         shell: pwsh
         run: tools\windows\package.ps1
 
       - name: Upload portable executable
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
-        if: ${{ inputs.release || github.event_name == 'workflow_dispatch' }}
         with:
           name: spool-for-jellyfin-windows-x64-portable
           path: |
             dist/*-Portable.exe
           if-no-files-found: error
-          retention-days: 1
+          retention-days: ${{ inputs.release && 1 || 7 }}
 
       - name: Upload installer executable
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
-        if: ${{ inputs.release || github.event_name == 'workflow_dispatch' }}
         with:
           name: spool-for-jellyfin-windows-x64-installer
           path: |
             dist/*-Setup.exe
           if-no-files-found: error
-          retention-days: 1
+          retention-days: ${{ inputs.release && 1 || 7 }}

@@ -52,6 +52,13 @@ native-window commands, renderer replacement and standalone mpv playlist
 management are unsupported. Config errors and embedding ownership are reported
 in player/mpv diagnostics.
 
+On webOS, supported codecs still use Starfish. For software-decoded codecs,
+**Software video renderer** in advanced playback settings offers Automatic
+(the established OpenGL `gpu` path), `gpu`, or experimental OpenGL `gpu-next`.
+Both retain the lightweight software-video options. Changes apply to the next
+playback; an explicitly selected renderer reports initialization failure rather
+than silently switching backends. Vulkan is not offered on webOS.
+
 During desktop playback, Spool's shortcuts, dialogs and focused text/IME
 controls take precedence. Remaining keys reach mpv's `input.conf` machinery.
 Printable characters retain their case, named keys and keypad keys use mpv

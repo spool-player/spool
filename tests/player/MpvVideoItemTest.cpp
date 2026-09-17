@@ -132,66 +132,73 @@ JELLYFIN_TEST_MAIN("mpv-video-item")
     window.show();
     app.processEvents();
 
-    std::setlocale(LC_NUMERIC, "C");
-    mpv_handle *handle = mpv_create();
-    const bool verbose = !qgetenv("SPOOL_TEST_MPV_LOG").isEmpty();
-    // mpv_create can fail, and the check for that is below: setting options on
-    // its result first would crash instead of reporting it, but only for a run
-    // that asked for logging.
-    if (handle && verbose
-        && (mpv_set_option_string(handle, "terminal", "yes") < 0
-            || mpv_set_option_string(handle, "msg-level", "all=debug") < 0)) {
-        std::fprintf(stderr, "failed to enable mpv logging\n");
-        return 1;
-    }
-    if (!handle || mpv_set_option_string(handle, "terminal", verbose ? "yes" : "no") < 0
-        || mpv_set_option_string(handle, "vo", "libmpv") < 0 || mpv_set_option_string(handle, "hwdec", "no") < 0
-        || mpv_initialize(handle) < 0) {
-        std::fprintf(stderr, "failed to initialize mpv\n");
-        if (handle)
+    // Reusing an item after detach must reset first-frame state and publish
+    // the new context, including when Qt replaces the render target on resize.
+    for (const QSize size : { QSize(320, 180), QSize(480, 270) }) {
+        window.resize(size);
+        videoItem.setSize(QSizeF(size));
+        std::setlocale(LC_NUMERIC, "C");
+        mpv_handle *handle = mpv_create();
+        const bool verbose = !qgetenv("SPOOL_TEST_MPV_LOG").isEmpty();
+        // mpv_create can fail, and the check for that is below: setting options on
+        // its result first would crash instead of reporting it, but only for a run
+        // that asked for logging.
+        if (handle && verbose
+            && (mpv_set_option_string(handle, "terminal", "yes") < 0
+                || mpv_set_option_string(handle, "msg-level", "all=debug") < 0)) {
+            std::fprintf(stderr, "failed to enable mpv logging\n");
+            return 1;
+        }
+        if (!handle || mpv_set_option_string(handle, "terminal", verbose ? "yes" : "no") < 0
+            || mpv_set_option_string(handle, "vo", "libmpv") < 0 || mpv_set_option_string(handle, "hwdec", "no") < 0
+            || mpv_initialize(handle) < 0) {
+            std::fprintf(stderr, "failed to initialize mpv\n");
+            if (handle)
+                mpv_terminate_destroy(handle);
+            return 1;
+        }
+
+        videoItem.setRenderBackend(qgetenv("SPOOL_TEST_RENDER_BACKEND"));
+        videoItem.setMpvHandle(handle);
+        if (!videoItem.waitForRenderContext()) {
+            std::fprintf(stderr, "render context was not ready before media load\n");
             mpv_terminate_destroy(handle);
-        return 1;
-    }
+            return 1;
+        }
 
-    videoItem.setMpvHandle(handle);
-    if (!videoItem.waitForRenderContext()) {
-        std::fprintf(stderr, "render context was not ready before media load\n");
+        const QByteArray path = QFile::encodeName(video.fileName());
+        const char *command[] = { "loadfile", path.constData(), nullptr };
+        if (mpv_command(handle, command) < 0) {
+            std::fprintf(stderr, "failed to load test video\n");
+            videoItem.releaseMpvHandle();
+            mpv_terminate_destroy(handle);
+            return 1;
+        }
+
+        bool rendered = false;
+        QElapsedTimer timer;
+        timer.start();
+        while (!rendered && timer.elapsed() < 5000) {
+            app.processEvents(QEventLoop::AllEvents, 20);
+            rendered = containsVideoPixel(window.grabWindow());
+            QThread::msleep(10);
+        }
+
+        // Diagnostic, not an assertion: what the swapchain can present depends on
+        // the driver, the compositor and whether the display is in HDR mode, none
+        // of which a test can require.
+        const JellyfinNative::DisplayOutputCapabilities display = JellyfinNative::PlatformDisplayOutput::probe(&window);
+        std::fprintf(stderr, "display: hdrAvailable=%d format=%d sdrWhite=%.0f min=%.4f max=%.0f\n",
+            int(display.hdrAvailable), int(display.preferredFormat), double(display.sdrWhiteNits),
+            double(display.minLuminanceNits), double(display.maxLuminanceNits));
+
+        const bool upright = rendered && isRightWayUp(window.grabWindow());
+        const bool released = videoItem.releaseMpvHandle();
         mpv_terminate_destroy(handle);
-        return 1;
-    }
-
-    const QByteArray path = QFile::encodeName(video.fileName());
-    const char *command[] = { "loadfile", path.constData(), nullptr };
-    if (mpv_command(handle, command) < 0) {
-        std::fprintf(stderr, "failed to load test video\n");
-        videoItem.releaseMpvHandle();
-        mpv_terminate_destroy(handle);
-        return 1;
-    }
-
-    bool rendered = false;
-    QElapsedTimer timer;
-    timer.start();
-    while (!rendered && timer.elapsed() < 5000) {
-        app.processEvents(QEventLoop::AllEvents, 20);
-        rendered = containsVideoPixel(window.grabWindow());
-        QThread::msleep(10);
-    }
-
-    // Diagnostic, not an assertion: what the swapchain can present depends on
-    // the driver, the compositor and whether the display is in HDR mode, none
-    // of which a test can require.
-    const JellyfinNative::DisplayOutputCapabilities display = JellyfinNative::PlatformDisplayOutput::probe(&window);
-    std::fprintf(stderr, "display: hdrAvailable=%d format=%d sdrWhite=%.0f min=%.4f max=%.0f\n",
-        int(display.hdrAvailable), int(display.preferredFormat), double(display.sdrWhiteNits),
-        double(display.minLuminanceNits), double(display.maxLuminanceNits));
-
-    const bool upright = rendered && isRightWayUp(window.grabWindow());
-    const bool released = videoItem.releaseMpvHandle();
-    mpv_terminate_destroy(handle);
-    if (!rendered || !upright || !released) {
-        std::fprintf(stderr, "video result: rendered=%d upright=%d released=%d\n", rendered, upright, released);
-        return 1;
+        if (!rendered || !upright || !released) {
+            std::fprintf(stderr, "video result: rendered=%d upright=%d released=%d\n", rendered, upright, released);
+            return 1;
+        }
     }
     return 0;
 }

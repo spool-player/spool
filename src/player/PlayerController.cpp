@@ -11,6 +11,7 @@
 #include "../platform/PlatformPlaybackSurface.h"
 #include "../platform/PlatformSystemProbes.h"
 #include "MpvOptionProfile.h"
+#include "MpvVideoItem.h"
 #include "PlaybackFailurePolicy.h"
 #include "PlaybackTrackParser.h"
 
@@ -1087,6 +1088,11 @@ bool PlayerController::ensureMpv(bool needsVideoSurface, bool embeddedVideo)
 
     qInfo() << "player: mpv initialized in" << startupTimer.elapsed() << "ms"
             << "idlePrepared=" << idlePrepared;
+
+    if (needsVideoSurface && embeddedVideo) {
+        if (auto *item = MpvVideoItem::instance())
+            item->setRenderBackend(m_softwareRenderer);
+    }
 
     QString attachmentError;
     if (!attachPlatformMpvSurface(

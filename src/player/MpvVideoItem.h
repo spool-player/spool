@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QByteArray>
 #include <QMutex>
 #include <QPointer>
 #include <QtQmlIntegration/qqmlintegration.h>
@@ -51,6 +52,11 @@ public:
     // Schedule render-context creation on Qt's scene-graph thread.
     void setMpvHandle(mpv_handle *handle);
 
+    // GUI-thread selection for the next handle attachment, not a live switch.
+    // webOS accepts gpu/gpu-next; empty or auto keeps its gpu default.
+    // Other platforms retain their existing backend selection.
+    void setRenderBackend(const QByteArray& backend);
+
     // Wait until the scheduled render-context handoff has completed. The
     // player must make this item visible before calling this so Qt will render
     // it; media loading must not start until this returns true.
@@ -76,6 +82,7 @@ public:
         QPointer<QObject> releaseWaiter;
         std::shared_ptr<std::atomic_bool> releaseCompleted;
         std::shared_ptr<std::atomic_bool> attachCompleted;
+        QByteArray renderBackend;
     };
     HandleSnapshot takePendingHandle();
 
@@ -92,6 +99,8 @@ private:
 
     QMutex m_handleMutex;
     mpv_handle *m_pendingHandle = nullptr;
+    QByteArray m_renderBackend;
+    QByteArray m_pendingRenderBackend;
     bool m_handleDirty = false;
     QPointer<QObject> m_releaseWaiter;
     std::shared_ptr<std::atomic_bool> m_releaseCompleted;

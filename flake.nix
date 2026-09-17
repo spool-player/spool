@@ -370,7 +370,8 @@
         squashfsTools
         spirv-cross
         wayland
-        wayland-scanner
+        # Executed during native client builds, not a target Wayland binary.
+        buildPackages.wayland-scanner
         wayland-protocols
         zimg
       ];
