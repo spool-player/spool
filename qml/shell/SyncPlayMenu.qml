@@ -168,9 +168,7 @@ FocusScope {
         baseColor: Theme.bgRaised
         clip: true
 
-        MouseArea {
-            anchors.fill: parent
-        }
+        PopupShield {}
 
         ColumnLayout {
             id: contentColumn

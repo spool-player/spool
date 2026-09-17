@@ -483,6 +483,7 @@ qt_add_qml_module(jellyfin-native
         qml/primitives/NavGrid.qml
         qml/primitives/MaterialIcon.qml
         qml/primitives/PopupMenuPanel.qml
+        qml/primitives/PopupShield.qml
         qml/primitives/ProfileTile.qml
         qml/primitives/SectionHeader.qml
         qml/primitives/ServerCard.qml
@@ -903,6 +904,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
             route-policy tests/qml/tst_RoutePolicy.qml
             key-router tests/qml/tst_KeyRouter.qml
             player-overlay-input tests/qml/tst_PlayerOverlayInput.qml
+            popup-menu-input tests/qml/tst_PopupMenuInput.qml
             option-picker-input tests/qml/tst_OptionPickerInput.qml
             media-row tests/qml/tst_MediaRow.qml
             metrics tests/qml/tst_Metrics.qml

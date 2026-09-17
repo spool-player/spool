@@ -127,14 +127,11 @@ Item {
             if (root.overlay.touchscreenControls)
                 return
             if (root.syncPlayMenuOpen) {
-                const local = syncPlayMenu.mapFromItem(root, point.position.x, point.position.y)
+                // The menu's PopupShield keeps presses inside it from reaching
+                // this handler, so a press here is outside the menu. The
+                // syncplay button toggles via its own handler.
                 const syncTarget = actionRow.actionTarget("syncplay")
-                if (syncTarget) {
-                    const syncLocal = syncTarget.mapFromItem(root, point.position.x, point.position.y)
-                    if (syncTarget.contains(syncLocal))
-                        return
-                }
-                if (!syncPlayMenu.contains(local))
+                if (!syncTarget || !root.containsControl(syncTarget, point.position))
                     root.overlay.closeMenu()
                 return
             }
@@ -491,9 +488,7 @@ Item {
             clip: true
             baseColor: menuDialog.dropdown ? Theme.bgRaised : Theme.bgPanel
 
-            MouseArea {
-                anchors.fill: parent
-            }
+            PopupShield {}
 
             ColumnLayout {
                 id: menuBody
