@@ -59,12 +59,46 @@ if [[ "$DEPLOY_APP" == "1" ]]; then
     exit 1
   }
 
+  # These are loaded dynamically, so no Mach-O load command tells macdeployqt
+  # to include them. Seed both roots before deploying their dependency closure.
+  vulkan_loader="${SPOOL_VULKAN_LOADER:-}"
+  moltenvk_icd="${SPOOL_MOLTENVK_ICD:-}"
+  if [[ "$vulkan_loader" != /* || ! -f "$vulkan_loader" ]]; then
+    echo "error: SPOOL_VULKAN_LOADER must name an absolute Vulkan loader dylib: $vulkan_loader" >&2
+    exit 1
+  fi
+  if [[ "$moltenvk_icd" != /* || ! -f "$moltenvk_icd" ]]; then
+    echo "error: SPOOL_MOLTENVK_ICD must name an absolute MoltenVK ICD manifest: $moltenvk_icd" >&2
+    exit 1
+  fi
+  moltenvk_driver="$(jq -er '.ICD.library_path | select(type == "string" and length > 0)' "$moltenvk_icd")"
+  if [[ "$moltenvk_driver" != /* ]]; then
+    moltenvk_driver="$(dirname "$moltenvk_icd")/$moltenvk_driver"
+  fi
+  for library in "$vulkan_loader" "$moltenvk_driver"; do
+    if [[ ! -f "$library" ]] || [[ "$(file -bL "$library")" != *"Mach-O"*"dynamically linked shared library"* ]]; then
+      echo "error: required Vulkan runtime is not a Mach-O dylib: $library" >&2
+      exit 1
+    fi
+  done
+  frameworks="$APP_BUNDLE/Contents/Frameworks"
+  bundled_icd="$APP_BUNDLE/Contents/Resources/vulkan/icd.d/MoltenVK_icd.json"
+  mkdir -p "$frameworks" "$(dirname "$bundled_icd")"
+  rm -f "$frameworks/libvulkan.1.dylib" "$frameworks/libMoltenVK.dylib"
+  cp -L "$vulkan_loader" "$frameworks/libvulkan.1.dylib"
+  cp -L "$moltenvk_driver" "$frameworks/libMoltenVK.dylib"
+  chmod u+w "$frameworks/libvulkan.1.dylib" "$frameworks/libMoltenVK.dylib"
+  install_name_tool -id @rpath/libvulkan.1.dylib "$frameworks/libvulkan.1.dylib"
+  install_name_tool -id @rpath/libMoltenVK.dylib "$frameworks/libMoltenVK.dylib"
+  jq '.ICD.library_path = "../../../Frameworks/libMoltenVK.dylib"' "$moltenvk_icd" >"$bundled_icd"
 
   macdeployqt_shadow="$(qt_deploy_macdeployqt_shadow \
     "$APP_BUILD/build.ninja" \
     "$BUILD_ROOT/qt-tools-shadow" \
     "$(command -v macdeployqt)")"
-  "$macdeployqt_shadow" "$APP_BUNDLE" -qmldir="$APP_ROOT/qml" -no-strip
+  "$macdeployqt_shadow" "$APP_BUNDLE" -qmldir="$APP_ROOT/qml" -no-strip \
+    -executable="$frameworks/libvulkan.1.dylib" \
+    -executable="$frameworks/libMoltenVK.dylib"
 
   canonicalize_library_alias() {
     local obsolete_name="$1"
@@ -206,7 +240,9 @@ if [[ "$DEPLOY_APP" == "1" ]]; then
     chmod u+w "$binary"
     "$strip_bin" -S -x "$binary"
   done < <(find "$APP_BUNDLE" -type f | sort)
-  python3 "$APP_ROOT/tools/package-audit.py" macho "$APP_BUNDLE"
+  python3 "$APP_ROOT/tools/package-audit.py" macho "$APP_BUNDLE" \
+    --root Contents/Frameworks/libvulkan.1.dylib \
+    --root Contents/Frameworks/libMoltenVK.dylib
   python3 "$APP_ROOT/tools/package-audit.py" inventory "$APP_BUNDLE" \
     --output "$BUILD_ROOT/jellyfin-native.inventory.tsv"
   python3 "$APP_ROOT/tools/ffmpeg-capabilities.py" \
