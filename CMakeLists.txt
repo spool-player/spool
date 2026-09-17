@@ -183,6 +183,8 @@ set(SPOOL_PLAYER_SOURCES
     src/player/PlaybackTrackState.h
     src/player/PlayerController.cpp
     src/player/PlayerController.h
+    src/player/RenderTargetProfile.cpp
+    src/player/RenderTargetProfile.h
 )
 
 # Application plumbing that does not name a media backend.
@@ -737,6 +739,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         playback-position-tracker tests/player/PlaybackPositionTrackerTest.cpp
         audio-sync-policy tests/player/AudioSyncPolicyTest.cpp
         mpv-option-profile tests/player/MpvOptionProfileTest.cpp
+        render-target-profile tests/player/RenderTargetProfileTest.cpp
         playback-failure-policy tests/player/PlaybackFailurePolicyTest.cpp
         play-queue-controller tests/player/PlayQueueControllerTest.cpp
         play-queue-outline-model tests/player/PlayQueueOutlineModelTest.cpp
