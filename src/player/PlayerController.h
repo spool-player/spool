@@ -8,6 +8,7 @@
 #include "PlaybackReporter.h"
 #include "PlaybackTimeline.h"
 #include "PlaybackTrackState.h"
+#include "RenderTargetProfile.h"
 
 #include <QByteArray>
 #include <QByteArrayList>
@@ -180,6 +181,10 @@ public:
     // Applies to the next thing that plays: the render options are set on a
     // fresh mpv core, and every play request builds one.
     void setRenderQuality(MpvOptionProfile::RenderQuality quality);
+    void setHardwareDecoding(bool enabled)
+    {
+        m_hardwareDecoding = enabled;
+    }
     // Direct output keeps video off the Qt scene graph entirely. Applies to
     // the next thing that plays, like the quality profile.
     void setDirectVideoOutput(bool direct);
@@ -247,6 +252,7 @@ public:
 
 private:
     QHash<int, QByteArray> m_mpvKeys;
+    void logColorDiagnostics(mpv_handle *handle);
     bool usesUserMpvConfig() const;
     int uiTrackIndexForStream(const QString& type, int streamIndex, int firstUiIndex) const;
     int streamIndexForUiTrack(const QString& type, int uiIndex, int firstUiIndex) const;
@@ -299,7 +305,17 @@ private:
     void handleVideoRenderError(const QString& message);
     void changePlaybackSpeed(double speed, bool syncOverride, bool clearSyncOverride = false);
     void updateHdrOutput(bool applySubtitleOptions);
+    // Ask the window what it is presenting into and tell mpv, once a session
+    // is under way and the scene graph therefore has a swapchain to ask.
+    void updateRenderTarget();
 
+public:
+    // Both take effect on the next probe, which is the next time something
+    // plays: the swapchain itself is fixed when the window is created.
+    void setHdrOutputPreference(const QString& name);
+    void setHdrPeakNits(int nits);
+
+private:
     // The video's display size, tracked so a platform that shapes its own
     // video plane can be told. Both halves arrive as separate property
     // changes, so neither is acted on until the pair is complete.
@@ -343,6 +359,7 @@ private:
     double m_containerFps = 0.0;
     MpvOptionProfile::RenderQuality m_renderQuality = MpvOptionProfile::RenderQuality::Balanced;
     bool m_directVideoOutput = false;
+    bool m_hardwareDecoding = true;
     // The opening seconds are where a device that cannot keep up says so:
     // the picture is being scaled and tone-mapped from the first frame, and
     // nothing has warmed a cache yet.
@@ -378,6 +395,9 @@ private:
     SubtitlePreferences m_subtitlePreferences;
     bool m_hdrPlayback = false;
     bool m_hdrInput = false;
+    RenderTargetProfile m_renderTarget;
+    HdrOutputPreference m_hdrPreference = HdrOutputPreference::Auto;
+    RenderTargetOverrides m_renderTargetOverrides;
     bool m_starfishVideoOutput = false;
     QByteArray m_targetTransfer;
     PlaybackPositionTracker m_positionTracker;

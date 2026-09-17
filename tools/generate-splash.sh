@@ -56,8 +56,13 @@ if ! command -v magick >/dev/null 2>&1; then
   exit 1
 fi
 
+# The interpreter is resolved by the shared manifest library: Windows ships it
+# as python only, every other platform here has python3.
+# shellcheck source=tools/lib/manifest-sources.sh
+source "$APP_ROOT/tools/lib/manifest-sources.sh"
+
 field() {
-  python3 -c '
+  "$MANIFEST_PYTHON" -c '
 import json
 import sys
 

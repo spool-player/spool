@@ -26,6 +26,8 @@ extern "C" {
 #include <QFile>
 #include <QMetaObject>
 #include <QPointer>
+#include <QQuickWindow>
+#include <QSGRendererInterface>
 #include <QUrl>
 #include <QtGlobal>
 
@@ -183,6 +185,7 @@ PlayerController::PlayerController(NativeAppWindow *window, JellyfinApiFacade *a
     , m_subtitleFontsPath(QFile::encodeName(subtitleFontsPath))
 {
     if (m_window) {
+        connect(m_window, &NativeAppWindow::hdrOutputChanged, this, &PlayerController::updateRenderTarget);
         connect(m_window, &QWindow::activeChanged, this, [this]() {
             if (!m_window->isActive())
                 releaseMpvKeys();
@@ -229,8 +232,8 @@ PlayerController::PlayerController(NativeAppWindow *window, JellyfinApiFacade *a
         // presents them late and simply runs slow. So the question asked here
         // is whether the picture is actually arriving at the rate the file
         // says it should.
-        constexpr qint64 tolerableDrops = 10;
-        constexpr qint64 tolerableDelays = 10;
+        constexpr qint64 tolerableDrops = 50;
+        constexpr qint64 tolerableDelays = 50;
         constexpr double sustainedFraction = 0.85;
         const bool tooSlow
             = m_containerFps > 0.0 && m_outputFps > 0.0 && m_outputFps < m_containerFps * sustainedFraction;
@@ -449,7 +452,7 @@ bool PlayerController::configureAndInitializeMpv(mpv_handle *handle, bool embedd
     // before scripts or force-window can create a native player window.
     char embeddingOptions[][40] = {
         "--vo=libmpv",
-        "--gpu-api=opengl",
+        "--gpu-api=auto",
         "--gpu-context=auto",
         "--wid=-1",
         "--force-window=no",
@@ -460,9 +463,28 @@ bool PlayerController::configureAndInitializeMpv(mpv_handle *handle, bool embedd
         "--terminal=no",
         "--osc=no",
     };
-    char *embeddingArguments[std::size(embeddingOptions) + 1] {};
+    char *embeddingArguments[std::size(embeddingOptions) + 2] {};
     for (size_t i = 0; i < std::size(embeddingOptions); ++i)
         embeddingArguments[i] = embeddingOptions[i];
+    // --gpu-api picks one of mpv's own ra_ctx backends: a native context and
+    // swapchain of its own. Neither handle this function builds has one. Both
+    // are --vo=libmpv --wid=-1 --force-window=no, so mpv never owns a surface
+    // on desktop: the embedded handle renders into the texture Qt owns through
+    // libplacebo, and the idle handle renders nothing until it is adopted as
+    // that one. Which backend libplacebo uses comes from the render API the
+    // video item asks for, not from here.
+    //
+    // Naming an API would only constrain contexts that are never created, and
+    // would name one this build may not have. Windows builds libmpv without its
+    // D3D11 and Vulkan contexts -- libplacebo carries both instead -- so
+    // --gpu-api=d3d11 is an unknown value there and mpv_initialize_opts fails
+    // on it. That is not hypothetical: keying this off embeddedVideo left the
+    // idle handle, which passes false, naming d3d11 on Windows and failing to
+    // initialise, losing the pre-warm silently for want of an option that had
+    // nothing to constrain. The option stays at auto for both.
+    QByteArray softwareDecodeOption = QByteArrayLiteral("--hwdec=no");
+    if (!m_hardwareDecoding)
+        embeddingArguments[std::size(embeddingOptions)] = softwareDecodeOption.data();
     if (usesUserMpvConfig())
         qInfo() << "player: user mpv config enabled; embedding overrides vo, gpu-api, gpu-context,"
                    " wid, force-window, idle, keep-open, input-vo-keyboard, input-cursor, terminal and osc";
@@ -470,8 +492,13 @@ bool PlayerController::configureAndInitializeMpv(mpv_handle *handle, bool embedd
 #else
     initializeResult = mpv_initialize(handle);
 #endif
-    if (initializeResult < 0)
+    logColorDiagnostics(handle);
+    if (initializeResult < 0) {
+        // This runs before log messages are requested below, so a failure here
+        // reaches neither log on its own and reads as a silent retry loop.
+        qWarning() << "player: mpv initialization failed:" << mpv_error_string(initializeResult);
         return false;
+    }
     // mpv's own log file lives in application-private storage, which is
     // unreadable on Android. Mirror its messages into the app log so player
     // problems are diagnosable wherever the app runs.
@@ -493,6 +520,49 @@ bool PlayerController::usesUserMpvConfig() const
         return m_activeUserMpvConfig;
     return platformMpvOptionProfile() == MpvOptionProfile::Platform::Desktop
         && m_mpvConfigPolicy.mode != MpvConfigPolicy::Mode::Disabled;
+}
+
+void PlayerController::logColorDiagnostics(mpv_handle *handle)
+{
+    if (!handle)
+        return;
+    const char *props[] = {
+        "current-vo",
+        "current-gpu-context",
+        "current-render-api",
+        "current-render-backend",
+        "video-dec-params/pixelformat",
+        "video-params/colormatrix",
+        "video-params/primaries",
+        "video-params/gamma",
+        "video-params/colorlevels",
+        "video-params/sig-peak",
+        "video-params/max-cll",
+        "video-params/max-fall",
+        "video-target-params/pixelformat",
+        "video-target-params/colormatrix",
+        "video-target-params/primaries",
+        "video-target-params/gamma",
+        "video-target-params/colorlevels",
+        "video-target-params/min-luma",
+        "video-target-params/max-luma",
+        "video-target-params/max-cll",
+        "target-trc",
+        "target-prim",
+        "target-peak",
+        "target-contrast",
+        "hdr-reference-white",
+        "tone-mapping",
+    };
+    QStringList details;
+    for (const char *prop : props) {
+        char *val = mpv_get_property_string(handle, prop);
+        if (val) {
+            details.push_back(QStringLiteral("%1=%2").arg(QString::fromLatin1(prop), QString::fromUtf8(val)));
+            mpv_free(val);
+        }
+    }
+    qInfo().noquote() << "player: color diagnostics ->" << details.join(QStringLiteral(", "));
 }
 
 bool PlayerController::forwardMpvKey(int key, int modifiers, const QString& text, bool pressed, bool repeat)
@@ -596,9 +666,62 @@ bool PlayerController::hdrPlayback() const
 {
     return m_hdrPlayback;
 }
+// The surface encoding is fixed at startup; settings changes apply next launch.
+// Read the GUI-thread snapshot, never QRhi resources from the player thread.
+void PlayerController::updateRenderTarget()
+{
+    if (platformMpvOptionProfile() != MpvOptionProfile::Platform::Desktop)
+        return;
+    DisplayOutputCapabilities display;
+    if (m_window) {
+        display.hdrAvailable = m_window->hdrOutput();
+        display.preferredFormat
+            = display.hdrAvailable ? RenderTargetProfile::Format::ExtendedSrgbLinear : RenderTargetProfile::Format::Sdr;
+        display.sdrWhiteNits = m_window->hdrSdrWhiteNits();
+        display.maxLuminanceNits = m_window->hdrPeakNits();
+        display.luminanceMeasured = display.maxLuminanceNits > 0.0f;
+    }
+    const RenderTargetProfile resolved
+        = RenderTargetPolicy::resolve(display, HdrOutputPreference::Auto, m_renderTargetOverrides);
+    if (resolved != m_renderTarget) {
+        m_renderTarget = resolved;
+        qInfo() << "player: render target" << (m_renderTarget.isHdr() ? "scRGB" : "SDR")
+                << "sdrWhite=" << m_renderTarget.sdrWhiteNits << "peak=" << m_renderTarget.maxLuminanceNits;
+    }
+    // Apply for every new mpv handle, even when the window profile is unchanged.
+    // Encoding is an embedding invariant; user shaders/tone mapping remain theirs.
+    if (auto *handle = m_mpvLifecycle.handle()) {
+        if (!applyOptions(handle, RenderTargetPolicy::targetOptions(m_renderTarget)))
+            qWarning() << "player: failed to apply the embedded output target";
+    }
+    updateHdrOutput(true);
+}
+
+void PlayerController::setHdrOutputPreference(const QString& name)
+{
+    const HdrOutputPreference preference = RenderTargetPolicy::preferenceFromName(name);
+    if (m_hdrPreference == preference)
+        return;
+    m_hdrPreference = preference;
+    // The current surface keeps its encoding until restart.
+}
+
+void PlayerController::setHdrPeakNits(int nits)
+{
+    const float peak = std::max(0, nits);
+    if (qFuzzyCompare(m_renderTargetOverrides.maxLuminanceNits + 1.0f, peak + 1.0f))
+        return;
+    m_renderTargetOverrides.maxLuminanceNits = peak;
+    updateRenderTarget();
+}
+
 void PlayerController::updateHdrOutput(bool applySubtitleOptions)
 {
-    const bool hdrOutput = MpvOptionProfile::isHdrOutput(m_starfishVideoOutput, m_hdrInput, m_targetTransfer);
+    // On an embedded target the transfer function mpv reports is the one Spool
+    // asked for, so the profile is the more direct answer and the only one
+    // available before the first frame.
+    const bool hdrOutput
+        = m_renderTarget.isHdr() || MpvOptionProfile::isHdrOutput(m_starfishVideoOutput, m_hdrInput, m_targetTransfer);
     if (m_hdrPlayback == hdrOutput)
         return;
     m_hdrPlayback = hdrOutput;
@@ -1043,7 +1166,11 @@ void PlayerController::play(const PlaybackSession& session, bool startPaused)
         }
         qInfo() << "player: prepareForPlaybackSurface completed in" << playbackSurfaceTimer.elapsed() << "ms";
     } else if (embeddedVideo) {
-        qInfo() << "player: using embedded OpenGL software video surface";
+        qInfo() << "player: using the embedded video surface on"
+                << (QQuickWindow::graphicsApi() == QSGRendererInterface::Vulkan              ? "Vulkan"
+                           : QQuickWindow::graphicsApi() == QSGRendererInterface::Direct3D11 ? "Direct3D 11"
+                           : QQuickWindow::graphicsApi() == QSGRendererInterface::Software   ? "software"
+                                                                                             : "OpenGL");
     } else {
         qInfo() << "player: audio-only playback does not request a video surface";
     }
@@ -1104,6 +1231,11 @@ void PlayerController::play(const PlaybackSession& session, bool startPaused)
         return;
     }
     auto *handle = m_mpvLifecycle.handle();
+    // The scene graph has a swapchain by now, which it does not when mpv is
+    // first configured, so this is the first moment the target can be asked
+    // about at all.
+    updateRenderTarget();
+
     // An idle-prepared mpv was configured before this session's HDR policy
     // was known. Reapply subtitle options now so HDR paperwhite is correct
     // from the first rendered subtitle, not only after a settings change.
@@ -2026,6 +2158,7 @@ void PlayerController::handleMpvEvent(mpv_event *event)
         QMetaObject::invokeMethod(this, [this]() {
             qInfo() << "player: file loaded";
             m_fileLoaded = true;
+            logColorDiagnostics(m_mpvLifecycle.handle());
             // Only video can strain the renderer, and only once per playback:
             // a step down rebuilds the core, which lands back here.
             if (!m_renderStrainReported && m_mediaKind == QStringLiteral("video"))
@@ -2042,6 +2175,7 @@ void PlayerController::handleMpvEvent(mpv_event *event)
     case MPV_EVENT_PLAYBACK_RESTART:
         QMetaObject::invokeMethod(this, [this]() {
             qInfo() << "player: playback restart";
+            logColorDiagnostics(m_mpvLifecycle.handle());
             const bool hadPendingSeek = m_pendingSeek;
             m_seekDispatchReady = true;
             if (hadPendingSeek) {

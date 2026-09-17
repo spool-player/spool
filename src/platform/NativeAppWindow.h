@@ -19,6 +19,8 @@ class NativeAppWindow final : public QQuickView {
     Q_PROPERTY(int overlayHeight READ overlayHeight NOTIFY overlayRevisionChanged)
     Q_PROPERTY(qint64 systemMemoryBytes READ systemMemoryBytes CONSTANT)
     Q_PROPERTY(bool fullScreen READ fullScreen NOTIFY fullScreenChanged)
+    Q_PROPERTY(bool hdrOutput READ hdrOutput NOTIFY hdrOutputChanged)
+    Q_PROPERTY(qreal hdrSdrWhiteNits READ hdrSdrWhiteNits NOTIFY hdrOutputChanged)
 
 public:
     explicit NativeAppWindow(const QString& appId, QWindow *parent = nullptr);
@@ -71,6 +73,21 @@ public:
     {
         m_systemMemoryBytes = qMax<qint64>(0, bytes);
     }
+    // Actual scRGB surface state, published on the GUI thread after the render
+    // thread has inspected the swapchain. Independent of the playing file.
+    bool hdrOutput() const
+    {
+        return m_hdrOutput;
+    }
+    qreal hdrSdrWhiteNits() const
+    {
+        return m_hdrSdrWhiteNits;
+    }
+    qreal hdrPeakNits() const
+    {
+        return m_hdrPeakNits;
+    }
+    void setHdrOutput(bool active, qreal sdrWhiteNits, qreal peakNits);
     Q_INVOKABLE void toggleFullScreen();
     // Whether the window should cover the system's own bars. Only Android
     // acts on it: elsewhere the window manager already decides, and the shell
@@ -91,6 +108,7 @@ signals:
     void closeRequested();
     void overlayRevisionChanged();
     void fullScreenChanged();
+    void hdrOutputChanged();
     void platformSurfaceStateChanged(int state);
     void platformSurfaceExposed(bool exposed);
     void platformCloseRequested();
@@ -142,6 +160,9 @@ private:
     bool m_overlayPublishQueued = false;
     int m_overlayRevision = 0;
     qint64 m_systemMemoryBytes = 0;
+    bool m_hdrOutput = false;
+    qreal m_hdrSdrWhiteNits = 203.0;
+    qreal m_hdrPeakNits = 0.0;
     Qt::MouseButton m_pointerNavigationButton = Qt::NoButton;
     std::unique_ptr<PlatformData> m_platform;
     bool m_immersive = false;

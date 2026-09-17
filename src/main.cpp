@@ -19,6 +19,7 @@
 #include "platform/NativeAppWindow.h"
 #include "platform/PlatformApplicationServices.h"
 #include "platform/PlatformCapabilities.h"
+#include "platform/PlatformDisplayOutput.h"
 #include "platform/PlatformPaths.h"
 #include "platform/PlatformPlaybackRuntime.h"
 #include "platform/PlatformProcess.h"
@@ -26,11 +27,15 @@
 #include "platform/ScreenSaverInhibitor.h"
 #include "player/MpvVideoItem.h"
 #include "player/PlayerController.h"
+#include "player/RenderTargetProfile.h"
 #if defined(SPOOL_ANDROID) || defined(JELLYFIN_NATIVE_WEBOS)
 #include "platform/UpdateController.h"
 #endif
 #if defined(SPOOL_ANDROID)
 #include <QJniObject>
+#endif
+#if defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID) && !defined(JELLYFIN_NATIVE_WEBOS)
+#include "platform/linux/WaylandColorInfo.h"
 #endif
 
 #include <QCoreApplication>
@@ -441,28 +446,130 @@ int main(int argc, char **argv)
     qInstallMessageHandler(qtMessageHandler);
     QLoggingCategory::setFilterRules(QStringLiteral("qt.*.debug=false\nqt.*.info=false"));
 
-    // Production playback needs OpenGL for MpvVideoItem's FBO. Launch tests
-    // validate the QML scene on headless runners, where no OpenGL adapter is
-    // guaranteed, so use Qt Quick's deterministic software renderer.
-    QQuickWindow::setGraphicsApi(launchTest ? QSGRendererInterface::Software : QSGRendererInterface::OpenGL);
+    // Launch tests validate the QML scene on headless runners, where no
+    // adapter of any kind is guaranteed, so use Qt Quick's deterministic
+    // software renderer.
+    //
+    // Keep the renderer and Qt on the same API. Linux uses Vulkan for Wayland
+    // HDR and macOS uses it through MoltenVK; OpenGL remains an explicit SDR
+    // compatibility choice.
+#if defined(Q_OS_WIN)
+    QSGRendererInterface::GraphicsApi graphicsApi = QSGRendererInterface::Direct3D11;
+#elif defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID) && !defined(JELLYFIN_NATIVE_WEBOS) && QT_CONFIG(vulkan)
+    QSGRendererInterface::GraphicsApi graphicsApi = QSGRendererInterface::Vulkan;
+#elif defined(Q_OS_MACOS) && QT_CONFIG(vulkan)
+    QSGRendererInterface::GraphicsApi graphicsApi = QSGRendererInterface::Vulkan;
+#else
+    QSGRendererInterface::GraphicsApi graphicsApi = QSGRendererInterface::OpenGL;
+#endif
+    // QSettings resolves which store it opens from the application identity,
+    // and the graphics-API choice below is read out of that store before there
+    // is an application object to carry it. These setters are static and do not
+    // need one -- set here rather than after QGuiApplication, or the read finds
+    // an empty store and every launch silently takes the platform default.
+    QCoreApplication::setOrganizationName(QStringLiteral("spool-jellyfin"));
+    QCoreApplication::setApplicationName(QStringLiteral("Spool for Jellyfin"));
+    QCoreApplication::setApplicationVersion(QString::fromLatin1(kAppVersion));
+
+    // The setting is what a viewer chose; the environment variable stays a
+    // developer override and wins over it.
+    QByteArray requestedApi = qgetenv("SPOOL_RENDER_API").toLower();
+    if (!requestedApi.isEmpty()) {
+        // An override outlives the shell that set it, and an application that
+        // restarts itself inherits it, so a setting that appears to be ignored
+        // is usually this. Say so rather than leaving it to be discovered.
+        logLine("startup: SPOOL_RENDER_API=%s overrides the graphics backend setting", requestedApi.constData());
+    } else {
+        const auto stored = JellyfinNative::RenderTargetPolicy::startupGraphicsApi();
+        if (stored != JellyfinNative::RenderTargetPolicy::GraphicsApiPreference::Automatic) {
+            requestedApi = JellyfinNative::RenderTargetPolicy::graphicsApiName(stored);
+            logLine("startup: graphics backend setting asks for %s", requestedApi.constData());
+        }
+    }
+    if (launchTest) {
+        graphicsApi = QSGRendererInterface::Software;
+    } else if (requestedApi == "opengl") {
+        graphicsApi = QSGRendererInterface::OpenGL;
+    } else if (requestedApi == "d3d11" || requestedApi == "direct3d11") {
+#if defined(Q_OS_WIN)
+        graphicsApi = QSGRendererInterface::Direct3D11;
+#else
+        logLine("startup: SPOOL_RENDER_API asked for Direct3D 11, which only Windows has");
+#endif
+    } else if (requestedApi == "vulkan") {
+#if QT_CONFIG(vulkan)
+        graphicsApi = QSGRendererInterface::Vulkan;
+#else
+        logLine("startup: SPOOL_RENDER_API asked for Vulkan, which this build has no support for");
+#endif
+    }
+    QQuickWindow::setGraphicsApi(graphicsApi);
+    logLine("startup: scene graph on %s",
+        graphicsApi == QSGRendererInterface::Vulkan           ? "Vulkan"
+            : graphicsApi == QSGRendererInterface::Direct3D11 ? "Direct3D 11"
+            : graphicsApi == QSGRendererInterface::Software   ? "software"
+                                                              : "OpenGL");
 
     QSurfaceFormat::setDefaultFormat(JellyfinNative::platformSurfaceFormat());
 
     logLine("startup: constructing QGuiApplication");
     QGuiApplication app(argc, argv);
-    app.setApplicationName(QStringLiteral("Spool for Jellyfin"));
-    app.setApplicationVersion(QString::fromLatin1(kAppVersion));
-    app.setOrganizationName(QStringLiteral("spool-jellyfin"));
+    // The name, version and organisation are set above, before the settings
+    // store is read.
     app.setApplicationDisplayName(QStringLiteral("Spool for Jellyfin"));
     JellyfinNative::TerminationSignalHandler terminationSignals(app);
     logLine("startup: QGuiApplication constructed");
 
     // Put a native surface on screen at the first valid opportunity. QWindow
+    QString autoplayItemId;
+    for (int i = 1; i < argc; ++i) {
+        const QString arg = QString::fromLocal8Bit(argv[i]);
+        if (arg == QStringLiteral("--play") && i + 1 < argc) {
+            autoplayItemId = QString::fromLocal8Bit(argv[++i]);
+        } else if (!arg.startsWith('-') && arg.length() >= 16) {
+            autoplayItemId = arg;
+        }
+    }
+    if (autoplayItemId.isEmpty()) {
+        autoplayItemId = QString::fromLocal8Bit(qgetenv("SPOOL_PLAY_ITEM"));
+    }
+
+    bool automaticHdr = false;
+    bool allowHdrRequest = !launchTest
+        && (graphicsApi == QSGRendererInterface::Vulkan || graphicsApi == QSGRendererInterface::Direct3D11);
+#if defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID) && !defined(JELLYFIN_NATIVE_WEBOS)
+    allowHdrRequest = allowHdrRequest && QGuiApplication::platformName().startsWith(QLatin1String("wayland"));
+    automaticHdr = allowHdrRequest;
+#elif defined(Q_OS_WIN)
+    // Qt checks the window's output and Windows' Use HDR state before choosing
+    // FP16. The native probe then verifies the actual buffer and DXGI signaling.
+    // Vulkan asks for the same scRGB encoding through VK_EXT_swapchain_colorspace
+    // rather than DXGI, and Windows composites either one the same way.
+    automaticHdr = allowHdrRequest;
+#endif
+    const QByteArray hdrRequest
+        = allowHdrRequest ? JellyfinNative::RenderTargetPolicy::startupSwapChainRequest(automaticHdr) : QByteArray();
+#if !defined(Q_OS_ANDROID) && !defined(JELLYFIN_NATIVE_WEBOS)
+    if (!hdrRequest.isEmpty()) {
+        qputenv("QSG_RHI_HDR", hdrRequest);
+        logLine("startup: set QSG_RHI_HDR=%s in environment", hdrRequest.constData());
+    } else {
+        qunsetenv("QSG_RHI_HDR");
+    }
+#endif
+
     // and scene-graph setup must remain on the GUI thread; everything below
     // this point can overlap the render thread's first-frame work instead of
     // delaying it.
     JellyfinNative::InputLatencyMonitor inputLatencyMonitor;
     JellyfinNative::NativeAppWindow window(QString::fromLatin1(kAppId));
+#if defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID) && !defined(JELLYFIN_NATIVE_WEBOS)
+    JellyfinNative::WaylandHdrSurface waylandHdrSurface(&window);
+#endif
+    window.setProperty("_qt_sg_hdr_format", hdrRequest);
+    logLine("startup: output request=%s qpa=%s", hdrRequest.isEmpty() ? "SDR" : hdrRequest.constData(),
+        qPrintable(QGuiApplication::platformName()));
+    window.rootContext()->setContextProperty(QStringLiteral("startupNativeWindow"), &window);
     // The launch screen. Everything that draws it -- the frame put up before
     // the shell exists, the shell's own overlay, the slow-start page -- reads
     // these, so all three land on the same pixels and the handover from the
@@ -475,6 +582,43 @@ int main(int argc, char **argv)
     window.rootContext()->setContextProperty(QStringLiteral("startupSplashCoreWidthDp"), splashCoreWidthDp());
     window.rootContext()->setContextProperty(QStringLiteral("startupSplashPixelsPerDp"), splashPixelsPerDp());
     JellyfinNative::configurePlatformWindow(window);
+#if !defined(Q_OS_ANDROID) && !defined(JELLYFIN_NATIVE_WEBOS)
+    // Access QRhi only on its render thread. Native display queries and QML
+    // notification stay on the GUI thread. Snapshot once per scene graph;
+    // live output-change subscriptions remain a separate follow-up.
+    auto outputSnapshotPending = std::make_shared<bool>(true);
+    QObject::connect(
+        &window, &QQuickWindow::sceneGraphInitialized, &window,
+        [outputSnapshotPending] { *outputSnapshotPending = true; }, Qt::DirectConnection);
+    QObject::connect(
+        &window, &QQuickWindow::beforeSynchronizing, &window,
+        [&, outputSnapshotPending] {
+            if (!*outputSnapshotPending)
+                return;
+            auto display = JellyfinNative::PlatformDisplayOutput::probe(&window);
+            if (!display.surfaceReady)
+                return;
+            *outputSnapshotPending = false;
+            QMetaObject::invokeMethod(
+                &window,
+                [&, display]() mutable {
+                    JellyfinNative::PlatformDisplayOutput::updateDisplayLuminance(display, &window);
+                    bool scrgb = display.hdrAvailable
+                        && display.preferredFormat == JellyfinNative::RenderTargetProfile::Format::ExtendedSrgbLinear;
+#if defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID) && !defined(JELLYFIN_NATIVE_WEBOS)
+                    if (!waylandHdrSurface.setEnabled(scrgb && display.needsWaylandDescription))
+                        scrgb = false;
+#endif
+                    const qreal peak = display.luminanceMeasured ? display.maxLuminanceNits : 0.0;
+                    window.setHdrOutput(scrgb, display.sdrWhiteNits, peak);
+                    logLine("output: swapchain=%s supported=%d sdrWhite=%.1f peak=%.1f luminanceReported=%s",
+                        scrgb ? "scRGB" : "SDR", static_cast<int>(display.supportedFormat),
+                        double(display.sdrWhiteNits), double(peak), display.luminanceMeasured ? "yes" : "no");
+                },
+                Qt::QueuedConnection);
+        },
+        Qt::DirectConnection);
+#endif
     inputLatencyMonitor.attachWindow(&window);
     window.setInputLatencyMonitor(&inputLatencyMonitor);
     const auto directSingleShot = static_cast<Qt::ConnectionType>(Qt::DirectConnection | Qt::SingleShotConnection);
@@ -901,6 +1045,15 @@ int main(int argc, char **argv)
             app.exit(1);
         });
         window.requestUpdate();
+    }
+    if (!autoplayItemId.isEmpty()) {
+        QObject::connect(controller.get(), &JellyfinNative::AppController::initializedChanged, controller.get(),
+            [autoplayItemId, c = controller.get()]() {
+                if (c->initialized()) {
+                    logLine("startup: autoplay requested for item %s", qPrintable(autoplayItemId));
+                    QTimer::singleShot(300, c, [autoplayItemId, c]() { c->playItemId(autoplayItemId); });
+                }
+            });
     }
 
     QTimer::singleShot(1000, router.get(), [router = router.get()] { router->beginSession(false); });

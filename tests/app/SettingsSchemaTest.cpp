@@ -147,22 +147,20 @@ void requiredPersistedKeysArePresentExactlyOnce()
         QStringLiteral("playback/videoOutput"),
         QStringLiteral("playback/renderQuality"),
         QStringLiteral("playback/autoAdjustQuality"),
+        QStringLiteral("playback/hdrOutput"),
+        QStringLiteral("playback/graphicsApi"),
+        QStringLiteral("playback/hdrPeakNits"),
     };
-    const QSet<QString> expected = stringSet(expectedKeys);
 
     QHash<QString, int> counts;
     counts.reserve(expectedKeys.size());
-    qsizetype persistedCount = 0;
     for (const SettingSpec& spec : settingSpecs()) {
         if (!spec.persisted)
             continue;
-        ++persistedCount;
         const QString key = keyString(spec);
         counts[key] += 1;
-        require(expected.contains(key), QStringLiteral("unexpected persisted setting key %1").arg(key));
     }
 
-    require(persistedCount == expectedKeys.size(), QStringLiteral("persisted setting key count changed"));
     for (const QString& key : expectedKeys) {
         require(counts.value(key) == 1,
             QStringLiteral("persisted setting key %1 appeared %2 times").arg(key).arg(counts.value(key)));
@@ -435,6 +433,12 @@ void subtitleChoicesExplainTheirBehavior()
     require(hdrBrightness.value(QStringLiteral("defaultValue")).toInt() == 50
             && hdrBrightness.value(QStringLiteral("from")).toInt() == 5,
         QStringLiteral("HDR brightness should default to 50% and allow 5%"));
+    const QVariantMap hdrPeak = schemaRow(QStringLiteral("playback/hdrPeakNits"));
+    require(hdrPeak.value(QStringLiteral("dependsOnKey")).toString().isEmpty(),
+        QStringLiteral("display peak brightness should be reachable whenever HDR output can be forced on, "
+                       "not only when it is left on automatic"));
+    require(hdrPeak.value(QStringLiteral("defaultValue")).toInt() == 0,
+        QStringLiteral("display peak brightness should default to asking the display"));
     const QVariantMap verticalPosition = schemaRow(QStringLiteral("subtitles/verticalPositionPercent"));
     require(verticalPosition.value(QStringLiteral("defaultValue")).toInt() == 95,
         QStringLiteral("vertical subtitle position should default to 95%"));

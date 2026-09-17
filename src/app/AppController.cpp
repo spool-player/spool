@@ -537,6 +537,26 @@ void AppController::playOrOpen(const MovieItem& item, bool fromStart)
         playQueuedItem(item, fromStart);
     }
 }
+void AppController::playItemId(const QString& itemId, bool fromStart)
+{
+    if (itemId.isEmpty() || !m_api)
+        return;
+    setBusy(true, QStringLiteral("Loading item for playback…"));
+    Async::runScoped(
+        this, m_api->fetchItemDetails(itemId),
+        [this, fromStart](const MovieItem& item) {
+            setBusy(false);
+            if (!item.id.isEmpty())
+                playQueuedItem(item, fromStart);
+            else
+                showToast(QStringLiteral("Item not found."));
+        },
+        [this](const std::exception_ptr& error) {
+            setBusy(false);
+            showToast(exceptionMessage(error));
+        },
+        "play item by id");
+}
 
 void AppController::playFromModel(QObject *model, int index, bool fromStart)
 {

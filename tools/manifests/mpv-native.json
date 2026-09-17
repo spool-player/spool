@@ -109,7 +109,7 @@
       "egl-x11=enabled",
       "gl=enabled",
       "gl-x11=enabled",
-      "vulkan=disabled",
+      "vulkan=enabled",
       "vaapi=enabled",
       "vaapi-wayland=enabled",
       "vaapi-x11=enabled",
@@ -132,7 +132,7 @@
       "macos-media-player=disabled",
       "videotoolbox-gl=disabled",
       "videotoolbox-pl=disabled",
-      "vulkan=disabled"
+      "vulkan=enabled"
     ],
     "webos": [
       "gpl=true",
@@ -224,10 +224,11 @@
       "libplacebo:demos=false",
       "libplacebo:lcms=disabled",
       "libplacebo:shaderc=disabled",
+      "libplacebo:glslang=enabled",
       "libplacebo:tests=false",
       "libplacebo:unwind=disabled",
-      "libplacebo:vulkan=disabled",
-      "libplacebo:d3d11=disabled",
+      "libplacebo:vulkan=enabled",
+      "libplacebo:d3d11=enabled",
       "libpng:default_library=static",
       "zlib:default_library=static",
       "xxhash:default_library=static",

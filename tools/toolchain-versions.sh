@@ -60,6 +60,8 @@ case "${1:-}" in
     printf 'qt_series=%s\n' "$(toolchain_field "$ROOT" qt.series)"
     printf 'qt_windows_kit=%s\n' "$(toolchain_field "$ROOT" qt.windowsKit)"
     printf 'ffmpeg_version=%s\n' "$(toolchain_field "$ROOT" ffmpeg.version)"
+    printf 'qcoro_revision=%s\n' "$(toolchain_field "$ROOT" qcoro.revision)"
+    printf 'qcoro_windows_prefix=%s\n' "$(toolchain_field "$ROOT" qcoro.windowsPrefix)"
     ;;
   *)
     toolchain_field "$ROOT" "$1"

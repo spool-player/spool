@@ -1,5 +1,8 @@
 #include "player/MpvVideoItem.h"
 
+#include "platform/PlatformDisplayOutput.h"
+#include "player/RenderTargetProfile.h"
+
 #include "TestMain.h"
 
 #include <QDir>
@@ -22,22 +25,36 @@ namespace {
 
 bool writeVideo(QTemporaryFile& file)
 {
+    // A red top half over a blue bottom half, so the grab below can tell which
+    // way up the frame arrived. A uniform frame cannot: the scene graph samples
+    // the item's texture with a different origin convention than an OpenGL
+    // framebuffer writes it, and getting that wrong is invisible until the
+    // picture is upside down.
     static const QByteArray encoded(
-        "GkXfo6NChoEBQveBAULygQRC84EIQoKIbWF0cm9za2FCh4EEQoWBAhhTgGcBAAAAAAADLBFNm3TAv4RapygiTbuLU6uEFUmpZlOsgaFNu4tTq4"
-        "QWVK5rU6yB8U27jFOrhBJUw2dTrIIBgk27jFOrhBxTu2tTrIIDEOwBAAAAAAAAUwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFUmpZsu/"
-        "hIOnwO0q17GDD0JATYCNTGF2ZjYyLjEyLjEwMldBjUxhdmY2Mi4xMi4xMDJzpJAfQKd/Xi4CYnAdzmOHtmnNRImIQJ9AAAAAAAAWVK5rQIu/"
-        "hDLVR6yuAQAAAAAAAHzXgQFzxYi9z8m93l/"
-        "54ZyBACK1nIN1bmSIgQCGhlZfRkZWMYOBASPjg4Q7msoA4JCwgSC6gSCagQJVsIRVuYEBVe6BAOwBAAAAAAAAAgAAY6KqViuE0ZwFL0E8YCbpX"
-        "DdvXRt2l506ycQgQx6Ln1UgUS9O+KFoO5sXE3wDElTDZ0CAv4TarNEk"
-        "c3OgY8CAZ8iaRaOHRU5DT0RFUkSHjUxhdmY2Mi4xMi4xMDJzc9RjwItjxYi9z8m93l/"
-        "54WfIn0Wjh0VOQ09ERVJEh5JMYXZjNjIuMjguMTAyIGZmdjFnyKFFo4hEVVJBVElPTkSHkzAwOjAwOjAyLjAwMDAwMDAwMAAfQ7Z1QQK/"
-        "hP+j8hfngQCjQISBAACA/BWAAASsr/+f///+AAp5Xz//7DK+f//AAAAYAOv9GZ493oAABKyv/5////4ACnlfP//sMr5//"
-        "8AAABgAGdKzDpwckwAErK//n////gAKeV8//+wyvn//wAAAGAD8Ewr+EL89AASsr/+f///+AAp5Xz//7DK+f//"
-        "AAAAYANEOkTKj8IED6AB8lYAXv//f///+Of+//+w/7//4AAATAE57dHg93oAXv//f///+Of+//+w/7//4AAATAEx7FF+cHJMXv//f///+Of+//"
-        "+w/7//4AAATAG0PoF4Qvz0Xv//f///+Of+//+w/7//4AAATAHkfpJEcU7trl7+EzPmEuruPs4EAt4r3gQHxggII8IEJ");
+        "GkXfo6NChoEBQveBAULygQRC84EIQoKIbWF0cm9za2FCh4EEQoWBAhhTgGcBAAAAAAADcBFNm3TAv4TOvihrTbuLU6uEFUmpZlOsgaFNu4tTq4"
+        "QWVK5rU6yB7027jFOrhBJUw2dTrIIBgE27jFOrhBxTu2tTrIIDVOwBAAAAAAAAUwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFUmpZsm/hGlzfewq17GDD0JATYCMTGF2ZjYzLjEuMTAxV0"
+        "GMTGF2ZjYzLjEuMTAxc6SQreZwOuxO0yMxY2vMVQNY0USJiEBpAAAAAAAAFlSua0CLv4RetviWrgEAAAAAAAB814EBc8WIVxEvauyQpzCcgQAi"
+        "tZyDdW5kiIEAhoZWX0ZGVjGDgQEj44OEBfXhAOCQsIFAuoFAmoECVbCEVbmBAVXugQDsAQAAAAAAAAIAAGOiqlYrhNGcBS9BPGAm6Vw3b10bdp"
+        "edOsnEIEMei59VIFEvTvihaDubFxN8AxJUw2f+v4SfHzw3c3OfY8CAZ8iZRaOHRU5DT0RFUkSHjExhdmY2My4xLjEwMXNz02PAi2PFiFcRL2rs"
+        "kKcwZ8ieRaOHRU5DT0RFUkSHkUxhdmM2My4xLjEwMSBmZnYxZ8ihRaOIRFVSQVRJT05Eh5MwMDowMDowMC4yMDAwMDAwMDAAH0O2dUFLv4R0cs"
+        "8T54EAo0CogQAAgPwVgAAErK////+f///////AAU8r/+f///+wyv/5////4AAAIQAzUIGfPd6AAASsr////5///////8ABTyv/5////7DK//n/"
+        "///gAAAhAE7SlqucHJMAAiyv////n///////wDyv/5////4ADRlf/z////wAACEAmd4MahC/PQACLK////+f///////APK//n////gANGV//P/"
+        "///AAAIQDxKHhfo0CUgQBkAHyVgBe/////3///////xz//9////7D//7////wAABwA9Go9cz3egBe/////3///////xz//9////7D//7////wA"
+        "ABwAYZzUf5wckxd/////v///////r///v////C7//7////wAABwAzwS8hhC/PRd/////v///////r///v////C7//7////wAABwAa5JS6xxTu2"
+        "uXv4TNfoVtu4+zgQC3iveBAfGCAgPwgQk=");
     const QByteArray video = QByteArray::fromBase64(encoded);
     return file.open() && file.write(video) == video.size() && file.flush();
+}
+
+bool isRed(const QColor& color)
+{
+    return color.red() > 80 && color.red() > color.green() * 2 && color.red() > color.blue() * 2;
+}
+
+bool isBlue(const QColor& color)
+{
+    return color.blue() > 80 && color.blue() > color.green() * 2 && color.blue() > color.red() * 2;
 }
 
 bool containsVideoPixel(const QImage& image)
@@ -46,19 +63,55 @@ bool containsVideoPixel(const QImage& image)
         return false;
     for (int y = 0; y < image.height(); y += 8) {
         for (int x = 0; x < image.width(); x += 8) {
-            const QColor color = image.pixelColor(x, y);
-            if (color.red() > 80 && color.red() > color.green() * 2 && color.red() > color.blue() * 2)
+            if (isRed(image.pixelColor(x, y)) || isBlue(image.pixelColor(x, y)))
                 return true;
         }
     }
     return false;
 }
 
+// The video is red over blue, so the frame is the right way up when the top of
+// the window is red and the bottom is blue. Counting rather than sampling one
+// pixel keeps letterboxing and the window's own background out of the answer.
+bool isRightWayUp(const QImage& image)
+{
+    if (image.isNull())
+        return false;
+    int redAbove = 0;
+    int blueAbove = 0;
+    int redBelow = 0;
+    int blueBelow = 0;
+    const int middle = image.height() / 2;
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); x += 4) {
+            const QColor color = image.pixelColor(x, y);
+            if (isRed(color))
+                (y < middle ? redAbove : redBelow)++;
+            else if (isBlue(color))
+                (y < middle ? blueAbove : blueBelow)++;
+        }
+    }
+    std::fprintf(stderr, "orientation: redAbove=%d blueAbove=%d redBelow=%d blueBelow=%d\n", redAbove, blueAbove,
+        redBelow, blueBelow);
+    return redAbove > blueAbove && blueBelow > redBelow;
+}
+
 } // namespace
 
 JELLYFIN_TEST_MAIN("mpv-video-item")
 {
-    QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
+    // The same end-to-end check is worth running against either backend, and
+    // the Vulkan one is the whole reason the item moved to the RHI. OpenGL
+    // stays the default so CI and a plain local run test what ships.
+    const QByteArray api = qgetenv("SPOOL_TEST_RENDER_API").toLower();
+#if QT_CONFIG(vulkan)
+    if (api == "vulkan")
+        QQuickWindow::setGraphicsApi(QSGRendererInterface::Vulkan);
+    else
+#endif
+        QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
+    if (api == "vulkan")
+        std::fprintf(stderr, "requested Vulkan scene graph\n");
     QSurfaceFormat format;
     format.setRenderableType(QSurfaceFormat::OpenGL);
     format.setVersion(3, 3);
@@ -81,7 +134,17 @@ JELLYFIN_TEST_MAIN("mpv-video-item")
 
     std::setlocale(LC_NUMERIC, "C");
     mpv_handle *handle = mpv_create();
-    if (!handle || mpv_set_option_string(handle, "terminal", "no") < 0
+    const bool verbose = !qgetenv("SPOOL_TEST_MPV_LOG").isEmpty();
+    // mpv_create can fail, and the check for that is below: setting options on
+    // its result first would crash instead of reporting it, but only for a run
+    // that asked for logging.
+    if (handle && verbose
+        && (mpv_set_option_string(handle, "terminal", "yes") < 0
+            || mpv_set_option_string(handle, "msg-level", "all=debug") < 0)) {
+        std::fprintf(stderr, "failed to enable mpv logging\n");
+        return 1;
+    }
+    if (!handle || mpv_set_option_string(handle, "terminal", verbose ? "yes" : "no") < 0
         || mpv_set_option_string(handle, "vo", "libmpv") < 0 || mpv_set_option_string(handle, "hwdec", "no") < 0
         || mpv_initialize(handle) < 0) {
         std::fprintf(stderr, "failed to initialize mpv\n");
@@ -115,11 +178,34 @@ JELLYFIN_TEST_MAIN("mpv-video-item")
         QThread::msleep(10);
     }
 
+    // Diagnostic, not an assertion: what the swapchain can present depends on
+    // the driver, the compositor and whether the display is in HDR mode, none
+    // of which a test can require.
+    const JellyfinNative::DisplayOutputCapabilities display = JellyfinNative::PlatformDisplayOutput::probe(&window);
+    std::fprintf(stderr, "display: hdrAvailable=%d format=%d sdrWhite=%.0f min=%.4f max=%.0f\n",
+        int(display.hdrAvailable), int(display.preferredFormat), double(display.sdrWhiteNits),
+        double(display.minLuminanceNits), double(display.maxLuminanceNits));
+
+    const bool upright = rendered && isRightWayUp(window.grabWindow());
     const bool released = videoItem.releaseMpvHandle();
     mpv_terminate_destroy(handle);
-    if (!rendered || !released) {
-        std::fprintf(stderr, "video result: rendered=%d released=%d\n", rendered, released);
+    if (!rendered || !upright || !released) {
+        std::fprintf(stderr, "video result: rendered=%d upright=%d released=%d\n", rendered, upright, released);
         return 1;
     }
     return 0;
 }
+
+namespace {
+
+int vulkanEntry(int argc, char **argv)
+{
+    qputenv("SPOOL_TEST_RENDER_API", "vulkan");
+    return jellyfinTestBody(argc, argv);
+}
+
+// Registered by hand rather than with a second JELLYFIN_TEST_MAIN, which names
+// its body the same thing every time and so can only appear once per file.
+[[maybe_unused]] const bool vulkanRegistered = ::JellyfinTests::registerTest("mpv-video-item-vulkan", &vulkanEntry);
+
+} // namespace

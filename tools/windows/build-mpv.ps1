@@ -31,12 +31,26 @@ if ($Clean) {
 }
 
 # Work in a disposable mirror so Meson wraps never dirty the mpv submodule.
-# Use -Clean after changing the fork; ordinary retries retain downloaded wraps.
+# The mirror is a copy, so it goes stale the moment the submodule moves; re-seed
+# it then rather than building the previous fork again. Ordinary retries, where
+# the revision is unchanged, still retain the downloaded wraps.
+$sourceRevision = Get-MpvSourceRevision
+if ($sourceRevision -and (Test-Path -LiteralPath $buildSource)) {
+    $mirroredRevision = Read-MpvRevisionStamp -Directory $buildSource
+    if ($mirroredRevision -ne $sourceRevision) {
+        Write-Host "mpv source mirror is at '$(if ($mirroredRevision) { $mirroredRevision } else { 'an unrecorded revision' })'; re-seeding from $sourceRevision"
+        Remove-Item -LiteralPath $buildSource -Recurse -Force
+        if (Test-Path -LiteralPath $buildDirectory) {
+            Remove-Item -LiteralPath $buildDirectory -Recurse -Force
+        }
+    }
+}
 if (-not (Test-Path -LiteralPath $buildSource)) {
     New-Item -ItemType Directory -Force $buildSource | Out-Null
     Get-ChildItem -LiteralPath $source -Force |
         Where-Object { $_.Name -notin @('.git', 'build') } |
         Copy-Item -Destination $buildSource -Recurse -Force
+    Write-MpvRevisionStamp -Directory $buildSource -Revision $sourceRevision
 }
 New-Item -ItemType Directory -Force $packageCache | Out-Null
 
@@ -80,6 +94,26 @@ try {
     $ffmpegPrefix = Join-Path $dependencyRoot 'ffmpeg'
     $env:PKG_CONFIG_PATH = (& (Join-Path $msysRoot 'usr\bin\cygpath.exe') -u "$ffmpegPrefix/lib/pkgconfig").Trim()
     if ($LASTEXITCODE -ne 0) { throw 'Converting the FFmpeg pkg-config search path failed.' }
+
+    # A GLSL compiler and SPIRV-Cross, which libplacebo needs for D3D11 and
+    # Vulkan alike and which Windows has no other way to get.
+    & (Join-Path $PSScriptRoot 'build-shader-tools.ps1') -Clean:$Clean
+    Initialize-WindowsMpvBuildEnvironment
+    $shaderTools = Join-Path $dependencyRoot 'shader-tools'
+    $shaderPkgConfig = (& (Join-Path $msysRoot 'usr\bin\cygpath.exe') -u "$shaderTools/lib/pkgconfig").Trim()
+    if ($LASTEXITCODE -ne 0) { throw 'Converting the shader tool pkg-config search path failed.' }
+    $env:PKG_CONFIG_PATH = "$($env:PKG_CONFIG_PATH):$shaderPkgConfig"
+    # mpv's own sources include libplacebo/vulkan.h, so the Vulkan headers have
+    # to be on mpv's include path too, not only on libplacebo's.
+    $shaderInclude = Join-Path $shaderTools 'include'
+    $env:CFLAGS = "$env:CFLAGS -I$($shaderInclude -replace '\\', '/')".Trim()
+    $env:CXXFLAGS = "$env:CXXFLAGS -I$($shaderInclude -replace '\\', '/')".Trim()
+    # libplacebo hands its vulkan-sdk path to find_library for SPIRV but not
+    # for glslang, which is then looked for on the default search path alone --
+    # and found nowhere, silently, because it asks for it as optional. LIB is
+    # that default path for clang and lld-link, so the libraries end up where
+    # both the detection and the link will look.
+    $env:LIB = "$(Join-Path $shaderTools 'lib');$env:LIB"
     # Discard the old Meson-port wrap when reusing a dependency checkout.
     Remove-Item (Join-Path $subprojects 'ffmpeg.wrap') -ErrorAction SilentlyContinue
 
@@ -124,6 +158,19 @@ clone-recursive = true
         "python = import('python').find_installation('$pythonMesonPath')")
     [IO.File]::WriteAllText($libplaceboMeson, $libplaceboText, [Text.UTF8Encoding]::new($false))
 
+    # libplacebo hands vulkan-sdk/lib to the SPIRV lookup but not to the
+    # glslang one beside it. Meson resolves a static find_library from
+    # `clang++ --print-search-dirs`, which lists LLVM's own directories and
+    # never reads LIB, so glslang is looked for where it cannot be and is
+    # missed silently -- the link then fails on glslang::InitializeProcess.
+    # Give that call the same search path its neighbour already gets.
+    $glslangMeson = Join-Path $libplaceboRoot 'src\glsl\meson.build'
+    $glslangText = Get-Content -LiteralPath $glslangMeson -Raw
+    $glslangText = $glslangText.Replace(
+        "cxx.find_library('glslang', required: required, static: static)",
+        "cxx.find_library('glslang', required: required, static: static, dirs: vulkan_lib_dirs)")
+    [IO.File]::WriteAllText($glslangMeson, $glslangText, [Text.UTF8Encoding]::new($false))
+
     $setupArguments = @(
         'setup',
         $buildDirectory,
@@ -132,13 +179,26 @@ clone-recursive = true
         '--libdir', 'lib',
         '--buildtype', 'release',
         '--default-library', 'shared',
-        '--force-fallback-for', 'curl,expat,freetype2,fribidi,harfbuzz,libpng,luajit,zlib,xxhash,libass,libplacebo'
+        '--force-fallback-for', 'curl,expat,freetype2,fribidi,harfbuzz,libpng,luajit,zlib,xxhash,libass,libplacebo',
+        # libplacebo looks for glslang under <vulkan-sdk>/lib and takes the
+        # headers from the same prefix, so the shader tools are handed to it
+        # as though they were an SDK. They are not one: the Vulkan headers it
+        # uses are its own, under 3rdparty.
+        "-Dlibplacebo:vulkan-sdk=$($shaderTools -replace '\\', '/')"
     ) + @(Get-MpvFeatureArguments -Platform windows -IncludeSubprojects)
 
     if (Test-Path (Join-Path $buildDirectory 'build.ninja')) {
         $setupArguments = @('setup', '--reconfigure') + $setupArguments[1..($setupArguments.Count - 1)]
     } elseif (Test-Path -LiteralPath $buildDirectory) {
         Remove-Item -LiteralPath $buildDirectory -Recurse -Force
+    }
+    # Meson detects its compiler from scratch, and picks MSVC when CC is unset
+    # -- then looks for link.exe and finds Git's, which is not a linker. Say
+    # what it is about to be given, so a failure here names its own cause.
+    Write-Host "mpv toolchain: CC=$env:CC CXX=$env:CXX CC_LD=$env:CC_LD"
+    foreach ($tool in @('clang', 'lld-link', 'link')) {
+        $found = (Get-Command $tool -ErrorAction SilentlyContinue)
+        Write-Host "  $tool -> $(if ($found) { $found.Source } else { '<missing>' })"
     }
     & meson @setupArguments
     if ($LASTEXITCODE -ne 0) { throw 'Configuring the Windows libmpv build failed.' }
@@ -161,6 +221,25 @@ clone-recursive = true
     meson install -C $buildDirectory
     if ($LASTEXITCODE -ne 0) { throw 'Installing Windows libmpv failed.' }
     Copy-Item (Join-Path $ffmpegPrefix 'bin\*.dll') (Join-Path $prefix 'bin')
+    # libplacebo reaches SPIRV-Cross through its shared library, so that DLL is
+    # part of libmpv's runtime closure and has to sit beside it for staging.
+    Copy-Item (Join-Path $shaderTools 'bin\*.dll') (Join-Path $prefix 'bin')
+    # mpv's own render_vk.h includes vulkan.h, and libplacebo keeps its copy of
+    # the Vulkan headers under 3rdparty without handing them to whoever links
+    # against it. The prefix is what the application compiles against, so the
+    # headers travel with it -- that, and nothing else, is what decides whether
+    # the application can compile its Vulkan path on Windows. No loader is
+    # among them: this is not an SDK, and nothing here calls a Vulkan entry
+    # point that the driver's own vulkan-1.dll does not supply at run time.
+    foreach ($headers in @('vulkan', 'vk_video')) {
+        $source = Join-Path $shaderTools "include\$headers"
+        if (Test-Path -LiteralPath $source) {
+            Copy-Item -LiteralPath $source -Destination (Join-Path $prefix 'include') -Recurse -Force
+        }
+    }
+    # Name the revision this prefix was built from, so build.ps1 can tell a
+    # current libmpv from one the submodule has moved past.
+    Write-MpvRevisionStamp -Directory $prefix -Revision $sourceRevision
 } finally {
     Pop-Location
 }

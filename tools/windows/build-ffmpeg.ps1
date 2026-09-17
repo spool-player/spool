@@ -12,14 +12,31 @@ $prefix = Join-Path $deps 'ffmpeg'
 $build = Join-Path $deps 'ffmpeg-build'
 $msysRoot = Get-Msys2Root
 $bash = Join-Path $msysRoot 'usr\bin\bash.exe'
+$stamp = Join-Path $prefix '.spool-ffmpeg-inputs'
+$identity = (@(
+    $PSCommandPath, (Join-Path $PSScriptRoot 'build-ffmpeg.sh'),
+    (Join-Path $PSScriptRoot 'common.ps1'), (Join-Path $PSScriptRoot 'extract-archive.py'),
+    (Join-Path $PSScriptRoot 'check-ffmpeg.py'),
+    (Join-Path $root 'tools\manifests\toolchain.json'),
+    (Join-Path $root 'tools\manifests\ffmpeg-capabilities.json'),
+    (Join-Path $root 'tools\ffmpeg-capabilities.py'),
+    (Get-Command cl.exe -ErrorAction Stop).Source,
+    (Get-Command nasm.exe -ErrorAction Stop).Source
+) | ForEach-Object { (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash }) -join "`n"
+if (-not $Clean -and (Test-Path -LiteralPath $stamp) -and
+    (Get-Content -LiteralPath $stamp -Raw) -eq $identity) {
+    Write-Host "FFmpeg build inputs unchanged; reusing $prefix"
+    Initialize-WindowsMpvBuildEnvironment
+    $env:PKG_CONFIG = Join-Path $msysRoot 'usr\bin\pkgconf.exe'
+    return
+}
 New-Item -ItemType Directory -Force $deps | Out-Null
 if (-not (Test-Path $archive)) { Invoke-WebRequest $pin.url -OutFile $archive }
 if ((Get-FileHash $archive -Algorithm SHA256).Hash -ine $pin.sha256) {
     throw "FFmpeg source checksum mismatch: $archive"
 }
 if (-not (Test-Path $source)) {
-    & "$env:SystemRoot\System32\tar.exe" -xf $archive -C $deps
-    if ($LASTEXITCODE -ne 0) { throw 'Extracting FFmpeg failed.' }
+    Expand-WindowsSourceArchive -Archive $archive -Destination $deps
 }
 if (-not (Test-Path $headers)) {
     git clone https://github.com/FFmpeg/nv-codec-headers.git $headers
@@ -47,6 +64,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Building upstream Windows FFmpeg failed.' }
 if ($LASTEXITCODE -ne 0) { throw 'Windows FFmpeg capabilities failed verification.' }
 & python (Join-Path $PSScriptRoot 'check-ffmpeg.py') $prefix
 if ($LASTEXITCODE -ne 0) { throw 'Windows FFmpeg runtime failed verification.' }
+[IO.File]::WriteAllText($stamp, $identity, [Text.UTF8Encoding]::new($false))
 # Ensure subsequent Meson builds use the existing clang/MSVC-compatible toolchain.
 Initialize-WindowsMpvBuildEnvironment
 $env:PKG_CONFIG = Join-Path $msysRoot 'usr\bin\pkgconf.exe'
