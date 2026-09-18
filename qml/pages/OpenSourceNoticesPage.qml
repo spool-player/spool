@@ -20,7 +20,7 @@ FocusScope {
         {
             "name": "mpv",
             "license": "GPL-2.0-or-later / LGPL-2.1-or-later",
-            "source": "github.com/sachk/mpv"
+            "source": "github.com/spool-player/mpv"
         },
         {
             "name": "FFmpeg",
@@ -232,7 +232,7 @@ FocusScope {
 
             AppText {
                 Layout.fillWidth: true
-                text: "This application is free software licensed under MPL-2.0. Corresponding source is available at github.com/spool-player/spool. The modified mpv source is available at github.com/sachk/mpv."
+                text: "This application is free software licensed under MPL-2.0. Corresponding source is available at github.com/spool-player/spool. The modified mpv source is available at github.com/spool-player/mpv."
                 color: Theme.textSecondary
                 font.pixelSize: Metrics.bodySizePx
                 wrapMode: Text.Wrap

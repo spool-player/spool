@@ -23,7 +23,7 @@ distributed under GPL-2.0-or-later as a whole. Corresponding source is available
 
 The modified mpv source used by the application is available at:
 
-  https://github.com/sachk/mpv
+  https://github.com/spool-player/mpv
 
 Major bundled components
 

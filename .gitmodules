@@ -1,4 +1,4 @@
 [submodule "mpv"]
 	path = mpv
-	url = https://github.com/sachk/mpv.git
+	url = https://github.com/spool-player/mpv.git
 	branch = universal
