@@ -226,6 +226,9 @@ set(SPOOL_SHELL_SOURCES
     src/models/MovieGridModel.cpp
     src/models/MovieGridModel.h
     src/provider/PlaybackSource.h
+    src/provider/Provider.h
+    src/provider/ProviderRegistry.cpp
+    src/provider/ProviderRegistry.h
     src/diagnostics/Diagnostics.cpp
     src/diagnostics/Diagnostics.h
     src/diagnostics/InputLatencyMonitor.cpp
@@ -711,6 +714,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         sync-play-drift-policy tests/app/SyncPlayDriftPolicyTest.cpp
         update-manifest tests/app/UpdateManifestTest.cpp
         artwork-url tests/app/ArtworkUrlTest.cpp
+        provider-registry tests/app/ProviderRegistryTest.cpp
     )
     set(JELLYFIN_TESTS_cache
         database-manager tests/cache/DatabaseManagerTest.cpp
