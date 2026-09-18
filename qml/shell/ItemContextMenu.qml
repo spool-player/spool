@@ -42,10 +42,13 @@ FocusScope {
     readonly property bool inCollection: currentViewKind === "boxset" || currentViewKind === "collection"
     readonly property bool collectionEligible: actionable && (itemType === "Movie" || itemType === "Series" || itemType
                                                               === "Episode")
-    readonly property bool canManagePlaylists: Management.currentUserCanManagePlaylists
-    readonly property bool canManageCollections: Management.currentUserCanManageCollections
-    readonly property bool canRenameItem: Management.currentUserCanRenameItems
-    readonly property bool canDeleteItem: Management.currentUserCanDeleteItems
+    // Management only exists on a source that has playlists and collections,
+    // so it is only consulted behind the capability.
+    readonly property var management: ProviderCapabilities.libraryManagement ? Management : null
+    readonly property bool canManagePlaylists: management ? management.currentUserCanManagePlaylists : false
+    readonly property bool canManageCollections: management ? management.currentUserCanManageCollections : false
+    readonly property bool canRenameItem: management ? management.currentUserCanRenameItems : false
+    readonly property bool canDeleteItem: management ? management.currentUserCanDeleteItems : false
 
     visible: opened
     focus: opened
@@ -157,7 +160,7 @@ FocusScope {
                                  label: "Add to collection",
                                  checked: false
                              })
-            if (inPlaylist && item.playlistItemId) {
+            if (inPlaylist && item.playlistItemId && management) {
                 options.push({
                                  action: "moveUp",
                                  icon: "keyboard_arrow_up",
@@ -305,7 +308,7 @@ FocusScope {
         } else if (action === "removeParent") {
             shell.openManagement("remove", item)
         } else if (action === "moveUp" || action === "moveDown") {
-            Management.movePlaylistItemInCurrent(item, action === "moveUp" ? -1 : 1)
+            management.movePlaylistItemInCurrent(item, action === "moveUp" ? -1 : 1)
         } else if (action === "rename" || action === "delete") {
             shell.openManagement(action, item)
         } else if (action === "info") {

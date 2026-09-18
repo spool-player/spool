@@ -8,6 +8,10 @@ Item {
     id: root
     property string route: ""
     property string focusedItemId: ""
+    // Only read behind the capability: a source without SyncPlay has no such
+    // singleton to report on.
+    readonly property var syncPlay: ProviderCapabilities.syncPlay ? SyncPlay : null
+    readonly property bool syncPlayActive: syncPlay ? syncPlay.enabled : false
 
     function formatBytes(bytes) {
         const value = Math.max(0, Number(bytes || 0))
@@ -111,27 +115,30 @@ Item {
                       + "  samples " + InputLatency.sampleCount
             }
             SecondaryText {
-                visible: SyncPlay.enabled
+                visible: root.syncPlayActive
                 Layout.maximumWidth: Metrics.scaled(396)
-                text: "SyncPlay  " + (SyncPlay.groupState || "Unknown") + (SyncPlay.groupStateReason ? " / "
-                                                                                                       + SyncPlay.groupStateReason :
-                                                                                                       "") + (SyncPlay.waitingForPlayback
-                                                                                                              ? "  ·  waiting to play" :
-                                                                                                                "")
+                text: !root.syncPlayActive ? "" : "SyncPlay  " + (root.syncPlay.groupState || "Unknown") + (
+                                                 root.syncPlay.groupStateReason ? " / "
+                                                                                  + root.syncPlay.groupStateReason :
+                                                                                  "") + (root.syncPlay.waitingForPlayback
+                                                                                         ? "  ·  waiting to play" : "")
                 elide: Text.ElideRight
             }
             SecondaryText {
-                visible: SyncPlay.enabled
+                visible: root.syncPlayActive
                 Layout.maximumWidth: Metrics.scaled(396)
-                text: "Time sync  " + SyncPlay.timeSyncDevice + "  offset " + root.signedMs(SyncPlay.clockOffsetMs)
-                      + "  ping " + Number(SyncPlay.pingMs || 0).toFixed(2) + " ms"
+                text: !root.syncPlayActive ? "" : "Time sync  " + root.syncPlay.timeSyncDevice + "  offset "
+                                             + root.signedMs(root.syncPlay.clockOffsetMs) + "  ping " + Number(
+                                                 root.syncPlay.pingMs || 0).toFixed(2) + " ms"
                 elide: Text.ElideRight
             }
             SecondaryText {
-                visible: SyncPlay.enabled
+                visible: root.syncPlayActive
                 Layout.maximumWidth: Metrics.scaled(396)
-                text: "Playback drift  " + (SyncPlay.playbackDiffValid ? root.signedMs(SyncPlay.playbackDiffMs) : "—") + "  method "
-                      + SyncPlay.syncMethod + "  (ignore <100 ms; seek ≥400 ms)"
+                text: !root.syncPlayActive ? "" : "Playback drift  " + (root.syncPlay.playbackDiffValid ? root.signedMs(
+                                                                                                              root.syncPlay.playbackDiffMs) :
+                                                                                                          "—") + "  method "
+                                             + root.syncPlay.syncMethod + "  (ignore <100 ms; seek ≥400 ms)"
                 elide: Text.ElideRight
             }
             SecondaryText {

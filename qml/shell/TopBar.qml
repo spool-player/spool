@@ -4,6 +4,8 @@ import QtQuick
 import QtQuick.Layouts
 import "../theme"
 import "../primitives"
+import "../providers/jellyfin"
+import "TopBarNavigation.js" as TopBarNavigation
 
 // Horizontal top navigation bar. Hosts primary routes on the left and playback
 // destination, remote-control, and SyncPlay actions on the right. D-pad:
@@ -23,9 +25,16 @@ FocusScope {
     property bool syncPlayMenuLoaded: false
     readonly property bool remoteControlMenuOpen: remoteMenuLoader.item ? remoteMenuLoader.item.menuOpen : false
     property bool remoteControlMenuLoaded: false
-    readonly property bool castVisible: Settings.castButtonEnabled
-    readonly property bool remoteVisible: RemoteControl.targetSelected
-    readonly property var syncPlay: SyncPlay
+    // Provider-shaped singletons are only touched behind their capability, so
+    // a source without them never has the bindings evaluated.
+    readonly property var session: ProviderCapabilities.auth ? Session : null
+    readonly property var remoteControl: ProviderCapabilities.remoteControl ? RemoteControl : null
+    readonly property bool remoteTargetSelected: remoteControl ? remoteControl.targetSelected : false
+    readonly property string remoteTargetName: remoteControl ? remoteControl.selectedTargetName : ""
+    readonly property bool castVisible: remoteControl !== null && Settings.castButtonEnabled
+    readonly property bool remoteVisible: remoteTargetSelected
+    readonly property var syncPlay: ProviderCapabilities.syncPlay ? SyncPlay : null
+    readonly property bool syncVisible: syncPlay !== null
     readonly property bool syncActive: syncPlay ? syncPlay.enabled : false
     readonly property var syncGroups: syncPlay ? syncPlay.groups : []
     readonly property bool syncAvailable: syncGroups && syncGroups.length > 0
@@ -39,9 +48,19 @@ FocusScope {
     // few pixels either side of each button were dead.
     readonly property int railCellWidth: Math.max(Metrics.scaled(50), Metrics.touchTargetPx)
 
-    // Index space: navigation buttons, optional Remote and Cast buttons, then SyncPlay.
+    // Index space: navigation buttons, then the optional Remote, Cast and
+    // SyncPlay buttons. TopBarNavigation.js owns the arithmetic so a gated-out
+    // button drops out of the sequence rather than leaving a dead index.
     function lastIndex() {
-        return railRepeater.count + (castVisible ? 1 : 0) + (remoteVisible ? 1 : 0)
+        return TopBarNavigation.lastIndex(railRepeater.count, remoteVisible, castVisible, syncVisible)
+    }
+
+    function slotIndex(kind) {
+        return TopBarNavigation.indexOf(kind, railRepeater.count, remoteVisible, castVisible, syncVisible)
+    }
+
+    function slotAt(index) {
+        return TopBarNavigation.slotAt(index, railRepeater.count, remoteVisible, castVisible, syncVisible)
     }
 
     function focusedIndex() {
@@ -51,31 +70,29 @@ FocusScope {
                 return i
         }
         if (remoteVisible && remoteButton.activeFocus)
-            return railRepeater.count
+            return slotIndex("remote")
         if (castVisible && castButton.activeFocus)
-            return railRepeater.count + (remoteVisible ? 1 : 0)
-        if (syncButton.activeFocus)
-            return lastIndex()
+            return slotIndex("cast")
+        if (syncVisible && syncButton.activeFocus)
+            return slotIndex("sync")
         return 0
     }
 
     function focusIndex(index) {
-        const clamped = Math.max(0, Math.min(lastIndex(), index))
-        if (clamped < railRepeater.count) {
-            const item = railRepeater.itemAt(clamped)
+        const slot = slotAt(index)
+        if (!slot)
+            return
+        if (slot.kind === "rail") {
+            const item = railRepeater.itemAt(slot.railIndex)
             if (item)
                 item.forceButtonFocus()
-            return
-        }
-        if (remoteVisible && clamped === railRepeater.count) {
+        } else if (slot.kind === "remote") {
             InputKeys.focus(remoteButton)
-            return
-        }
-        if (castVisible && clamped === railRepeater.count + (remoteVisible ? 1 : 0)) {
+        } else if (slot.kind === "cast") {
             InputKeys.focus(castButton)
-            return
+        } else {
+            InputKeys.focus(syncButton)
         }
-        InputKeys.focus(syncButton)
     }
 
     function focusCurrent() {
@@ -97,6 +114,8 @@ FocusScope {
     }
 
     function openRemoteMenu() {
+        if (!castVisible)
+            return
         closeSyncPlayMenu(false)
         const menu = remoteMenu()
         if (menu)
@@ -117,9 +136,10 @@ FocusScope {
     }
 
     function openSyncMenu() {
+        if (!syncVisible)
+            return
         closeRemoteMenu(false)
-        if (syncPlay)
-            syncPlay.refreshGroups()
+        syncPlay.refreshGroups()
         const menu = syncMenu()
         if (menu)
             menu.openMenu()
@@ -129,7 +149,7 @@ FocusScope {
         const menu = syncMenuLoader.item
         if (menu)
             menu.closeMenu()
-        if (restoreFocus !== false)
+        if (restoreFocus !== false && syncVisible)
             InputKeys.focus(syncButton)
     }
 
@@ -178,16 +198,18 @@ FocusScope {
             sync.activate()
             return
         }
-        const index = focusedIndex()
-        if (remoteVisible && index === railRepeater.count) {
+        const slot = slotAt(focusedIndex())
+        if (!slot)
+            return
+        if (slot.kind === "remote") {
             closeRemoteMenu(false)
             navigate("remoteControl")
-        } else if (castVisible && index === railRepeater.count + (remoteVisible ? 1 : 0)) {
+        } else if (slot.kind === "cast") {
             openRemoteMenu()
-        } else if (index >= lastIndex()) {
+        } else if (slot.kind === "sync") {
             openSyncMenu()
         } else {
-            const item = railRepeater.itemAt(index)
+            const item = railRepeater.itemAt(slot.railIndex)
             if (item)
                 navigate(item.route)
         }
@@ -206,7 +228,7 @@ FocusScope {
     }
 
     onActiveFocusChanged: if (!activeFocus)
-    closeMenus(false)
+                              closeMenus(false)
 
     function routeKey(key, phase, repeat) {
         const remote = remoteMenuLoader.item
@@ -267,28 +289,34 @@ FocusScope {
 
         Repeater {
             id: railRepeater
-            model: [
-                {
-                    label: "My Media",
-                    route: "home",
-                    icon: "home"
-                },
-                {
-                    label: "Search",
-                    route: "search",
-                    icon: "search"
-                },
-                {
-                    label: "Switch user",
-                    route: "switchUser",
-                    icon: "person"
-                },
-                {
-                    label: "Settings",
-                    route: "settings",
-                    icon: "settings"
-                }
-            ]
+            // Switching user is the provider's sign-in flow, so a source
+            // without one has no such button.
+            model: {
+                const entries = [
+                          {
+                              label: "My Media",
+                              route: "home",
+                              icon: "home"
+                          },
+                          {
+                              label: "Search",
+                              route: "search",
+                              icon: "search"
+                          }
+                      ]
+                if (ProviderCapabilities.auth)
+                    entries.push({
+                                     label: "Switch user",
+                                     route: "switchUser",
+                                     icon: "person"
+                                 })
+                entries.push({
+                                 label: "Settings",
+                                 route: "settings",
+                                 icon: "settings"
+                             })
+                return entries
+            }
 
             delegate: Item {
                 id: railDelegate
@@ -307,8 +335,10 @@ FocusScope {
                     id: button
                     anchors.centerIn: parent
                     iconName: modelData.icon
-                    accessibleName: modelData.route === "switchUser" && Session.activeProfileLabel.length > 0
-                                    ? "Switch user — " + Session.activeProfileLabel : modelData.label
+                    accessibleName: modelData.route === "switchUser" && root.session
+                                    && root.session.activeProfileLabel.length > 0 ? "Switch user — "
+                                                                                    + root.session.activeProfileLabel :
+                                                                                    modelData.label
                     railStyle: true
                     // The rail changes pages; the selection goes with them.
                     focusOnClick: false
@@ -335,7 +365,7 @@ FocusScope {
                     AppText {
                         id: switchTooltip
                         anchors.centerIn: parent
-                        text: "Switch user — " + Session.activeProfileLabel
+                        text: "Switch user — " + (root.session ? root.session.activeProfileLabel : "")
                         color: Theme.textPrimary
                         font.pixelSize: Metrics.metaSizePx
                         maximumLineCount: 1
@@ -357,20 +387,19 @@ FocusScope {
             IconButton {
                 id: castButton
                 anchors.centerIn: parent
-                iconName: RemoteControl.targetSelected ? "cast_connected" : "cast"
-                accessibleName: RemoteControl.targetSelected ? "Play on — " + RemoteControl.selectedTargetName :
-                                                               "Play on"
+                iconName: root.remoteTargetSelected ? "cast_connected" : "cast"
+                accessibleName: root.remoteTargetSelected ? "Play on — " + root.remoteTargetName : "Play on"
                 railStyle: true
                 selected: root.remoteControlMenuOpen
                 onClicked: {
                     if (root.remoteControlMenuOpen)
-                    root.closeRemoteMenu(false)
+                        root.closeRemoteMenu(false)
                     else
-                    root.openRemoteMenu()
+                        root.openRemoteMenu()
                 }
 
                 Rectangle {
-                    visible: RemoteControl.targetSelected
+                    visible: root.remoteTargetSelected
                     width: Metrics.scaled(9)
                     height: width
                     radius: width / 2
@@ -394,7 +423,7 @@ FocusScope {
                 id: remoteButton
                 anchors.centerIn: parent
                 iconName: "settings_remote"
-                accessibleName: "Remote control — " + RemoteControl.selectedTargetName
+                accessibleName: "Remote control — " + root.remoteTargetName
                 railStyle: true
                 focusOnClick: false
                 selected: root.currentRoute === "remoteControl"
@@ -404,7 +433,7 @@ FocusScope {
                 }
 
                 Rectangle {
-                    visible: RemoteControl.playbackPending
+                    visible: root.remoteControl ? root.remoteControl.playbackPending : false
                     width: Metrics.scaled(9)
                     height: width
                     radius: width / 2
@@ -420,8 +449,9 @@ FocusScope {
         }
 
         Item {
+            visible: root.syncVisible
             Layout.alignment: Qt.AlignVCenter
-            Layout.preferredWidth: root.railCellWidth
+            Layout.preferredWidth: visible ? root.railCellWidth : 0
             Layout.fillHeight: true
 
             IconButton {
@@ -434,9 +464,9 @@ FocusScope {
                 acceptedButtons: Qt.LeftButton | Qt.RightButton
                 onClicked: {
                     if (root.syncPlayMenuOpen)
-                    root.closeSyncPlayMenu(false)
+                        root.closeSyncPlayMenu(false)
                     else
-                    root.openSyncMenu()
+                        root.openSyncMenu()
                 }
 
                 // Status dot: accent when in a group, green when groups exist to join.
@@ -465,7 +495,7 @@ FocusScope {
         anchors.topMargin: Metrics.scaled(6)
         anchors.rightMargin: Metrics.scaled(64)
         z: 50
-        active: root.remoteControlMenuLoaded
+        active: root.remoteControl !== null && root.remoteControlMenuLoaded
         sourceComponent: RemoteControlMenu {
             onRequestClose: root.closeRemoteMenu()
         }
@@ -479,7 +509,7 @@ FocusScope {
         anchors.topMargin: Metrics.scaled(6)
         anchors.rightMargin: Metrics.scaled(14)
         z: 50
-        active: root.syncPlayMenuLoaded
+        active: root.syncVisible && root.syncPlayMenuLoaded
         sourceComponent: SyncPlayMenu {
             onRequestClose: root.closeSyncPlayMenu()
         }

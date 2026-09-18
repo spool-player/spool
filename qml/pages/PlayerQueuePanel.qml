@@ -277,7 +277,7 @@ FocusScope {
             anchors.right: parent.right
             anchors.top: headingText.bottom
             height: visible ? implicitHeight : 0
-            visible: root.reordering || (SyncPlay.enabled && list.count > 0)
+            visible: root.reordering || (root.overlay.syncPlayActive && list.count > 0)
             text: root.reordering ? "Moving — Up/Down to place, OK to drop, Back to cancel" :
                                     "Changes apply to everyone in the group"
             color: root.reordering ? Theme.accent : Theme.textMuted
