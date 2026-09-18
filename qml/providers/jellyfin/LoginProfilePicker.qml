@@ -1,8 +1,8 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
-import "../theme"
-import "../primitives"
+import "../../theme"
+import "../../primitives"
 import "ProfileNavigation.js" as ProfileNavigation
 
 // The accounts already saved on this device, plus the way to add another.
@@ -120,7 +120,7 @@ FocusScope {
             model: root.profileCount + 1
             currentIndex: 0
             onCountChanged: if (currentIndex >= count)
-            currentIndex = Math.max(0, count - 1)
+                                currentIndex = Math.max(0, count - 1)
 
             function columnCount() {
                 return Math.max(1, Math.floor(width / Math.max(1, cellWidth)))
@@ -176,13 +176,13 @@ FocusScope {
                         grid.currentIndex = cell.index
                         InputKeys.focus(grid)
                         if (cell.profile)
-                        root.profileChosen(String(cell.profile.profileId || ""))
+                            root.profileChosen(String(cell.profile.profileId || ""))
                         else
-                        root.addRequested()
+                            root.addRequested()
                     }
                     onContextRequested: {
                         if (!cell.profile)
-                        return
+                            return
                         grid.currentIndex = cell.index
                         InputKeys.focus(grid)
                         root.contextRequested(String(cell.profile.profileId || ""), tile, tile.serverName, String(

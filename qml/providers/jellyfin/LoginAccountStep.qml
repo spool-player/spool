@@ -1,7 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
-import "../theme"
-import "../primitives"
+import "../../theme"
+import "../../primitives"
 
 // Signing in to the server the previous step settled on.
 //

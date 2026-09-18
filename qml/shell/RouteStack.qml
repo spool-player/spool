@@ -54,7 +54,7 @@ FocusScope {
     function pageSource(key) {
         switch (key) {
         case "login":
-            return Qt.resolvedUrl("../pages/LoginPage.qml")
+            return Qt.resolvedUrl("../providers/jellyfin/LoginPage.qml")
         case "libraryGrid":
             return Qt.resolvedUrl("../pages/LibraryGridPage.qml")
         case "itemDetails":
@@ -64,7 +64,7 @@ FocusScope {
         case "search":
             return Qt.resolvedUrl("../pages/SearchPage.qml")
         case "remoteControl":
-            return Qt.resolvedUrl("../pages/RemoteControlPage.qml")
+            return Qt.resolvedUrl("../providers/jellyfin/RemoteControlPage.qml")
         case "openSourceNotices":
             return Qt.resolvedUrl("../pages/OpenSourceNoticesPage.qml")
         case "settings":
