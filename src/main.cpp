@@ -2,6 +2,7 @@
 #include "api/JellyfinProvider.h"
 #include "app/AppController.h"
 #include "app/ArtworkImageProvider.h"
+#include "app/ArtworkService.h"
 #include "app/CpuTopology.h"
 #include "app/GraphicsStartup.h"
 #include "app/LocalizationManager.h"
@@ -77,6 +78,7 @@
 #include <cstring>
 #include <memory>
 #include <mutex>
+#include <utility>
 #ifdef Q_OS_WIN
 #include <qt_windows.h>
 #endif
@@ -724,7 +726,18 @@ int main(int argc, char **argv)
             [api, loc = localization.get()]() { api->setAcceptLanguage(loc->bcp47Locale()); });
     }
     auto router = std::make_unique<JellyfinNative::RouterController>();
-    JellyfinNative::PlatformApplicationServices platformServices(app, window, *controller, *router);
+    JellyfinNative::ApplicationHooks applicationHooks;
+    applicationHooks.player = player.get();
+    applicationHooks.settings = controller->settings();
+    applicationHooks.memoryPressure
+        = [controller = controller.get()](const QString& level) { controller->onMemoryPressure(level); };
+    QObject::connect(controller.get(), &JellyfinNative::AppController::aggressiveMemoryPressure, &applicationHooks,
+        &JellyfinNative::ApplicationHooks::aggressiveMemoryPressure);
+    QObject::connect(controller.get(), &JellyfinNative::AppController::diagnosticsReportSaved, &applicationHooks,
+        &JellyfinNative::ApplicationHooks::diagnosticsReportSaved);
+    QObject::connect(&applicationHooks, &JellyfinNative::ApplicationHooks::toastRequested, controller.get(),
+        &JellyfinNative::AppController::toastMessage);
+    JellyfinNative::PlatformApplicationServices platformServices(app, window, applicationHooks, *router);
     platformServices.start();
     QQmlPropertyMap *platformInfo = QQmlPropertyMap::create(&app);
     platformInfo->insert(QStringLiteral("isTV"), capabilities.isTV);
@@ -837,8 +850,21 @@ int main(int argc, char **argv)
     // as it always does and is then walked through a set of route switches
     // with what each one cost written out, so page-switch cost is a number in
     // CI rather than an impression.
+    JellyfinNative::RenderBenchmarkHooks benchmarkHooks;
+    benchmarkHooks.libraries = controller->libraries();
+    benchmarkHooks.openLibrary = [controller = controller.get()](int index) { controller->openLibrary(index); };
+    benchmarkHooks.outstandingArtworkRequests
+        = [artwork = artworkService.get()] { return artwork->outstandingRequests(); };
+    benchmarkHooks.artworkDecodeTotals = [artwork = artworkService.get()] {
+        const auto totals = artwork->decodeTotals();
+        return QVariantMap { { QStringLiteral("decodeMsTotal"), static_cast<double>(totals.decodeNs) / 1000000.0 },
+            { QStringLiteral("decodedPixelsTotal"), static_cast<double>(totals.pixels) },
+            { QStringLiteral("decodedImagesTotal"), totals.images } };
+    };
+    benchmarkHooks.forceColdCaches
+        = [controller = controller.get()] { controller->onMemoryPressure(QStringLiteral("critical")); };
     if (auto *benchmark = JellyfinNative::RenderBenchmark::createIfRequested(
-            controller.get(), router.get(), &inputLatencyMonitor, &window, &app)) {
+            std::move(benchmarkHooks), router.get(), &inputLatencyMonitor, &window, &app)) {
         if (controller->initialized()) {
             benchmark->start();
         } else {
