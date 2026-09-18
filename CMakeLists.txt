@@ -131,8 +131,8 @@ jellyfin_resolve_platform_dependencies()
 # now; keeping them apart here is what makes the split mechanical later.
 #
 # The rule that matters: nothing in the platform, player or shell groups may
-# include src/api/ or src/discovery/. Core reaches a media source only
-# through the interfaces in src/provider/;
+# include src/api/, src/discovery/ or src/providers/. Core reaches a media
+# source only through the interfaces in src/provider/;
 # tools/check-module-seam.sh enforces it as the module-seam test.
 
 # Per-OS abstractions. No backend and no UI knowledge.
@@ -304,11 +304,19 @@ set(SPOOL_JELLYFIN_SOURCES
     src/models/DiscoveredServerModel.h
 )
 
+# The folder-of-files provider: the second implementation of the provider
+# contract, kept as its permanent fixture. Nothing in core may include it.
+set(SPOOL_LOCAL_SOURCES
+    src/providers/local/LocalProvider.cpp
+    src/providers/local/LocalProvider.h
+)
+
 set(JELLYFIN_CORE_SOURCES
     ${SPOOL_PLATFORM_SOURCES}
     ${SPOOL_PLAYER_SOURCES}
     ${SPOOL_SHELL_SOURCES}
     ${SPOOL_JELLYFIN_SOURCES}
+    ${SPOOL_LOCAL_SOURCES}
 )
 
 add_library(jellyfin-core STATIC ${JELLYFIN_CORE_SOURCES})
@@ -695,7 +703,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     # by add_test(). One executable per test used to cost more to build on
     # Windows than the application itself, because every one of them repeated a
     # whole-program-optimized link against all of jellyfin-core.
-    set(JELLYFIN_TEST_GROUPS api app cache common diagnostics discovery platform player)
+    set(JELLYFIN_TEST_GROUPS api app cache common diagnostics discovery platform player providers)
 
     set(JELLYFIN_TESTS_api
         http-request-policy tests/api/HttpRequestPolicyTest.cpp
@@ -749,6 +757,9 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
             macos-titlebar tests/platform/MacOSTitlebarTest.mm
         )
     endif()
+    set(JELLYFIN_TESTS_providers
+        local-provider tests/providers/LocalProviderTest.cpp
+    )
     set(JELLYFIN_TESTS_player
         playback-timeline tests/player/PlaybackTimelineTest.cpp
         playback-track-parser tests/player/PlaybackTrackParserTest.cpp

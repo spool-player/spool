@@ -26,7 +26,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 core_dirs=(src/platform src/player src/media src/provider src/common src/cache src/diagnostics)
-provider_dirs=(src/api src/discovery)
+provider_dirs=(src/api src/discovery src/providers)
 
 group_files() {
   sed -n "/^set($1/,/^)/p" CMakeLists.txt | grep -E '^\s+src/' | sed -E 's/^\s+//'
