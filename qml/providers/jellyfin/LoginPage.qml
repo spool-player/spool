@@ -1,8 +1,8 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
-import "../theme"
-import "../primitives"
+import "../../theme"
+import "../../primitives"
 
 // The way into the app: pick an account, or add one by finding a server and
 // signing in to it.
@@ -182,7 +182,7 @@ FocusScope {
             return true
         }
 
-        const current = focusedControl();
+        const current = focusedControl()
         // A step gets first refusal, because a grid or a list moves inside
         // itself before the page moves between the things it holds.
         if (currentStep().moveInside(current, key))
