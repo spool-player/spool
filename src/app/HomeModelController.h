@@ -3,6 +3,7 @@
 #include "../common/RequestGeneration.h"
 #include "../media/MediaTypes.h"
 #include "../models/MovieGridModel.h"
+#include "../provider/Catalog.h"
 #include <QCoroTask>
 #include <QJsonObject>
 
@@ -16,7 +17,6 @@
 namespace JellyfinNative {
 
 class DatabaseManager;
-class JellyfinApiFacade;
 class LibraryPrefetchController;
 
 class HomeModelController final : public QObject {
@@ -27,8 +27,8 @@ class HomeModelController final : public QObject {
     Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
 
 public:
-    HomeModelController(DatabaseManager *database, JellyfinApiFacade *api, LibraryPrefetchController *prefetch,
-        QObject *parent = nullptr);
+    HomeModelController(
+        DatabaseManager *database, Catalog *catalog, LibraryPrefetchController *prefetch, QObject *parent = nullptr);
 
     MovieGridModel *resumeItems()
     {
@@ -79,7 +79,7 @@ private:
     void saveCachedPayload(const QJsonObject& payload);
 
     DatabaseManager *m_database = nullptr;
-    JellyfinApiFacade *m_api = nullptr;
+    Catalog *m_api = nullptr;
     LibraryPrefetchController *m_prefetch = nullptr;
     MovieGridModel m_resumeItems;
     MovieGridModel m_nextUpItems;
