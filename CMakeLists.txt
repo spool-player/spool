@@ -203,6 +203,8 @@ set(SPOOL_SHELL_SOURCES
     src/app/CpuTopology.h
     src/app/LocalizationManager.cpp
     src/app/LocalizationManager.h
+    src/app/LibraryQuery.cpp
+    src/app/LibraryQuery.h
     src/app/MemoryBudget.cpp
     src/app/MemoryBudget.h
     src/app/RouterController.cpp
@@ -211,6 +213,10 @@ set(SPOOL_SHELL_SOURCES
     src/app/SettingsController.h
     src/app/SettingsSchema.cpp
     src/app/SettingsSchema.h
+    src/app/SpoolLinkCodec.cpp
+    src/app/SpoolLinkCodec.h
+    src/app/SpoolRemoteProtocol.cpp
+    src/app/SpoolRemoteProtocol.h
     src/app/UpdateManifest.cpp
     src/app/UpdateManifest.h
     src/cache/DatabaseManager.cpp
@@ -225,6 +231,10 @@ set(SPOOL_SHELL_SOURCES
     src/common/VariantUtils.h
     src/media/MediaTypes.cpp
     src/media/MediaTypes.h
+    src/models/LibraryListModel.cpp
+    src/models/LibraryListModel.h
+    src/models/MovieGridModel.cpp
+    src/models/MovieGridModel.h
     src/provider/PlaybackSource.h
     src/diagnostics/Diagnostics.cpp
     src/diagnostics/Diagnostics.h
@@ -270,18 +280,12 @@ set(SPOOL_JELLYFIN_SOURCES
     src/app/LibraryManagementController.h
     src/app/LibraryPrefetchController.cpp
     src/app/LibraryPrefetchController.h
-    src/app/LibraryQuery.cpp
-    src/app/LibraryQuery.h
     src/app/QuickConnectController.cpp
     src/app/QuickConnectController.h
     src/app/RemoteControlController.cpp
     src/app/RemoteControlController.h
     src/app/SpoolLink.cpp
     src/app/SpoolLink.h
-    src/app/SpoolLinkCodec.cpp
-    src/app/SpoolLinkCodec.h
-    src/app/SpoolRemoteProtocol.cpp
-    src/app/SpoolRemoteProtocol.h
     src/app/SearchController.cpp
     src/app/SearchController.h
     src/app/SessionController.cpp
@@ -297,10 +301,6 @@ set(SPOOL_JELLYFIN_SOURCES
     src/discovery/DiscoveryController.h
     src/models/DiscoveredServerModel.cpp
     src/models/DiscoveredServerModel.h
-    src/models/LibraryListModel.cpp
-    src/models/LibraryListModel.h
-    src/models/MovieGridModel.cpp
-    src/models/MovieGridModel.h
 )
 
 set(JELLYFIN_CORE_SOURCES
@@ -951,6 +951,9 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/PackageAuditTest.py"
             "${CMAKE_CURRENT_SOURCE_DIR}/tools/package-audit.py"
+    )
+    add_test(NAME module-seam
+        COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-module-seam.sh"
     )
 
     add_test(NAME network-shaper

@@ -35,12 +35,22 @@ spool-plex, spool-stremio). `CMakeLists.txt` groups sources into
 `SPOOL_JELLYFIN_SOURCES` to mark where that cut goes. They still build as one
 library; the grouping exists so the split stays mechanical.
 
-- Do not add a `src/api/` or `src/discovery/` include to the platform, player
-  or shell groups. Four such dependencies already exist and are the work a
-  split has to undo first: `PlayerController`, `PlaybackReporter`,
-  `PlayQueueController` and `SettingsController` each take a
-  `JellyfinApiFacade`, and `configurePlatformPlaybackCapabilities()` is
-  handed one.
+- Core (the platform, player and shell groups plus everything under
+  `src/platform`, `src/player`, `src/media`, `src/provider`, `src/common`,
+  `src/cache` and `src/diagnostics`) never includes `src/api/` or
+  `src/discovery/`. `tools/check-module-seam.sh` enforces that and runs as
+  the `module-seam` ctest; `--strict` also treats every file still listed in
+  `SPOOL_JELLYFIN_SOURCES` as provider and currently reports the
+  composition-root leaks left for the provider registry work
+  (`PlatformApplicationServices`, `RenderBenchmark` and `DatabaseManager`
+  reach `AppController`, `ArtworkService` or `AccountProfile`).
+- The player talks to its media source only through
+  `src/provider/PlaybackSource.h`; `JellyfinApiFacade` implements it.
+  `SettingsController` emits the preferences a source needs and takes the
+  account's remote settings back through `applyRemote*()`;
+  `JellyfinSettingsBridge` in `src/api` is the Jellyfin side of that.
+  `configurePlatformPlaybackCapabilities()` takes an applier callback, not
+  the facade.
 - `qml/primitives` and `qml/theme` reach exactly two singletons, `Art.url` and
   `Settings.uiScalePercent`. Keep it that way; page- and shell-level QML is
   where backend-shaped data belongs.
