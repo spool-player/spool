@@ -82,7 +82,7 @@ FocusScope {
     function commitProbedServer() {
         if (probeOnline) {
             advanceWhenOnline = false
-            App.rememberServer(probeServerName, probeAddress)
+            Session.rememberServer(probeServerName, probeAddress)
             root.serverChosen(probeServerName, probeAddress)
             return
         }
@@ -97,7 +97,7 @@ FocusScope {
     function chooseDiscoveredServer(index, name, address) {
         if (index < 0)
             return
-        App.chooseDiscoveredServer(index)
+        Session.chooseDiscoveredServer(index)
         root.serverChosen(name, address)
     }
 
