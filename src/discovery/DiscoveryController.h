@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../common/JellyfinTypes.h"
+#include "DiscoveredServer.h"
 
 #include <QNetworkAccessManager>
 #include <QNetworkReply>

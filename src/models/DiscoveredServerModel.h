@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../common/JellyfinTypes.h"
+#include "../discovery/DiscoveredServer.h"
 
 #include <QAbstractListModel>
 #include <QSet>

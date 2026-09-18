@@ -1,4 +1,5 @@
 #include "common/MetaJson.h"
+#include "discovery/DiscoveredServer.h"
 
 #include "TestMain.h"
 

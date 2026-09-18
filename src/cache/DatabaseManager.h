@@ -13,7 +13,7 @@
 #include <QVariant>
 
 #include "../app/AccountProfile.h"
-#include "../common/JellyfinTypes.h"
+#include "../media/MediaTypes.h"
 
 #include <optional>
 #include <utility>

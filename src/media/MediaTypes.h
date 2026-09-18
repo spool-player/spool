@@ -15,18 +15,6 @@
 
 namespace JellyfinNative {
 
-struct DiscoveredServer {
-    Q_GADGET
-    Q_PROPERTY(QString id MEMBER id)
-    Q_PROPERTY(QString name MEMBER name)
-    Q_PROPERTY(QString address MEMBER address)
-
-public:
-    QString id;
-    QString name;
-    QString address;
-};
-
 struct LibraryItem {
     Q_GADGET
     Q_PROPERTY(QString id MEMBER id)
@@ -319,13 +307,6 @@ QString itemEpisodeCode(const MovieItem& item);
 bool isGenericEpisodeTitle(const MovieItem& item);
 int episodicPlaybackStartIndex(const std::vector<MovieItem>& episodes);
 
-struct AuthSession {
-    QString userId;
-    QString userName;
-    QString accessToken;
-    QString serverId;
-};
-
 struct MediaSegment {
     Q_GADGET
     Q_PROPERTY(QString id MEMBER id)
@@ -432,7 +413,6 @@ QVariantMap formatMediaInfo(const MovieItem& item, const QString& preferredAudio
 
 } // namespace JellyfinNative
 
-Q_DECLARE_METATYPE(JellyfinNative::DiscoveredServer)
 Q_DECLARE_METATYPE(JellyfinNative::LibraryItem)
 Q_DECLARE_METATYPE(JellyfinNative::PersonItem)
 Q_DECLARE_METATYPE(JellyfinNative::MediaStreamInfo)

@@ -1,4 +1,4 @@
-#include "common/JellyfinTypes.h"
+#include "media/MediaTypes.h"
 
 #include "TestMain.h"
 
