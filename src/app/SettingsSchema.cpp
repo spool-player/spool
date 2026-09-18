@@ -1,6 +1,6 @@
 #include "SettingsSchema.h"
 
-#include "../common/JellyfinTypes.h"
+#include "../media/MediaTypes.h"
 #include "../platform/PlatformSettingsPolicy.h"
 
 #include <QVariantMap>

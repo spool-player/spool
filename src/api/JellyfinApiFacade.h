@@ -1,7 +1,8 @@
 #pragma once
 
-#include "../common/JellyfinTypes.h"
+#include "../media/MediaTypes.h"
 #include "HttpRequestPolicy.h"
+#include "JellyfinSession.h"
 #include "PlaybackBandwidthPolicy.h"
 
 #include <QCoroTask>

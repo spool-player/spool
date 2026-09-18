@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../common/JellyfinTypes.h"
+#include "../media/MediaTypes.h"
 
 #include <QStringList>
 #include <QVariantMap>

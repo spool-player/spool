@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../common/JellyfinTypes.h"
 #include "../common/RequestGeneration.h"
+#include "../media/MediaTypes.h"
 #include "../player/PlaybackTimeline.h"
 #include "SpoolLink.h"
 

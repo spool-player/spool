@@ -2,8 +2,8 @@
 
 #include "../api/JellyfinApiFacade.h"
 #include "../common/AsyncTask.h"
-#include "../common/JellyfinTypes.h"
 #include "../common/TlsTrust.h"
+#include "../media/MediaTypes.h"
 #include "../player/PlayQueueController.h"
 #include "../player/PlayerController.h"
 

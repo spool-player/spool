@@ -1,6 +1,6 @@
 #pragma once
 
-#include "JellyfinTypes.h"
+#include "../media/MediaTypes.h"
 #include "RequestGeneration.h"
 
 #include <QCoroTask>

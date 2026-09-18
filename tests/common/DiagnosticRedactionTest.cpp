@@ -1,5 +1,5 @@
-#include "common/JellyfinTypes.h"
 #include "diagnostics/Diagnostics.h"
+#include "media/MediaTypes.h"
 
 #include "TestMain.h"
 

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../common/JellyfinTypes.h"
+#include "../media/MediaTypes.h"
 #include "../platform/MpvConfigPolicy.h"
 #include "MpvLifecycle.h"
 #include "MpvOptionProfile.h"
