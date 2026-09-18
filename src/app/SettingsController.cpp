@@ -1,6 +1,5 @@
 #include "SettingsController.h"
 
-#include "../api/JellyfinApiFacade.h"
 #include "../cache/DatabaseManager.h"
 #include "../common/AsyncTask.h"
 #include "../platform/PlatformSettingsPolicy.h"
@@ -36,11 +35,10 @@ namespace {
 
 } // namespace
 
-SettingsController::SettingsController(DatabaseManager *database, JellyfinApiFacade *api, PlayerController *player,
-    ArtworkService *artwork, QObject *parent)
+SettingsController::SettingsController(
+    DatabaseManager *database, PlayerController *player, ArtworkService *artwork, QObject *parent)
     : QObject(parent)
     , m_database(database)
-    , m_api(api)
     , m_player(player)
     , m_artwork(artwork)
     , m_uiScalePercent(platformDefaultUiScalePercent())
@@ -221,74 +219,62 @@ void SettingsController::applyLocalValues(const QVariantMap& storedValues)
 
 void SettingsController::loadRemote()
 {
-    if (m_remoteLoadStarted || !m_api || m_api->session().accessToken.isEmpty())
-        return;
-    m_remoteLoadStarted = true;
+    emit remoteLoadRequested();
+}
 
-    Async::runScoped(
-        this, m_api->fetchCultures(),
-        [this](const QJsonArray& cultures) {
-            QStringList codes { QString() };
-            QStringList labels { QStringLiteral("Any language") };
-            QSet<QString> seen { QString() };
+void SettingsController::applyRemoteCultures(const QJsonArray& cultures)
+{
+    QStringList codes { QString() };
+    QStringList labels { QStringLiteral("Any language") };
+    QSet<QString> seen { QString() };
 
-            for (const QJsonValue& value : cultures) {
-                const QJsonObject culture = value.toObject();
-                const QString code = culture.value(QStringLiteral("ThreeLetterISOLanguageName")).toString();
-                if (code.isEmpty() || seen.contains(code))
-                    continue;
-                QString label = culture.value(QStringLiteral("DisplayName")).toString();
-                if (label.isEmpty())
-                    label = code.toUpper();
-                seen.insert(code);
-                codes.push_back(code);
-                labels.push_back(label);
-            }
+    for (const QJsonValue& value : cultures) {
+        const QJsonObject culture = value.toObject();
+        const QString code = culture.value(QStringLiteral("ThreeLetterISOLanguageName")).toString();
+        if (code.isEmpty() || seen.contains(code))
+            continue;
+        QString label = culture.value(QStringLiteral("DisplayName")).toString();
+        if (label.isEmpty())
+            label = code.toUpper();
+        seen.insert(code);
+        codes.push_back(code);
+        labels.push_back(label);
+    }
 
-            if (!m_subtitlePreferences.language.isEmpty() && !seen.contains(m_subtitlePreferences.language)) {
-                codes.push_back(m_subtitlePreferences.language);
-                labels.push_back(m_subtitlePreferences.language.toUpper());
-            }
+    if (!m_subtitlePreferences.language.isEmpty() && !seen.contains(m_subtitlePreferences.language)) {
+        codes.push_back(m_subtitlePreferences.language);
+        labels.push_back(m_subtitlePreferences.language.toUpper());
+    }
 
-            m_subtitleLanguageCodes = codes;
-            m_subtitleLanguageLabels = labels;
-            emit subtitleSettingsChanged();
-        },
-        [](const std::exception_ptr& error) {
-            qWarning() << "subtitles: culture list failed" << exceptionMessage(error);
-        });
+    m_subtitleLanguageCodes = codes;
+    m_subtitleLanguageLabels = labels;
+    emit subtitleSettingsChanged();
+}
 
-    Async::runScoped(
-        this, m_api->fetchUserConfiguration(),
-        [this](const QJsonObject& configuration) {
-            m_userConfiguration = configuration;
-            m_subtitlePreferences.audioLanguage
-                = configuration.value(QStringLiteral("AudioLanguagePreference")).toString();
-            const SettingSpec& languageSpec = specForKey("subtitles/language");
-            const SettingSpec& modeSpec = specForKey("subtitles/mode");
-            const SettingSpec& audioModeSpec = specForKey("audio/trackMode");
-            setSchemaValue(languageSpec, configuration.value(QStringLiteral("SubtitleLanguagePreference")).toString(),
-                true, false, false);
-            setSchemaValue(modeSpec,
-                configuration.value(QStringLiteral("SubtitleMode")).toString(QStringLiteral("Default")), true, false,
-                false);
-            setSchemaValue(audioModeSpec,
-                configuration.value(QStringLiteral("PlayDefaultAudioTrack")).toBool(true) ? QStringLiteral("Default")
-                                                                                          : QStringLiteral("Smart"),
-                true, false, false);
-            applySubtitlePreferencesToPlayer();
-            emit settingsValuesChanged();
-            emit subtitleSettingsChanged();
-        },
-        [](const std::exception_ptr& error) {
-            qWarning() << "subtitles: user configuration failed" << exceptionMessage(error);
-        });
+void SettingsController::applyRemoteUserConfiguration(const QJsonObject& configuration)
+{
+    m_userConfiguration = configuration;
+    m_subtitlePreferences.audioLanguage = configuration.value(QStringLiteral("AudioLanguagePreference")).toString();
+    const SettingSpec& languageSpec = specForKey("subtitles/language");
+    const SettingSpec& modeSpec = specForKey("subtitles/mode");
+    const SettingSpec& audioModeSpec = specForKey("audio/trackMode");
+    setSchemaValue(
+        languageSpec, configuration.value(QStringLiteral("SubtitleLanguagePreference")).toString(), true, false, false);
+    setSchemaValue(modeSpec, configuration.value(QStringLiteral("SubtitleMode")).toString(QStringLiteral("Default")),
+        true, false, false);
+    setSchemaValue(audioModeSpec,
+        configuration.value(QStringLiteral("PlayDefaultAudioTrack")).toBool(true) ? QStringLiteral("Default")
+                                                                                  : QStringLiteral("Smart"),
+        true, false, false);
+    applySubtitlePreferencesToPlayer();
+    emit settingsValuesChanged();
+    emit subtitleSettingsChanged();
 }
 
 void SettingsController::clearRemote()
 {
     m_userConfiguration = {};
-    m_remoteLoadStarted = false;
+    emit remoteCleared();
 }
 
 void SettingsController::completePlayerControlTooltipSession()
@@ -483,8 +469,7 @@ void SettingsController::applySchemaValue(const SettingSpec& spec, const QVarian
         break;
     case SettingTarget::RemoteControlTargetEnabled:
         m_remoteControlTargetEnabled = value.toBool();
-        if (m_api)
-            m_api->setRemoteControlTargetEnabled(m_remoteControlTargetEnabled);
+        emit remoteControlTargetEnabledChanged(m_remoteControlTargetEnabled);
         break;
     case SettingTarget::ToneMappingVisualization:
         m_toneMappingVisualizationEnabled = value.toBool();
@@ -858,11 +843,9 @@ void SettingsController::applyArtworkEncoding()
 
 void SettingsController::applyPlaybackPreferences()
 {
-    if (!m_api)
-        return;
     const qint64 manualBitrate
         = m_manualStreamingBitrate ? static_cast<qint64>(m_maxStreamingBitrateMbps) * 1'000'000 : 0;
-    m_api->setPlaybackPreferences(manualBitrate, m_unlimitedLocalBitrate, m_preferRemux, m_maxStreamingHeight);
+    emit playbackPreferencesChanged(manualBitrate, m_unlimitedLocalBitrate, m_preferRemux, m_maxStreamingHeight);
 }
 
 void SettingsController::applyAudioDelayToPlayer()
@@ -942,19 +925,13 @@ void SettingsController::applyLoadedAudioDelay(const QString& output, int delayM
 
 void SettingsController::saveSubtitleUserConfiguration()
 {
-    if (!m_api || m_api->session().accessToken.isEmpty())
-        return;
-
     QJsonObject configuration = m_userConfiguration;
     configuration.insert(QStringLiteral("SubtitleLanguagePreference"), m_subtitlePreferences.language);
     configuration.insert(QStringLiteral("SubtitleMode"), m_subtitlePreferences.mode);
     const bool smartAudio = m_subtitlePreferences.audioMode == QStringLiteral("Smart");
     configuration.insert(QStringLiteral("PlayDefaultAudioTrack"), !smartAudio);
     m_userConfiguration = configuration;
-
-    Async::runScoped(
-        this, m_api->updateUserConfiguration(configuration), []() {},
-        [this](const std::exception_ptr& error) { emit errorOccurred(exceptionMessage(error)); });
+    emit userConfigurationChanged(configuration);
 }
 
 void SettingsController::applyMpvConfigPolicy()
