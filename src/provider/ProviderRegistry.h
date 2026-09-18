@@ -9,7 +9,7 @@
 
 namespace JellyfinNative {
 
-// The active provider's capability flags as eleven booleans, registered in
+// The active provider's capability flags as twelve booleans, registered in
 // QML as the ProviderCapabilities singleton. The property names are the
 // contract with shared QML: a gated control binds to one of them by name.
 class ProviderCapabilities final : public QObject {
@@ -25,6 +25,7 @@ class ProviderCapabilities final : public QObject {
     Q_PROPERTY(bool remoteControl READ remoteControl NOTIFY changed)
     Q_PROPERTY(bool quickConnect READ quickConnect NOTIFY changed)
     Q_PROPERTY(bool peerRelay READ peerRelay NOTIFY changed)
+    Q_PROPERTY(bool streamQuality READ streamQuality NOTIFY changed)
 
 public:
     explicit ProviderCapabilities(QObject *parent = nullptr);
@@ -78,6 +79,10 @@ public:
     bool peerRelay() const
     {
         return m_flags.testFlag(Provider::PeerRelay);
+    }
+    bool streamQuality() const
+    {
+        return m_flags.testFlag(Provider::StreamQuality);
     }
 
 signals:

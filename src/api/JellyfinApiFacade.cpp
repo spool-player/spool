@@ -1898,7 +1898,7 @@ QCoro::Task<void> JellyfinApiFacade::syncPlaySetPlaylistItem(QString playlistIte
     co_await requestNoContent(HttpMethod::Post, QStringLiteral("/SyncPlay/SetPlaylistItem"), QJsonDocument(body));
 }
 
-QCoro::Task<PlaybackSession> JellyfinApiFacade::negotiatePlayback(MovieItem movie, bool forceTranscode)
+QCoro::Task<PlaybackSession> JellyfinApiFacade::resolvePlayback(MovieItem movie, bool forceTranscode)
 {
     Diagnostics::Task task(QStringLiteral("api_negotiate_playback"),
         { { QStringLiteral("itemId"), movie.id }, { QStringLiteral("title"), movie.title } });
@@ -2278,6 +2278,29 @@ PlaybackSession JellyfinApiFacade::buildPlaybackSession(
         trickplay,
         {},
     };
+}
+
+void JellyfinApiFacade::setOverride(qint64 bitrate, int height)
+{
+    setSessionBitrateOverride(bitrate);
+    // The rung's resolution travels with its bitrate. Without this the server
+    // was told a ceiling in megabits and nothing about size, so it re-encoded
+    // at the source resolution and "480p" only ever meant "fewer bits".
+    setSessionHeightOverride(height);
+}
+
+QString JellyfinApiFacade::autoDescription() const
+{
+    return PlaybackBandwidthPolicy::describeAuto(
+        streamingBitrateSource(), maxStreamingBitrate(), playbackParallelRequests());
+}
+
+std::vector<StreamQualityControl::Rung> JellyfinApiFacade::ladder(qint64 sourceBitrate) const
+{
+    std::vector<Rung> rungs;
+    for (const PlaybackBandwidthPolicy::QualityOption& rung : PlaybackBandwidthPolicy::qualityLadder(sourceBitrate))
+        rungs.push_back({ rung.label, rung.bitrate, rung.height });
+    return rungs;
 }
 
 } // namespace JellyfinNative

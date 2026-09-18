@@ -10,14 +10,12 @@
 #include "BrowseSessionController.h"
 #include "ContentModelController.h"
 #include "HomeModelController.h"
-#include "LibraryManagementController.h"
-#include "RemoteControlController.h"
 #include "SearchController.h"
 #include "SettingsController.h"
 #include "SpoolRemoteProtocol.h"
-#include "SyncPlayController.h"
 
 #include <QCoroTask>
+#include <QJsonObject>
 #include <QLockFile>
 #include <QObject>
 #include <QVariantList>
@@ -30,13 +28,19 @@
 namespace JellyfinNative {
 
 class ArtworkService;
-class JellyfinApiFacade;
-class JellyfinProvider;
+class Catalog;
+class GroupPlayback;
 class LibraryPrefetchController;
-class QuickConnectController;
-class SessionController;
+class PlaybackSource;
+class Provider;
+class RemotePlayback;
+class StreamQualityControl;
 class UserItemStateController;
 class TlsTrustController;
+// The composition root: it owns the source-agnostic controllers, wires them
+// to the player and the queue, and talks to the media source only through
+// the Provider it was handed and the interfaces that provider serves. It
+// knows nothing about which provider that is.
 class AppController final : public QObject {
     Q_OBJECT
     Q_PROPERTY(bool busy MEMBER m_busy NOTIFY busyChanged)
@@ -46,12 +50,12 @@ class AppController final : public QObject {
     Q_PROPERTY(bool playbackTransition MEMBER m_playbackTransition NOTIFY playbackTransitionChanged)
     Q_PROPERTY(QString busyText MEMBER m_busyText NOTIFY busyChanged)
     Q_PROPERTY(QString errorText MEMBER m_errorText NOTIFY errorTextChanged)
-    Q_PROPERTY(bool hasDefaultProfile MEMBER m_hasDefaultProfile NOTIFY defaultProfileChanged)
+    Q_PROPERTY(bool hasDefaultProfile READ hasDefaultProfile NOTIFY defaultProfileChanged)
     Q_PROPERTY(bool initialized READ initialized NOTIFY initializedChanged)
 
 public:
-    AppController(DatabaseManager *database, JellyfinProvider *jellyfin, ArtworkService *artwork,
-        PlayerController *player, QObject *parent = nullptr);
+    AppController(DatabaseManager *database, Provider *provider, ArtworkService *artwork, PlayerController *player,
+        QObject *parent = nullptr);
 
     ArtworkService *artwork() const
     {
@@ -97,6 +101,7 @@ public:
     {
         return m_initialized;
     }
+    bool hasDefaultProfile() const;
 
     Q_INVOKABLE void initialize();
     void shutdown();
@@ -181,6 +186,11 @@ private:
     bool modelIsOrderedList(MovieGridModel *model) const;
     void playAlbumFrom(const MovieItem& track, bool fromStart);
     bool inSyncPlayGroup() const;
+    bool remoteTargetSelected() const;
+    // Hands the items to the remote target when one is selected; false
+    // means play them here.
+    bool playRemotely(const std::vector<MovieItem>& items, int startIndex, const QString& command, bool fromStart);
+    void groupOrLocalTogglePause();
     void setPlaybackTransition(bool transition);
     QString queuePlaylistItemId(int index) const;
     bool enqueueForGroup(const MovieItem& item, bool queueNext);
@@ -197,26 +207,26 @@ private:
     void handlePlaybackStopped(const QString& itemId, qint64 positionTicks, bool completed);
 
     DatabaseManager *m_database = nullptr;
-    JellyfinProvider *m_jellyfin = nullptr;
-    JellyfinApiFacade *m_api = nullptr;
+    Provider *m_provider = nullptr;
+    Catalog *m_catalog = nullptr;
+    PlaybackSource *m_playback = nullptr;
+    // Null when the provider lacks the matching capability.
+    StreamQualityControl *m_quality = nullptr;
+    GroupPlayback *m_group = nullptr;
+    RemotePlayback *m_remote = nullptr;
     ArtworkService *m_artwork = nullptr;
     PlayerController *m_player = nullptr;
-    SyncPlayController *m_syncPlay = nullptr;
-    RemoteControlController *m_remoteControl = nullptr;
     PlayQueueController *m_playQueue = nullptr;
     ContentModelController *m_content = nullptr;
     BrowseSessionController *m_browse = nullptr;
     HomeModelController *m_home = nullptr;
-    QuickConnectController *m_quickConnect = nullptr;
     SettingsController *m_settings = nullptr;
-    SessionController *m_session = nullptr;
     LibraryPrefetchController *m_prefetch = nullptr;
     UserItemStateController *m_itemState = nullptr;
     SearchController *m_search = nullptr;
     quint64 m_episodeQueueGeneration = 0;
     quint64 m_albumQueueGeneration = 0;
     bool m_episodeQueuePending = false;
-    LibraryManagementController *m_management = nullptr;
     LibraryListModel m_libraries;
     MovieItem m_activePlaybackItem;
     QList<MediaStreamInfo> m_activePlaybackStreams;
@@ -225,7 +235,6 @@ private:
     bool m_busy = false;
     bool m_playbackTransition = false;
     quint64 m_playbackTransitionGeneration = 0;
-    bool m_hasDefaultProfile = false;
     bool m_initialized = false;
     QString m_busyText;
     QString m_errorText;

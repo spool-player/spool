@@ -137,10 +137,9 @@ jellyfin_resolve_platform_dependencies()
 # now; keeping them apart here is what makes the split mechanical later.
 #
 # The rule that matters: nothing in the platform, player or shell groups may
-# include src/api/ or src/discovery/. Four places still break it and are the
-# work a split has to do first — PlayerController, PlaybackReporter,
-# PlayQueueController and SettingsController each take a JellyfinApiFacade,
-# and configurePlatformPlaybackCapabilities() is handed one.
+# include src/api/ or src/discovery/. Core reaches a media source only
+# through the interfaces in src/provider/;
+# tools/check-module-seam.sh enforces it as the module-seam test.
 
 # Per-OS abstractions. No backend and no UI knowledge.
 set(SPOOL_PLATFORM_SOURCES
@@ -238,6 +237,8 @@ set(SPOOL_SHELL_SOURCES
     src/app/SpoolRemoteProtocol.h
     src/app/UpdateManifest.cpp
     src/app/UpdateManifest.h
+    src/app/AppController.cpp
+    src/app/AppController.h
     src/cache/DatabaseManager.cpp
     src/cache/DatabaseManager.h
     src/common/AsyncTask.h
@@ -256,11 +257,14 @@ set(SPOOL_SHELL_SOURCES
     src/models/MovieGridModel.h
     src/provider/ArtworkSource.h
     src/provider/Catalog.h
+    src/provider/GroupPlayback.h
     src/provider/PlaybackSource.h
     src/provider/Provider.h
     src/provider/ProviderRegistry.cpp
     src/provider/ProviderRegistry.h
+    src/provider/RemotePlayback.h
     src/provider/SearchSource.h
+    src/provider/StreamQualityControl.h
     src/provider/UserItemStateSink.h
     src/diagnostics/Diagnostics.cpp
     src/diagnostics/Diagnostics.h
@@ -289,8 +293,6 @@ set(SPOOL_JELLYFIN_SOURCES
     src/api/PlaybackBandwidthPolicy.h
     src/api/PlaybackNegotiation.cpp
     src/api/PlaybackNegotiation.h
-    src/app/AppController.cpp
-    src/app/AppController.h
     src/app/LibraryManagementController.cpp
     src/app/LibraryManagementController.h
     src/app/QuickConnectController.cpp
