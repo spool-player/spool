@@ -2,8 +2,8 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Layouts
-import "../theme"
-import "../primitives"
+import "../../theme"
+import "../../primitives"
 
 // Choosing a server: type an address, or take one off the network.
 //
@@ -343,10 +343,10 @@ FocusScope {
                 currentIndex: count > 0 ? 0 : -1
                 onCountChanged: {
                     if (count > 0 && !addressRow.editing && !probeRow.activeFocus)
-                    Qt.callLater(root.focusDefault)
+                        Qt.callLater(root.focusDefault)
                 }
                 onCurrentIndexChanged: if (currentIndex >= 0)
-                positionViewAtIndex(currentIndex, ListView.Contain)
+                                           positionViewAtIndex(currentIndex, ListView.Contain)
 
                 FastWheelHandler {
                     flickable: discoveredList

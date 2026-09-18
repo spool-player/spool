@@ -1,6 +1,6 @@
 import QtQuick
 import QtTest
-import "../../qml/pages/ProfileNavigation.js" as ProfileNavigation
+import "../../qml/providers/jellyfin/ProfileNavigation.js" as ProfileNavigation
 
 TestCase {
     name: "ProfileNavigation"
