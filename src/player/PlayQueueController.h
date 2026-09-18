@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../common/JellyfinTypes.h"
+#include "../media/MediaTypes.h"
 // Full definition, not a forward declaration: moc needs the pointed-to type
 // of a Q_PROPERTY to be complete. The outline only forward-declares this
 // controller in turn, so there is no cycle.

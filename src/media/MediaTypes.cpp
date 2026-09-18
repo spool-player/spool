@@ -1,6 +1,6 @@
-#include "JellyfinTypes.h"
+#include "MediaTypes.h"
+#include "../common/MetaJson.h"
 #include "../platform/PlatformSettingsPolicy.h"
-#include "MetaJson.h"
 
 #include <QDate>
 #include <QJsonValue>

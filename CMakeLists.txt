@@ -183,6 +183,8 @@ set(SPOOL_PLAYER_SOURCES
     src/player/PlaybackTrackState.h
     src/player/PlayerController.cpp
     src/player/PlayerController.h
+    src/common/SeriesAudioSelection.cpp
+    src/common/SeriesAudioSelection.h
 )
 
 # Application plumbing that does not name a media backend.
@@ -211,6 +213,8 @@ set(SPOOL_SHELL_SOURCES
     src/common/TlsTrust.h
     src/common/VariantUtils.cpp
     src/common/VariantUtils.h
+    src/media/MediaTypes.cpp
+    src/media/MediaTypes.h
     src/diagnostics/Diagnostics.cpp
     src/diagnostics/Diagnostics.h
     src/diagnostics/InputLatencyMonitor.cpp
@@ -229,6 +233,7 @@ set(SPOOL_JELLYFIN_SOURCES
     src/api/ItemsQuery.h
     src/api/JellyfinApiFacade.cpp
     src/api/JellyfinApiFacade.h
+    src/api/JellyfinSession.h
     src/api/PlaybackBandwidthPolicy.cpp
     src/api/PlaybackBandwidthPolicy.h
     src/api/PlaybackNegotiation.cpp
@@ -274,10 +279,7 @@ set(SPOOL_JELLYFIN_SOURCES
     src/app/SyncPlayController.h
     src/app/UserItemStateController.cpp
     src/app/UserItemStateController.h
-    src/common/JellyfinTypes.cpp
-    src/common/JellyfinTypes.h
-    src/common/SeriesAudioSelection.cpp
-    src/common/SeriesAudioSelection.h
+    src/discovery/DiscoveredServer.h
     src/discovery/DiscoveryController.cpp
     src/discovery/DiscoveryController.h
     src/models/DiscoveredServerModel.cpp
