@@ -12,7 +12,7 @@
 #include <vector>
 
 namespace JellyfinNative {
-class JellyfinApiFacade;
+class PlaybackSource;
 
 class PlayQueueController final : public QAbstractListModel {
     Q_OBJECT
@@ -65,7 +65,7 @@ public:
         UserQueuedRole,
     };
 
-    explicit PlayQueueController(JellyfinApiFacade *api = nullptr, QObject *parent = nullptr);
+    explicit PlayQueueController(PlaybackSource *api = nullptr, QObject *parent = nullptr);
 
     PlayQueueOutlineModel *outline() const
     {
@@ -157,7 +157,7 @@ private:
     void setCurrentOrderIndex(int orderIndex);
     void emitQueueStateChanged(int previousCurrentIndex);
 
-    JellyfinApiFacade *m_api = nullptr;
+    PlaybackSource *m_api = nullptr;
     PlayQueueOutlineModel *m_outline = nullptr;
     std::vector<MovieItem> m_entries;
     // Parallel to m_entries. Provenance belongs to this queue, not to the
