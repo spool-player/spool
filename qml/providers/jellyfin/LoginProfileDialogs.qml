@@ -2,8 +2,8 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Layouts
-import "../theme"
-import "../primitives"
+import "../../theme"
+import "../../primitives"
 
 // The three things you can do to a saved account: sign in again, correct the
 // server it points at, or forget it. They share one anchor and one key route,

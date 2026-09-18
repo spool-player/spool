@@ -1,7 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
-import "../theme"
-import "../primitives"
+import "../../theme"
+import "../../primitives"
 
 // The header of the sign-in screen: where you are, and the way back out.
 // Nothing else in here takes focus, so a remote never walks through it on the

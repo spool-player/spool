@@ -471,13 +471,6 @@ qt_add_qml_module(jellyfin-native
         qml/pages/LibraryNavigation.js
         qml/shell/ItemActivation.js
         qml/primitives/ModelAccess.js
-        qml/pages/LoginPage.qml
-        qml/pages/LoginAccountStep.qml
-        qml/pages/LoginBrandPanel.qml
-        qml/pages/LoginProfileDialogs.qml
-        qml/pages/LoginProfilePicker.qml
-        qml/pages/LoginServerStep.qml
-        qml/pages/ProfileNavigation.js
         qml/pages/OpenSourceNoticesPage.qml
         qml/pages/PersonDetailsPage.qml
         qml/pages/PlayerBrowsePanel.qml
@@ -493,12 +486,23 @@ qt_add_qml_module(jellyfin-native
         qml/pages/PlayerStatsPanel.qml
         qml/pages/PlayerTransportBar.qml
         qml/pages/PlayerTrickplayPreview.qml
-        qml/pages/RemoteControlPage.qml
         qml/pages/SearchPage.qml
         qml/pages/SettingsPage.qml
         qml/pages/SettingsNavigation.js
         qml/pages/SubtitleSettingsPanel.qml
         qml/primitives/ActionButton.qml
+        qml/providers/jellyfin/LoginPage.qml
+        qml/providers/jellyfin/LoginAccountStep.qml
+        qml/providers/jellyfin/LoginBrandPanel.qml
+        qml/providers/jellyfin/LoginProfileDialogs.qml
+        qml/providers/jellyfin/LoginProfilePicker.qml
+        qml/providers/jellyfin/LoginServerStep.qml
+        qml/providers/jellyfin/ProfileNavigation.js
+        qml/providers/jellyfin/RemoteControlPage.qml
+        qml/providers/jellyfin/RemoteControlMenu.qml
+        qml/providers/jellyfin/RemoteNowPlayingBar.qml
+        qml/providers/jellyfin/SyncPlayMenu.qml
+        qml/providers/jellyfin/ManagementDialog.qml
         qml/primitives/AppText.qml
         qml/primitives/AtomicViewReveal.qml
         qml/primitives/BusySpinner.qml
@@ -545,7 +549,6 @@ qt_add_qml_module(jellyfin-native
         qml/shell/DiagnosticsOverlay.qml
         qml/shell/InputLatencyWarning.qml
         qml/shell/ItemContextMenu.qml
-        qml/shell/ManagementDialog.qml
         qml/shell/RememberedCertificatesDialog.qml
         qml/shell/MediaInfoOverlay.qml
         qml/shell/OverlayDialog.qml
@@ -553,9 +556,6 @@ qt_add_qml_module(jellyfin-native
         qml/shell/ProviderCapabilities.qml
         qml/shell/RoutePolicy.js
         qml/shell/RouteStack.qml
-        qml/shell/RemoteControlMenu.qml
-        qml/shell/RemoteNowPlayingBar.qml
-        qml/shell/SyncPlayMenu.qml
         qml/shell/TlsTrustDialog.qml
         qml/shell/UpdateDialog.qml
         qml/shell/ToastLayer.qml

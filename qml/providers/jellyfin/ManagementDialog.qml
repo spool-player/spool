@@ -2,8 +2,9 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Layouts
-import "../theme"
-import "../primitives"
+import "../../theme"
+import "../../primitives"
+import "../../shell"
 
 OverlayDialog {
     id: root

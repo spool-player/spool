@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Layouts
 import "../theme"
 import "../primitives"
+import "../providers/jellyfin"
 import "RoutePolicy.js" as RoutePolicy
 
 KeyRouter {
