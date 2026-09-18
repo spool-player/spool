@@ -35,6 +35,14 @@ public:
     virtual bool signedIn() const = 0;
     virtual QString trickplayTileUrl(const QString& itemId, int width, int tileIndex) const = 0;
 
+    // Turns an item into something mpv can open: the URL, its streams, and
+    // where to start. `forceTranscode` asks a source that can re-encode to
+    // do so after a direct stream failed to decode; a source that cannot
+    // ignores it.
+    virtual QCoro::Task<PlaybackSession> resolvePlayback(MovieItem item, bool forceTranscode) = 0;
+    // Intro and credit markers; empty for a source without them.
+    virtual QCoro::Task<std::vector<MediaSegment>> fetchMediaSegments(QString itemId) = 0;
+
     // Every episode of a series in play order, so the queue can continue
     // past the one the viewer started.
     virtual QCoro::Task<std::vector<MovieItem>> fetchSeriesEpisodes(QString seriesId) = 0;

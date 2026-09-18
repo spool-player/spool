@@ -5,6 +5,7 @@
 #include "../provider/Catalog.h"
 #include "../provider/PlaybackSource.h"
 #include "../provider/SearchSource.h"
+#include "../provider/StreamQualityControl.h"
 #include "../provider/UserItemStateSink.h"
 #include "HttpRequestPolicy.h"
 #include "JellyfinSession.h"
@@ -36,7 +37,8 @@ class JellyfinApiFacade final : public PlaybackSource,
                                 public Catalog,
                                 public SearchSource,
                                 public UserItemStateSink,
-                                public ArtworkSource {
+                                public ArtworkSource,
+                                public StreamQualityControl {
     Q_OBJECT
 
 public:
@@ -120,12 +122,12 @@ public:
     QCoro::Task<void> updateUserConfiguration(QJsonObject configuration);
     QCoro::Task<QJsonObject> fetchCurrentUserPolicy();
     QCoro::Task<QJsonArray> fetchCultures();
-    QCoro::Task<std::vector<LibraryItem>> fetchLibraries();
+    QCoro::Task<std::vector<LibraryItem>> fetchLibraries() override;
     QCoro::Task<PagedMovieItems> fetchBrowsePage(
         BrowseDescriptor descriptor, int startIndex = 0, int limit = 72, QVariantMap queryOptions = {}) override;
-    QCoro::Task<QVariantMap> fetchLibraryFilterOptions(QString libraryId, QString collectionType = {});
+    QCoro::Task<QVariantMap> fetchLibraryFilterOptions(QString libraryId, QString collectionType = {}) override;
     QCoro::Task<MovieItem> fetchItemDetails(QString itemId) override;
-    QCoro::Task<std::vector<MovieItem>> fetchItemsByIds(QStringList itemIds);
+    QCoro::Task<std::vector<MovieItem>> fetchItemsByIds(QStringList itemIds) override;
     QCoro::Task<std::vector<MovieItem>> fetchSeasons(QString seriesId) override;
     QCoro::Task<std::vector<MovieItem>> fetchEpisodes(QString seriesId, QString seasonId = {}) override;
     QCoro::Task<std::vector<MovieItem>> fetchResumeItems(int limit = 24) override;
@@ -149,10 +151,22 @@ public:
     QCoro::Task<void> setItemFavorite(QString itemId, bool favorite) override;
     QCoro::Task<void> setItemPlayed(QString itemId, bool played) override;
     QCoro::Task<void> setItemPlaybackPosition(QString itemId, qint64 positionTicks) override;
-    QCoro::Task<std::vector<MediaSegment>> fetchMediaSegments(QString itemId);
+    QCoro::Task<std::vector<MediaSegment>> fetchMediaSegments(QString itemId) override;
     QCoro::Task<TrickplayInfo> fetchTrickplayInfo(QString itemId, QString mediaSourceId = {});
     QString trickplayTileUrl(const QString& itemId, int width, int tileIndex) const override;
-    QCoro::Task<PlaybackSession> negotiatePlayback(MovieItem movie, bool forceTranscode = false);
+    QCoro::Task<PlaybackSession> resolvePlayback(MovieItem movie, bool forceTranscode = false) override;
+    // StreamQualityControl: the session ceiling and the ladder under it.
+    qint64 bitrateOverride() const override
+    {
+        return sessionBitrateOverride();
+    }
+    int heightOverride() const override
+    {
+        return sessionHeightOverride();
+    }
+    void setOverride(qint64 bitrate, int height) override;
+    QString autoDescription() const override;
+    std::vector<StreamQualityControl::Rung> ladder(qint64 sourceBitrate) const override;
 
     QCoro::Task<QJsonArray> fetchControllableSessions();
     QCoro::Task<void> sendRemotePlay(QString sessionId, QStringList itemIds, QString playCommand,

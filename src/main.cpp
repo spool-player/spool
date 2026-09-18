@@ -1,4 +1,3 @@
-#include "api/JellyfinApiFacade.h"
 #include "api/JellyfinProvider.h"
 #include "app/AppController.h"
 #include "app/ArtworkImageProvider.h"
@@ -26,6 +25,7 @@
 #include "platform/ScreenSaverInhibitor.h"
 #include "player/MpvVideoItem.h"
 #include "player/PlayerController.h"
+#include "provider/Provider.h"
 #include "provider/ProviderRegistry.h"
 #if defined(SPOOL_ANDROID) || defined(JELLYFIN_NATIVE_WEBOS)
 #include "platform/UpdateController.h"
@@ -588,11 +588,14 @@ int main(int argc, char **argv)
     JellyfinNative::TlsTrustController tlsTrust;
     // One provider, chosen here until the first-run picker exists. It
     // outlives the player and the app controller, which hold its parts by
-    // pointer, so it is declared before them.
+    // pointer, so it is declared before them. The app only ever sees it as
+    // a Provider.
+    JellyfinNative::ProviderRegistry providers;
     auto jellyfin = std::make_unique<JellyfinNative::JellyfinProvider>(JellyfinNative::JellyfinProviderContext {
         networkAccessManager, &tlsTrust, &database, capabilities.deviceName, QString::fromLatin1(kAppVersion) });
-    JellyfinNative::ProviderRegistry providers;
+    providers.add(jellyfin.get());
     providers.setActive(jellyfin.get());
+    JellyfinNative::Provider *provider = providers.active();
 
     const JellyfinNative::CpuTopology cpuTopology = JellyfinNative::detectCpuTopology();
     logLine("artwork: cpu logical=%d physical=%d smt=%s source=%s decodeThreads=%d", cpuTopology.logicalCpus,
@@ -602,10 +605,10 @@ int main(int argc, char **argv)
         qmlImageCachePath + QStringLiteral("/artwork"), memoryBudget.qmlImageDiskCacheBytes,
         memoryBudget.artworkByteCacheBytes, cpuTopology.artworkDecodeThreads, &tlsTrust);
     artworkService->setUiWidth(window.width());
-    artworkService->setSource(jellyfin->api());
+    artworkService->setSource(provider->artwork());
 
     auto player = std::make_unique<JellyfinNative::PlayerController>(
-        &window, jellyfin->playback(), &tlsTrust, JellyfinNative::bundledFontsPath(appRootPath));
+        &window, provider->playback(), &tlsTrust, JellyfinNative::bundledFontsPath(appRootPath));
     player->setDemuxerBudget(memoryBudget.mpvDemuxerMaxBytes, memoryBudget.mpvDemuxerMaxBackBytes);
     JellyfinNative::ScreenSaverInhibitor screenSaverInhibitor;
     const auto updateScreenSaver = [&screenSaverInhibitor, player = player.get()] {
@@ -625,8 +628,8 @@ int main(int argc, char **argv)
         player.get(), &JellyfinNative::PlayerController::sessionActiveChanged, &app, updateApplicationIcon);
     updateApplicationIcon();
 #endif
-    auto controller = std::make_unique<JellyfinNative::AppController>(
-        &database, jellyfin.get(), artworkService.get(), player.get());
+    auto controller
+        = std::make_unique<JellyfinNative::AppController>(&database, provider, artworkService.get(), player.get());
     controller->settings()->setProviderCapabilities(providers.capabilities());
 #if defined(SPOOL_ANDROID) || defined(JELLYFIN_NATIVE_WEBOS)
     // Settings own the update preference; platform installers own installation.
@@ -707,11 +710,9 @@ int main(int argc, char **argv)
         [](QQuickView::Status status) { logLine("view status changed: %d", static_cast<int>(status)); });
     auto localization = std::make_unique<JellyfinNative::LocalizationManager>();
     localization->attachToEngine(window.engine());
-    if (JellyfinNative::JellyfinApiFacade *api = jellyfin->api()) {
-        api->setAcceptLanguage(localization->bcp47Locale());
-        QObject::connect(localization.get(), &JellyfinNative::LocalizationManager::localeChanged, api,
-            [api, loc = localization.get()]() { api->setAcceptLanguage(loc->bcp47Locale()); });
-    }
+    provider->setLocale(localization->bcp47Locale());
+    QObject::connect(localization.get(), &JellyfinNative::LocalizationManager::localeChanged, provider,
+        [provider, loc = localization.get()]() { provider->setLocale(loc->bcp47Locale()); });
     auto router = std::make_unique<JellyfinNative::RouterController>();
     JellyfinNative::ApplicationHooks applicationHooks;
     applicationHooks.player = player.get();
@@ -756,7 +757,7 @@ int main(int argc, char **argv)
     platformInfo->insert(QStringLiteral("splashImageUrl"), splashImageUrl(appRootPath));
     qmlRegisterSingletonInstance("JellyfinWebOS", 1, 0, "App", controller.get());
     qmlRegisterSingletonInstance("JellyfinWebOS", 1, 0, "ProviderCapabilities", providers.capabilities());
-    jellyfin->registerQmlSingletons();
+    provider->registerQmlSingletons();
     qmlRegisterSingletonInstance("JellyfinWebOS", 1, 0, "Art", artworkService.get());
     qmlRegisterSingletonInstance("JellyfinWebOS", 1, 0, "Browse", controller->browse());
     qmlRegisterSingletonInstance("JellyfinWebOS", 1, 0, "Home", controller->home());

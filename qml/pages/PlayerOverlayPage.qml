@@ -145,12 +145,13 @@ FocusScope {
                   {
                       "action": "speed",
                       "label": "Playback speed"
-                  },
-                  {
-                      "action": "quality",
-                      "label": "Quality"
                   }
               ]
+        if (ProviderCapabilities.streamQuality)
+            values.push({
+                            "action": "quality",
+                            "label": "Quality"
+                        })
         if (!audioOnly)
             values.push({
                             "action": "subtitleSettings",

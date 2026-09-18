@@ -1,6 +1,9 @@
 #pragma once
 
+#include "../provider/GroupPlayback.h"
 #include "SyncPlayClock.h"
+
+#include <QCoroTask>
 
 #include <QJsonArray>
 #include <QJsonObject>
@@ -84,7 +87,7 @@ public:
     static SyncCorrection evaluate(double diffMs);
 };
 
-class SyncPlayController final : public QObject {
+class SyncPlayController final : public GroupPlayback {
     Q_OBJECT
     Q_PROPERTY(QString currentGroupId READ currentGroupId NOTIFY groupChanged)
     Q_PROPERTY(QString currentGroupName READ currentGroupName NOTIFY groupChanged)
@@ -119,7 +122,7 @@ public:
     {
         return m_groups;
     }
-    bool enabled() const
+    bool enabled() const override
     {
         return !m_groupId.isEmpty();
     }
@@ -173,21 +176,22 @@ public:
     Q_INVOKABLE void connectSocket();
     Q_INVOKABLE void disconnectSocket();
     Q_INVOKABLE void createGroup(const QString& name);
-    Q_INVOKABLE void joinGroup(const QString& groupId);
-    Q_INVOKABLE void leaveGroup();
-    Q_INVOKABLE void requestTogglePause();
-    Q_INVOKABLE void requestSeek(double positionSeconds);
-    Q_INVOKABLE void requestRelativeSeek(double deltaSeconds);
-    Q_INVOKABLE void requestNextItem();
-    Q_INVOKABLE void requestPreviousItem();
+    Q_INVOKABLE void joinGroup(const QString& groupId) override;
+    Q_INVOKABLE void leaveGroup() override;
+    Q_INVOKABLE void requestTogglePause() override;
+    Q_INVOKABLE void requestSeek(double positionSeconds) override;
+    Q_INVOKABLE void requestRelativeSeek(double deltaSeconds) override;
+    Q_INVOKABLE void requestNextItem() override;
+    Q_INVOKABLE void requestPreviousItem() override;
     // Inside a group the queue belongs to the server. These publish an intent
     // and the resulting PlayQueue broadcast is what actually changes the queue.
-    void requestMoveItem(const QString& playlistItemId, int newIndex);
-    void requestRemoveItems(const QStringList& playlistItemIds);
-    void requestQueueItems(const QStringList& itemIds, bool queueNext);
-    void requestPlayItem(const QString& playlistItemId);
-    void requestUnpauseWhenReady();
-    void cancelPendingUnpause();
+    void requestMoveItem(const QString& playlistItemId, int newIndex) override;
+    void requestRemoveItems(const QStringList& playlistItemIds) override;
+    void requestQueueItems(const QStringList& itemIds, bool queueNext) override;
+    void requestPlayItem(const QString& playlistItemId) override;
+    void requestUnpauseWhenReady() override;
+    void cancelPendingUnpause() override;
+    QCoro::Task<void> publishQueue(QStringList itemIds, int playingIndex, qint64 startPositionTicks) override;
 
 signals:
     void groupsChanged();
@@ -199,7 +203,6 @@ signals:
     void remotePlaystateCommand(const QJsonObject& data);
     void remoteGeneralCommand(const QJsonObject& data);
     void sessionsUpdated(const QJsonArray& sessions);
-    void queuePlaybackRequested(qint64 positionTicks);
 
 private:
     void handleSocketTextMessage(const QString& message);

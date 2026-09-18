@@ -10,7 +10,7 @@ TestCase {
     name: "ProviderGating"
 
     readonly property var capabilityNames: ["auth", "discovery", "search", "userItemState", "playbackReporting",
-        "segments", "libraryManagement", "syncPlay", "remoteControl", "quickConnect", "peerRelay"]
+        "segments", "libraryManagement", "syncPlay", "remoteControl", "quickConnect", "peerRelay", "streamQuality"]
 
     function test_capabilityNamesAreBooleans() {
         for (let index = 0; index < capabilityNames.length; ++index) {
