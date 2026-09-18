@@ -1,8 +1,7 @@
 #include "RenderBenchmark.h"
 
-#include "../app/AppController.h"
-#include "../app/ArtworkService.h"
 #include "../app/RouterController.h"
+#include "../models/LibraryListModel.h"
 #include "InputLatencyMonitor.h"
 
 #include <QChronoTimer>
@@ -18,6 +17,8 @@
 #include <QQuickWindow>
 #include <QTimer>
 #include <QtGlobal>
+
+#include <utility>
 
 #include <algorithm>
 #include <chrono>
@@ -40,13 +41,13 @@ namespace {
 
 } // namespace
 
-RenderBenchmark *RenderBenchmark::createIfRequested(
-    AppController *app, RouterController *router, InputLatencyMonitor *latency, QQuickWindow *window, QObject *parent)
+RenderBenchmark *RenderBenchmark::createIfRequested(RenderBenchmarkHooks hooks, RouterController *router,
+    InputLatencyMonitor *latency, QQuickWindow *window, QObject *parent)
 {
     const QString script = qEnvironmentVariable("SPOOL_BENCH").trimmed();
     if (script.isEmpty())
         return nullptr;
-    auto *benchmark = new RenderBenchmark(app, router, latency, window, parent);
+    auto *benchmark = new RenderBenchmark(std::move(hooks), router, latency, window, parent);
     // "library" walks one library's grid instead of the route set: open it,
     // then page down through it waiting for the artwork on each screen. That
     // is the part of this application that costs the most on a television and
@@ -64,10 +65,10 @@ RenderBenchmark *RenderBenchmark::createIfRequested(
     return benchmark;
 }
 
-RenderBenchmark::RenderBenchmark(
-    AppController *app, RouterController *router, InputLatencyMonitor *latency, QQuickWindow *window, QObject *parent)
+RenderBenchmark::RenderBenchmark(RenderBenchmarkHooks hooks, RouterController *router, InputLatencyMonitor *latency,
+    QQuickWindow *window, QObject *parent)
     : QObject(parent)
-    , m_app(app)
+    , m_hooks(std::move(hooks))
     , m_router(router)
     , m_latency(latency)
     , m_window(window)
@@ -112,8 +113,7 @@ RenderBenchmark::RenderBenchmark(
     connect(m_scrollPoll, &QTimer::timeout, this, [this] {
         if (!m_scrolling)
             return;
-        auto *artwork = m_app ? m_app->artwork() : nullptr;
-        const int outstanding = artwork ? artwork->outstandingRequests() : 0;
+        const int outstanding = m_hooks.outstandingArtworkRequests ? m_hooks.outstandingArtworkRequests() : 0;
         if (outstanding == 0 || m_scrollClock.elapsed() > m_stepTimeoutMs)
             finishScrollStep();
     });
@@ -134,15 +134,15 @@ qint64 RenderBenchmark::budgetNs() const
 
 bool RenderBenchmark::openLibraryNamed(const QString& name)
 {
-    auto *libraries = m_app ? m_app->libraries() : nullptr;
-    if (!libraries) {
+    LibraryListModel *libraries = m_hooks.libraries;
+    if (!libraries || !m_hooks.openLibrary) {
         qWarning() << "render benchmark: no library list to search";
         return false;
     }
     for (int index = 0; index < libraries->count(); ++index) {
         if (libraries->libraryAt(index).name.compare(name, Qt::CaseInsensitive) == 0) {
             qInfo() << "render benchmark: opening library" << name;
-            m_app->openLibrary(index);
+            m_hooks.openLibrary(index);
             return true;
         }
     }
@@ -235,12 +235,8 @@ void RenderBenchmark::finishScrollStep()
     m_scrollGapTimer->stop();
     QVariantMap sample;
     sample.insert(QStringLiteral("screen"), m_scrollPosition);
-    if (auto *artwork = m_app ? m_app->artwork() : nullptr) {
-        const auto totals = artwork->decodeTotals();
-        sample.insert(QStringLiteral("decodeMsTotal"), static_cast<double>(totals.decodeNs) / 1000000.0);
-        sample.insert(QStringLiteral("decodedPixelsTotal"), static_cast<double>(totals.pixels));
-        sample.insert(QStringLiteral("decodedImagesTotal"), totals.images);
-    }
+    if (m_hooks.artworkDecodeTotals)
+        sample.insert(m_hooks.artworkDecodeTotals());
     sample.insert(QStringLiteral("settleMs"), static_cast<double>(m_scrollClock.nsecsElapsed()) / 1000000.0);
     sample.insert(QStringLiteral("maxGapMs"), static_cast<double>(m_scrollWorstGapNs) / 1000000.0);
     sample.insert(QStringLiteral("frameBudgetMs"), m_latency ? m_latency->frameBudgetMs() : 16.67);
@@ -300,7 +296,7 @@ void RenderBenchmark::start()
     waiter->setInterval(50);
     const qint64 deadline = QDateTime::currentMSecsSinceEpoch() + m_stepTimeoutMs;
     connect(waiter, &QTimer::timeout, this, [this, waiter, deadline] {
-        auto *libraries = m_app ? m_app->libraries() : nullptr;
+        LibraryListModel *libraries = m_hooks.libraries;
         const bool ready = libraries && libraries->count() > 0;
         if (!ready && QDateTime::currentMSecsSinceEpoch() < deadline)
             return;
@@ -344,8 +340,8 @@ void RenderBenchmark::step()
         return;
     }
 
-    if (m_forceCold)
-        m_app->onMemoryPressure(QStringLiteral("critical"));
+    if (m_forceCold && m_hooks.forceColdCaches)
+        m_hooks.forceColdCaches();
 
     m_awaitingSample = true;
     m_stepTimer.start();
