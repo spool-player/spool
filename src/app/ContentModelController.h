@@ -2,6 +2,7 @@
 
 #include "../common/RequestGeneration.h"
 #include "../models/MovieGridModel.h"
+#include "../provider/Catalog.h"
 
 #include <QObject>
 #include <QString>
@@ -13,7 +14,6 @@
 
 namespace JellyfinNative {
 
-class JellyfinApiFacade;
 class LibraryPrefetchController;
 
 class ContentModelController final : public QObject {
@@ -28,7 +28,7 @@ class ContentModelController final : public QObject {
     Q_PROPERTY(bool personItemsBusy READ personItemsBusy NOTIFY personItemsChanged)
 
 public:
-    ContentModelController(JellyfinApiFacade *api, LibraryPrefetchController *prefetch, QObject *parent = nullptr);
+    ContentModelController(Catalog *catalog, LibraryPrefetchController *prefetch, QObject *parent = nullptr);
 
     MovieGridModel *detailSeasons()
     {
@@ -93,7 +93,7 @@ private:
     void setPersonCredits(PersonCredits credits);
     void clearPersonItems();
 
-    JellyfinApiFacade *m_api = nullptr;
+    Catalog *m_api = nullptr;
     LibraryPrefetchController *m_prefetch = nullptr;
     MovieGridModel m_detailSeasons;
     MovieGridModel m_detailSeasonOptions;

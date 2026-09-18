@@ -2,6 +2,7 @@
 
 #include "../common/RequestGeneration.h"
 #include "../models/MovieGridModel.h"
+#include "../provider/SearchSource.h"
 
 #include <QObject>
 #include <QString>
@@ -10,7 +11,6 @@
 #include <vector>
 namespace JellyfinNative {
 
-class JellyfinApiFacade;
 class LibraryPrefetchController;
 
 class SearchController final : public QObject {
@@ -26,7 +26,7 @@ class SearchController final : public QObject {
     Q_PROPERTY(bool suggestionsBusy READ suggestionsBusy NOTIFY suggestionsChanged)
 
 public:
-    SearchController(JellyfinApiFacade *api, LibraryPrefetchController *prefetch, QObject *parent = nullptr);
+    SearchController(SearchSource *source, LibraryPrefetchController *prefetch, QObject *parent = nullptr);
 
     QString query() const
     {
@@ -90,7 +90,7 @@ private:
 
     void clearResults();
     void setResults(std::vector<MovieItem> items);
-    JellyfinApiFacade *m_api = nullptr;
+    SearchSource *m_api = nullptr;
     LibraryPrefetchController *m_prefetch = nullptr;
     MovieGridModel m_movieResults;
     MovieGridModel m_seriesResults;
