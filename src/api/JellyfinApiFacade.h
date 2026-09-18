@@ -1,7 +1,11 @@
 #pragma once
 
 #include "../media/MediaTypes.h"
+#include "../provider/ArtworkSource.h"
+#include "../provider/Catalog.h"
 #include "../provider/PlaybackSource.h"
+#include "../provider/SearchSource.h"
+#include "../provider/UserItemStateSink.h"
 #include "HttpRequestPolicy.h"
 #include "JellyfinSession.h"
 #include "PlaybackBandwidthPolicy.h"
@@ -26,7 +30,13 @@
 namespace JellyfinNative {
 
 class TlsTrustController;
-class JellyfinApiFacade final : public PlaybackSource {
+// PlaybackSource is the QObject base; the others are plain interfaces the
+// source-agnostic controllers talk through.
+class JellyfinApiFacade final : public PlaybackSource,
+                                public Catalog,
+                                public SearchSource,
+                                public UserItemStateSink,
+                                public ArtworkSource {
     Q_OBJECT
 
 public:
@@ -65,7 +75,11 @@ public:
     // every media request, and the server URL owns the TLS trust decision.
     QByteArray mediaRequestHeaders() const override;
     QUrl mediaOrigin() const override;
+    // Catalog, SearchSource, UserItemStateSink and PlaybackSource all ask
+    // this; one session answers for every one of them.
     bool signedIn() const override;
+    QString libraryScopeKey() const override;
+    QString imageUrl(const ArtworkSource::ImageRequest& request) const override;
     QCoro::Task<std::vector<MovieItem>> fetchSeriesEpisodes(QString seriesId) override;
     QCoro::Task<void> refreshPlaybackNetworkState();
 
@@ -108,19 +122,19 @@ public:
     QCoro::Task<QJsonArray> fetchCultures();
     QCoro::Task<std::vector<LibraryItem>> fetchLibraries();
     QCoro::Task<PagedMovieItems> fetchBrowsePage(
-        BrowseDescriptor descriptor, int startIndex = 0, int limit = 72, QVariantMap queryOptions = {});
+        BrowseDescriptor descriptor, int startIndex = 0, int limit = 72, QVariantMap queryOptions = {}) override;
     QCoro::Task<QVariantMap> fetchLibraryFilterOptions(QString libraryId, QString collectionType = {});
-    QCoro::Task<MovieItem> fetchItemDetails(QString itemId);
+    QCoro::Task<MovieItem> fetchItemDetails(QString itemId) override;
     QCoro::Task<std::vector<MovieItem>> fetchItemsByIds(QStringList itemIds);
-    QCoro::Task<std::vector<MovieItem>> fetchSeasons(QString seriesId);
-    QCoro::Task<std::vector<MovieItem>> fetchEpisodes(QString seriesId, QString seasonId = {});
-    QCoro::Task<std::vector<MovieItem>> fetchResumeItems(int limit = 24);
-    QCoro::Task<std::vector<MovieItem>> fetchNextUpEpisodes(int limit = 24);
-    QCoro::Task<std::vector<MovieItem>> fetchLatestItems(QString parentId = {}, int limit = 24);
-    QCoro::Task<std::vector<MovieItem>> searchItems(QString searchTerm, int limit = 80);
-    QCoro::Task<std::vector<MovieItem>> fetchSearchSuggestions(int limit = 20);
-    QCoro::Task<std::vector<MovieItem>> fetchSimilarItems(QString itemId, int limit = 24);
-    QCoro::Task<PersonCredits> fetchItemsByPerson(QString personId, int maximumItems = 4000);
+    QCoro::Task<std::vector<MovieItem>> fetchSeasons(QString seriesId) override;
+    QCoro::Task<std::vector<MovieItem>> fetchEpisodes(QString seriesId, QString seasonId = {}) override;
+    QCoro::Task<std::vector<MovieItem>> fetchResumeItems(int limit = 24) override;
+    QCoro::Task<std::vector<MovieItem>> fetchNextUpEpisodes(int limit = 24) override;
+    QCoro::Task<std::vector<MovieItem>> fetchLatestItems(QString parentId = {}, int limit = 24) override;
+    QCoro::Task<std::vector<MovieItem>> searchItems(QString searchTerm, int limit = 80) override;
+    QCoro::Task<std::vector<MovieItem>> fetchSearchSuggestions(int limit = 20) override;
+    QCoro::Task<std::vector<MovieItem>> fetchSimilarItems(QString itemId, int limit = 24) override;
+    QCoro::Task<PersonCredits> fetchItemsByPerson(QString personId, int maximumItems = 4000) override;
     QCoro::Task<std::vector<MovieItem>> fetchManagementTargets(QString itemType);
     QCoro::Task<QString> createPlaylist(QString name, QStringList itemIds = {});
     QCoro::Task<void> addPlaylistItems(QString playlistId, QStringList itemIds, int position = -1);
@@ -132,9 +146,9 @@ public:
     QCoro::Task<void> removeCollectionItems(QString collectionId, QStringList itemIds);
     QCoro::Task<void> renameItem(QString itemId, QString name);
     QCoro::Task<void> deleteItem(QString itemId);
-    QCoro::Task<void> setItemFavorite(QString itemId, bool favorite);
-    QCoro::Task<void> setItemPlayed(QString itemId, bool played);
-    QCoro::Task<void> setItemPlaybackPosition(QString itemId, qint64 positionTicks);
+    QCoro::Task<void> setItemFavorite(QString itemId, bool favorite) override;
+    QCoro::Task<void> setItemPlayed(QString itemId, bool played) override;
+    QCoro::Task<void> setItemPlaybackPosition(QString itemId, qint64 positionTicks) override;
     QCoro::Task<std::vector<MediaSegment>> fetchMediaSegments(QString itemId);
     QCoro::Task<TrickplayInfo> fetchTrickplayInfo(QString itemId, QString mediaSourceId = {});
     QString trickplayTileUrl(const QString& itemId, int width, int tileIndex) const override;

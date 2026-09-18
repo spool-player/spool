@@ -121,11 +121,6 @@ AppController::AppController(DatabaseManager *database, JellyfinProvider *jellyf
     m_syncPlay = m_jellyfin->syncPlay();
     m_management = m_jellyfin->management();
     JellyfinSettingsBridge *settingsBridge = m_jellyfin->settingsBridge();
-    if (m_artwork) {
-        m_artwork->setServerUrl(m_session->serverUrl());
-        connect(m_session, &SessionController::serverUrlChanged, m_artwork,
-            [this]() { m_artwork->setServerUrl(m_session->serverUrl()); });
-    }
     connect(m_playQueue, &PlayQueueController::successorPlaybackReady, this, [this]() { playQueueCurrent(false); });
     connect(m_browse, &BrowseSessionController::reloadRequested, this, [this]() { beginBrowse(); });
     connect(m_browse, &BrowseSessionController::moreItemsRequested, this, &AppController::loadMoreCurrentItems);

@@ -1,6 +1,5 @@
 #include "SearchController.h"
 
-#include "../api/JellyfinApiFacade.h"
 #include "../common/AsyncTask.h"
 #include "LibraryPrefetchController.h"
 
@@ -14,9 +13,9 @@ namespace {
     constexpr int kSearchDebounceMs = 260;
 }
 
-SearchController::SearchController(JellyfinApiFacade *api, LibraryPrefetchController *prefetch, QObject *parent)
+SearchController::SearchController(SearchSource *source, LibraryPrefetchController *prefetch, QObject *parent)
     : QObject(parent)
-    , m_api(api)
+    , m_api(source)
     , m_prefetch(prefetch)
 {
     m_debounceTimer.setSingleShot(true);
@@ -199,7 +198,7 @@ void SearchController::setResults(std::vector<MovieItem> items)
 
 bool SearchController::authenticated() const
 {
-    return m_api && !m_api->session().accessToken.isEmpty();
+    return m_api && m_api->signedIn();
 }
 
 void SearchController::setBusy(bool busy)

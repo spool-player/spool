@@ -2,6 +2,7 @@
 
 #include "../common/RequestGeneration.h"
 #include "../media/MediaTypes.h"
+#include "../provider/Catalog.h"
 
 #include <QHash>
 #include <QObject>
@@ -15,7 +16,6 @@
 namespace JellyfinNative {
 
 class ArtworkPrefetcher;
-class JellyfinApiFacade;
 
 class LibraryPrefetchController final : public QObject {
     Q_OBJECT
@@ -23,7 +23,7 @@ class LibraryPrefetchController final : public QObject {
 public:
     enum class ImageKind { Poster, Landscape };
 
-    LibraryPrefetchController(JellyfinApiFacade *api, ArtworkPrefetcher *artwork = nullptr, QObject *parent = nullptr);
+    LibraryPrefetchController(Catalog *catalog, ArtworkPrefetcher *artwork = nullptr, QObject *parent = nullptr);
 
     void stop();
     void schedule(const std::vector<LibraryItem>& libraries, const QStringList& recentLibraryIds);
@@ -43,7 +43,7 @@ private:
 
     void startNext();
 
-    JellyfinApiFacade *m_api = nullptr;
+    Catalog *m_api = nullptr;
     ArtworkPrefetcher *m_artwork = nullptr;
     QTimer m_timer;
     RequestGeneration m_generation;

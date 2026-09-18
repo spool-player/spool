@@ -468,6 +468,34 @@ bool JellyfinApiFacade::signedIn() const
     return !m_session.accessToken.isEmpty();
 }
 
+QString JellyfinApiFacade::libraryScopeKey() const
+{
+    const QString userKey = m_session.userId.isEmpty() ? m_session.userName : m_session.userId;
+    const QString serverKey = m_session.serverId.isEmpty() ? serverUrl() : m_session.serverId;
+    return userKey.isEmpty() || serverKey.isEmpty() ? QString() : QStringLiteral("%1/%2").arg(serverKey, userKey);
+}
+
+QString JellyfinApiFacade::imageUrl(const ArtworkSource::ImageRequest& request) const
+{
+    const QString origin = serverUrl();
+    if (origin.isEmpty() || request.itemId.isEmpty() || request.tag.isEmpty() || request.imageType.isEmpty())
+        return {};
+    QUrl url = serverUrlWithPath(
+        origin, { QStringLiteral("Items"), request.itemId, QStringLiteral("Images"), request.imageType });
+    QUrlQuery query;
+    if (request.fillWidth > 0 && request.fillHeight > 0) {
+        query.addQueryItem(QStringLiteral("fillWidth"), QString::number(request.fillWidth));
+        query.addQueryItem(QStringLiteral("fillHeight"), QString::number(request.fillHeight));
+    } else {
+        query.addQueryItem(QStringLiteral("maxWidth"), QString::number(request.maxWidth));
+    }
+    query.addQueryItem(QStringLiteral("quality"), QString::number(request.quality));
+    query.addQueryItem(QStringLiteral("format"), request.format);
+    query.addQueryItem(QStringLiteral("tag"), request.tag);
+    url.setQuery(query);
+    return url.toString(QUrl::FullyEncoded);
+}
+
 QCoro::Task<std::vector<MovieItem>> JellyfinApiFacade::fetchSeriesEpisodes(QString seriesId)
 {
     return fetchEpisodes(std::move(seriesId));

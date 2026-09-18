@@ -1,6 +1,5 @@
 #include "LibraryPrefetchController.h"
 
-#include "../api/JellyfinApiFacade.h"
 #include "../common/AsyncTask.h"
 #include "ArtworkPrefetcher.h"
 #include "LibraryQuery.h"
@@ -20,10 +19,9 @@ namespace {
 
 } // namespace
 
-LibraryPrefetchController::LibraryPrefetchController(
-    JellyfinApiFacade *api, ArtworkPrefetcher *artwork, QObject *parent)
+LibraryPrefetchController::LibraryPrefetchController(Catalog *catalog, ArtworkPrefetcher *artwork, QObject *parent)
     : QObject(parent)
-    , m_api(api)
+    , m_api(catalog)
     , m_artwork(artwork)
 {
     m_timer.setSingleShot(true);
@@ -42,7 +40,7 @@ void LibraryPrefetchController::stop()
 void LibraryPrefetchController::schedule(const std::vector<LibraryItem>& libraries, const QStringList& recentLibraryIds)
 {
     stop();
-    if (!m_api || m_api->session().accessToken.isEmpty())
+    if (!m_api || !m_api->signedIn())
         return;
 
     std::vector<LibraryItem> selected;
@@ -147,7 +145,7 @@ void LibraryPrefetchController::prefetchPosters(
 
 void LibraryPrefetchController::startNext()
 {
-    if (m_active || !m_api || m_api->session().accessToken.isEmpty())
+    if (m_active || !m_api || !m_api->signedIn())
         return;
     if (m_index < 0 || m_index >= static_cast<int>(m_queue.size()))
         return;

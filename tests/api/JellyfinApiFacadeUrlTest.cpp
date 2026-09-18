@@ -105,7 +105,7 @@ JELLYFIN_TEST_MAIN("jellyfin-api-facade-url")
     QTemporaryDir cacheDirectory;
     require(cacheDirectory.isValid(), "artwork test cache should be available");
     ArtworkService artwork(cacheDirectory.path(), 1024 * 1024, 1024 * 1024, 1, &tlsTrust);
-    artwork.setServerUrl(QStringLiteral("https://media.example.test/jellyfin/root/"));
+    artwork.setSource(&api);
     MovieItem imageItem;
     imageItem.id = QStringLiteral("folder/item 1");
     imageItem.thumbTag = QStringLiteral("tag/one two");

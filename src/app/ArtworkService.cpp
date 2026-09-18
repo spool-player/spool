@@ -483,11 +483,9 @@ QString ArtworkService::itemUrl(const MovieItem& item, bool landscape, int width
     return movieUrl(item, landscape ? QStringLiteral("landscape") : QStringLiteral("poster"), width);
 }
 
-void ArtworkService::setServerUrl(QString serverUrl)
+void ArtworkService::setSource(const ArtworkSource *source)
 {
-    while (serverUrl.endsWith(QLatin1Char('/')))
-        serverUrl.chop(1);
-    m_serverUrl = std::move(serverUrl);
+    m_source = source;
 }
 
 void ArtworkService::setUiWidth(int width)
@@ -596,36 +594,33 @@ QString ArtworkService::movieUrl(const MovieItem& item, const QString& kind, int
 QString ArtworkService::buildLosslessUrl(
     const QString& itemId, const QString& tag, const QString& imageType, int maxWidth) const
 {
-    if (m_serverUrl.isEmpty() || itemId.isEmpty() || tag.isEmpty() || imageType.isEmpty())
+    if (!m_source)
         return {};
-    QUrl url = serverUrlWithPath(m_serverUrl, { QStringLiteral("Items"), itemId, QStringLiteral("Images"), imageType });
-    QUrlQuery query;
-    query.addQueryItem(QStringLiteral("maxWidth"), QString::number(maxWidth));
-    query.addQueryItem(QStringLiteral("quality"), QStringLiteral("90"));
-    query.addQueryItem(QStringLiteral("format"), QStringLiteral("png"));
-    query.addQueryItem(QStringLiteral("tag"), tag);
-    url.setQuery(query);
-    return url.toString(QUrl::FullyEncoded);
+    ArtworkSource::ImageRequest request;
+    request.itemId = itemId;
+    request.tag = tag;
+    request.imageType = imageType;
+    request.maxWidth = maxWidth;
+    request.format = QStringLiteral("png");
+    request.quality = 90;
+    return m_source->imageUrl(request);
 }
 
 QString ArtworkService::buildUrl(const QString& itemId, const QString& tag, const QString& imageType, int maxWidth,
     int qualityOffset, int fillWidth, int fillHeight) const
 {
-    if (m_serverUrl.isEmpty() || itemId.isEmpty() || tag.isEmpty() || imageType.isEmpty())
+    if (!m_source)
         return {};
-    QUrl url = serverUrlWithPath(m_serverUrl, { QStringLiteral("Items"), itemId, QStringLiteral("Images"), imageType });
-    QUrlQuery query;
-    if (fillWidth > 0 && fillHeight > 0) {
-        query.addQueryItem(QStringLiteral("fillWidth"), QString::number(fillWidth));
-        query.addQueryItem(QStringLiteral("fillHeight"), QString::number(fillHeight));
-    } else {
-        query.addQueryItem(QStringLiteral("maxWidth"), QString::number(maxWidth));
-    }
-    query.addQueryItem(QStringLiteral("quality"), QString::number(qualityForOffset(qualityOffset)));
-    query.addQueryItem(QStringLiteral("format"), artworkFormat());
-    query.addQueryItem(QStringLiteral("tag"), tag);
-    url.setQuery(query);
-    return url.toString(QUrl::FullyEncoded);
+    ArtworkSource::ImageRequest request;
+    request.itemId = itemId;
+    request.tag = tag;
+    request.imageType = imageType;
+    request.maxWidth = maxWidth;
+    request.fillWidth = fillWidth;
+    request.fillHeight = fillHeight;
+    request.format = artworkFormat();
+    request.quality = qualityForOffset(qualityOffset);
+    return m_source->imageUrl(request);
 }
 
 QQuickImageResponse *ArtworkService::requestImageResponse(const QString& id, const QSize& requestedSize)
