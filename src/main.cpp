@@ -626,6 +626,7 @@ int main(int argc, char **argv)
         qmlImageCachePath + QStringLiteral("/artwork"), memoryBudget.qmlImageDiskCacheBytes,
         memoryBudget.artworkByteCacheBytes, cpuTopology.artworkDecodeThreads, &tlsTrust);
     artworkService->setUiWidth(window.width());
+    artworkService->setSource(api.get());
 
     auto player = std::make_unique<JellyfinNative::PlayerController>(
         &window, api.get(), &tlsTrust, JellyfinNative::bundledFontsPath(appRootPath));

@@ -4,6 +4,7 @@
 #include "cache/DatabaseManager.h"
 #include "platform/PlatformSettingsPolicy.h"
 
+#include "RecordingArtworkSource.h"
 #include "TestMain.h"
 
 #include <QCoreApplication>
@@ -41,8 +42,9 @@ JELLYFIN_TEST_MAIN("settings-controller")
     require(database.initialize(directory.filePath(QStringLiteral("settings.sqlite"))),
         "settings database did not initialize");
 
+    JellyfinNative::Testing::RecordingArtworkSource artworkSource;
     ArtworkService artwork(QString(), 0, 1024, 1, nullptr);
-    artwork.setServerUrl(QStringLiteral("https://example.test"));
+    artwork.setSource(&artworkSource);
     MovieItem poster;
     poster.id = QStringLiteral("item1");
     poster.posterTag = QStringLiteral("tag1");
