@@ -16,6 +16,7 @@
 namespace JellyfinNative {
 
 class DatabaseManager;
+class DiscoveredServerModel;
 class JellyfinApiFacade;
 
 class SessionController final : public QObject {
@@ -46,6 +47,13 @@ public:
     QCoro::Task<bool> initializeAsync();
     static QStringList localStorageKeys();
     bool initializeFromStorage(QVariantMap values, std::vector<AccountProfile> profiles);
+    // The list the server step offers; the provider owns it and caches it.
+    void setDiscoveredServers(DiscoveredServerModel *servers);
+    Q_INVOKABLE void chooseDiscoveredServer(int index);
+    Q_INVOKABLE void rememberServer(const QString& name, const QString& address);
+    // Back to the profile picker while the session is kept, so a cancel
+    // returns to it; the provider scans for servers meanwhile.
+    Q_INVOKABLE void switchUser();
     Q_INVOKABLE void setServerUrl(const QString& serverUrl);
     Q_INVOKABLE void setServerName(const QString& serverName);
     Q_INVOKABLE void setUsername(const QString& username);
@@ -75,6 +83,14 @@ signals:
     void accountProfilesChanged();
     void profileSignInRequiredChanged();
     void loggedOut();
+    // A remembered or chosen server was added to the list.
+    void serverRemembered();
+    // Lifecycle points the provider hangs its own parts on: sign-in code
+    // polling stops, the SyncPlay socket and remote-control registration are
+    // dropped before the session changes hands.
+    void profileActivationStarted();
+    void switchUserRequested();
+    void logoutStarted();
 
 private:
     QCoro::Task<void> activateProfileAsync(const QString& profileId);
@@ -88,6 +104,7 @@ private:
 
     DatabaseManager *m_database = nullptr;
     JellyfinApiFacade *m_api = nullptr;
+    DiscoveredServerModel *m_discoveredServers = nullptr;
     QString m_serverUrl;
     QString m_serverName;
     QString m_username;

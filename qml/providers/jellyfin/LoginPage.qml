@@ -68,7 +68,7 @@ FocusScope {
     }
 
     function enterProfile(profileId) {
-        App.useProfile(profileId)
+        Session.activateProfile(profileId)
     }
 
     function openAddAccount() {

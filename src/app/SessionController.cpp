@@ -3,6 +3,7 @@
 #include "../api/JellyfinApiFacade.h"
 #include "../cache/DatabaseManager.h"
 #include "../common/AsyncTask.h"
+#include "../models/DiscoveredServerModel.h"
 
 #include <QDateTime>
 #include <QDebug>
@@ -113,6 +114,43 @@ bool SessionController::initializeFromStorage(QVariantMap values, std::vector<Ac
     return !m_profiles.empty();
 }
 
+void SessionController::setDiscoveredServers(DiscoveredServerModel *servers)
+{
+    m_discoveredServers = servers;
+}
+
+void SessionController::chooseDiscoveredServer(int index)
+{
+    if (!m_discoveredServers)
+        return;
+    const auto server = m_discoveredServers->serverAt(index);
+    if (server.address.isEmpty())
+        return;
+    setServerName(server.name);
+    setServerUrl(server.address);
+}
+
+void SessionController::rememberServer(const QString& name, const QString& address)
+{
+    const QString normalizedAddress = address.trimmed();
+    if (normalizedAddress.isEmpty())
+        return;
+
+    const QString serverName = name.trimmed().isEmpty() ? QStringLiteral("Jellyfin Server") : name.trimmed();
+    if (m_discoveredServers) {
+        m_discoveredServers->upsertServer({ normalizedAddress, serverName, normalizedAddress });
+        emit serverRemembered();
+    }
+    setServerName(serverName);
+    setServerUrl(normalizedAddress);
+}
+
+void SessionController::switchUser()
+{
+    qInfo() << "session: switch user requested";
+    emit switchUserRequested();
+}
+
 void SessionController::setServerUrl(const QString& serverUrl)
 {
     QString normalized = canonicalServerUrl(serverUrl);
@@ -177,6 +215,7 @@ void SessionController::login()
 
 void SessionController::activateProfile(const QString& profileId)
 {
+    emit profileActivationStarted();
     emit busyChanged(true, QStringLiteral("Opening profile…"));
     Async::runScoped(
         this, activateProfileAsync(profileId), []() {},
@@ -325,6 +364,8 @@ void SessionController::acceptSession(const AuthSession& session)
 
 void SessionController::logout()
 {
+    qInfo() << "session: logout requested";
+    emit logoutStarted();
     clearPassword();
     if (!m_activeProfileId.isEmpty()) {
         const auto it = std::find_if(m_profiles.begin(), m_profiles.end(),

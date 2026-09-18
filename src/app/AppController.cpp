@@ -3,11 +3,12 @@
 #include "ArtworkService.h"
 
 #include "../api/JellyfinApiFacade.h"
+#include "../api/JellyfinProvider.h"
 #include "../api/JellyfinSettingsBridge.h"
 #include "../common/AsyncTask.h"
-#include "../common/MetaJson.h"
 #include "../common/SeriesAudioSelection.h"
 #include "../diagnostics/Diagnostics.h"
+#include "../discovery/DiscoveryController.h"
 #include "../platform/PlatformPaths.h"
 #include "../player/PlayQueueController.h"
 #include "../player/PlaybackFailurePolicy.h"
@@ -93,29 +94,33 @@ namespace {
 
 }
 
-AppController::AppController(DatabaseManager *database, DiscoveryController *discovery, JellyfinApiFacade *api,
-    ArtworkService *artwork, PlayerController *player, TlsTrustController *tlsTrust, QObject *parent)
+AppController::AppController(DatabaseManager *database, JellyfinProvider *jellyfin, ArtworkService *artwork,
+    PlayerController *player, QObject *parent)
     : QObject(parent)
     , m_database(database)
-    , m_discovery(discovery)
-    , m_api(api)
+    , m_jellyfin(jellyfin)
+    , m_api(jellyfin->api())
     , m_artwork(artwork)
     , m_player(player)
+    , m_remoteControl(jellyfin->remoteControl())
+    , m_quickConnect(jellyfin->quickConnect())
+    , m_session(jellyfin->session())
 {
+    JellyfinApiFacade *api = m_api;
     m_playQueue = new PlayQueueController(api, this);
-    m_syncPlay = new SyncPlayController(api, player, m_playQueue, tlsTrust, this);
-    m_remoteControl = new RemoteControlController(api, this);
-    m_quickConnect = new QuickConnectController(api, this);
     m_settings = new SettingsController(database, player, artwork, this);
-    auto *settingsBridge = new JellyfinSettingsBridge(m_settings, api, this);
-    m_session = new SessionController(database, api, this);
     m_prefetch = new LibraryPrefetchController(api, artwork, this);
     m_browse = new BrowseSessionController(m_prefetch, this);
-    m_management = new LibraryManagementController(api, m_browse, this);
     m_home = new HomeModelController(database, api, m_prefetch, this);
     m_content = new ContentModelController(api, m_prefetch, this);
     m_search = new SearchController(api, m_prefetch, this);
     m_itemState = new UserItemStateController(api, m_browse, m_home, m_content, m_search, this);
+    // The provider's session-bound parts sit on the queue, settings and
+    // browse state built above, and die with this object as they always did.
+    m_jellyfin->attach({ this, player, m_playQueue, m_settings, m_browse });
+    m_syncPlay = m_jellyfin->syncPlay();
+    m_management = m_jellyfin->management();
+    JellyfinSettingsBridge *settingsBridge = m_jellyfin->settingsBridge();
     if (m_artwork) {
         m_artwork->setServerUrl(m_session->serverUrl());
         connect(m_session, &SessionController::serverUrlChanged, m_artwork,
@@ -124,13 +129,11 @@ AppController::AppController(DatabaseManager *database, DiscoveryController *dis
     connect(m_playQueue, &PlayQueueController::successorPlaybackReady, this, [this]() { playQueueCurrent(false); });
     connect(m_browse, &BrowseSessionController::reloadRequested, this, [this]() { beginBrowse(); });
     connect(m_browse, &BrowseSessionController::moreItemsRequested, this, &AppController::loadMoreCurrentItems);
-    connect(m_api, &JellyfinApiFacade::authenticationExpired, m_session, &SessionController::expireSession);
     connect(m_syncPlay, &SyncPlayController::errorText, this, &AppController::showToast);
     connect(m_remoteControl, &RemoteControlController::errorText, this, &AppController::showToast);
     connect(m_remoteControl, &RemoteControlController::feedbackText, this, &AppController::showToast);
     if (SpoolLink *link = m_remoteControl->link())
         connect(link, &SpoolLink::messageReceived, this, &AppController::handleSpoolMessage);
-    connect(m_syncPlay, &SyncPlayController::sessionsUpdated, m_remoteControl, &RemoteControlController::applySessions);
     connect(m_database, &DatabaseManager::recoveryNotice, this, &AppController::showToast);
     connect(m_syncPlay, &SyncPlayController::remotePlayCommand, this, &AppController::handleRemotePlay);
     connect(m_syncPlay, &SyncPlayController::remotePlaystateCommand, this, &AppController::handleRemotePlaystate);
@@ -176,10 +179,16 @@ AppController::AppController(DatabaseManager *database, DiscoveryController *dis
         m_hasDefaultProfile = hasProfiles;
         emit defaultProfileChanged();
     });
+    connect(m_session, &SessionController::profileActivationStarted, this, [this]() { setErrorText({}); });
+    connect(m_session, &SessionController::switchUserRequested, this, [this]() {
+        setBusy(false);
+        setErrorText({});
+    });
+    connect(m_session, &SessionController::logoutStarted, this, [this]() {
+        if (m_player->visible())
+            m_player->stopWithReason(QStringLiteral("logout"));
+    });
     connect(m_session, &SessionController::authenticatedChanged, this, [this](const AuthSession&) {
-        m_syncPlay->connectSocket();
-        m_remoteControl->start();
-        m_discovery->stop();
         if (m_artwork)
             m_artwork->setAuthorizationHeader(m_api->authorizationHeader());
         if (!m_hasDefaultProfile) {
@@ -207,12 +216,6 @@ AppController::AppController(DatabaseManager *database, DiscoveryController *dis
         });
     });
     connect(m_session, &SessionController::loggedOut, this, &AppController::resetApplicationState);
-    connect(m_quickConnect, &QuickConnectController::authenticated, this,
-        [this](const AuthSession& session) { m_session->acceptSession(session); });
-    connect(m_discovery, &DiscoveryController::serverDiscovered, this, [this](const DiscoveredServer& server) {
-        m_discoveredServers.upsertServer(server);
-        cacheDiscoveredServers();
-    });
 
     connect(m_player, &PlayerController::playbackStopped, this, &AppController::handlePlaybackStopped);
     // The device has just shown it cannot sustain the picture it was asked
@@ -385,85 +388,12 @@ QCoro::Task<void> AppController::initializeAsync()
 
     m_initialized = true;
     emit initializedChanged();
-    if (!m_session->authenticated()) {
-        Async::runScoped(
-            this, applyDiscoveredServersCacheAsync(),
-            [this]() {
-                if (!m_session->authenticated())
-                    m_discovery->start();
-            },
-            [this](const std::exception_ptr& error) {
-                qWarning() << "discovery: cached server load failed" << exceptionMessage(error);
-                if (!m_session->authenticated())
-                    m_discovery->start();
-            },
-            "startup discovery cache");
-    }
-}
-
-void AppController::chooseDiscoveredServer(int index)
-{
-    const auto server = m_discoveredServers.serverAt(index);
-    if (server.address.isEmpty())
-        return;
-    m_session->setServerName(server.name);
-    m_session->setServerUrl(server.address);
-}
-
-void AppController::rememberServer(const QString& name, const QString& address)
-{
-    const QString normalizedAddress = address.trimmed();
-    if (normalizedAddress.isEmpty())
-        return;
-
-    m_discoveredServers.upsertServer({ normalizedAddress,
-        name.trimmed().isEmpty() ? QStringLiteral("Jellyfin Server") : name.trimmed(), normalizedAddress });
-    cacheDiscoveredServers();
-    m_session->setServerName(name.trimmed().isEmpty() ? QStringLiteral("Jellyfin Server") : name.trimmed());
-    m_session->setServerUrl(normalizedAddress);
-}
-
-void AppController::cacheDiscoveredServers()
-{
-    QJsonArray cache;
-    for (const auto& entry : m_discoveredServers.servers())
-        cache.push_back(metaToJson(entry));
-    m_database->saveDiscoveredServers(cache);
-}
-
-void AppController::useProfile(const QString& profileId)
-{
-    setErrorText({});
-    m_quickConnect->cancel();
-    m_syncPlay->disconnectSocket();
-    m_remoteControl->stop();
-    m_session->activateProfile(profileId);
-}
-
-void AppController::switchUser()
-{
-    qInfo() << "app: switch user requested";
-    m_quickConnect->cancel();
-    setBusy(false);
-    setErrorText({});
-    m_discovery->start();
-}
-
-void AppController::logout()
-{
-    qInfo() << "app: logout requested";
-    m_quickConnect->cancel();
-    if (m_player->visible())
-        m_player->stopWithReason(QStringLiteral("logout"));
-    m_syncPlay->disconnectSocket();
-    m_remoteControl->stop();
-    m_session->logout();
+    if (!m_session->authenticated())
+        m_jellyfin->resumeServerDiscovery();
 }
 
 void AppController::resetApplicationState()
 {
-    m_syncPlay->disconnectSocket();
-    m_remoteControl->stop();
     m_remotePlaybackRequestGeneration.invalidate();
     m_remotePlaybackFingerprint.clear();
     m_settings->clearRemote();
@@ -485,13 +415,6 @@ void AppController::resetApplicationState()
     m_browse->reset();
     setBusy(false);
     setErrorText({});
-    Async::runScoped(
-        this, applyDiscoveredServersCacheAsync(), []() {},
-        [](const std::exception_ptr& error) {
-            qWarning() << "discovery: cached server load failed" << exceptionMessage(error);
-        },
-        "discovery cache");
-    m_discovery->start();
 }
 
 void AppController::goHome()
@@ -502,7 +425,7 @@ void AppController::goHome()
     qInfo() << "app: go home viewKind=" << m_browse->viewKind();
     m_libraryLoadGeneration.invalidate();
     setBusy(false);
-    m_discovery->stop();
+    m_jellyfin->discovery()->stop();
     refreshHomeRows();
 }
 
@@ -1446,10 +1369,8 @@ void AppController::shutdown()
     m_shuttingDown = true;
     qInfo() << "app: shutdown requested";
     m_player->prepareForShutdown();
-    m_quickConnect->cancel();
     m_prefetch->stop();
-    m_api->cancelRequests();
-    m_discovery->stop();
+    m_jellyfin->shutdown();
     m_player->teardownMpv();
 }
 
@@ -1514,16 +1435,6 @@ void AppController::showToast(const QString& message)
     emit toastMessage(message);
 }
 
-QCoro::Task<void> AppController::applyDiscoveredServersCacheAsync()
-{
-    const auto servers = co_await m_database->loadDiscoveredServersAsync();
-    std::vector<DiscoveredServer> parsed;
-    parsed.reserve(servers.size());
-    for (const auto& value : servers)
-        parsed.push_back(metaFromJson<DiscoveredServer>(value.toObject()));
-    m_discoveredServers.setServers(parsed, false);
-}
-
 void AppController::loadLibraries()
 {
     m_prefetch->stop();
@@ -1532,7 +1443,7 @@ void AppController::loadLibraries()
         [this](const std::vector<LibraryItem>& libraries) {
             m_libraries.setLibraries(libraries);
             setBusy(false);
-            m_discovery->stop();
+            m_jellyfin->discovery()->stop();
             refreshHomeRows();
         },
         [this](const std::exception_ptr& error) {
