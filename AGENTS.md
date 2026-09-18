@@ -40,15 +40,32 @@ library; the grouping exists so the split stays mechanical.
   `src/cache` and `src/diagnostics`) never includes `src/api/` or
   `src/discovery/`. `tools/check-module-seam.sh` enforces that and runs as
   the `module-seam` ctest; `--strict` also treats every file still listed in
-  `SPOOL_JELLYFIN_SOURCES` as provider and currently reports the
-  composition-root leaks left for the provider registry work
-  (`PlatformApplicationServices`, `RenderBenchmark` and `DatabaseManager`
-  reach `AppController`, `ArtworkService` or `AccountProfile`).
+  `SPOOL_JELLYFIN_SOURCES` as provider and currently reports one leftover
+  (`DatabaseManager` reaches `AccountProfile`).
+- A media source is a `Provider` (`src/provider/Provider.h`): an id, a
+  display name, a set of capability flags and a `PlaybackSource`.
+  `ProviderRegistry` holds the active one and publishes its flags as the
+  `ProviderCapabilities` QML singleton (eleven booleans: auth, discovery,
+  search, userItemState, playbackReporting, segments, libraryManagement,
+  syncPlay, remoteControl, quickConnect, peerRelay). Shared QML gates every
+  provider-specific control on one of those names; the provider registers
+  the singletons only its own QML reaches (`Session`, `SyncPlay`,
+  `RemoteControl`, `Management`, `QuickConnect`, `Discovery`,
+  `DiscoveredServers`) from `registerQmlSingletons()`.
+- `JellyfinProvider` (`src/api`) composes everything Jellyfin-specific: the
+  facade, discovery and its cached server list, the session, QuickConnect,
+  remote control, and after `attach()` SyncPlay, library management and the
+  settings bridge. It owns the session-driven lifecycle of those parts;
+  `AppController` is the composition root above it and constructs none of
+  them. Nothing under `src/platform` or `src/diagnostics` includes
+  `AppController`: the platform layer takes `ApplicationHooks` and the render
+  benchmark `RenderBenchmarkHooks`, both filled in by `main.cpp`.
 - The player talks to its media source only through
   `src/provider/PlaybackSource.h`; `JellyfinApiFacade` implements it.
   `SettingsController` emits the preferences a source needs and takes the
   account's remote settings back through `applyRemote*()`;
-  `JellyfinSettingsBridge` in `src/api` is the Jellyfin side of that.
+  `JellyfinSettingsBridge` in `src/api` is the Jellyfin side of that. Its
+  schema drops the account rows when the active provider has no `auth`.
   `configurePlatformPlaybackCapabilities()` takes an applier callback, not
   the facade.
 - `qml/primitives` and `qml/theme` reach exactly two singletons, `Art.url` and
