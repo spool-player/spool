@@ -259,6 +259,8 @@ set(SPOOL_JELLYFIN_SOURCES
     src/api/JellyfinApiFacade.h
     src/api/JellyfinSession.h
     src/api/JellyfinSettingsBridge.cpp
+    src/api/JellyfinProvider.cpp
+    src/api/JellyfinProvider.h
     src/api/JellyfinSettingsBridge.h
     src/api/PlaybackBandwidthPolicy.cpp
     src/api/PlaybackBandwidthPolicy.h
@@ -443,7 +445,6 @@ endif()
 
 set_source_files_properties(
     qml/primitives/InputKeys.qml
-    qml/shell/ProviderCapabilities.qml
     qml/theme/Metrics.qml
     qml/theme/Theme.qml
     qml/theme/Typography.qml
@@ -561,7 +562,6 @@ qt_add_qml_module(jellyfin-native
         qml/shell/MediaInfoOverlay.qml
         qml/shell/OverlayDialog.qml
         qml/shell/PageReadiness.js
-        qml/shell/ProviderCapabilities.qml
         qml/shell/RoutePolicy.js
         qml/shell/RouteStack.qml
         qml/shell/TlsTrustDialog.qml

@@ -2,9 +2,7 @@
 
 #include "../cache/DatabaseManager.h"
 #include "../common/RequestGeneration.h"
-#include "../discovery/DiscoveryController.h"
 #include "../media/MediaTypes.h"
-#include "../models/DiscoveredServerModel.h"
 #include "../models/LibraryListModel.h"
 #include "../models/MovieGridModel.h"
 #include "../player/PlayQueueController.h"
@@ -13,10 +11,8 @@
 #include "ContentModelController.h"
 #include "HomeModelController.h"
 #include "LibraryManagementController.h"
-#include "QuickConnectController.h"
 #include "RemoteControlController.h"
 #include "SearchController.h"
-#include "SessionController.h"
 #include "SettingsController.h"
 #include "SpoolRemoteProtocol.h"
 #include "SyncPlayController.h"
@@ -35,7 +31,10 @@ namespace JellyfinNative {
 
 class ArtworkService;
 class JellyfinApiFacade;
+class JellyfinProvider;
 class LibraryPrefetchController;
+class QuickConnectController;
+class SessionController;
 class UserItemStateController;
 class TlsTrustController;
 class AppController final : public QObject {
@@ -51,13 +50,9 @@ class AppController final : public QObject {
     Q_PROPERTY(bool initialized READ initialized NOTIFY initializedChanged)
 
 public:
-    AppController(DatabaseManager *database, DiscoveryController *discovery, JellyfinApiFacade *api,
-        ArtworkService *artwork, PlayerController *player, TlsTrustController *tlsTrust, QObject *parent = nullptr);
+    AppController(DatabaseManager *database, JellyfinProvider *jellyfin, ArtworkService *artwork,
+        PlayerController *player, QObject *parent = nullptr);
 
-    DiscoveredServerModel *discoveredServers()
-    {
-        return &m_discoveredServers;
-    }
     ArtworkService *artwork() const
     {
         return m_artwork;
@@ -94,14 +89,6 @@ public:
     {
         return m_playQueue;
     }
-    SyncPlayController *syncPlay()
-    {
-        return m_syncPlay;
-    }
-    RemoteControlController *remoteControl()
-    {
-        return m_remoteControl;
-    }
     SettingsController *settings()
     {
         return m_settings;
@@ -110,26 +97,9 @@ public:
     {
         return m_initialized;
     }
-    SessionController *session()
-    {
-        return m_session;
-    }
-    QuickConnectController *quickConnect()
-    {
-        return m_quickConnect;
-    }
-    LibraryManagementController *management()
-    {
-        return m_management;
-    }
 
     Q_INVOKABLE void initialize();
     void shutdown();
-    Q_INVOKABLE void chooseDiscoveredServer(int index);
-    Q_INVOKABLE void rememberServer(const QString& name, const QString& address);
-    Q_INVOKABLE void useProfile(const QString& profileId);
-    Q_INVOKABLE void switchUser();
-    Q_INVOKABLE void logout();
     Q_INVOKABLE void goHome();
     Q_INVOKABLE void openLibrary(int index);
     Q_INVOKABLE bool openLibraryById(const QString& libraryId);
@@ -196,8 +166,6 @@ private:
     void showToast(const QString& message);
     QCoro::Task<void> initializeAsync();
     void resetApplicationState();
-    QCoro::Task<void> applyDiscoveredServersCacheAsync();
-    void cacheDiscoveredServers();
     void loadLibraries();
     void loadMoreCurrentItems();
     void refreshHomeRows()
@@ -229,7 +197,7 @@ private:
     void handlePlaybackStopped(const QString& itemId, qint64 positionTicks, bool completed);
 
     DatabaseManager *m_database = nullptr;
-    DiscoveryController *m_discovery = nullptr;
+    JellyfinProvider *m_jellyfin = nullptr;
     JellyfinApiFacade *m_api = nullptr;
     ArtworkService *m_artwork = nullptr;
     PlayerController *m_player = nullptr;
@@ -249,7 +217,6 @@ private:
     quint64 m_albumQueueGeneration = 0;
     bool m_episodeQueuePending = false;
     LibraryManagementController *m_management = nullptr;
-    DiscoveredServerModel m_discoveredServers;
     LibraryListModel m_libraries;
     MovieItem m_activePlaybackItem;
     QList<MediaStreamInfo> m_activePlaybackStreams;

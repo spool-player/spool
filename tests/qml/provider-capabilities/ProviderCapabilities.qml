@@ -6,9 +6,9 @@ import QtQuick
 // so a source that has no SyncPlay or remote control simply has no such
 // buttons, and nothing else changes.
 //
-// Placeholder: every flag is true until the Phase 3 C++ provider registry
-// replaces this file with a qmlRegisterSingletonInstance under the same name
-// and the same property names. The contract is the names.
+// Test stand-in for the ProviderCapabilities singleton main.cpp registers
+// from the provider registry (src/provider/ProviderRegistry.h). The property
+// names are the contract; ProviderRegistryTest pins the C++ side to them.
 QtObject {
     // The provider supplies its own login flow and session (Session).
     readonly property bool auth: true

@@ -657,7 +657,7 @@ KeyRouter {
         switchUserReturnArgs = Object.assign({}, routeArgs)
         switchUserReturnPending = false
         Router.reset("login")
-        App.switchUser()
+        root.session.switchUser()
         navigationTarget = routeStack
         InputKeys.focus(routeStack)
     }
@@ -675,12 +675,12 @@ KeyRouter {
     }
 
     function cancelSwitchUser() {
-        if (!canCancelSwitchUser)
+        if (!canCancelSwitchUser || !root.session)
             return false
         if (switchUserReturnPending)
             return true
         switchUserReturnPending = true
-        App.useProfile(switchUserReturnProfileId)
+        root.session.activateProfile(switchUserReturnProfileId)
         return true
     }
 
