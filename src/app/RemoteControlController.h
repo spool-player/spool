@@ -3,6 +3,7 @@
 #include "../common/RequestGeneration.h"
 #include "../media/MediaTypes.h"
 #include "../player/PlaybackTimeline.h"
+#include "../provider/RemotePlayback.h"
 #include "SpoolLink.h"
 
 #include <QHash>
@@ -23,7 +24,7 @@ namespace JellyfinNative {
 class JellyfinApiFacade;
 class PlatformRemoteMediaSession;
 
-class RemoteControlController final : public QObject {
+class RemoteControlController final : public RemotePlayback {
     Q_OBJECT
     Q_PROPERTY(QVariantList targets READ targets NOTIFY targetsChanged)
     Q_PROPERTY(QString selectedSessionId READ selectedSessionId NOTIFY targetChanged)
@@ -67,7 +68,7 @@ public:
     {
         return m_selectedTargetDetail;
     }
-    bool targetSelected() const
+    bool targetSelected() const override
     {
         return !m_selectedSessionId.isEmpty();
     }
@@ -139,7 +140,9 @@ public:
     void start();
     void stop();
     void applySessions(const QJsonArray& sessions);
-    bool playItems(const std::vector<MovieItem>& items, int startIndex, const QString& command, bool fromStart);
+    bool playItems(
+        const std::vector<MovieItem>& items, int startIndex, const QString& command, bool fromStart) override;
+    bool handlePeerSignalling(const SpoolRemoteProtocol::Message& message) override;
 
     Q_INVOKABLE void refreshTargets();
     Q_INVOKABLE void selectTarget(const QString& sessionId);

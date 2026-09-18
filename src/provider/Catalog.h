@@ -5,6 +5,7 @@
 #include <QCoroTask>
 
 #include <QString>
+#include <QStringList>
 #include <QVariantMap>
 
 #include <vector>
@@ -38,6 +39,13 @@ public:
     virtual QCoro::Task<std::vector<MovieItem>> fetchLatestItems(QString parentId = {}, int limit = 24) = 0;
     virtual QCoro::Task<std::vector<MovieItem>> fetchSimilarItems(QString itemId, int limit = 24) = 0;
     virtual QCoro::Task<PersonCredits> fetchItemsByPerson(QString personId, int maximumItems = 4000) = 0;
+
+    // The top-level libraries the home page and the rail are built from.
+    virtual QCoro::Task<std::vector<LibraryItem>> fetchLibraries() = 0;
+    // The genres, years and the like a library can be filtered by; empty
+    // when the source offers no filtering.
+    virtual QCoro::Task<QVariantMap> fetchLibraryFilterOptions(QString libraryId, QString collectionType = {}) = 0;
+    virtual QCoro::Task<std::vector<MovieItem>> fetchItemsByIds(QStringList itemIds) = 0;
 };
 
 } // namespace JellyfinNative

@@ -55,7 +55,7 @@ namespace {
 } // namespace
 
 RemoteControlController::RemoteControlController(JellyfinApiFacade *api, QObject *parent)
-    : QObject(parent)
+    : RemotePlayback(parent)
     , m_api(api)
     , m_mediaSession(createPlatformRemoteMediaSession(this))
 {
@@ -957,6 +957,11 @@ void RemoteControlController::updateMediaSession()
 void RemoteControlController::reportCommandError(const QString& action, const std::exception_ptr& error)
 {
     emit errorText(QStringLiteral("Could not %1: %2").arg(action, exceptionMessage(error)));
+}
+
+bool RemoteControlController::handlePeerSignalling(const SpoolRemoteProtocol::Message& message)
+{
+    return m_link && m_link->handleServerMessage(message);
 }
 
 } // namespace JellyfinNative
