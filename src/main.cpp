@@ -596,7 +596,13 @@ int main(int argc, char **argv)
             apiPointer, [apiPointer, name]() { apiPointer->setDeviceName(name); }, Qt::QueuedConnection);
     });
 #endif
-    JellyfinNative::configurePlatformPlaybackCapabilities(*api, app);
+    JellyfinNative::configurePlatformPlaybackCapabilities(
+        [guardedApi = QPointer<JellyfinNative::JellyfinApiFacade>(api.get())](
+            const QStringList& videoCodecs, bool restrictVideoCodecs) {
+            if (guardedApi)
+                guardedApi->setVideoCodecCapabilities(videoCodecs, restrictVideoCodecs);
+        },
+        app);
 
     const JellyfinNative::CpuTopology cpuTopology = JellyfinNative::detectCpuTopology();
     logLine("artwork: cpu logical=%d physical=%d smt=%s source=%s decodeThreads=%d", cpuTopology.logicalCpus,
