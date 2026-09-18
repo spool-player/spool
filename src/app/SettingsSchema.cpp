@@ -252,6 +252,13 @@ SettingSpec SettingSpec::onAndroid() const
     return spec;
 }
 
+SettingSpec SettingSpec::withAuth() const
+{
+    SettingSpec spec = *this;
+    spec.requiresAuth = true;
+    return spec;
+}
+
 SettingSpec SettingSpec::whenSetTo(const char *otherKey, const char *otherValue) const
 {
     SettingSpec spec = *this;
@@ -491,9 +498,10 @@ const QVector<SettingSpec>& settingSpecs()
             .onAndroid(),
 #endif
 
-        pageSpec("session/account", "Account", "Signed in as", "", SettingType::ReadOnly),
-        pageSpec("action/switchUser", "Account", "Switch profile", "", SettingType::Action),
-        pageSpec("action/logout", "Account", "Sign out", "Keeps this profile on the device", SettingType::Action),
+        pageSpec("session/account", "Account", "Signed in as", "", SettingType::ReadOnly).withAuth(),
+        pageSpec("action/switchUser", "Account", "Switch profile", "", SettingType::Action).withAuth(),
+        pageSpec("action/logout", "Account", "Sign out", "Keeps this profile on the device", SettingType::Action)
+            .withAuth(),
         pageSpec("action/manageCertificates", "Account", "Remembered certificates",
             "Server certificates you chose to trust", SettingType::Action),
 
@@ -587,11 +595,13 @@ QString serializedSettingValue(const SettingSpec& spec, const QVariant& value)
     return normalized.toString();
 }
 
-QVariantList settingSchemaModel()
+QVariantList settingSchemaModel(bool auth)
 {
     QVariantList model;
     model.reserve(settingSpecs().size());
     for (const SettingSpec& spec : settingSpecs()) {
+        if (spec.requiresAuth && !auth)
+            continue;
         QVariantMap row { { QStringLiteral("key"), QLatin1String(spec.key) },
             { QStringLiteral("source"), spec.persisted ? QStringLiteral("settings") : QStringLiteral("page") },
             { QStringLiteral("group"), QLatin1String(spec.group) },

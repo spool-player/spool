@@ -15,6 +15,7 @@
 namespace JellyfinNative {
 
 class DatabaseManager;
+class ProviderCapabilities;
 class ArtworkService;
 class PlayerController;
 struct SettingSpec;
@@ -78,6 +79,10 @@ public:
     QStringList subtitleLanguageOptions() const;
     QStringList systemSubtitleFonts() const;
     QVariantList settingsSchema() const;
+    // The active provider's capabilities decide which rows exist (the
+    // account rows need auth). Set before QML first reads the schema; the
+    // schema is built once, on that first read.
+    void setProviderCapabilities(const ProviderCapabilities *capabilities);
     QVariantMap values() const;
     Q_INVOKABLE QVariant value(const QString& key) const;
     bool playerControlTooltipsEnabled() const
@@ -162,6 +167,8 @@ private:
     DatabaseManager *m_database = nullptr;
     PlayerController *m_player = nullptr;
     ArtworkService *m_artwork = nullptr;
+    const ProviderCapabilities *m_capabilities = nullptr;
+    mutable QVariantList m_schema;
     QString m_artworkFormat = QStringLiteral("auto");
     int m_artworkWebpQuality = 75;
     int m_artworkJpegQuality = 82;
