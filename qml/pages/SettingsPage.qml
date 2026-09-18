@@ -440,8 +440,8 @@ FocusScope {
         if (row.type === "action") {
             if (row.key === "action/switchUser" && shell)
                 shell.switchUser()
-            else if (row.key === "action/logout")
-                App.logout()
+            else if (row.key === "action/logout" && ProviderCapabilities.auth)
+                Session.logout()
             else if (row.key === "action/manageCertificates")
                 certificateManagerVisible = true
             else if (row.key === "action/clearLatencyStatistics")
