@@ -3,6 +3,7 @@
 #include "ArtworkService.h"
 
 #include "../api/JellyfinApiFacade.h"
+#include "../api/JellyfinSettingsBridge.h"
 #include "../common/AsyncTask.h"
 #include "../common/MetaJson.h"
 #include "../common/SeriesAudioSelection.h"
@@ -105,7 +106,8 @@ AppController::AppController(DatabaseManager *database, DiscoveryController *dis
     m_syncPlay = new SyncPlayController(api, player, m_playQueue, tlsTrust, this);
     m_remoteControl = new RemoteControlController(api, this);
     m_quickConnect = new QuickConnectController(api, this);
-    m_settings = new SettingsController(database, api, player, artwork, this);
+    m_settings = new SettingsController(database, player, artwork, this);
+    auto *settingsBridge = new JellyfinSettingsBridge(m_settings, api, this);
     m_session = new SessionController(database, api, this);
     m_prefetch = new LibraryPrefetchController(api, artwork, this);
     m_browse = new BrowseSessionController(m_prefetch, this);
@@ -164,6 +166,7 @@ AppController::AppController(DatabaseManager *database, DiscoveryController *dis
     connect(m_quickConnect, &QuickConnectController::busyChanged, this, &AppController::setBusy);
     connect(m_quickConnect, &QuickConnectController::errorOccurred, this, &AppController::setErrorText);
     connect(m_settings, &SettingsController::errorOccurred, this, &AppController::showToast);
+    connect(settingsBridge, &JellyfinSettingsBridge::errorOccurred, this, &AppController::showToast);
     connect(m_session, &SessionController::busyChanged, this, &AppController::setBusy);
     connect(m_session, &SessionController::errorOccurred, this, &AppController::setErrorText);
     connect(m_session, &SessionController::accountProfilesChanged, this, [this]() {

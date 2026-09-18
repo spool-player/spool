@@ -49,7 +49,7 @@ JELLYFIN_TEST_MAIN("settings-controller")
     const QVariant posterValue = QVariant::fromValue(poster);
     const auto posterUrl = [&] { return artwork.url(posterValue, QStringLiteral("poster")); };
 
-    SettingsController settings(&database, nullptr, nullptr, &artwork);
+    SettingsController settings(&database, nullptr, &artwork);
     QCoro::waitFor(settings.loadLocalAsync());
 
     // A fresh profile leaves the codec to the platform, and the artwork
@@ -166,7 +166,7 @@ JELLYFIN_TEST_MAIN("settings-controller")
             == QStringLiteral("3"),
         "completed control-tooltip sessions were not persisted");
 
-    SettingsController restored(&database, nullptr, nullptr, nullptr);
+    SettingsController restored(&database, nullptr, nullptr);
     QCoro::waitFor(restored.loadLocalAsync());
     require(restored.uiScalePercent() == 135, "persisted UI scale was not restored");
     require(restored.audioDelayMs() == 120, "persisted global desktop audio delay was not restored");
