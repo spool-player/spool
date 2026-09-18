@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../media/MediaTypes.h"
+#include "../provider/PlaybackSource.h"
 
 #include <QObject>
 #include <QTimer>
@@ -8,13 +9,11 @@
 
 namespace JellyfinNative {
 
-class JellyfinApiFacade;
-
 class PlaybackReporter final : public QObject {
     Q_OBJECT
 
 public:
-    explicit PlaybackReporter(JellyfinApiFacade *api, QObject *parent = nullptr);
+    explicit PlaybackReporter(PlaybackSource *api, QObject *parent = nullptr);
 
     void start(const PlaybackSession& session, double playbackRate, int volume, bool muted);
     bool setStreamIndexes(int audioStreamIndex, int subtitleStreamIndex);
@@ -29,7 +28,7 @@ private:
     void sendProgress();
     void sendStop(const PlaybackSession& session, qint64 positionTicks, bool failed, double playbackRate, int attempt);
 
-    JellyfinApiFacade *m_api = nullptr;
+    PlaybackSource *m_api = nullptr;
     PlaybackSession m_session;
     QTimer m_startRetryTimer;
     QTimer m_progressRetryTimer;

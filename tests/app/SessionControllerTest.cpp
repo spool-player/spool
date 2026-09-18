@@ -105,7 +105,7 @@ JELLYFIN_TEST_MAIN("session-controller")
     TlsTrustController tlsTrust;
     JellyfinApiFacade api(&network, &tlsTrust);
     int tokenChanges = 0;
-    QObject::connect(&api, &JellyfinApiFacade::sessionTokenChanged, [&tokenChanges]() { ++tokenChanges; });
+    QObject::connect(&api, &JellyfinApiFacade::credentialsChanged, [&tokenChanges]() { ++tokenChanges; });
     SessionController session(&database, &api);
     require(QCoro::waitFor(session.initializeAsync()), "saved profiles should be detected");
     require(!session.authenticated(), "startup should never activate a saved token");

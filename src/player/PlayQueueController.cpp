@@ -1,7 +1,7 @@
 #include "PlayQueueController.h"
 
-#include "../api/JellyfinApiFacade.h"
 #include "../common/AsyncTask.h"
+#include "../provider/PlaybackSource.h"
 
 #include <QDebug>
 #include <algorithm>
@@ -105,7 +105,7 @@ namespace {
 
 } // namespace
 
-PlayQueueController::PlayQueueController(JellyfinApiFacade *api, QObject *parent)
+PlayQueueController::PlayQueueController(PlaybackSource *api, QObject *parent)
     : QAbstractListModel(parent)
     , m_api(api)
     , m_outline(new PlayQueueOutlineModel(this, this))
@@ -565,12 +565,11 @@ bool PlayQueueController::moveRange(int from, int count, int to)
 
 void PlayQueueController::enqueueEpisodeSuccessors(const MovieItem& episode)
 {
-    if (!m_api || episode.itemType != QStringLiteral("Episode") || episode.seriesId.isEmpty()
-        || m_api->session().accessToken.isEmpty()) {
+    if (!m_api || episode.itemType != QStringLiteral("Episode") || episode.seriesId.isEmpty() || !m_api->signedIn()) {
         return;
     }
     Async::runScoped(
-        this, m_api->fetchEpisodes(episode.seriesId),
+        this, m_api->fetchSeriesEpisodes(episode.seriesId),
         [this, episode](const std::vector<MovieItem>& episodes) {
             auto current = std::find_if(episodes.begin(), episodes.end(),
                 [&episode](const MovieItem& candidate) { return candidate.id == episode.id; });
