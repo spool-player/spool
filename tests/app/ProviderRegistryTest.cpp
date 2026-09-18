@@ -1,4 +1,6 @@
 #include "provider/ProviderRegistry.h"
+#include "provider/ArtworkSource.h"
+#include "provider/Catalog.h"
 #include "provider/PlaybackSource.h"
 #include "provider/Provider.h"
 
@@ -46,7 +48,19 @@ public:
     {
         return nullptr;
     }
+    JellyfinNative::Catalog *catalog() override
+    {
+        return nullptr;
+    }
+    JellyfinNative::ArtworkSource *artwork() override
+    {
+        return nullptr;
+    }
     void registerQmlSingletons() override { }
+    bool ready() const override
+    {
+        return true;
+    }
 
     void setCapabilities(Capabilities capabilities)
     {
@@ -59,11 +73,11 @@ private:
     Capabilities m_capabilities;
 };
 
-// The eleven names shared QML gates on, in the order the flags are declared.
+// The twelve names shared QML gates on, in the order the flags are declared.
 const QStringList kCapabilityNames { QStringLiteral("auth"), QStringLiteral("discovery"), QStringLiteral("search"),
     QStringLiteral("userItemState"), QStringLiteral("playbackReporting"), QStringLiteral("segments"),
     QStringLiteral("libraryManagement"), QStringLiteral("syncPlay"), QStringLiteral("remoteControl"),
-    QStringLiteral("quickConnect"), QStringLiteral("peerRelay") };
+    QStringLiteral("quickConnect"), QStringLiteral("peerRelay"), QStringLiteral("streamQuality") };
 
 bool propertyValue(const QObject& object, const QString& name)
 {
@@ -89,7 +103,8 @@ JELLYFIN_TEST_MAIN("provider-registry")
     Provider::Capabilities all;
     const QList<Provider::Capability> flags { Provider::Auth, Provider::Discovery, Provider::Search,
         Provider::UserItemState, Provider::PlaybackReporting, Provider::Segments, Provider::LibraryManagement,
-        Provider::SyncPlay, Provider::RemoteControl, Provider::QuickConnect, Provider::PeerRelay };
+        Provider::SyncPlay, Provider::RemoteControl, Provider::QuickConnect, Provider::PeerRelay,
+        Provider::StreamQuality };
     require(flags.size() == kCapabilityNames.size(), "one flag per capability name");
     StubProvider single(QStringLiteral("single"), {});
     registry.setActive(&single);
@@ -150,7 +165,7 @@ JELLYFIN_TEST_MAIN("provider-registry")
     QStringList declared;
     for (int index = meta->propertyOffset(); index < meta->propertyCount(); ++index)
         declared.append(QString::fromLatin1(meta->property(index).name()));
-    require(declared == kCapabilityNames, "ProviderCapabilities declares exactly the eleven contract names in order");
+    require(declared == kCapabilityNames, "ProviderCapabilities declares exactly the twelve contract names in order");
 
     std::cout << "provider registry ok\n";
     return 0;

@@ -10,15 +10,13 @@ class QNetworkAccessManager;
 
 namespace JellyfinNative {
 
-class BrowseSessionController;
+class ArtworkService;
 class DatabaseManager;
 class DiscoveredServerModel;
 class DiscoveryController;
 class JellyfinApiFacade;
 class JellyfinSettingsBridge;
 class LibraryManagementController;
-class PlayQueueController;
-class PlayerController;
 class QuickConnectController;
 class RemoteControlController;
 class SessionController;
@@ -40,7 +38,8 @@ struct JellyfinProviderContext {
 // core objects those parts sit on through attach(); the provider then keeps
 // the session-driven lifecycle of its own parts (discovery scans while
 // nobody is signed in, the SyncPlay socket and remote-control registration
-// follow the session) so the app never has to.
+// follow the session, artwork carries the session's token) so the app never
+// has to. The app sees it only as a Provider.
 class JellyfinProvider final : public Provider {
     Q_OBJECT
 
@@ -52,25 +51,28 @@ public:
     QString displayName() const override;
     Capabilities capabilities() const override;
     PlaybackSource *playback() override;
+    Catalog *catalog() override;
+    ArtworkSource *artwork() override;
+    SearchSource *search() override;
+    UserItemStateSink *itemState() override;
+    StreamQualityControl *streamQuality() override;
+    GroupPlayback *groupPlayback() override;
+    RemotePlayback *remotePlayback() override;
+
+    void attach(const CoreServices& core) override;
     void registerQmlSingletons() override;
+    void shutdown() override;
 
-    // The core objects built after the provider exists. The parts created
-    // here are parented to `owner`, which must not outlive `player`: they
-    // hold it by pointer.
-    struct CoreServices {
-        QObject *owner = nullptr;
-        PlayerController *player = nullptr;
-        PlayQueueController *playQueue = nullptr;
-        SettingsController *settings = nullptr;
-        BrowseSessionController *browse = nullptr;
-    };
-    void attach(const CoreServices& core);
-
-    // Shows the servers seen last time and scans for more while nobody is
-    // signed in. The app calls it once its stored session is known; the
-    // provider calls it itself after a sign-out.
-    void resumeServerDiscovery();
-    void shutdown();
+    bool ready() const override;
+    bool hasDefaultProfile() const override
+    {
+        return m_hasDefaultProfile;
+    }
+    QStringList startupStorageKeys() const override;
+    bool restoreFromStorage(QVariantMap values, std::vector<AccountProfile> profiles) override;
+    void setDeviceId(const QString& deviceId) override;
+    void setLocale(const QString& bcp47) override;
+    bool handleUnauthorized(const std::exception_ptr& error) override;
 
     JellyfinApiFacade *api() const
     {
@@ -111,9 +113,13 @@ public:
     }
 
 private:
+    // Shows the servers seen last time and scans for more while nobody is
+    // signed in. Runs after the stored session is known and after a sign-out.
+    void resumeServerDiscovery();
     void cacheDiscoveredServers();
     QCoro::Task<void> restoreDiscoveredServersAsync();
     void leaveSessionServices();
+    void setHasDefaultProfile(bool hasDefaultProfile);
 
     DatabaseManager *m_database = nullptr;
     TlsTrustController *m_tlsTrust = nullptr;
@@ -126,6 +132,9 @@ private:
     SyncPlayController *m_syncPlay = nullptr;
     LibraryManagementController *m_management = nullptr;
     JellyfinSettingsBridge *m_settingsBridge = nullptr;
+    SettingsController *m_settings = nullptr;
+    ArtworkService *m_artwork = nullptr;
+    bool m_hasDefaultProfile = false;
 };
 
 } // namespace JellyfinNative

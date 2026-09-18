@@ -105,7 +105,7 @@ SyncCorrection SyncPlayDriftPolicy::evaluate(double diffMs)
 
 SyncPlayController::SyncPlayController(JellyfinApiFacade *api, PlayerController *player, PlayQueueController *playQueue,
     TlsTrustController *tlsTrust, QObject *parent)
-    : QObject(parent)
+    : GroupPlayback(parent)
     , m_api(api)
     , m_player(player)
     , m_playQueue(playQueue)
@@ -1124,6 +1124,11 @@ QUrl SyncPlayController::socketUrl() const
     }
     url.setQuery(query);
     return url;
+}
+
+QCoro::Task<void> SyncPlayController::publishQueue(QStringList itemIds, int playingIndex, qint64 startPositionTicks)
+{
+    co_await m_api->syncPlaySetNewQueue(std::move(itemIds), playingIndex, startPositionTicks);
 }
 
 } // namespace JellyfinNative

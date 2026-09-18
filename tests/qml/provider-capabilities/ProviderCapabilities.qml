@@ -32,4 +32,6 @@ QtObject {
     readonly property bool quickConnect: true
     // A datagram path between two Spool instances relayed by the source.
     readonly property bool peerRelay: true
+    // The source can deliver a lower bitrate or resolution on request.
+    readonly property bool streamQuality: true
 }
