@@ -2,8 +2,8 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Layouts
-import "../theme"
-import "../primitives"
+import "../../theme"
+import "../../primitives"
 
 // A compact transport for the client this device is driving, kept in reach
 // while the user browses everything else. Dragging its bar previews on the
@@ -55,7 +55,7 @@ Item {
     enabled: shown
 
     onShownChanged: if (!shown)
-    openMenu = ""
+                        openMenu = ""
 
     Connections {
         target: RemoteControl
@@ -70,7 +70,7 @@ Item {
         repeat: true
         running: root.shown && root.visible && !RemoteControl.paused
         onTriggered: if (!seekBar.dragging)
-        root.shownPositionTicks = RemoteControl.predictedPositionTicks()
+                         root.shownPositionTicks = RemoteControl.predictedPositionTicks()
     }
 
     // An enlarged frame while scrubbing, clear of the thumb doing the
@@ -153,9 +153,9 @@ Item {
             anchors.fill: parent
             onClicked: {
                 if (root.openMenu.length > 0)
-                root.openMenu = ""
+                    root.openMenu = ""
                 else
-                root.openRequested()
+                    root.openRequested()
             }
         }
 
@@ -404,7 +404,7 @@ Item {
                             checked: modelData.selected === true
                             onActivated: {
                                 if (panel.chooser)
-                                panel.chooser(Number(modelData.index))
+                                    panel.chooser(Number(modelData.index))
                                 root.openMenu = ""
                             }
                         }
