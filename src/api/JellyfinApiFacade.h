@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../media/MediaTypes.h"
+#include "../provider/PlaybackSource.h"
 #include "HttpRequestPolicy.h"
 #include "JellyfinSession.h"
 #include "PlaybackBandwidthPolicy.h"
@@ -25,7 +26,7 @@
 namespace JellyfinNative {
 
 class TlsTrustController;
-class JellyfinApiFacade final : public QObject {
+class JellyfinApiFacade final : public PlaybackSource {
     Q_OBJECT
 
 public:
@@ -59,7 +60,13 @@ public:
     {
         return m_remoteControlTargetEnabled;
     }
-    int playbackParallelRequests() const;
+    int playbackParallelRequests() const override;
+    // PlaybackSource: the access token rides an X-Emby-Token header on
+    // every media request, and the server URL owns the TLS trust decision.
+    QByteArray mediaRequestHeaders() const override;
+    QUrl mediaOrigin() const override;
+    bool signedIn() const override;
+    QCoro::Task<std::vector<MovieItem>> fetchSeriesEpisodes(QString seriesId) override;
     QCoro::Task<void> refreshPlaybackNetworkState();
 
     // Measuring pulls several megabytes from the server, so it must never run
@@ -130,7 +137,7 @@ public:
     QCoro::Task<void> setItemPlaybackPosition(QString itemId, qint64 positionTicks);
     QCoro::Task<std::vector<MediaSegment>> fetchMediaSegments(QString itemId);
     QCoro::Task<TrickplayInfo> fetchTrickplayInfo(QString itemId, QString mediaSourceId = {});
-    QString trickplayTileUrl(const QString& itemId, int width, int tileIndex) const;
+    QString trickplayTileUrl(const QString& itemId, int width, int tileIndex) const override;
     QCoro::Task<PlaybackSession> negotiatePlayback(MovieItem movie, bool forceTranscode = false);
 
     QCoro::Task<QJsonArray> fetchControllableSessions();
@@ -163,18 +170,17 @@ public:
     QCoro::Task<void> syncPlaySetPlaylistItem(QString playlistItemId);
 
     QCoro::Task<void> postCapabilities();
-    QCoro::Task<void> reportPlaybackStart(PlaybackSession session, double playbackRate, int volume, bool muted);
-    QCoro::Task<void> reportPlaybackProgress(
-        PlaybackSession session, qint64 positionTicks, bool paused, double playbackRate, int volume, bool muted);
+    QCoro::Task<void> reportPlaybackStart(
+        PlaybackSession session, double playbackRate, int volume, bool muted) override;
+    QCoro::Task<void> reportPlaybackProgress(PlaybackSession session, qint64 positionTicks, bool paused,
+        double playbackRate, int volume, bool muted) override;
     QCoro::Task<void> reportPlaybackStopped(
-        PlaybackSession session, qint64 positionTicks, bool failed, double playbackRate = 1.0);
+        PlaybackSession session, qint64 positionTicks, bool failed, double playbackRate) override;
 
 signals:
     void authenticationExpired(const QString& message);
     void deviceProfileChanged();
-    void playbackNetworkProfileChanged();
     void streamingBitrateChanged();
-    void sessionTokenChanged();
 
 private:
     enum class HttpMethod {

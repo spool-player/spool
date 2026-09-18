@@ -1,6 +1,5 @@
 #include "PlayerController.h"
 
-#include "../api/JellyfinApiFacade.h"
 #include "../common/LogRotation.h"
 #include "../common/TlsTrust.h"
 #include "../diagnostics/Diagnostics.h"
@@ -10,6 +9,7 @@
 #include "../platform/PlatformPaths.h"
 #include "../platform/PlatformPlaybackSurface.h"
 #include "../platform/PlatformSystemProbes.h"
+#include "../provider/PlaybackSource.h"
 #include "MpvOptionProfile.h"
 #include "MpvVideoItem.h"
 #include "PlaybackFailurePolicy.h"
@@ -176,7 +176,7 @@ namespace {
 
 } // namespace
 
-PlayerController::PlayerController(NativeAppWindow *window, JellyfinApiFacade *api, TlsTrustController *tlsTrust,
+PlayerController::PlayerController(NativeAppWindow *window, PlaybackSource *api, TlsTrustController *tlsTrust,
     const QString& subtitleFontsPath, QObject *parent)
     : QObject(parent)
     , m_window(window)
@@ -199,7 +199,7 @@ PlayerController::PlayerController(NativeAppWindow *window, JellyfinApiFacade *a
         });
     }
     if (m_api) {
-        connect(m_api, &JellyfinApiFacade::sessionTokenChanged, this, [this]() {
+        connect(m_api, &PlaybackSource::credentialsChanged, this, [this]() {
             if (auto *handle = m_mpvLifecycle.handle())
                 setMpvProperty(handle, "http-header-fields", "");
         });
@@ -291,7 +291,7 @@ PlayerController::PlayerController(NativeAppWindow *window, JellyfinApiFacade *a
             { { QStringLiteral("operation"), operation }, { QStringLiteral("message"), message } });
     });
     if (m_api) {
-        connect(m_api, &JellyfinApiFacade::playbackNetworkProfileChanged, this,
+        connect(m_api, &PlaybackSource::playbackNetworkProfileChanged, this,
             [this]() { discardPreparedMpvForOptionChange("network profile change"); });
     }
     scheduleIdleMpvPreparation();
@@ -1278,8 +1278,7 @@ void PlayerController::play(const PlaybackSession& session, bool startPaused)
     }
 
     const QByteArray urlBytes = session.url.toUtf8();
-    const QByteArray token = m_api ? m_api->session().accessToken.toUtf8() : QByteArray {};
-    const QByteArray header = token.isEmpty() ? QByteArray {} : QByteArrayLiteral("X-Emby-Token: ") + token;
+    const QByteArray header = m_api ? m_api->mediaRequestHeaders() : QByteArray {};
     if (!setRequiredMpvProperty(handle, "http-header-fields", header.constData())) {
         m_mpvLifecycle.cancelFileLoad();
         m_errorText = QStringLiteral("libmpv rejected the authenticated media request.");
@@ -1293,7 +1292,7 @@ void PlayerController::play(const PlaybackSession& session, bool startPaused)
         return;
     }
     if (m_api && m_tlsTrust) {
-        const QSslCertificate certificate = m_tlsTrust->trustedCertificate(QUrl(m_api->serverUrl()));
+        const QSslCertificate certificate = m_tlsTrust->trustedCertificate(m_api->mediaOrigin());
         if (!certificate.isNull()) {
             const QString trustDirectory = QDir(startupCacheRoot({})).filePath(QStringLiteral("tls"));
             const QString trustPath = trustDirectory + QLatin1Char('/')
