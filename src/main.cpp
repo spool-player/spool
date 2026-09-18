@@ -28,6 +28,7 @@
 #include "player/PlayerController.h"
 #include "provider/Provider.h"
 #include "provider/ProviderRegistry.h"
+#include "providers/local/LocalProvider.h"
 #if defined(SPOOL_ANDROID) || defined(JELLYFIN_NATIVE_WEBOS)
 #include "platform/UpdateController.h"
 #endif
@@ -90,6 +91,23 @@
 #endif
 
 namespace {
+
+// A start-up option: `--name value` or `--name=value` on the command line,
+// else the environment variable, else the fallback.
+QString optionValue(
+    const QStringList& arguments, const QString& option, const char *environmentVariable, const QString& fallback = {})
+{
+    for (qsizetype index = 1; index < arguments.size(); ++index) {
+        const QString& argument = arguments.at(index);
+        if (argument == option && index + 1 < arguments.size())
+            return arguments.at(index + 1);
+        if (argument.startsWith(option + QLatin1Char('=')))
+            return argument.mid(option.size() + 1);
+    }
+    if (qEnvironmentVariableIsSet(environmentVariable))
+        return QString::fromLocal8Bit(qgetenv(environmentVariable));
+    return fallback;
+}
 
 // The window's stock incubation controller advances async QML construction
 // ~5 ms per frame, so a page whose creation costs ~200 ms of CPU takes
@@ -600,16 +618,27 @@ int main(int argc, char **argv)
     }
 
     JellyfinNative::TlsTrustController tlsTrust;
-    // One provider, chosen here until the first-run picker exists. It
-    // outlives the player and the app controller, which hold its parts by
-    // pointer, so it is declared before them. The app only ever sees it as
-    // a Provider.
+    // Every provider the build knows about is registered; the one the app
+    // runs on is chosen from the command line or the environment until the
+    // first-run picker exists. Providers outlive the player and the app
+    // controller, which hold their parts by pointer, so they are declared
+    // before them.
     JellyfinNative::ProviderRegistry providers;
     auto jellyfin = std::make_unique<JellyfinNative::JellyfinProvider>(JellyfinNative::JellyfinProviderContext {
         networkAccessManager, &tlsTrust, &database, capabilities.deviceName, QString::fromLatin1(kAppVersion) });
     providers.add(jellyfin.get());
-    providers.setActive(jellyfin.get());
+    auto local
+        = std::make_unique<JellyfinNative::LocalProvider>(optionValue(arguments, QStringLiteral("--library-root"),
+            "SPOOL_LOCAL_LIBRARY", QStandardPaths::writableLocation(QStandardPaths::MoviesLocation)));
+    providers.add(local.get());
+    const QString requestedProvider
+        = optionValue(arguments, QStringLiteral("--provider"), "SPOOL_PROVIDER", jellyfin->id());
+    if (!providers.setActive(requestedProvider)) {
+        logLine("provider: unknown provider %s; using %s", qPrintable(requestedProvider), qPrintable(jellyfin->id()));
+        providers.setActive(jellyfin.get());
+    }
     JellyfinNative::Provider *provider = providers.active();
+    logLine("provider: %s", qPrintable(provider->id()));
 
     const JellyfinNative::CpuTopology cpuTopology = JellyfinNative::detectCpuTopology();
     logLine("artwork: cpu logical=%d physical=%d smt=%s source=%s decodeThreads=%d", cpuTopology.logicalCpus,
@@ -727,7 +756,11 @@ int main(int argc, char **argv)
     provider->setLocale(localization->bcp47Locale());
     QObject::connect(localization.get(), &JellyfinNative::LocalizationManager::localeChanged, provider,
         [provider, loc = localization.get()]() { provider->setLocale(loc->bcp47Locale()); });
-    auto router = std::make_unique<JellyfinNative::RouterController>();
+    // A source with its own sign-in opens on it; one without goes straight
+    // to home.
+    auto router = std::make_unique<JellyfinNative::RouterController>(
+        provider->capabilities().testFlag(JellyfinNative::Provider::Auth) ? QStringLiteral("login")
+                                                                          : QStringLiteral("home"));
     JellyfinNative::ApplicationHooks applicationHooks;
     applicationHooks.player = player.get();
     applicationHooks.settings = controller->settings();
