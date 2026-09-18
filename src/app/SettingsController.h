@@ -5,6 +5,7 @@
 #include "../platform/MpvConfigPolicy.h"
 
 #include <QCoroTask>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QObject>
 #include <QStringList>
@@ -15,7 +16,6 @@ namespace JellyfinNative {
 
 class DatabaseManager;
 class ArtworkService;
-class JellyfinApiFacade;
 class PlayerController;
 struct SettingSpec;
 
@@ -57,8 +57,8 @@ public:
     // the next playback starts where this one ended up.
     QString stepDownRenderQuality();
 
-    SettingsController(DatabaseManager *database, JellyfinApiFacade *api, PlayerController *player,
-        ArtworkService *artwork, QObject *parent = nullptr);
+    SettingsController(
+        DatabaseManager *database, PlayerController *player, ArtworkService *artwork, QObject *parent = nullptr);
 
     int uiScalePercent() const
     {
@@ -97,8 +97,14 @@ public:
     void applyLocalValues(const QVariantMap& storedValues);
 
     QCoro::Task<void> loadLocalAsync();
+    // The half of settings a media source keeps for the account lives with
+    // that source. loadRemote() asks whoever is listening to fetch it, and
+    // the apply methods below take what comes back; this class never talks
+    // to a server itself.
     Q_INVOKABLE void loadRemote();
     void clearRemote();
+    void applyRemoteCultures(const QJsonArray& cultures);
+    void applyRemoteUserConfiguration(const QJsonObject& configuration);
     Q_INVOKABLE void setValue(const QString& key, const QVariant& value);
     Q_INVOKABLE void previewValue(const QString& key, const QVariant& value);
     Q_INVOKABLE void completePlayerControlTooltipSession();
@@ -119,6 +125,15 @@ public:
     void updateAudioOutputRoute(const QString& output, int displayLatencyMs, int outputLatencyMs);
 
 signals:
+    // Pushes toward the media source.
+    void playbackPreferencesChanged(
+        qint64 manualMaxStreamingBitrate, bool unlimitedLocalNetwork, bool preferRemux, int maxStreamingHeight);
+    void remoteControlTargetEnabledChanged(bool enabled);
+    void userConfigurationChanged(const QJsonObject& configuration);
+    // Pulls from it.
+    void remoteLoadRequested();
+    void remoteCleared();
+
     void nightModeChanged();
     void audioDelayChanged();
     void audioOutputDeviceChanged();
@@ -145,14 +160,12 @@ private:
     void applyMpvConfigPolicy();
 
     DatabaseManager *m_database = nullptr;
-    JellyfinApiFacade *m_api = nullptr;
     PlayerController *m_player = nullptr;
     ArtworkService *m_artwork = nullptr;
     QString m_artworkFormat = QStringLiteral("auto");
     int m_artworkWebpQuality = 75;
     int m_artworkJpegQuality = 82;
     QVariantMap m_values;
-    bool m_remoteLoadStarted = false;
     bool m_nightModeEnabled = false;
     bool m_castButtonEnabled = true;
     bool m_remoteControlTargetEnabled = true;

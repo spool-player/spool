@@ -235,6 +235,8 @@ set(SPOOL_JELLYFIN_SOURCES
     src/api/JellyfinApiFacade.cpp
     src/api/JellyfinApiFacade.h
     src/api/JellyfinSession.h
+    src/api/JellyfinSettingsBridge.cpp
+    src/api/JellyfinSettingsBridge.h
     src/api/PlaybackBandwidthPolicy.cpp
     src/api/PlaybackBandwidthPolicy.h
     src/api/PlaybackNegotiation.cpp
