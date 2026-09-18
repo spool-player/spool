@@ -9,6 +9,8 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.media.AudioAttributes;
 import android.media.AudioFocusRequest;
 import android.media.AudioManager;
@@ -21,6 +23,7 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.os.PowerManager;
 import android.util.Log;
+import java.util.Objects;
 
 // The service protects the existing native player; it never creates another player.
 // Future Android picture-in-picture overlay miniplayer UI should reuse this session
@@ -32,6 +35,7 @@ public final class LocalMediaPlaybackService extends Service {
     // All state, including remote-session arbitration, lives on Android's main thread.
     private static LocalMediaPlaybackService instance;
     private static Snapshot latest;
+    private static Bitmap artwork;
     private static boolean startPending;
     private static boolean stopping;
 
@@ -44,6 +48,8 @@ public final class LocalMediaPlaybackService extends Service {
     private boolean focusPausePending;
     private boolean released;
     private boolean foreground;
+    private Snapshot published;
+    private Bitmap publishedArtwork;
     private final BroadcastReceiver noisyReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent)
         {
@@ -103,10 +109,23 @@ public final class LocalMediaPlaybackService extends Service {
         });
     }
 
+    public static void setArtwork(byte[] encoded)
+    {
+        // Called on Qt's thread once per cover, never on each position update.
+        // Decode before posting so Android's UI thread only publishes the bitmap.
+        Bitmap cover = encoded == null ? null : BitmapFactory.decodeByteArray(encoded, 0, encoded.length);
+        MAIN.post(() -> {
+            artwork = cover;
+            if (instance != null)
+                instance.publish();
+        });
+    }
+
     public static void clear(Context context)
     {
         MAIN.post(() -> {
             latest = null;
+            artwork = null;
             stopping = false;
             if (instance != null)
                 instance.finish();
@@ -195,12 +214,18 @@ public final class LocalMediaPlaybackService extends Service {
         Snapshot state = latest;
         if (state == null || released || !foreground)
             return;
-        session.setMetadata(new MediaMetadata.Builder()
-                .putString(MediaMetadata.METADATA_KEY_TITLE, state.title)
-                .putString(MediaMetadata.METADATA_KEY_ARTIST, state.artist)
-                .putString(MediaMetadata.METADATA_KEY_ALBUM, state.album)
-                .putLong(MediaMetadata.METADATA_KEY_DURATION, state.duration)
-                .build());
+        // Position ticks need only PlaybackState, not another bitmap transfer.
+        boolean metadataChanged = published == null || publishedArtwork != artwork
+            || !Objects.equals(published.title, state.title) || !Objects.equals(published.artist, state.artist)
+            || !Objects.equals(published.album, state.album) || published.duration != state.duration;
+        if (metadataChanged)
+            session.setMetadata(new MediaMetadata.Builder()
+                    .putString(MediaMetadata.METADATA_KEY_TITLE, state.title)
+                    .putString(MediaMetadata.METADATA_KEY_ARTIST, state.artist)
+                    .putString(MediaMetadata.METADATA_KEY_ALBUM, state.album)
+                    .putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, artwork)
+                    .putLong(MediaMetadata.METADATA_KEY_DURATION, state.duration)
+                    .build());
         long actions = PlaybackState.ACTION_PLAY | PlaybackState.ACTION_PAUSE | PlaybackState.ACTION_PLAY_PAUSE
             | PlaybackState.ACTION_STOP;
         if (state.canNext)
@@ -217,7 +242,11 @@ public final class LocalMediaPlaybackService extends Service {
                 .setState(playbackState, state.position, state.playing && !state.buffering ? (float)state.rate : 0.0f)
                 .build());
         session.setActive(true);
-        getSystemService(NotificationManager.class).notify(NOTIFICATION_ID, notification(state));
+        if (metadataChanged || published.playing != state.playing || published.canNext != state.canNext
+            || published.canPrevious != state.canPrevious)
+            getSystemService(NotificationManager.class).notify(NOTIFICATION_ID, notification(state));
+        published = state;
+        publishedArtwork = artwork;
         if (state.playing) {
             if (!wakeLock.isHeld())
                 wakeLock.acquire();
@@ -289,6 +318,7 @@ public final class LocalMediaPlaybackService extends Service {
         boolean playing = state != null && state.playing;
         Notification.Builder builder = new Notification.Builder(this, CHANNEL_ID)
                                            .setSmallIcon(com.sachk.spool.R.mipmap.ic_launcher)
+                                           .setLargeIcon(artwork)
                                            .setContentTitle(state == null ? "Music playback" : state.title)
                                            .setContentText(state == null ? "" : state.artist)
                                            .setContentIntent(session.getController().getSessionActivity())

@@ -1,11 +1,16 @@
 #include "AndroidLocalMediaSession.h"
 
 #include "app/AppController.h"
+#include "app/ArtworkService.h"
 #include "player/PlayQueueController.h"
 #include "player/PlayerController.h"
 
+#include <QBuffer>
 #include <QCoreApplication>
+#include <QJniEnvironment>
 #include <QJniObject>
+#include <QQuickImageResponse>
+#include <QQuickTextureFactory>
 #include <QtCore/qnativeinterface.h>
 
 namespace JellyfinNative {
@@ -76,6 +81,50 @@ void AndroidLocalMediaSession::update()
         static_cast<jboolean>(active ? !m_player.paused() : !m_transitionPaused.value_or(false)),
         static_cast<jboolean>(!active || m_player.buffering()), static_cast<jdouble>(m_player.effectivePlaybackSpeed()),
         static_cast<jboolean>(m_queue.canGoNext()), static_cast<jboolean>(m_queue.canGoPrevious()));
+    if (auto *artwork = m_controller.artwork())
+        updateArtwork(artwork->itemUrl(item, false, 512));
+}
+
+void AndroidLocalMediaSession::updateArtwork(const QString& url)
+{
+    if (url == m_artworkUrl)
+        return;
+    m_artworkUrl = url;
+    if (m_artworkResponse) {
+        m_artworkResponse->cancel();
+        m_artworkResponse->deleteLater();
+        m_artworkResponse = nullptr;
+    }
+    // Clear the previous album immediately; a slow response must not put it
+    // back after the queue has moved on. Reuse the authenticated artwork cache.
+    QJniObject::callStaticMethod<void>(serviceClass, "setArtwork", "([B)V", static_cast<jbyteArray>(nullptr));
+    if (url.isEmpty())
+        return;
+    auto *response = m_controller.artwork()->requestImageResponse(
+        QString::fromLatin1(QUrl::toPercentEncoding(url)), QSize(512, 512));
+    m_artworkResponse = response;
+    connect(response, &QQuickImageResponse::finished, this, [this, response]() {
+        response->deleteLater();
+        if (!m_active || m_artworkResponse != response)
+            return;
+        m_artworkResponse = nullptr;
+        const std::unique_ptr<QQuickTextureFactory> texture(response->textureFactory());
+        if (!texture || !response->errorString().isEmpty())
+            return;
+        QByteArray encoded;
+        QBuffer buffer(&encoded);
+        buffer.open(QIODevice::WriteOnly);
+        if (!texture->image().save(&buffer, "PNG"))
+            return;
+        QJniEnvironment env;
+        jbyteArray bytes = env->NewByteArray(static_cast<jsize>(encoded.size()));
+        if (!bytes)
+            return;
+        env->SetByteArrayRegion(
+            bytes, 0, static_cast<jsize>(encoded.size()), reinterpret_cast<const jbyte *>(encoded.constData()));
+        QJniObject::callStaticMethod<void>(serviceClass, "setArtwork", "([B)V", bytes);
+        env->DeleteLocalRef(bytes);
+    });
 }
 
 void AndroidLocalMediaSession::clear()
@@ -84,6 +133,7 @@ void AndroidLocalMediaSession::clear()
         return;
     m_active = false;
     m_transitionPaused.reset();
+    updateArtwork({});
     const QJniObject context = QNativeInterface::QAndroidApplication::context();
     if (context.isValid())
         QJniObject::callStaticMethod<void>(

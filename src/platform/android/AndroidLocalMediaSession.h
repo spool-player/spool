@@ -1,6 +1,9 @@
 #pragma once
 
 #include <QObject>
+#include <QPointer>
+
+class QQuickImageResponse;
 
 #include <optional>
 
@@ -22,12 +25,15 @@ private:
     void update();
     void clear();
     void setPaused(bool paused);
+    void updateArtwork(const QString& url);
 
     AppController& m_controller;
     PlayerController& m_player;
     PlayQueueController& m_queue;
     bool m_active = false;
     std::optional<bool> m_transitionPaused;
+    QString m_artworkUrl;
+    QPointer<QQuickImageResponse> m_artworkResponse;
 };
 
 } // namespace JellyfinNative
