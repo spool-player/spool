@@ -638,6 +638,7 @@ int main(int argc, char **argv)
 #endif
     auto controller = std::make_unique<JellyfinNative::AppController>(
         &database, jellyfin.get(), artworkService.get(), player.get());
+    controller->settings()->setProviderCapabilities(providers.capabilities());
 #if defined(SPOOL_ANDROID) || defined(JELLYFIN_NATIVE_WEBOS)
     // Settings own the update preference; platform installers own installation.
     QObject::connect(controller->settings(), &JellyfinNative::SettingsController::automaticUpdatesChanged,

@@ -5,6 +5,7 @@
 #include "../platform/PlatformSettingsPolicy.h"
 #include "../player/PlayerController.h"
 #include "../player/RenderTargetProfile.h"
+#include "../provider/ProviderRegistry.h"
 #include "ArtworkService.h"
 #include "SettingsSchema.h"
 
@@ -66,8 +67,17 @@ QStringList SettingsController::systemSubtitleFonts() const
 
 QVariantList SettingsController::settingsSchema() const
 {
-    static const QVariantList schema = settingSchemaModel();
-    return schema;
+    // Cached for the same reason as the fonts above, and because the row set
+    // is fixed once the provider is chosen.
+    if (m_schema.isEmpty())
+        m_schema = settingSchemaModel(!m_capabilities || m_capabilities->auth());
+    return m_schema;
+}
+
+void SettingsController::setProviderCapabilities(const ProviderCapabilities *capabilities)
+{
+    m_capabilities = capabilities;
+    m_schema.clear();
 }
 
 QVariantMap SettingsController::values() const

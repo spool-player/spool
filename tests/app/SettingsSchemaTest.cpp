@@ -407,6 +407,30 @@ void pageRowsShareTheSchemaContract()
         QStringLiteral("diagnostics controls should be hidden below Expert detail"));
 }
 
+void accountRowsFollowTheAuthCapability()
+{
+    const QStringList accountKeys { QStringLiteral("session/account"), QStringLiteral("action/switchUser"),
+        QStringLiteral("action/logout") };
+    for (const QString& key : accountKeys)
+        require(requiredSpec(key).requiresAuth, QStringLiteral("account row %1 must require auth").arg(key));
+    require(!requiredSpec(QStringLiteral("action/manageCertificates")).requiresAuth,
+        QStringLiteral("certificate management is core and must not require auth"));
+
+    QSet<QString> withAuth;
+    for (const QVariant& item : settingSchemaModel(true))
+        withAuth.insert(item.toMap().value(QStringLiteral("key")).toString());
+    QSet<QString> withoutAuth;
+    for (const QVariant& item : settingSchemaModel(false))
+        withoutAuth.insert(item.toMap().value(QStringLiteral("key")).toString());
+    for (const QString& key : accountKeys) {
+        require(withAuth.contains(key), QStringLiteral("account row %1 exists with auth").arg(key));
+        require(!withoutAuth.contains(key), QStringLiteral("account row %1 must not exist without auth").arg(key));
+    }
+    const QSet<QString> dropped = withAuth - withoutAuth;
+    require(dropped == stringSet(accountKeys),
+        QStringLiteral("only the account rows depend on auth; dropped: %1").arg(dropped.values().join(", ")));
+}
+
 void subtitleChoicesExplainTheirBehavior()
 {
     const SettingSpec& subtitleMode = requiredSpec(QStringLiteral("subtitles/mode"));
@@ -565,6 +589,7 @@ JELLYFIN_TEST_MAIN("settings-schema")
     schemaModelExposesEverySpecOnce();
     groupsAreDeclaredContiguously();
     pageRowsShareTheSchemaContract();
+    accountRowsFollowTheAuthCapability();
     subtitleChoicesExplainTheirBehavior();
     systemLanguageLabelNamesResolvedLanguage();
     buttonChoicesAndLabelsExposePlayerActions();

@@ -133,6 +133,9 @@ struct SettingSpec {
     const char *dependsOnValue = "";
     bool persisted = true;
     bool requiresHdrPlayback = false;
+    // Only meaningful with a source that has accounts: absent from the
+    // schema model when the active provider has no auth capability.
+    bool requiresAuth = false;
 
     // Declaration modifiers. Each returns a copy so specs read as one
     // expression: slider(...).advanced().onDesktop().
@@ -143,6 +146,7 @@ struct SettingSpec {
     SettingSpec onAndroid() const;
     SettingSpec whenSetTo(const char *otherKey, const char *otherValue) const;
     SettingSpec duringHdrPlayback() const;
+    SettingSpec withAuth() const;
 };
 
 const QVector<SettingSpec>& settingSpecs();
@@ -150,6 +154,8 @@ const SettingSpec *findSettingSpec(const QString& key);
 QVariant settingDefaultValue(const SettingSpec& spec);
 QVariant normalizedSettingValue(const SettingSpec& spec, const QVariant& value);
 QString serializedSettingValue(const SettingSpec& spec, const QVariant& value);
-QVariantList settingSchemaModel();
+// `auth` is the active provider's auth capability; rows that only make
+// sense with an account are left out without it.
+QVariantList settingSchemaModel(bool auth = true);
 
 } // namespace JellyfinNative
