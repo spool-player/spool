@@ -59,6 +59,12 @@ RouterController::RouterController(QObject *parent)
 {
 }
 
+RouterController::RouterController(const QString& startRoute, QObject *parent)
+    : QObject(parent)
+    , m_route(startRoute)
+{
+}
+
 QString RouterController::route() const
 {
     return m_route;
