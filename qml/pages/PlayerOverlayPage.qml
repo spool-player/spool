@@ -63,6 +63,12 @@ FocusScope {
     // get(currentIndex) went on titling the overlay with what had been playing
     // before -- which is how an episode lost the series line above it.
     readonly property var currentQueueItem: playQueue ? playQueue.currentEntry : ({})
+    // SyncPlay is only read behind its capability, so a source without group
+    // watch never has the singleton evaluated; the chrome and the transport
+    // bar take it from here rather than reaching for it themselves.
+    readonly property var syncPlay: ProviderCapabilities.syncPlay ? SyncPlay : null
+    readonly property bool syncPlayActive: syncPlay ? syncPlay.enabled : false
+    readonly property bool syncPlayWaiting: syncPlayActive && syncPlay.waitingForPlayback
     readonly property bool syncPlayMenuOpen: chrome.syncPlayMenuOpen
     readonly property string episodeContextText: {
         if (!episodeQueue)
@@ -126,7 +132,8 @@ FocusScope {
             values.push("audio")
         if (playQueue && playQueue.count > 0)
             values.push("queue")
-        values.push("syncplay")
+        if (syncPlay)
+            values.push("syncplay")
         if (desktopControlsAvailable)
             values.push("fullscreen")
         values.push("debug")
@@ -199,7 +206,7 @@ FocusScope {
     function actionIcon(action) {
         if (action === "back")
             return "fast_rewind"
-        if (action === "pause" && SyncPlay.enabled && SyncPlay.waitingForPlayback)
+        if (action === "pause" && syncPlayWaiting)
             return "schedule"
         if (action === "pause")
             return hasPlayer && player.paused ? "play_arrow" : "pause"
@@ -231,7 +238,7 @@ FocusScope {
             return "Back 10 seconds"
         if (action === "forward")
             return "Forward 10 seconds"
-        if (action === "pause" && SyncPlay.enabled && SyncPlay.waitingForPlayback)
+        if (action === "pause" && syncPlayWaiting)
             return "Waiting for group playback"
         if (action === "pause")
             return hasPlayer && player.paused ? "Resume" : "Pause"
@@ -246,7 +253,7 @@ FocusScope {
         if (action === "queue")
             return "Play queue"
         if (action === "syncplay")
-            return SyncPlay.enabled ? "SyncPlay group" : "Join or create a SyncPlay group"
+            return syncPlayActive ? "SyncPlay group" : "Join or create a SyncPlay group"
         if (action === "fullscreen")
             return NativeWindow.fullScreen ? "Exit fullscreen" : "Fullscreen"
         return "Playback settings"
@@ -426,7 +433,7 @@ FocusScope {
         if (menuKind === "quality")
             return String(qualityOptions[index] && qualityOptions[index].detail || "")
         // Playback speed is the one row a SyncPlay group takes away.
-        return debugAction(index) === "speed" && SyncPlay.enabled ? "Disabled by SyncPlay" : ""
+        return debugAction(index) === "speed" && syncPlayActive ? "Disabled by SyncPlay" : ""
     }
 
     function menuItemSelected(index) {
@@ -456,6 +463,8 @@ FocusScope {
     }
 
     function openSyncPlayMenu() {
+        if (!syncPlay)
+            return
         if (syncPlayMenuOpen) {
             closeMenu()
             return
@@ -649,7 +658,7 @@ FocusScope {
     }
 
     function adjustPlaybackSpeed(direction) {
-        if (!hasPlayer || SyncPlay.enabled || direction === 0)
+        if (!hasPlayer || syncPlayActive || direction === 0)
             return
         player.setPlaybackSpeed(Math.max(0.25, Math.min(4, Number(player.playbackSpeed) + direction * 0.25)))
     }
@@ -748,22 +757,22 @@ FocusScope {
     }
 
     function togglePlayback() {
-        if (SyncPlay.enabled)
-            SyncPlay.requestTogglePause()
+        if (syncPlayActive)
+            syncPlay.requestTogglePause()
         else
             player.togglePause()
     }
 
     function seekTo(seconds) {
-        if (SyncPlay.enabled)
-            SyncPlay.requestSeek(clampSeconds(seconds))
+        if (syncPlayActive)
+            syncPlay.requestSeek(clampSeconds(seconds))
         else
             player.seek(clampSeconds(seconds))
     }
 
     function seekRelative(seconds) {
-        if (SyncPlay.enabled)
-            SyncPlay.requestRelativeSeek(seconds)
+        if (syncPlayActive)
+            syncPlay.requestRelativeSeek(seconds)
         else if (seconds < 0)
             player.seekBack()
         else

@@ -265,7 +265,7 @@ FocusScope {
 
     function rowDescription(row) {
         if (row.key === "session/account")
-            return Session.serverUrl
+            return ProviderCapabilities.auth ? Session.serverUrl : ""
         if (row.key === "subtitles/mode" || row.key === "audio/trackMode") {
             const index = rowCurrentIndex(row)
             const labels = rowOptions(row)
@@ -303,7 +303,9 @@ FocusScope {
         if (row.key === "action/clearLatencyStatistics" || row.key === "action/clearLogs")
             return "Clear"
         if (row.key === "session/account")
-            return Session.activeProfileLabel.length > 0 ? Session.activeProfileLabel : "Offline"
+            return ProviderCapabilities.auth && Session.activeProfileLabel.length > 0 ? Session.activeProfileLabel :
+                                                                                        "Offline"
+
         if (row.key === "about/version")
             return "v" + Qt.application.version
         if (row.key === "about/locale")
@@ -575,12 +577,12 @@ FocusScope {
 
     focus: true
     onActiveFocusChanged: if (activeFocus)
-    focusEntry()
+                              focusEntry()
     onVisibleChanged: {
         if (visible)
-        ensureRowsBuilt()
+            ensureRowsBuilt()
         if (visible && activeFocus)
-        Qt.callLater(focusEntry)
+            Qt.callLater(focusEntry)
     }
 
     property bool rowsBuilt: false
@@ -648,14 +650,14 @@ FocusScope {
         spacing: Metrics.scaled(10)
         onCurrentIndexChanged: {
             if (root.reconcilingSettingsRows)
-            return
+                return
             root.currentIndex = currentIndex
             root.selectedRowKey = currentIndex >= 0 && currentIndex < settingsRows.count ? settingsRows.get(
                                                                                                currentIndex).rowKey : ""
         }
         onAccepted: index => root.activateRow(root.rowAtVisibleIndex(index), index)
         onEdgeUp: if (root.shell)
-        root.shell.focusNavBar()
+                      root.shell.focusNavBar()
         delegate: Column {
             id: settingsDelegate
             required property int index

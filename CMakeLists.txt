@@ -440,6 +440,7 @@ endif()
 
 set_source_files_properties(
     qml/primitives/InputKeys.qml
+    qml/shell/ProviderCapabilities.qml
     qml/theme/Metrics.qml
     qml/theme/Theme.qml
     qml/theme/Typography.qml
@@ -554,6 +555,7 @@ qt_add_qml_module(jellyfin-native
         qml/shell/MediaInfoOverlay.qml
         qml/shell/OverlayDialog.qml
         qml/shell/PageReadiness.js
+        qml/shell/ProviderCapabilities.qml
         qml/shell/RoutePolicy.js
         qml/shell/RouteStack.qml
         qml/shell/RemoteControlMenu.qml
@@ -563,6 +565,7 @@ qt_add_qml_module(jellyfin-native
         qml/shell/UpdateDialog.qml
         qml/shell/ToastLayer.qml
         qml/shell/TopBar.qml
+        qml/shell/TopBarNavigation.js
         qml/shell/VideoSurface.qml
         qml/theme/Metrics.qml
         qml/theme/Theme.qml
@@ -995,6 +998,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
             player-seek-bar-hover tests/qml/tst_PlayerSeekBarHover.qml
             list-scroll-bar tests/qml/tst_ListScrollBar.qml
             inline-slider tests/qml/tst_InlineSlider.qml
+            provider-gating tests/qml/tst_ProviderGating.qml
         )
         # The subtitle panel test has never run on macOS; it was narrowed to
         # Windows alone while chasing that, which silently dropped Linux too.

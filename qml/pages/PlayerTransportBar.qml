@@ -25,7 +25,7 @@ RowLayout {
         readonly property bool emphasized: focused || selected || (hover.hovered && Metrics.pointerActive)
         readonly property string tooltip: Settings.playerControlTooltipsEnabled ? root.overlay.actionTooltip(action) :
                                                                                   ""
-        readonly property bool waitingForSyncPlay: action === "pause" && SyncPlay.enabled && SyncPlay.waitingForPlayback
+        readonly property bool waitingForSyncPlay: action === "pause" && root.overlay.syncPlayWaiting
         readonly property string badge: action === "prevQueue" || action === "nextQueue" ? "EP" : action
                                                                                            === "prevChapter" || action
                                                                                            === "nextChapter" ? "CH" : ""
@@ -154,7 +154,7 @@ RowLayout {
             TapHandler {
                 onTapped: {
                     if (!root.overlay.hasPlayer)
-                    return
+                        return
                     const volume = Number(root.overlay.player.volume)
                     if (volume > 0) {
                         volumeControls.lastAudibleVolume = volume

@@ -172,7 +172,7 @@ FocusScope {
         // while it builds. What made a television slow was never the
         // prewarming; it was dropping every page the moment it left the
         // screen and paying to build it again on the way back.
-        if (Session.authenticated && !prewarmScheduled) {
+        if ((!ProviderCapabilities.auth || Session.authenticated) && !prewarmScheduled) {
             prewarmScheduled = true
             // Most-wanted first. The budget stops this queue partway through on
             // a small television, so whatever stands at the front is what
@@ -234,7 +234,7 @@ FocusScope {
     }
 
     function evictBeyondBudget() {
-        const shown = useOrder.filter(key => Boolean(pages[key]));
+        const shown = useOrder.filter(key => Boolean(pages[key]))
         // Prewarmed pages never pass through noteUse(), so an order taken from
         // useOrder alone could not see them: the budget said three while the
         // process was holding five. Count every resident page, and spend the
@@ -248,7 +248,7 @@ FocusScope {
             if (!loader || loader === activeLoader || key === pinnedPageKey)
                 continue
             delete pages[key]
-            loader.destroy()
+            loader.destroy();
             --excess
             console.info("route host: released", key)
         }
