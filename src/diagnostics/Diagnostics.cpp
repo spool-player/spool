@@ -1,6 +1,6 @@
 #include "Diagnostics.h"
 
-#include "../common/JellyfinTypes.h"
+#include "../media/MediaTypes.h"
 
 #include <QAbstractEventDispatcher>
 #include <QCoreApplication>

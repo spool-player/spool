@@ -1,10 +1,10 @@
 #include "PlayerController.h"
 
 #include "../api/JellyfinApiFacade.h"
-#include "../common/JellyfinTypes.h"
 #include "../common/LogRotation.h"
 #include "../common/TlsTrust.h"
 #include "../diagnostics/Diagnostics.h"
+#include "../media/MediaTypes.h"
 #include "../platform/MpvConfigPolicy.h"
 #include "../platform/NativeAppWindow.h"
 #include "../platform/PlatformPaths.h"

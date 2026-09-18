@@ -1,6 +1,7 @@
 #pragma once
 
-#include "../common/JellyfinTypes.h"
+#include "../api/JellyfinSession.h"
+#include "../media/MediaTypes.h"
 
 #include <QObject>
 #include <QTimer>

@@ -1,9 +1,9 @@
 #pragma once
 
 #include "../cache/DatabaseManager.h"
-#include "../common/JellyfinTypes.h"
 #include "../common/RequestGeneration.h"
 #include "../discovery/DiscoveryController.h"
+#include "../media/MediaTypes.h"
 #include "../models/DiscoveredServerModel.h"
 #include "../models/LibraryListModel.h"
 #include "../models/MovieGridModel.h"
