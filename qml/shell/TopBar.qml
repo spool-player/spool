@@ -4,6 +4,7 @@ import QtQuick
 import QtQuick.Layouts
 import "../theme"
 import "../primitives"
+import "../providers/jellyfin"
 import "TopBarNavigation.js" as TopBarNavigation
 
 // Horizontal top navigation bar. Hosts primary routes on the left and playback

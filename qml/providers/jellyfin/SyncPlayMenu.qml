@@ -2,8 +2,8 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Layouts
-import "../theme"
-import "../primitives"
+import "../../theme"
+import "../../primitives"
 
 // Dropdown menu for the top-bar SyncPlay button. Mirrors jellyfin-web's
 // SyncPlayMenu: when in a group it shows the active group and a Leave action;

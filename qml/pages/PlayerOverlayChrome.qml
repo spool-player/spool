@@ -6,6 +6,7 @@ import JellyfinWebOS
 import "../theme"
 import "../primitives"
 import "../shell" as Shell
+import "../providers/jellyfin" as Provider
 
 Item {
     id: root
@@ -431,7 +432,7 @@ Item {
         width: root.dp(420)
         z: 55
         active: root.overlay.syncPlay !== null
-        sourceComponent: Shell.SyncPlayMenu {
+        sourceComponent: Provider.SyncPlayMenu {
             onRequestClose: root.overlay.closeMenu()
         }
     }

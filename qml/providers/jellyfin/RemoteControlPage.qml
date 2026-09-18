@@ -2,8 +2,8 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Layouts
-import "../theme"
-import "../primitives"
+import "../../theme"
+import "../../primitives"
 
 FocusScope {
     id: root
@@ -94,7 +94,7 @@ FocusScope {
     }
 
     onActiveFocusChanged: if (activeFocus)
-    InputKeys.focus(RemoteControl.targetSelected ? disconnectButton : refreshButton)
+                              InputKeys.focus(RemoteControl.targetSelected ? disconnectButton : refreshButton)
 
     Connections {
         target: RemoteControl
@@ -120,7 +120,7 @@ FocusScope {
         repeat: true
         running: root.visible && RemoteControl.targetSelected && !RemoteControl.paused
         onTriggered: if (!positionSlider.dragging)
-        root.shownPositionTicks = RemoteControl.predictedPositionTicks()
+                         root.shownPositionTicks = RemoteControl.predictedPositionTicks()
     }
 
     Flickable {
