@@ -189,6 +189,25 @@ set(SPOOL_PLAYER_SOURCES
 
 # Application plumbing that does not name a media backend.
 set(SPOOL_SHELL_SOURCES
+    src/app/AccountProfile.cpp
+    src/app/AccountProfile.h
+    src/app/ArtworkImageProvider.cpp
+    src/app/ArtworkImageProvider.h
+    src/app/ArtworkPrefetcher.h
+    src/app/ArtworkService.cpp
+    src/app/ArtworkService.h
+    src/app/BrowseSessionController.cpp
+    src/app/BrowseSessionController.h
+    src/app/ContentModelController.cpp
+    src/app/ContentModelController.h
+    src/app/HomeModelController.cpp
+    src/app/HomeModelController.h
+    src/app/LibraryPrefetchController.cpp
+    src/app/LibraryPrefetchController.h
+    src/app/SearchController.cpp
+    src/app/SearchController.h
+    src/app/UserItemStateController.cpp
+    src/app/UserItemStateController.h
     src/app/CpuTopology.cpp
     src/app/CpuTopology.h
     src/app/LocalizationManager.cpp
@@ -225,10 +244,14 @@ set(SPOOL_SHELL_SOURCES
     src/models/LibraryListModel.h
     src/models/MovieGridModel.cpp
     src/models/MovieGridModel.h
+    src/provider/ArtworkSource.h
+    src/provider/Catalog.h
     src/provider/PlaybackSource.h
     src/provider/Provider.h
     src/provider/ProviderRegistry.cpp
     src/provider/ProviderRegistry.h
+    src/provider/SearchSource.h
+    src/provider/UserItemStateSink.h
     src/diagnostics/Diagnostics.cpp
     src/diagnostics/Diagnostics.h
     src/diagnostics/InputLatencyMonitor.cpp
@@ -256,41 +279,22 @@ set(SPOOL_JELLYFIN_SOURCES
     src/api/PlaybackBandwidthPolicy.h
     src/api/PlaybackNegotiation.cpp
     src/api/PlaybackNegotiation.h
-    src/app/AccountProfile.cpp
-    src/app/AccountProfile.h
     src/app/AppController.cpp
     src/app/AppController.h
-    src/app/ArtworkImageProvider.cpp
-    src/app/ArtworkImageProvider.h
-    src/app/ArtworkPrefetcher.h
-    src/app/ArtworkService.cpp
-    src/app/ArtworkService.h
-    src/app/BrowseSessionController.cpp
-    src/app/BrowseSessionController.h
-    src/app/ContentModelController.cpp
-    src/app/ContentModelController.h
-    src/app/HomeModelController.cpp
-    src/app/HomeModelController.h
     src/app/LibraryManagementController.cpp
     src/app/LibraryManagementController.h
-    src/app/LibraryPrefetchController.cpp
-    src/app/LibraryPrefetchController.h
     src/app/QuickConnectController.cpp
     src/app/QuickConnectController.h
     src/app/RemoteControlController.cpp
     src/app/RemoteControlController.h
     src/app/SpoolLink.cpp
     src/app/SpoolLink.h
-    src/app/SearchController.cpp
-    src/app/SearchController.h
     src/app/SessionController.cpp
     src/app/SessionController.h
     src/app/SyncPlayClock.cpp
     src/app/SyncPlayClock.h
     src/app/SyncPlayController.cpp
     src/app/SyncPlayController.h
-    src/app/UserItemStateController.cpp
-    src/app/UserItemStateController.h
     src/discovery/DiscoveredServer.h
     src/discovery/DiscoveryController.cpp
     src/discovery/DiscoveryController.h

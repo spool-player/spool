@@ -1,6 +1,5 @@
 #include "ContentModelController.h"
 
-#include "../api/JellyfinApiFacade.h"
 #include "../common/AsyncTask.h"
 #include "LibraryPrefetchController.h"
 
@@ -13,10 +12,9 @@
 
 namespace JellyfinNative {
 
-ContentModelController::ContentModelController(
-    JellyfinApiFacade *api, LibraryPrefetchController *prefetch, QObject *parent)
+ContentModelController::ContentModelController(Catalog *catalog, LibraryPrefetchController *prefetch, QObject *parent)
     : QObject(parent)
-    , m_api(api)
+    , m_api(catalog)
     , m_prefetch(prefetch)
 {
 }
@@ -52,7 +50,7 @@ void ContentModelController::loadDetailRows(
     m_detailSeasonOptions.clear();
     m_detailSimilarItems.clear();
 
-    if (itemId.isEmpty() || !m_api || m_api->session().accessToken.isEmpty()) {
+    if (itemId.isEmpty() || !m_api || !m_api->signedIn()) {
         emit detailRowsChanged();
         return;
     }
@@ -169,7 +167,7 @@ void ContentModelController::loadItemDetail(const QString& itemId)
     const RequestGeneration::Token generation = m_detailItemGeneration.next();
     m_detailItem = {};
 
-    if (itemId.isEmpty() || !m_api || m_api->session().accessToken.isEmpty()) {
+    if (itemId.isEmpty() || !m_api || !m_api->signedIn()) {
         emit detailItemChanged();
         return;
     }
@@ -193,7 +191,7 @@ void ContentModelController::loadPersonItems(const QString& personId)
 {
     const RequestGeneration::Token generation = m_personItemsGeneration.next();
     clearPersonItems();
-    if (personId.isEmpty() || !m_api || m_api->session().accessToken.isEmpty()) {
+    if (personId.isEmpty() || !m_api || !m_api->signedIn()) {
         m_personItemsBusy = false;
         emit personItemsChanged();
         return;
