@@ -16,11 +16,12 @@
     <category>AudioVideo</category>
     <category>Video</category>
   </categories>
-  <url type="homepage">https://github.com/sachk/spool</url>
-  <developer id="io.github.sachk">
-    <name>sachk</name>
+  <url type="homepage">https://github.com/spool-player/spool</url>
+  <developer id="io.github.spool-player">
+    <name>Spool</name>
   </developer>
   <releases>
+    <release version="0.7.17" date="2026-09-19" type="development"/>
     <release version="0.7.16" date="2026-09-19" type="development"/>
     <release version="0.7.15" date="2026-09-13" type="development"/>
     <release version="0.7.14" date="2026-09-10" type="development"/>

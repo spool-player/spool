@@ -1,7 +1,7 @@
 {
   "id": "com.sachk.spool",
   "version": "@VERSION@",
-  "vendor": "sachk",
+  "vendor": "Spool",
   "type": "native",
   "main": "bin/jellyfin-native",
   "title": "Spool for Jellyfin",

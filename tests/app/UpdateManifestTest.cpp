@@ -33,14 +33,14 @@ QJsonObject release(const QString& channel, int versionCode, const QString& vers
         { QStringLiteral("version"), version },
         { QStringLiteral("versionCode"), versionCode },
         { QStringLiteral("notes"), QStringLiteral("Security fixes first.\n\nMajor features next.") },
-        { QStringLiteral("releaseUrl"), QStringLiteral("https://github.com/sachk/spool/releases/tag/") + tag },
+        { QStringLiteral("releaseUrl"), QStringLiteral("https://github.com/spool-player/spool/releases/tag/") + tag },
         { QStringLiteral("assets"),
             QJsonObject {
                 { assetKey,
                     QJsonObject {
                         { QStringLiteral("url"),
-                            QStringLiteral("https://github.com/sachk/spool/releases/download/") + tag + QLatin1Char('/')
-                                + packageName },
+                            QStringLiteral("https://github.com/spool-player/spool/releases/download/") + tag
+                                + QLatin1Char('/') + packageName },
                         { QStringLiteral("sha256"), QString(64, QLatin1Char('a')) },
                         { QStringLiteral("size"), 12000000 },
                     } },
@@ -111,13 +111,14 @@ void missingDeviceAssetIsRejected(const QString& assetKey)
 
 void untrustedUrlsAreRejected(const QString& assetKey)
 {
-    const QString trustedAsset = QStringLiteral("https://github.com/sachk/spool/releases/download/v0.7.0/package");
+    const QString trustedAsset
+        = QStringLiteral("https://github.com/spool-player/spool/releases/download/v0.7.0/package");
     for (const QString& url : {
              QStringLiteral("https://example.com/package"),
              QStringLiteral("https://github.com/other/spool/releases/download/v0.7.0/package"),
-             QStringLiteral("http://github.com/sachk/spool/releases/download/v0.7.0/package"),
-             QStringLiteral("https://user@github.com/sachk/spool/releases/download/v0.7.0/package"),
-             QStringLiteral("https://github.com:444/sachk/spool/releases/download/v0.7.0/package"),
+             QStringLiteral("http://github.com/spool-player/spool/releases/download/v0.7.0/package"),
+             QStringLiteral("https://user@github.com/spool-player/spool/releases/download/v0.7.0/package"),
+             QStringLiteral("https://github.com:444/spool-player/spool/releases/download/v0.7.0/package"),
              trustedAsset + QStringLiteral("?download=1"),
              trustedAsset + QStringLiteral("#fragment"),
          }) {
@@ -167,7 +168,7 @@ void webOSSelectsArmPackage()
     require(result.error.isEmpty() && result.release, "webOS ARM update was not selected");
     require(result.release->packageUrl
             == QUrl(QStringLiteral(
-                "https://github.com/sachk/spool/releases/download/v0.7.13/com.sachk.spool_0.7.13_arm.ipk")),
+                "https://github.com/spool-player/spool/releases/download/v0.7.13/com.sachk.spool_0.7.13_arm.ipk")),
         "webOS selected another platform's package");
 }
 

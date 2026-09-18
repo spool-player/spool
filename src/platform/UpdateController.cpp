@@ -23,10 +23,10 @@ namespace JellyfinNative {
 namespace {
 
 #if defined(SPOOL_ANDROID)
-    constexpr auto kManifestUrl = "https://sachk.github.io/spool/updates/android.json";
+    constexpr auto kManifestUrl = "https://spool-player.github.io/spool/updates/android.json";
     constexpr auto kAssetKey = SPOOL_ANDROID_ABI;
 #else
-    constexpr auto kManifestUrl = "https://sachk.github.io/spool/updates/webos.json";
+    constexpr auto kManifestUrl = "https://spool-player.github.io/spool/updates/webos.json";
     constexpr auto kAssetKey = "arm";
 #endif
     constexpr qsizetype kMaximumManifestBytes = 512 * 1024;
@@ -53,7 +53,7 @@ namespace {
             || host == QStringLiteral("objects.githubusercontent.com"))
             return true;
         if (host == QStringLiteral("github.com"))
-            return url.path().startsWith(QStringLiteral("/sachk/spool/releases/download/"));
+            return url.path().startsWith(QStringLiteral("/spool-player/spool/releases/download/"));
         return url == QUrl(QString::fromLatin1(kManifestUrl));
     }
 

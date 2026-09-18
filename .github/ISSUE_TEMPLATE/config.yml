@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Security vulnerability
-    url: https://github.com/sachk/spool/security/advisories/new
+    url: https://github.com/spool-player/spool/security/advisories/new
     about: Report vulnerabilities privately. Never put credentials or private logs in an issue.
   - name: Support policy
-    url: https://github.com/sachk/spool/blob/master/SUPPORT.md
+    url: https://github.com/spool-player/spool/blob/master/SUPPORT.md
     about: Read scope and privacy requirements before requesting support.

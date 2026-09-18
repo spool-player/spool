@@ -9,7 +9,7 @@ namespace JellyfinNative {
 namespace {
 
     constexpr auto kReleaseHost = "github.com";
-    constexpr auto kReleaseAssetPrefix = "/sachk/spool/releases/download/";
+    constexpr auto kReleaseAssetPrefix = "/spool-player/spool/releases/download/";
 
     bool isHexSha256(const QString& value)
     {
@@ -32,7 +32,7 @@ namespace {
             return false;
         }
         const QString expectedPath
-            = asset ? QString::fromLatin1(kReleaseAssetPrefix) : QStringLiteral("/sachk/spool/releases/tag/");
+            = asset ? QString::fromLatin1(kReleaseAssetPrefix) : QStringLiteral("/spool-player/spool/releases/tag/");
         return url.path().startsWith(expectedPath);
     }
 

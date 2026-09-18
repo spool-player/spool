@@ -19,7 +19,7 @@ The application's original source files are licensed under MPL-2.0. Desktop
 and webOS distributions combine them with GPL-2.0-or-later components and are
 distributed under GPL-2.0-or-later as a whole. Corresponding source is available at:
 
-  https://github.com/sachk/spool
+  https://github.com/spool-player/spool
 
 The modified mpv source used by the application is available at:
 

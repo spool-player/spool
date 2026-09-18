@@ -23,7 +23,7 @@ so the recipe lives in this repository instead, and `makepkg` treats it the same
 way it would an AUR checkout:
 
 ```sh
-git clone https://github.com/sachk/spool.git
+git clone https://github.com/spool-player/spool.git
 cd spool/packaging/aur
 makepkg -si
 ```

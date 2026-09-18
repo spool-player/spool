@@ -1,11 +1,11 @@
 # Maintainer: Sacha Korban <sachakorban@gmail.com>
 
 pkgname=spool-bin
-pkgver=0.7.16
+pkgver=0.7.17
 pkgrel=1
 pkgdesc='Jellyfin client for desktop and TV, built on Qt Quick and mpv'
 arch=('x86_64')
-url='https://github.com/sachk/spool'
+url='https://github.com/spool-player/spool'
 license=('MPL-2.0')
 # Qt, mpv and FFmpeg are bundled. These are the libraries upstream packaging
 # deliberately leaves to the host, because a bundled copy of the graphics stack
@@ -17,7 +17,7 @@ conflicts=('spool')
 # Already stripped, and patchelf has set the RPATHs the bundle needs.
 options=('!strip' '!debug' '!lto')
 _bundle="Spool-for-Jellyfin-${pkgver}-linux-x86_64"
-source=("https://github.com/sachk/spool/releases/download/v${pkgver}/${_bundle}.tar.zst")
+source=("https://github.com/spool-player/spool/releases/download/v${pkgver}/${_bundle}.tar.zst")
 # Written by tools/update-aur-checksums.sh from SHA256SUMS.txt once the release
 # above is published; SKIP until then.
 sha256sums=('SKIP')
