@@ -1,19 +1,45 @@
 #pragma once
 
+#include <QObject>
+#include <QString>
+
+#include <functional>
 #include <memory>
 
 class QGuiApplication;
 
 namespace JellyfinNative {
 
-class AppController;
 class NativeAppWindow;
+class PlayerController;
 class RouterController;
+class SettingsController;
+
+// What the platform layer needs from the application above it, handed down
+// at startup so nothing under src/platform names the composition root. The
+// signals are forwarded from the app; the callback runs on the GUI thread.
+class ApplicationHooks final : public QObject {
+    Q_OBJECT
+
+public:
+    using QObject::QObject;
+
+    PlayerController *player = nullptr;
+    SettingsController *settings = nullptr;
+    // A platform memory warning at the given level ("low" or "critical").
+    std::function<void(const QString& level)> memoryPressure;
+
+signals:
+    // The app has shed what it can; the window may drop its resources too.
+    void aggressiveMemoryPressure();
+    void diagnosticsReportSaved(const QString& path);
+    void toastRequested(const QString& message);
+};
 
 class PlatformApplicationServices final {
 public:
     PlatformApplicationServices(
-        QGuiApplication& application, NativeAppWindow& window, AppController& controller, RouterController& router);
+        QGuiApplication& application, NativeAppWindow& window, ApplicationHooks& hooks, RouterController& router);
     ~PlatformApplicationServices();
 
     PlatformApplicationServices(const PlatformApplicationServices&) = delete;

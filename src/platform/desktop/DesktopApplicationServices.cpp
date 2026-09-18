@@ -5,7 +5,7 @@ namespace JellyfinNative {
 struct PlatformApplicationServices::PlatformData { };
 
 PlatformApplicationServices::PlatformApplicationServices(
-    QGuiApplication&, NativeAppWindow&, AppController&, RouterController&)
+    QGuiApplication&, NativeAppWindow&, ApplicationHooks&, RouterController&)
     : m_platform(std::make_unique<PlatformData>())
 {
 }

@@ -7,14 +7,30 @@
 #include <QTimer>
 #include <QVariant>
 #include <QVariantList>
+#include <QVariantMap>
+
+#include <functional>
 
 class QQuickWindow;
 class QQuickItem;
 
 namespace JellyfinNative {
 class InputLatencyMonitor;
+class LibraryListModel;
 class RouterController;
-class AppController;
+
+// The handful of things the benchmark drives in the app, handed in so the
+// diagnostics layer never names the composition root.
+struct RenderBenchmarkHooks {
+    LibraryListModel *libraries = nullptr;
+    std::function<void(int index)> openLibrary;
+    std::function<int()> outstandingArtworkRequests;
+    // decodeMsTotal, decodedPixelsTotal and decodedImagesTotal, as the
+    // artwork service counts them.
+    std::function<QVariantMap()> artworkDecodeTotals;
+    // Sheds every cache the app can, so a walk measures cold pages.
+    std::function<void()> forceColdCaches;
+};
 
 // Walks the app through a scripted set of route switches and writes down what
 // each one cost, so "does a page still appear in one frame" is a number in CI
@@ -32,14 +48,14 @@ class RenderBenchmark final : public QObject {
 
 public:
     // Returns nullptr when SPOOL_BENCH is unset, which is every ordinary run.
-    static RenderBenchmark *createIfRequested(AppController *app, RouterController *router,
+    static RenderBenchmark *createIfRequested(RenderBenchmarkHooks hooks, RouterController *router,
         InputLatencyMonitor *latency, QQuickWindow *window, QObject *parent);
 
     void start();
 
 private:
-    RenderBenchmark(AppController *app, RouterController *router, InputLatencyMonitor *latency, QQuickWindow *window,
-        QObject *parent);
+    RenderBenchmark(RenderBenchmarkHooks hooks, RouterController *router, InputLatencyMonitor *latency,
+        QQuickWindow *window, QObject *parent);
 
     void step();
     void recordSample();
@@ -64,7 +80,7 @@ private:
     void finishIdleProbe();
     void finish();
 
-    AppController *m_app = nullptr;
+    RenderBenchmarkHooks m_hooks;
     RouterController *m_router = nullptr;
     InputLatencyMonitor *m_latency = nullptr;
     // Offscreen, nothing asks for a frame on its own: no compositor is
