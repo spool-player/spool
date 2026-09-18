@@ -1,6 +1,5 @@
 #include "PlaybackReporter.h"
 
-#include "../api/JellyfinApiFacade.h"
 #include "../common/AsyncTask.h"
 
 namespace JellyfinNative {
@@ -12,7 +11,7 @@ namespace {
 
 } // namespace
 
-PlaybackReporter::PlaybackReporter(JellyfinApiFacade *api, QObject *parent)
+PlaybackReporter::PlaybackReporter(PlaybackSource *api, QObject *parent)
     : QObject(parent)
     , m_api(api)
 {

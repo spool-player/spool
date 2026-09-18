@@ -215,6 +215,7 @@ set(SPOOL_SHELL_SOURCES
     src/common/VariantUtils.h
     src/media/MediaTypes.cpp
     src/media/MediaTypes.h
+    src/provider/PlaybackSource.h
     src/diagnostics/Diagnostics.cpp
     src/diagnostics/Diagnostics.h
     src/diagnostics/InputLatencyMonitor.cpp

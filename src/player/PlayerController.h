@@ -24,8 +24,8 @@ struct mpv_handle;
 
 namespace JellyfinNative {
 
-class JellyfinApiFacade;
 class NativeAppWindow;
+class PlaybackSource;
 class TlsTrustController;
 
 class PlayerController final : public QObject {
@@ -78,7 +78,7 @@ class PlayerController final : public QObject {
     Q_PROPERTY(QStringList trickplaySheetUrls READ trickplaySheetUrls NOTIFY trickplayChanged)
 
 public:
-    PlayerController(NativeAppWindow *window, JellyfinApiFacade *api, TlsTrustController *tlsTrust,
+    PlayerController(NativeAppWindow *window, PlaybackSource *api, TlsTrustController *tlsTrust,
         const QString& subtitleFontsPath, QObject *parent = nullptr);
     ~PlayerController() override;
 
@@ -306,7 +306,7 @@ private:
     int m_videoWidth = 0;
     int m_videoHeight = 0;
     NativeAppWindow *m_window = nullptr;
-    JellyfinApiFacade *m_api = nullptr;
+    PlaybackSource *m_api = nullptr;
     PlaybackSession m_session;
     PlaybackReporter m_reporter;
     MpvLifecycle m_mpvLifecycle;

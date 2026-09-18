@@ -272,7 +272,7 @@ namespace {
 
 JellyfinApiFacade::JellyfinApiFacade(
     QNetworkAccessManager *networkAccessManager, TlsTrustController *tlsTrust, QObject *parent)
-    : QObject(parent)
+    : PlaybackSource(parent)
     , m_networkAccessManager(networkAccessManager)
     , m_rest(networkAccessManager, this)
 {
@@ -382,7 +382,7 @@ void JellyfinApiFacade::setSession(const AuthSession& session)
         // probe that follows refreshes it.
         if (!m_session.accessToken.isEmpty())
             restoreRememberedMeasurement();
-        emit sessionTokenChanged();
+        emit credentialsChanged();
     }
     preconnectToServer();
 }
@@ -450,6 +450,27 @@ void JellyfinApiFacade::setRemoteControlTargetEnabled(bool enabled)
         return;
     m_remoteControlTargetEnabled = enabled;
     emit deviceProfileChanged();
+}
+
+QByteArray JellyfinApiFacade::mediaRequestHeaders() const
+{
+    const QByteArray token = m_session.accessToken.toUtf8();
+    return token.isEmpty() ? QByteArray {} : QByteArrayLiteral("X-Emby-Token: ") + token;
+}
+
+QUrl JellyfinApiFacade::mediaOrigin() const
+{
+    return QUrl(serverUrl());
+}
+
+bool JellyfinApiFacade::signedIn() const
+{
+    return !m_session.accessToken.isEmpty();
+}
+
+QCoro::Task<std::vector<MovieItem>> JellyfinApiFacade::fetchSeriesEpisodes(QString seriesId)
+{
+    return fetchEpisodes(std::move(seriesId));
 }
 
 int JellyfinApiFacade::playbackParallelRequests() const
