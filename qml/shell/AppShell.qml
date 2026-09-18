@@ -127,13 +127,20 @@ KeyRouter {
 
     readonly property string route: Router.route
     readonly property var routeArgs: Router.args || ({})
+    // Provider-shaped singletons are only read behind their capability, so a
+    // source without sign-in or remote control never has them evaluated. A
+    // source with no sign-in is simply always signed in.
+    readonly property var session: ProviderCapabilities.auth ? Session : null
+    readonly property bool signedIn: session ? session.authenticated : true
+    readonly property var remoteControl: ProviderCapabilities.remoteControl ? RemoteControl : null
+    readonly property bool remoteTargetSelected: remoteControl ? remoteControl.targetSelected : false
     property bool remoteConnectionKnown: false
     property string lastRemoteTargetName: ""
     onRouteChanged: {
         root.exitArmedAt = 0
-        if (route === "remoteControl" && !RemoteControl.targetSelected) {
+        if (route === "remoteControl" && !root.remoteTargetSelected) {
             Qt.callLater(function () {
-                if (root.route === "remoteControl" && !RemoteControl.targetSelected)
+                if (root.route === "remoteControl" && !root.remoteTargetSelected)
                     root.goHome()
             })
         }
@@ -330,10 +337,10 @@ KeyRouter {
     }
 
     Connections {
-        target: RemoteControl
+        target: root.remoteControl
         function onTargetChanged() {
-            if (RemoteControl.targetSelected) {
-                const name = RemoteControl.selectedTargetName || "remote device"
+            if (root.remoteTargetSelected) {
+                const name = root.remoteControl.selectedTargetName || "remote device"
                 if (!root.remoteConnectionKnown || root.lastRemoteTargetName !== name)
                     toast.show("Connected to " + name, toast.briefDurationMs)
                 root.remoteConnectionKnown = true
@@ -355,11 +362,11 @@ KeyRouter {
     }
 
     function defaultRoute() {
-        return Session.authenticated ? "home" : "login"
+        return root.signedIn ? "home" : "login"
     }
 
     function restoreRecoveredRoute() {
-        if (!Router.recoveryPending || !Session.authenticated)
+        if (!Router.recoveryPending || !root.signedIn)
             return false
         const args = root.routeArgs
         if (root.route === "libraryGrid") {
@@ -407,24 +414,24 @@ KeyRouter {
         if (Router.recoveryPending) {
             if (root.restoreRecoveredRoute())
                 return
-            if (Session.authenticated)
+            if (root.signedIn)
                 return
         }
         Router.reset(root.defaultRoute())
     }
 
     Connections {
-        target: Session
+        target: root.session
         function onAuthenticatedStateChanged() {
-            if (Session.authenticated && root.switchUserReturnPending) {
+            if (root.signedIn && root.switchUserReturnPending) {
                 root.completeSwitchUserReturn()
                 return
             }
-            if (Session.authenticated)
+            if (root.signedIn)
                 root.clearSwitchUserReturn()
-            if (Session.authenticated && root.restoreRecoveredRoute())
+            if (root.signedIn && root.restoreRecoveredRoute())
                 return
-            if (Session.authenticated)
+            if (root.signedIn)
                 Router.replace(root.defaultRoute())
             else
                 Router.reset(root.defaultRoute())
@@ -470,8 +477,8 @@ KeyRouter {
         // is what raises the on-screen keyboard, so the row stays the D-pad
         // target until Select is pressed.
         Theme.textEntryFollowsFocus = !Platform.isTV
-        root.remoteConnectionKnown = RemoteControl.targetSelected
-        root.lastRemoteTargetName = RemoteControl.targetSelected ? RemoteControl.selectedTargetName : ""
+        root.remoteConnectionKnown = root.remoteTargetSelected
+        root.lastRemoteTargetName = root.remoteTargetSelected ? root.remoteControl.selectedTargetName : ""
         if (App.initialized)
             root.applyInitializedRoute()
     }
@@ -642,7 +649,9 @@ KeyRouter {
     }
 
     function switchUser() {
-        switchUserReturnProfileId = Session.activeProfileId
+        if (!root.session)
+            return
+        switchUserReturnProfileId = root.session.activeProfileId
         switchUserReturnRoute = route
         switchUserReturnArgs = Object.assign({}, routeArgs)
         switchUserReturnPending = false
@@ -675,7 +684,7 @@ KeyRouter {
     }
 
     function completeSwitchUserReturn() {
-        if (!switchUserReturnPending || !Session.authenticated)
+        if (!switchUserReturnPending || !root.signedIn)
             return false
         const returnRoute = switchUserReturnRoute
         const returnArgs = switchUserReturnArgs
@@ -801,7 +810,8 @@ KeyRouter {
     }
 
     function openItemMenu(item, anchorItem, context) {
-        Management.loadCurrentUserPolicy()
+        if (ProviderCapabilities.libraryManagement)
+            Management.loadCurrentUserPolicy()
         itemMenuLoaded = true
         return itemContextMenuLoader.item ? itemContextMenuLoader.item.openForItem(item || ({}), anchorItem || null,
                                                                                    context || ({})) : false
@@ -841,6 +851,8 @@ KeyRouter {
     }
 
     function openManagement(mode, item) {
+        if (!ProviderCapabilities.libraryManagement)
+            return
         managementMode = mode
         managementItem = item || ({})
         managementOverlayVisible = true
@@ -1081,7 +1093,9 @@ KeyRouter {
                                           root.navigationTarget = routeStack
             }
 
-            RemoteNowPlayingBar {
+            // Only a source that can drive another device has a bar for it; the
+            // loader keeps the bar's bindings from ever running otherwise.
+            Loader {
                 id: nowPlayingBar
                 objectName: "shellRemoteNowPlayingBar"
                 anchors.left: parent.left
@@ -1090,11 +1104,16 @@ KeyRouter {
                 // viewport edge when it does not.
                 y: root.navBarAtBottom ? Math.max(0, navBar.y - height) : Math.max(0, parent.height - height)
                 z: 2
-                // The remote control page is this bar in full, so it would only
-                // duplicate itself there.
-                visible: shown && root.chromeRoute !== "remoteControl" && root.chromeRoute !== "login"
-                enabled: visible
-                onOpenRequested: root.pushRoute("remoteControl")
+                active: ProviderCapabilities.remoteControl
+                height: item ? item.height : 0
+                visible: item ? item.visible : false
+                sourceComponent: RemoteNowPlayingBar {
+                    // The remote control page is this bar in full, so it would only
+                    // duplicate itself there.
+                    visible: shown && root.chromeRoute !== "remoteControl" && root.chromeRoute !== "login"
+                    enabled: visible
+                    onOpenRequested: root.pushRoute("remoteControl")
+                }
             }
         }
     }
@@ -1231,7 +1250,7 @@ KeyRouter {
             id: managementOverlayLoader
             anchors.fill: parent
             z: 57
-            active: root.managementOverlayVisible
+            active: ProviderCapabilities.libraryManagement && root.managementOverlayVisible
             asynchronous: true
             sourceComponent: ManagementDialog {
                 mode: root.managementMode
