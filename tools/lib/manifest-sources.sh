@@ -1,10 +1,18 @@
 #!/usr/bin/env bash
 
+# Windows ships the interpreter as python only; every other platform here has
+# python3. Resolve it once rather than assuming, and let the caller override.
+MANIFEST_PYTHON="${MANIFEST_PYTHON:-$(command -v python3 || command -v python || true)}"
+if [ -z "$MANIFEST_PYTHON" ]; then
+  echo "error: python3 is required to read the build manifests" >&2
+  exit 1
+fi
+
 manifest_source_field() {
   local manifest="$1"
   local source_name="$2"
   local field="$3"
-  python3 -c '
+  "$MANIFEST_PYTHON" -c '
 import json
 import sys
 
@@ -18,7 +26,7 @@ print(value)
 manifest_qt_field() {
   local manifest="$1"
   local field="$2"
-  python3 -c '
+  "$MANIFEST_PYTHON" -c '
 import json
 import sys
 
@@ -31,7 +39,7 @@ print(data[sys.argv[2]])
 manifest_qt_module_sha256() {
   local manifest="$1"
   local module="$2"
-  python3 -c '
+  "$MANIFEST_PYTHON" -c '
 import json
 import sys
 
@@ -50,7 +58,7 @@ manifest_tool_field() {
   local manifest="$1"
   local tool_name="$2"
   local field="$3"
-  python3 -c '
+  "$MANIFEST_PYTHON" -c '
 import json
 import sys
 
@@ -63,7 +71,7 @@ print(data["tools"][sys.argv[2]][sys.argv[3]])
 manifest_json_array() {
   local manifest="$1"
   local key="$2"
-  python3 -c '
+  "$MANIFEST_PYTHON" -c '
 import json
 import sys
 
@@ -77,7 +85,7 @@ for value in data[sys.argv[2]]:
 manifest_source_patches() {
   local manifest="$1"
   local source_name="$2"
-  python3 -c '
+  "$MANIFEST_PYTHON" -c '
 import json
 import sys
 
@@ -91,7 +99,7 @@ for patch in data["sources"][sys.argv[2]].get("patches", []):
 manifest_vendored_sources() {
   local manifest="$1"
   local source_name="$2"
-  python3 -c '
+  "$MANIFEST_PYTHON" -c '
 import json
 import sys
 
@@ -177,7 +185,7 @@ prepare_manifest_source() {
 toolchain_field() {
   local root="$1"
   local path="$2"
-  python3 -c '
+  "$MANIFEST_PYTHON" -c '
 import json
 import sys
 

@@ -633,7 +633,7 @@ std::vector<MpvOption> MpvOptionProfile::renderQualityOptions(RenderQuality qual
             { "sigmoid-upscaling", "yes" },
             { "deband", "no" },
             { "dither-depth", "auto" },
-            { "tone-mapping", "bt.2390" },
+            { "tone-mapping", "auto" },
             { "hdr-compute-peak", "yes" },
         };
     case RenderQuality::Balanced:
@@ -647,9 +647,7 @@ std::vector<MpvOption> MpvOptionProfile::renderQualityOptions(RenderQuality qual
             { "deband", "no" },
             { "interpolation", "no" },
             { "dither-depth", "auto" },
-            { "tone-mapping", "bt.2390" },
-            // Measuring each frame's peak costs a compute pass and a readback.
-            // A static curve is most of the picture for none of that.
+            { "tone-mapping", "auto" },
             { "hdr-compute-peak", "no" },
         };
     case RenderQuality::Fast:

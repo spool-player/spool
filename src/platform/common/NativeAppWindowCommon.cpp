@@ -47,6 +47,18 @@ void NativeAppWindow::setInputLatencyMonitor(InputLatencyMonitor *monitor)
     m_inputLatencyMonitor = monitor;
 }
 
+void NativeAppWindow::setHdrOutput(bool active, qreal sdrWhiteNits, qreal peakNits)
+{
+    if (m_hdrOutput == active && qFuzzyCompare(m_hdrSdrWhiteNits, sdrWhiteNits)
+        && qFuzzyCompare(m_hdrPeakNits + 1.0, peakNits + 1.0))
+        return;
+    m_hdrOutput = active;
+    m_hdrSdrWhiteNits = sdrWhiteNits;
+    m_hdrPeakNits = peakNits;
+    emit hdrOutputChanged();
+    update();
+}
+
 bool NativeAppWindow::event(QEvent *event)
 {
     if (event->type() == QEvent::PlatformSurface) {

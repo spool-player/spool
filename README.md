@@ -33,19 +33,31 @@ Precedence, from lowest to highest:
    the user configuration again; startup-only settings such as audio output and
    render quality remain defaults beneath that configuration.
 4. Spool retains its embedding and session requirements: `vo=libmpv`,
-   `gpu-api=opengl`, `gpu-context=auto`, `wid=-1`, `force-window=no`, `idle=yes`,
+   `gpu-api=auto`, `gpu-context=auto`, `wid=-1`, `force-window=no`, `idle=yes`,
    `keep-open=no`, `input-vo-keyboard=no`, `input-cursor=no`, `terminal=no` and
    `osc=no`. These are enforced before mpv initializes input, scripts or output.
    Spool also owns the initial window/fullscreen state, authenticated media
    requests, TLS verification, resume position, SyncPlay and explicit track
    restoration.
 
-This is still embedded OpenGL playback, not native Vulkan, D3D11 or Metal
-presentation, and it does not enable desktop HDR output. Native `gpu-context`
-names such as `winvk` or `d3d11` are not mapped to embedded backends. Scripts and
-dynamic profiles must not change the embedding options; native-window commands,
-renderer replacement and standalone mpv playlist management are unsupported.
-Config errors and embedding ownership are reported in player/mpv diagnostics.
+Desktop playback shares Qt's graphics device with libmpv: Vulkan on Linux,
+Vulkan through MoltenVK on macOS, and D3D11 on Windows. The macOS app bundles
+its Vulkan loader and MoltenVK driver; no Vulkan SDK or Homebrew installation
+is required. MoltenVK requires a Metal-capable GPU. Select OpenGL in the
+graphics backend setting, or launch with `SPOOL_RENDER_API=opengl`, for the
+compatibility path. Adding MoltenVK does not establish macOS HDR output support.
+Native `gpu-context` names such as `winvk` or `d3d11` are not mapped to embedded
+backends. Scripts and dynamic profiles must not change the embedding options;
+native-window commands, renderer replacement and standalone mpv playlist
+management are unsupported. Config errors and embedding ownership are reported
+in player/mpv diagnostics.
+
+On webOS, supported codecs still use Starfish. For software-decoded codecs,
+**Software video renderer** in advanced playback settings offers Automatic
+(the established OpenGL `gpu` path), `gpu`, or experimental OpenGL `gpu-next`.
+Both retain the lightweight software-video options. Changes apply to the next
+playback; an explicitly selected renderer reports initialization failure rather
+than silently switching backends. Vulkan is not offered on webOS.
 
 During desktop playback, Spool's shortcuts, dialogs and focused text/IME
 controls take precedence. Remaining keys reach mpv's `input.conf` machinery.

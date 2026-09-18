@@ -1005,179 +1005,96 @@ KeyRouter {
         }
     }
 
-    Rectangle {
+    // Browsing stays below the z=19 video surface. Capturing the entire shell
+    // would also capture (and convert a second time) mpv's linear HDR output.
+    HdrUiLayer {
         anchors.fill: parent
-        color: Theme.bg
-        visible: !(root.hasPlayer && root.playerHoldsScreen)
-    }
+        hdrOutput: NativeWindow.hdrOutput
+        hdrSdrWhiteNits: NativeWindow.hdrSdrWhiteNits
 
-    Item {
-        id: contentLayer
-        objectName: "shellContentLayer"
-        anchors.fill: parent
-        anchors.topMargin: -root.keyboardAvoidance + root.safeTopPx
-        anchors.bottomMargin: root.keyboardAvoidance + root.safeBottomPx
-        anchors.leftMargin: root.safeLeftPx
-        anchors.rightMargin: root.safeRightPx
-        visible: App.initialized && !(root.hasPlayer && root.playerHoldsScreen)
-        enabled: visible
-
-        TopBar {
-            id: navBar
-            objectName: "shellNavigationBar"
-            anchors.left: parent.left
-            anchors.right: parent.right
-            // Keep this as ordinary geometry. Conditional anchor bindings are
-            // not ordered when the initial compact lane settles to the real
-            // window lane; top and bottom can briefly coexist and leave the
-            // bar stretched across the viewport.
-            y: root.navBarAtBottom ? Math.max(0, parent.height - height) : 0
-            height: root.chromeRoute === "login" ? 0 : Metrics.topBarHeightPx
-            edge: root.navBarAtBottom ? "bottom" : "top"
-            visible: root.chromeRoute !== "login"
-            z: 1
-            // Same reason as the height above: the rail marks where you are,
-            // not where you are going, so it does not blink its selection off
-            // for the frames a page takes to arrive.
-            currentRoute: root.chromeRoute
-            onActiveFocusChanged: if (activeFocus)
-                                      root.navigationTarget = navBar
-            onNavigate: r => {
-                if (r === "home")
-                    root.goHome()
-                else if (r === "switchUser")
-                    root.switchUser()
-                else if (r === "settings")
-                    root.pushRoute("settings")
-                else
-                    root.pushRoute(r)
-            }
-            onContentRequested: root.focusContent()
-        }
-
-        // Space the now-playing bar takes out of the page, so content ends
-        // above it rather than under it.
-        readonly property real nowPlayingReserve: nowPlayingBar.visible ? nowPlayingBar.height : 0
-
-        RouteStack {
-            id: routeStack
-            objectName: "shellRouteStack"
-            anchors.left: parent.left
-            anchors.right: parent.right
-            y: root.navBarAtBottom ? 0 : navBar.height
-            height: Math.max(0, parent.height - navBar.height - contentLayer.nowPlayingReserve)
-            route: root.route
-            shell: root
-            startupReady: App.initialized
-            focus: !(root.hasPlayer && root.playerHoldsScreen)
-            onActiveFocusChanged: if (activeFocus)
-                                      root.navigationTarget = routeStack
-        }
-
-        RemoteNowPlayingBar {
-            id: nowPlayingBar
-            objectName: "shellRemoteNowPlayingBar"
-            anchors.left: parent.left
-            anchors.right: parent.right
-            // Above the navigation when it sits at the bottom, against the
-            // viewport edge when it does not.
-            y: root.navBarAtBottom ? Math.max(0, navBar.y - height) : Math.max(0, parent.height - height)
-            z: 2
-            // The remote control page is this bar in full, so it would only
-            // duplicate itself there.
-            visible: shown && root.chromeRoute !== "remoteControl" && root.chromeRoute !== "login"
-            enabled: visible
-            onOpenRequested: root.pushRoute("remoteControl")
-        }
-    }
-
-    // The launch screen, held until the first page has something to show.
-    //
-    // The bar is the page being settled, not merely created: startup should be
-    // the system's launch frame, then this same picture, then a home screen
-    // that has already been painted. It is deliberately not artwork -- the
-    // first row's delegates existing is enough, and waiting for every visible
-    // poster would hold a black screen over a usable page.
-    Item {
-        id: startupSplash
-
-        readonly property bool contentSettled: routeStack.startupSettled
-        property bool dismissed: false
-        // A start that is taking this long is a server that is not answering,
-        // not a slow machine, so say so and offer the way out rather than
-        // leaving a still picture up.
-        readonly property bool slow: slowStart.triggered && !dismissed
-
-        anchors.fill: parent
-        visible: !dismissed
-        enabled: visible
-        z: 70
-
-        onContentSettledChanged: if (contentSettled)
-                                     dismissed = true
-
-        Timer {
-            id: slowStart
-            property bool triggered: false
-            interval: 1000
-            running: !startupSplash.dismissed
-            onTriggered: triggered = true
-        }
-
-        // The overlay covers the shell, so while it is asking a question the
-        // one control on it is where a remote has to land.
-        onSlowChanged: if (slow)
-                           InputKeys.focus(switchServerButton)
-        onDismissedChanged: if (dismissed)
-                                InputKeys.focus(routeStack)
-
-        Loader {
-            id: splashContent
+        Rectangle {
             anchors.fill: parent
-            // The same file the pre-shell frame draws, drawn the same way, so
-            // replacing that frame with this one changes nothing on screen.
-            // setSource with initial properties, not source + assignment:
-            // the values are in place before the component completes, and
-            // they come from the singleton rather than the view context,
-            // which is what resolves from a component the shell loads.
-            Component.onCompleted: setSource("qrc:/startup/SplashContent.qml", {
-                                                 "pixelsPerDp": Platform.splashPixelsPerDp,
-                                                 "coreWidthDp": Platform.splashCoreWidthDp,
-                                                 "coreWidthFraction": Platform.splashCoreWidthFraction,
-                                                 "coreAspect": Platform.splashCoreAspect,
-                                                 "coreSource": Platform.splashImageUrl
-                                             })
+            color: Theme.bg
+            visible: !(root.hasPlayer && root.playerHoldsScreen)
         }
 
-        // Grows out of the launch screen rather than replacing it: the mark
-        // stays exactly where it was and the waiting appears underneath.
-        ColumnLayout {
-            anchors.horizontalCenter: parent.horizontalCenter
-            y: (splashContent.item ? splashContent.item.markBottomY : parent.height / 2) + Metrics.scaled(36)
-            spacing: Metrics.scaled(22)
-            opacity: startupSplash.slow ? 1 : 0
-            visible: opacity > 0
+        Item {
+            id: contentLayer
+            objectName: "shellContentLayer"
+            anchors.fill: parent
+            anchors.topMargin: -root.keyboardAvoidance + root.safeTopPx
+            anchors.bottomMargin: root.keyboardAvoidance + root.safeBottomPx
+            anchors.leftMargin: root.safeLeftPx
+            anchors.rightMargin: root.safeRightPx
+            visible: App.initialized && !(root.hasPlayer && root.playerHoldsScreen)
+            enabled: visible
 
-            Behavior on opacity {
-                NumberAnimation {
-                    duration: Theme.reducedMotion ? 0 : 180
+            TopBar {
+                id: navBar
+                objectName: "shellNavigationBar"
+                anchors.left: parent.left
+                anchors.right: parent.right
+                // Keep this as ordinary geometry. Conditional anchor bindings are
+                // not ordered when the initial compact lane settles to the real
+                // window lane; top and bottom can briefly coexist and leave the
+                // bar stretched across the viewport.
+                y: root.navBarAtBottom ? Math.max(0, parent.height - height) : 0
+                height: root.chromeRoute === "login" ? 0 : Metrics.topBarHeightPx
+                edge: root.navBarAtBottom ? "bottom" : "top"
+                visible: root.chromeRoute !== "login"
+                z: 1
+                // Same reason as the height above: the rail marks where you are,
+                // not where you are going, so it does not blink its selection off
+                // for the frames a page takes to arrive.
+                currentRoute: root.chromeRoute
+                onActiveFocusChanged: if (activeFocus)
+                                          root.navigationTarget = navBar
+                onNavigate: r => {
+                    if (r === "home")
+                        root.goHome()
+                    else if (r === "switchUser")
+                        root.switchUser()
+                    else if (r === "settings")
+                        root.pushRoute("settings")
+                    else
+                        root.pushRoute(r)
                 }
+                onContentRequested: root.focusContent()
             }
 
-            BusySpinner {
-                Layout.alignment: Qt.AlignHCenter
-                Layout.preferredWidth: Metrics.scaled(34)
-                Layout.preferredHeight: Metrics.scaled(34)
-                running: startupSplash.slow
-                color: Theme.textMuted
+            // Space the now-playing bar takes out of the page, so content ends
+            // above it rather than under it.
+            readonly property real nowPlayingReserve: nowPlayingBar.visible ? nowPlayingBar.height : 0
+
+            RouteStack {
+                id: routeStack
+                objectName: "shellRouteStack"
+                anchors.left: parent.left
+                anchors.right: parent.right
+                y: root.navBarAtBottom ? 0 : navBar.height
+                height: Math.max(0, parent.height - navBar.height - contentLayer.nowPlayingReserve)
+                route: root.route
+                shell: root
+                startupReady: App.initialized
+                focus: !(root.hasPlayer && root.playerHoldsScreen)
+                onActiveFocusChanged: if (activeFocus)
+                                          root.navigationTarget = routeStack
             }
 
-            ActionButton {
-                id: switchServerButton
-                Layout.alignment: Qt.AlignHCenter
-                text: "Switch server"
-                kind: "secondary"
-                onClicked: root.chooseServer()
+            RemoteNowPlayingBar {
+                id: nowPlayingBar
+                objectName: "shellRemoteNowPlayingBar"
+                anchors.left: parent.left
+                anchors.right: parent.right
+                // Above the navigation when it sits at the bottom, against the
+                // viewport edge when it does not.
+                y: root.navBarAtBottom ? Math.max(0, navBar.y - height) : Math.max(0, parent.height - height)
+                z: 2
+                // The remote control page is this bar in full, so it would only
+                // duplicate itself there.
+                visible: shown && root.chromeRoute !== "remoteControl" && root.chromeRoute !== "login"
+                enabled: visible
+                onOpenRequested: root.pushRoute("remoteControl")
             }
         }
     }
@@ -1192,152 +1109,252 @@ KeyRouter {
         z: 19
     }
 
-    Loader {
-        id: busyOverlayLoader
+    // All of these surfaces already lived above video. Keep their individual
+    // z values and declaration order, including splash/toast's shared z=70.
+    HdrUiLayer {
         anchors.fill: parent
-        z: 40
-        // Stepping to the next item is the one case where the busy state should
-        // show over the player: the surface is being held deliberately and
-        // would otherwise be a frozen last frame with no sign of progress.
-        active: App.playbackTransition || (root.busyValue && !(root.hasPlayer && root.playerHoldsScreen))
-        asynchronous: true
-        source: active ? "BusyOverlay.qml" : ""
+        hdrOutput: NativeWindow.hdrOutput
+        hdrSdrWhiteNits: NativeWindow.hdrSdrWhiteNits
+        z: 20
 
-        Binding {
-            target: busyOverlayLoader.item
-            property: "text"
-            value: App.playbackTransition ? "Loading next item…" : root.busyTextValue
-            when: busyOverlayLoader.item
-        }
-    }
+        // The launch screen, held until the first page has something to show.
+        //
+        // The bar is the page being settled, not merely created: startup should be
+        // the system's launch frame, then this same picture, then a home screen
+        // that has already been painted. It is deliberately not artwork -- the
+        // first row's delegates existing is enough, and waiting for every visible
+        // poster would hold a black screen over a usable page.
+        Item {
+            id: startupSplash
 
-    Loader {
-        id: managementOverlayLoader
-        anchors.fill: parent
-        z: 57
-        active: root.managementOverlayVisible
-        asynchronous: true
-        sourceComponent: ManagementDialog {
-            mode: root.managementMode
-            item: root.managementItem
-            onDismissed: root.closeManagementOverlay()
-        }
-        onLoaded: item.prepare()
-    }
+            readonly property bool contentSettled: routeStack.startupSettled
+            property bool dismissed: false
+            // A start that is taking this long is a server that is not answering,
+            // not a slow machine, so say so and offer the way out rather than
+            // leaving a still picture up.
+            readonly property bool slow: slowStart.triggered && !dismissed
 
-    Loader {
-        id: itemContextMenuLoader
-        anchors.fill: parent
-        z: 58
-        active: root.itemMenuLoaded
-        sourceComponent: ItemContextMenu {
-            shell: root
-            onClosed: Qt.callLater(root.restoreFocusAfterItemMenu)
-        }
-    }
-
-    Loader {
-        id: mediaInfoOverlayLoader
-        anchors.fill: parent
-        z: 59
-        active: root.mediaInfoVisible
-        sourceComponent: MediaInfoOverlay {
-            visible: root.mediaInfoVisible
-            item: visible ? (root.mediaInfoItem && Object.keys(root.mediaInfoItem).length > 0 ? root.mediaInfoItem :
-                                                                                                root.currentMediaItem(
-                                                                                                    )) : ({})
-            shell: root
-            onClosed: root.closeMediaInfo()
-        }
-    }
-
-    Loader {
-        anchors.fill: parent
-        z: 61
-        active: root.diagnosticsVisible && !(root.hasPlayer && root.playerHoldsScreen)
-        sourceComponent: DiagnosticsOverlay {
-            route: root.route
-            focusedItemId: RoutePolicy.itemIdFor(root.currentMediaItem())
-        }
-    }
-    Rectangle {
-        id: remoteMessage
-        anchors.horizontalCenter: parent.horizontalCenter
-        y: Math.round(parent.height * 0.75 - height / 2)
-        width: Math.min(parent.width * 0.72, Metrics.scaled(960))
-        height: remoteMessageText.implicitHeight + Metrics.scaled(30)
-        visible: false
-        radius: Theme.radiusMedium
-        color: Theme.bgRaised
-        z: 69
-
-        AppText {
-            id: remoteMessageText
-            anchors.centerIn: parent
-            width: Math.max(0, parent.width - Metrics.scaled(32))
-            color: Theme.textPrimary
-            font.pixelSize: Metrics.bodySizePx + Metrics.scaled(1)
-            font.weight: Font.Normal
-            wrapMode: Text.Wrap
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-        }
-
-        Timer {
-            id: remoteMessageTimer
-            interval: 10000
-            onTriggered: remoteMessage.visible = false
-        }
-    }
-
-    ToastLayer {
-        id: toast
-        anchors.fill: parent
-        // Toasts sit against the bottom edge, which is where the gesture bar
-        // is.
-        anchors.bottomMargin: root.safeBottomPx
-        z: 70
-    }
-
-    Surface {
-        anchors.horizontalCenter: parent.horizontalCenter
-        anchors.bottom: parent.bottom
-        anchors.bottomMargin: Metrics.scaled(32)
-        width: Math.min(parent.width * 0.72, Metrics.scaled(960))
-        height: root.errorTextValue.length > 0 ? errorText.implicitHeight + Metrics.scaled(28) : 0
-        visible: root.errorTextValue.length > 0
-        baseColor: Theme.errorPanel
-        z: 80
-        AppText {
-            id: errorText
-            anchors.centerIn: parent
-            width: Math.max(0, parent.width - Metrics.scaled(28))
-            text: root.errorTextValue
-            color: Theme.errorText
-            wrapMode: Text.Wrap
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-        }
-        MouseArea {
             anchors.fill: parent
-            onClicked: App.clearError()
+            visible: !dismissed
+            enabled: visible
+            z: 70
+
+            onContentSettledChanged: if (contentSettled)
+                                         dismissed = true
+
+            Timer {
+                id: slowStart
+                property bool triggered: false
+                interval: 1000
+                running: !startupSplash.dismissed
+                onTriggered: triggered = true
+            }
+
+            // The overlay covers the shell, so while it is asking a question the
+            // one control on it is where a remote has to land.
+            onSlowChanged: if (slow)
+                               InputKeys.focus(switchServerButton)
+            onDismissedChanged: if (dismissed)
+                                    InputKeys.focus(routeStack)
+
+            Loader {
+                id: splashContent
+                anchors.fill: parent
+                // The same file the pre-shell frame draws, drawn the same way, so
+                // replacing that frame with this one changes nothing on screen.
+                // setSource with initial properties, not source + assignment:
+                // the values are in place before the component completes, and
+                // they come from the singleton rather than the view context,
+                // which is what resolves from a component the shell loads.
+                Component.onCompleted: setSource("qrc:/startup/SplashContent.qml", {
+                                                     "pixelsPerDp": Platform.splashPixelsPerDp,
+                                                     "coreWidthDp": Platform.splashCoreWidthDp,
+                                                     "coreWidthFraction": Platform.splashCoreWidthFraction,
+                                                     "coreAspect": Platform.splashCoreAspect,
+                                                     "coreSource": Platform.splashImageUrl
+                                                 })
+            }
+
+            // Grows out of the launch screen rather than replacing it: the mark
+            // stays exactly where it was and the waiting appears underneath.
+            ColumnLayout {
+                anchors.horizontalCenter: parent.horizontalCenter
+                y: (splashContent.item ? splashContent.item.markBottomY : parent.height / 2) + Metrics.scaled(36)
+                spacing: Metrics.scaled(22)
+                opacity: startupSplash.slow ? 1 : 0
+                visible: opacity > 0
+
+                Behavior on opacity {
+                    NumberAnimation {
+                        duration: Theme.reducedMotion ? 0 : 180
+                    }
+                }
+
+                BusySpinner {
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.preferredWidth: Metrics.scaled(34)
+                    Layout.preferredHeight: Metrics.scaled(34)
+                    running: startupSplash.slow
+                    color: Theme.textMuted
+                }
+
+                ActionButton {
+                    id: switchServerButton
+                    Layout.alignment: Qt.AlignHCenter
+                    text: "Switch server"
+                    kind: "secondary"
+                    onClicked: root.chooseServer()
+                }
+            }
         }
-    }
-    UpdateDialog {
-        id: updateDialog
-        updater: Platform.updateController
-        z: 260
-    }
-    TlsTrustDialog {
-        id: tlsTrustDialog
-        visible: root.tlsTrustPending
-        trustController: TlsTrust
-        inputKeys: InputKeys
-        z: 250
-    }
-    InputLatencyWarning {
-        anchors.fill: parent
-        z: 90
-        monitor: InputLatency
+
+        Loader {
+            id: busyOverlayLoader
+            anchors.fill: parent
+            z: 40
+            // Stepping to the next item is the one case where the busy state should
+            // show over the player: the surface is being held deliberately and
+            // would otherwise be a frozen last frame with no sign of progress.
+            active: App.playbackTransition || (root.busyValue && !(root.hasPlayer && root.playerHoldsScreen))
+            asynchronous: true
+            source: active ? "BusyOverlay.qml" : ""
+
+            Binding {
+                target: busyOverlayLoader.item
+                property: "text"
+                value: App.playbackTransition ? "Loading next item…" : root.busyTextValue
+                when: busyOverlayLoader.item
+            }
+        }
+
+        Loader {
+            id: managementOverlayLoader
+            anchors.fill: parent
+            z: 57
+            active: root.managementOverlayVisible
+            asynchronous: true
+            sourceComponent: ManagementDialog {
+                mode: root.managementMode
+                item: root.managementItem
+                onDismissed: root.closeManagementOverlay()
+            }
+            onLoaded: item.prepare()
+        }
+
+        Loader {
+            id: itemContextMenuLoader
+            anchors.fill: parent
+            z: 58
+            active: root.itemMenuLoaded
+            sourceComponent: ItemContextMenu {
+                shell: root
+                onClosed: Qt.callLater(root.restoreFocusAfterItemMenu)
+            }
+        }
+
+        Loader {
+            id: mediaInfoOverlayLoader
+            anchors.fill: parent
+            z: 59
+            active: root.mediaInfoVisible
+            sourceComponent: MediaInfoOverlay {
+                visible: root.mediaInfoVisible
+                item: visible ? (root.mediaInfoItem && Object.keys(root.mediaInfoItem).length > 0 ? root.mediaInfoItem :
+                                                                                                    root.currentMediaItem(
+                                                                                                        )) : ({})
+                shell: root
+                onClosed: root.closeMediaInfo()
+            }
+        }
+
+        Loader {
+            anchors.fill: parent
+            z: 61
+            active: root.diagnosticsVisible && !(root.hasPlayer && root.playerHoldsScreen)
+            sourceComponent: DiagnosticsOverlay {
+                route: root.route
+                focusedItemId: RoutePolicy.itemIdFor(root.currentMediaItem())
+            }
+        }
+        Rectangle {
+            id: remoteMessage
+            anchors.horizontalCenter: parent.horizontalCenter
+            y: Math.round(parent.height * 0.75 - height / 2)
+            width: Math.min(parent.width * 0.72, Metrics.scaled(960))
+            height: remoteMessageText.implicitHeight + Metrics.scaled(30)
+            visible: false
+            radius: Theme.radiusMedium
+            color: Theme.bgRaised
+            z: 69
+
+            AppText {
+                id: remoteMessageText
+                anchors.centerIn: parent
+                width: Math.max(0, parent.width - Metrics.scaled(32))
+                color: Theme.textPrimary
+                font.pixelSize: Metrics.bodySizePx + Metrics.scaled(1)
+                font.weight: Font.Normal
+                wrapMode: Text.Wrap
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+            }
+
+            Timer {
+                id: remoteMessageTimer
+                interval: 10000
+                onTriggered: remoteMessage.visible = false
+            }
+        }
+
+        ToastLayer {
+            id: toast
+            anchors.fill: parent
+            // Toasts sit against the bottom edge, which is where the gesture bar
+            // is.
+            anchors.bottomMargin: root.safeBottomPx
+            z: 70
+        }
+
+        Surface {
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: Metrics.scaled(32)
+            width: Math.min(parent.width * 0.72, Metrics.scaled(960))
+            height: root.errorTextValue.length > 0 ? errorText.implicitHeight + Metrics.scaled(28) : 0
+            visible: root.errorTextValue.length > 0
+            baseColor: Theme.errorPanel
+            z: 80
+            AppText {
+                id: errorText
+                anchors.centerIn: parent
+                width: Math.max(0, parent.width - Metrics.scaled(28))
+                text: root.errorTextValue
+                color: Theme.errorText
+                wrapMode: Text.Wrap
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+            }
+            MouseArea {
+                anchors.fill: parent
+                onClicked: App.clearError()
+            }
+        }
+        UpdateDialog {
+            id: updateDialog
+            updater: Platform.updateController
+            z: 260
+        }
+        TlsTrustDialog {
+            id: tlsTrustDialog
+            visible: root.tlsTrustPending
+            trustController: TlsTrust
+            inputKeys: InputKeys
+            z: 250
+        }
+        InputLatencyWarning {
+            anchors.fill: parent
+            z: 90
+            monitor: InputLatency
+        }
     }
 }

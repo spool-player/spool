@@ -25,6 +25,11 @@
       "sha1": "f458d7f238795d61a3e53fa5211cf2d6b1aa08ef"
     },
     {
+      "package": "qt.qt6.6112.addons.qtshadertools.win64_msvc2022_64",
+      "file": "qtshadertools-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z",
+      "sha1": "27f32f1cc715f91e95802e654f585e0dd42c558a"
+    },
+    {
       "package": "qt.qt6.6112.addons.qtimageformats.win64_msvc2022_64",
       "file": "qtimageformats-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z",
       "sha1": "00fb138473510e065753e6576e8cc4ab4625d662"

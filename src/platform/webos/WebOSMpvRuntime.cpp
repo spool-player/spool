@@ -42,6 +42,8 @@ extern "C" {
     X(mpv_set_property_string)                                                                                         \
     X(mpv_get_property)                                                                                                \
     X(mpv_get_property_async)                                                                                          \
+    X(mpv_get_property_string)                                                                                         \
+    X(mpv_free)                                                                                                        \
     X(mpv_free_node_contents)                                                                                          \
     X(mpv_command)                                                                                                     \
     X(mpv_command_async)                                                                                               \
@@ -397,6 +399,21 @@ void mpv_free_node_contents(mpv_node *node)
 {
     if (node && JellyfinNative::WebOSMpvRuntime::ensureLoaded())
         g_api.mpv_free_node_contents(node);
+}
+
+char *mpv_get_property_string(mpv_handle *ctx, const char *name)
+{
+    if (!JellyfinNative::WebOSMpvRuntime::ensureLoaded())
+        return nullptr;
+    return g_api.mpv_get_property_string(ctx, name);
+}
+
+// This frees what mpv allocated, so it has to reach mpv's own allocator rather
+// than ::free. A handle that never loaded has nothing outstanding to release.
+void mpv_free(void *data)
+{
+    if (data && JellyfinNative::WebOSMpvRuntime::ensureLoaded())
+        g_api.mpv_free(data);
 }
 
 int mpv_command(mpv_handle *ctx, const char **args)

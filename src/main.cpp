@@ -2,6 +2,7 @@
 #include "app/AppController.h"
 #include "app/ArtworkImageProvider.h"
 #include "app/CpuTopology.h"
+#include "app/GraphicsStartup.h"
 #include "app/LocalizationManager.h"
 #include "app/MemoryBudget.h"
 #include "app/RouterController.h"
@@ -62,10 +63,8 @@
 #include <QQmlPropertyMap>
 #include <QQuickGraphicsConfiguration>
 #include <QQuickWindow>
-#include <QSGRendererInterface>
 #include <QScreen>
 #include <QStandardPaths>
-#include <QSurfaceFormat>
 #include <QThread>
 #include <QTimer>
 #include <qqml.h>
@@ -441,28 +440,43 @@ int main(int argc, char **argv)
     qInstallMessageHandler(qtMessageHandler);
     QLoggingCategory::setFilterRules(QStringLiteral("qt.*.debug=false\nqt.*.info=false"));
 
-    // Production playback needs OpenGL for MpvVideoItem's FBO. Launch tests
-    // validate the QML scene on headless runners, where no OpenGL adapter is
-    // guaranteed, so use Qt Quick's deterministic software renderer.
-    QQuickWindow::setGraphicsApi(launchTest ? QSGRendererInterface::Software : QSGRendererInterface::OpenGL);
+    // Graphics startup reads the persisted backend before QGuiApplication.
+    // Establish the settings-store identity first; these setters are static.
+    QCoreApplication::setOrganizationName(QStringLiteral("spool-jellyfin"));
+    QCoreApplication::setApplicationName(QStringLiteral("Spool for Jellyfin"));
+    QCoreApplication::setApplicationVersion(QString::fromLatin1(kAppVersion));
 
-    QSurfaceFormat::setDefaultFormat(JellyfinNative::platformSurfaceFormat());
+    const auto graphicsApi = JellyfinNative::GraphicsStartup::configureBeforeApplication(launchTest);
 
     logLine("startup: constructing QGuiApplication");
     QGuiApplication app(argc, argv);
-    app.setApplicationName(QStringLiteral("Spool for Jellyfin"));
-    app.setApplicationVersion(QString::fromLatin1(kAppVersion));
-    app.setOrganizationName(QStringLiteral("spool-jellyfin"));
+    // The name, version and organisation are set above, before the settings
+    // store is read.
     app.setApplicationDisplayName(QStringLiteral("Spool for Jellyfin"));
     JellyfinNative::TerminationSignalHandler terminationSignals(app);
     logLine("startup: QGuiApplication constructed");
 
-    // Put a native surface on screen at the first valid opportunity. QWindow
-    // and scene-graph setup must remain on the GUI thread; everything below
-    // this point can overlap the render thread's first-frame work instead of
-    // delaying it.
+    QString autoplayItemId;
+    for (int i = 1; i < argc; ++i) {
+        const QString arg = QString::fromLocal8Bit(argv[i]);
+        if (arg == QStringLiteral("--play") && i + 1 < argc) {
+            autoplayItemId = QString::fromLocal8Bit(argv[++i]);
+        } else if (!arg.startsWith('-') && arg.length() >= 16) {
+            autoplayItemId = arg;
+        }
+    }
+    if (autoplayItemId.isEmpty()) {
+        autoplayItemId = QString::fromLocal8Bit(qgetenv("SPOOL_PLAY_ITEM"));
+    }
+
+    const QByteArray hdrRequest = JellyfinNative::GraphicsStartup::prepareBeforeWindow(graphicsApi, launchTest);
+
+    // Native-window and scene-graph setup stay on the GUI thread. Put a surface
+    // on screen now so later startup work can overlap its first frame.
     JellyfinNative::InputLatencyMonitor inputLatencyMonitor;
     JellyfinNative::NativeAppWindow window(QString::fromLatin1(kAppId));
+    JellyfinNative::GraphicsStartup::attachToWindow(window, hdrRequest);
+    window.rootContext()->setContextProperty(QStringLiteral("startupNativeWindow"), &window);
     // The launch screen. Everything that draws it -- the frame put up before
     // the shell exists, the shell's own overlay, the slow-start page -- reads
     // these, so all three land on the same pixels and the handover from the
@@ -901,6 +915,15 @@ int main(int argc, char **argv)
             app.exit(1);
         });
         window.requestUpdate();
+    }
+    if (!autoplayItemId.isEmpty()) {
+        QObject::connect(controller.get(), &JellyfinNative::AppController::initializedChanged, controller.get(),
+            [autoplayItemId, c = controller.get()]() {
+                if (c->initialized()) {
+                    logLine("startup: autoplay requested for item %s", qPrintable(autoplayItemId));
+                    QTimer::singleShot(300, c, [autoplayItemId, c]() { c->playItemId(autoplayItemId); });
+                }
+            });
     }
 
     QTimer::singleShot(1000, router.get(), [router = router.get()] { router->beginSession(false); });

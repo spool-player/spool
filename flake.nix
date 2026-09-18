@@ -190,6 +190,8 @@
             systemdSupport = false;
             withGtk3 = false;
           }).overrideAttrs (old: {
+            # Both desktop renderers share Qt's Vulkan device with libplacebo;
+            # macOS supplies the Vulkan implementation through MoltenVK.
             propagatedBuildInputs = builtins.filter (input:
               input != final.glib
               && input != final.icu
@@ -197,29 +199,25 @@
               && input != final.unixodbcDrivers.mariadb
               && input != final.unixodbcDrivers.psql
               && input != final.unixodbcDrivers.sqlite
-              && (!final.stdenv.hostPlatform.isLinux || input != final.systemd)
-              && input != final.vulkan-headers
-              && input != final.vulkan-loader)
+              && (!final.stdenv.hostPlatform.isLinux || input != final.systemd))
               old.propagatedBuildInputs;
             buildInputs = builtins.filter (input:
               input != final.libmysqlclient
-              && input != final.libpq
-              && (!final.stdenv.hostPlatform.isDarwin || input != final.moltenvk))
+              && input != final.libpq)
               old.buildInputs;
-            cmakeFlags =
-              builtins.filter (flag: flag != "-DQT_FEATURE_vulkan=ON") old.cmakeFlags
+            cmakeFlags = old.cmakeFlags
+              ++ final.lib.optional (!(builtins.elem "-DQT_FEATURE_vulkan=ON" old.cmakeFlags))
+                "-DQT_FEATURE_vulkan=ON"
               ++ [
                 "-DQT_FEATURE_glib=OFF"
                 "-DQT_FEATURE_icu=OFF"
                 "-DQT_FEATURE_sql_mysql=OFF"
                 "-DQT_FEATURE_sql_odbc=OFF"
                 "-DQT_FEATURE_sql_psql=OFF"
-                "-DQT_FEATURE_vulkan=OFF"
               ];
             postFixup = builtins.replaceStrings [
               ''patchelf --add-rpath "${final.libmysqlclient}/lib/mariadb" $out/lib/qt-6/plugins/sqldrivers/libqsqlmysql.so''
-              ''patchelf --add-rpath "${final.vulkan-loader}/lib" --add-needed "libvulkan.so" $out/lib/libQt6Gui.so''
-            ] [ "" "" ] (old.postFixup or "");
+            ] [ "" ] (old.postFixup or "");
           });
           qtdeclarative = qtPrev.qtdeclarative.overrideAttrs (old: {
             # The channel explicitly names its untailored host qsb. Use this
@@ -264,8 +262,8 @@
             };
             overlays = [ pinnedQtOverlay libplaceboOverlay ffmpegSlimOverlay tailoredQtOverlay qcoroOverlay ];
           }));
-      # Native artifacts use a tailored Qt without ICU, Vulkan, foreign SQL
-      # drivers or GTK. Release jobs retain the full build closure in GitHub
+      # Native artifacts use a tailored Qt without ICU, foreign SQL drivers
+      # or GTK. Release jobs retain the full build closure in GitHub
       # Actions; Cachix receives only the runtime and development outputs that
       # keep `nix run` from compiling Qt.
       cachePkgsFor = system:
@@ -322,6 +320,10 @@
         rubberband
         rustup
         unzip
+        # mpv's Vulkan feature needs the headers and a loader to link against.
+        # The driver is the user's, found through the loader at runtime.
+        vulkan-headers
+        vulkan-loader
         which
         zlib
         zip
@@ -368,7 +370,8 @@
         squashfsTools
         spirv-cross
         wayland
-        wayland-scanner
+        # Executed during native client builds, not a target Wayland binary.
+        buildPackages.wayland-scanner
         wayland-protocols
         zimg
       ];
@@ -377,6 +380,9 @@
         apple-sdk_15
         create-dmg
         libiconvReal
+        moltenvk
+        vulkan-headers
+        vulkan-loader
       ];
       # Native release builds do not need the webOS Qt toolchain, JavaScript
       # interpreter, Rust, AppImage emulation or debugger stack. libmpv still
@@ -460,6 +466,7 @@
           spoolQcoro
           spoolQt6.qttools
           spoolQt6.qtwebsockets
+          spoolQt6.qtshadertools
           (qmlToolWrappers pkgs pkgs.spoolQt6)
         ])
         ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux (with pkgs; [
@@ -515,6 +522,12 @@
 
         ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''
           export GNU_ICONV_DYLIB="${pkgs.libiconvReal}/lib/libiconv.2.dylib"
+          export SPOOL_MOLTENVK_ICD="${pkgs.moltenvk}/share/vulkan/icd.d/MoltenVK_icd.json"
+          export SPOOL_VULKAN_LOADER="${pkgs.vulkan-loader}/lib/libvulkan.1.dylib"
+          export QT_VULKAN_LIB="''${QT_VULKAN_LIB-$SPOOL_VULKAN_LOADER}"
+          if [ -z "''${VK_DRIVER_FILES+x}''${VK_ICD_FILENAMES+x}''${VK_ADD_DRIVER_FILES+x}" ]; then
+            export VK_DRIVER_FILES="$SPOOL_MOLTENVK_ICD"
+          fi
         ''}
       '';
 
@@ -535,7 +548,7 @@
         # (spoolQt6) for native Linux/macOS development. Do not use it for
         # tools/webos-native/build-qt6-611.sh.
         export SPOOL_QT_CMAKE_DIR="${pkgs.spoolQt6.qtbase}/lib/cmake/Qt6"
-        native_qt_cmake_path="${pkgs.spoolQt6.qtbase}:${pkgs.spoolQt6.qtdeclarative}:${pkgs.spoolQt6.qtsvg}:${pkgs.spoolQt6.qttools}:${pkgs.spoolQt6.qtwebsockets}"
+        native_qt_cmake_path="${pkgs.spoolQt6.qtbase}:${pkgs.spoolQt6.qtdeclarative}:${pkgs.spoolQt6.qtsvg}:${pkgs.spoolQt6.qttools}:${pkgs.spoolQt6.qtwebsockets}:${pkgs.spoolQt6.qtshadertools}"
         export CMAKE_PREFIX_PATH="$native_qt_cmake_path''${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
         unset native_qt_cmake_path
         export JELLYFIN_NATIVE_SHELL=1
@@ -629,7 +642,7 @@
             export XDG_CACHE_HOME="$TMPDIR/cache"
             export JELLYFIN_NATIVE_SHELL=1
             export SPOOL_QT_CMAKE_DIR="${pkgs.spoolQt6.qtbase}/lib/cmake/Qt6"
-            export CMAKE_PREFIX_PATH="${pkgs.spoolQt6.qtbase}:${pkgs.spoolQt6.qtdeclarative}:${pkgs.spoolQt6.qtsvg}:${pkgs.spoolQt6.qttools}:${pkgs.spoolQt6.qtwebsockets}''${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
+            export CMAKE_PREFIX_PATH="${pkgs.spoolQt6.qtbase}:${pkgs.spoolQt6.qtdeclarative}:${pkgs.spoolQt6.qtsvg}:${pkgs.spoolQt6.qttools}:${pkgs.spoolQt6.qtwebsockets}:${pkgs.spoolQt6.qtshadertools}''${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
             mkdir -p "$HOME" "$XDG_CACHE_HOME"
 
             ${if pkgs.stdenv.hostPlatform.isDarwin then ''
@@ -731,6 +744,14 @@
           SPOOL_ANDROID_QT_HOST = "${androidQtHost}";
           shellHook = gitHooksShellHook;
         };
+      } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+        windows-proton = pkgs.mkShell {
+          packages = with pkgs; [
+            umu-launcher vulkan-tools python3 msitools gcab p7zip
+            curl git jq
+            podman util-linux
+          ];
+        };
       });
 
       apps = forAllSystems (pkgs:
@@ -787,12 +808,13 @@
             if pkgs.stdenv.hostPlatform.isDarwin
             then "build/macos/app"
             else "build/linux-release/app";
-          # Mirrors the "Run native tests" CI steps. mpv-video-item needs a GPU
+          # Mirrors the "Run native tests" CI steps. Both mpv-video-item tests
+          # need a GPU, so the pattern is a prefix rather than an exact name
           # the Linux runner does not have, so CI skips it there and here.
           ctestExcludeArgs =
             if pkgs.stdenv.hostPlatform.isDarwin
             then ""
-            else "-E '^mpv-video-item$' ";
+            else "-E '^mpv-video-item' ";
           ctestJobs =
             if pkgs.stdenv.hostPlatform.isDarwin
             then "$(sysctl -n hw.ncpu)"
@@ -970,6 +992,10 @@
               export DYLD_LIBRARY_PATH="$CACHED_OUT/lib:${cachedRuntimeLibPath}''${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
               export QT_PLUGIN_PATH="${cachedQtPluginPath}"
               export QML2_IMPORT_PATH="${cachedQmlImportPath}"
+              export QT_VULKAN_LIB="''${QT_VULKAN_LIB-${cachedPkgs.vulkan-loader}/lib/libvulkan.1.dylib}"
+              if [ -z "''${VK_DRIVER_FILES+x}''${VK_ICD_FILENAMES+x}''${VK_ADD_DRIVER_FILES+x}" ]; then
+                export VK_DRIVER_FILES="${cachedPkgs.moltenvk}/share/vulkan/icd.d/MoltenVK_icd.json"
+              fi
               export QML_IMPORT_PATH="$QML2_IMPORT_PATH"
               exec "$CACHED_OUT/Applications/Spool.app/Contents/MacOS/Spool" "$@"
             '' else ''
@@ -1051,6 +1077,25 @@
             program = "${imageDebugBuilder}/bin/jellyfin-native-image-debug-build";
           };
         } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          windows-proton-build = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "spool-windows-proton-build";
+              runtimeInputs = with pkgs; [
+                umu-launcher python3 msitools gcab p7zip curl git jq
+                podman util-linux
+              ];
+              text = builtins.readFile ./tools/windows/proton-build.sh;
+            }}/bin/spool-windows-proton-build";
+          };
+          windows-proton-run = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "spool-windows-proton-run";
+              runtimeInputs = [ pkgs.umu-launcher pkgs.git ];
+              text = builtins.readFile ./tools/windows/proton-run.sh;
+            }}/bin/spool-windows-proton-run";
+          };
           android-emulator = {
             type = "app";
             program = "${android.emulator}/bin/run-test-emulator";

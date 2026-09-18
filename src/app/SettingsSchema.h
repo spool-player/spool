@@ -85,7 +85,12 @@ enum class SettingTarget {
     AutomaticUpdates,
     RenderQuality,
     AutoAdjustRenderQuality,
+    HardwareDecoding,
+    HdrOutputMode,
+    GraphicsApi,
+    HdrPeakBrightness,
     VideoOutputMode,
+    SoftwareRenderer,
 };
 
 enum class SettingNormalizer {

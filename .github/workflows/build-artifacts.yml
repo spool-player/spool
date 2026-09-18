@@ -3,7 +3,7 @@ name: build artifacts
 on:
   push:
     branches:
-      - master
+      - "**"
   pull_request:
   workflow_dispatch:
     inputs:
@@ -30,6 +30,11 @@ on:
       build_webos:
         description: "Build webOS IPK"
         required: true
+        default: false
+        type: boolean
+      release:
+        description: "Take the release path: sign with the release key and verify the signing identity. Publishes nothing."
+        required: false
         default: false
         type: boolean
       webos_toolchain_archive_url:
@@ -72,21 +77,73 @@ on:
 
 permissions:
   contents: read
+env:
+  # PRs consume public caches but never receive publishing credentials.
+  SPOOL_CACHE_WRITE: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
 concurrency:
   group: build-artifacts-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  build-policy:
+    name: Select artifact build
+    runs-on: ubuntu-24.04
+    permissions:
+      pull-requests: read
+    outputs:
+      build: ${{ steps.policy.outputs.build }}
+    steps:
+      # No checkout or repository code: this token only reads PR metadata.
+      - name: Avoid duplicate branch and PR builds
+        id: policy
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          HEAD_OWNER: ${{ github.repository_owner }}
+          HEAD_BRANCH: ${{ github.ref_name }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          RELEASE_BUILD: ${{ inputs.release }}
+        run: |
+          set -euo pipefail
+          build=true
+          if [[ "$EVENT_NAME" == push && "$REF_TYPE" == branch &&
+                "$HEAD_BRANCH" != master && "$RELEASE_BUILD" != true ]]; then
+            if prs="$(gh api --method GET --paginate --slurp \
+              "repos/$GH_REPO/pulls" \
+              -f state=open -f head="$HEAD_OWNER:$HEAD_BRANCH" -f per_page=100)"; then
+              # Match both repositories and the full branch name, not just
+              # the owner's label. Do not require a SHA match: PR metadata
+              # can lag the push while its synchronize run is being queued.
+              if jq -e --arg repo "$GH_REPO" --arg head "$HEAD_BRANCH" \
+                'any(.[][]; .state == "open" and .base.repo.full_name == $repo
+                  and .head.repo.full_name == $repo and .head.ref == $head)' \
+                <<<"$prs" >/dev/null; then
+                build=false
+                echo "::notice::An open PR owns this branch's artifact build."
+              fi
+            else
+              echo "::warning::Could not query open PRs; running the branch build rather than skipping coverage."
+            fi
+          fi
+          echo "build=$build" >>"$GITHUB_OUTPUT"
+
   toolchain:
     name: Toolchain versions
     runs-on: ubuntu-24.04
+    needs: build-policy
+    if: ${{ needs.build-policy.outputs.build == 'true' }}
     outputs:
       qt_version: ${{ steps.versions.outputs.qt_version }}
       qt_series: ${{ steps.versions.outputs.qt_series }}
       qt_windows_kit: ${{ steps.versions.outputs.qt_windows_kit }}
       ffmpeg_version: ${{ steps.versions.outputs.ffmpeg_version }}
+      qcoro_revision: ${{ steps.versions.outputs.qcoro_revision }}
+      qcoro_windows_prefix: ${{ steps.versions.outputs.qcoro_windows_prefix }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
+        with:
+          persist-credentials: false
       - name: Read the pinned Qt and FFmpeg versions
         id: versions
         run: |
@@ -96,9 +153,12 @@ jobs:
   lint:
     name: Lint scripts
     runs-on: ubuntu-24.04
+    needs: build-policy
+    if: ${{ needs.build-policy.outputs.build == 'true' }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
         with:
+          persist-credentials: false
           fetch-depth: 2
           submodules: recursive
       - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035 # v34
@@ -112,10 +172,10 @@ jobs:
           gc-max-store-size-linux: 2G
           # Stale entries under the same prefix are dead weight against the
           # shared repository quota, and nothing restores them once the key moves.
-          # A tag run does not write at all: it can read master's copy, and a
-          # second scoped copy is what filled the quota before.
-          save: ${{ !inputs.release }}
-          purge: true
+          # Release tags and PR merge refs only restore; trusted branch builds
+          # can save and prune their own GitHub cache scope.
+          save: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release }}
+          purge: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release }}
           purge-prefixes: nix-lint-${{ runner.os }}-
           purge-created: P7D
           purge-primary-key: never
@@ -136,6 +196,9 @@ jobs:
           mapfile -t scripts < <(git ls-files '*.py' | sort -u)
           printf 'checking %d scripts\n' "${#scripts[@]}"
           nix develop .#lint -c python3 -m py_compile "${scripts[@]}"
+
+      - name: Check release artifacts stay separable from build inputs
+        run: bash tools/check-release-artifacts.sh
 
       - name: Check the toolchain pin is the only Qt and FFmpeg version
         run: bash tools/toolchain-versions.sh --check
@@ -165,50 +228,65 @@ jobs:
     runs-on: ubuntu-24.04
     needs: lint
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_linux }}
-    env:
-      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
         with:
+          persist-credentials: false
           submodules: recursive
 
       - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035 # v34
         with:
           nix_conf: |
             experimental-features = nix-command flakes
+      - name: Resolve tailored Qt cache key
+        id: qt-cache-inputs
+        run: |
+          qt_derivation="$(nix eval --raw .#native-qt-cache.drvPath)"
+          echo "key=${qt_derivation##*/}" >>"$GITHUB_OUTPUT"
       - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.1
         with:
-          primary-key: nix-native-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          primary-key: nix-native-${{ runner.os }}-${{ steps.qt-cache-inputs.outputs.key }}
           restore-prefixes-first-match: nix-native-${{ runner.os }}-
           gc-max-store-size-linux: 4G
           # Cache hygiene: see the lint job above.
-          save: ${{ !inputs.release }}
-          purge: true
+          save: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release }}
+          purge: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release }}
           purge-prefixes: nix-native-${{ runner.os }}-
           purge-created: P7D
           purge-primary-key: never
       - uses: cachix/cachix-action@3ba601ff5bbb07c7220846facfa2cd81eeee15a1 # v16
-        if: ${{ env.CACHIX_AUTH_TOKEN != '' }}
         with:
           name: spool
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
           skipPush: true
-      - name: Build and cache tailored Qt
+      - name: Build tailored Qt
         run: |
           nix build --accept-flake-config .#native-qt-cache \
             --out-link "$RUNNER_TEMP/spool-native-qt" --print-build-logs
+      - name: Publish tailored Qt
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' }}
+        env:
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        run: |
           if [[ -n "$CACHIX_AUTH_TOKEN" ]]; then
-            cachix push spool "$(readlink "$RUNNER_TEMP/spool-native-qt")"
+            cachix push spool "$RUNNER_TEMP/spool-native-qt"
           fi
-      - name: Publish cached nix run package
-        if: ${{ env.CACHIX_AUTH_TOKEN != '' }}
+      - name: Build cached nix run package
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' }}
         run: |
           nix build --accept-flake-config .#native-cache \
             --out-link "$RUNNER_TEMP/spool-native" --print-build-logs
-          cachix push spool "$(readlink "$RUNNER_TEMP/spool-native")"
+      - name: Publish native cache
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' }}
+        env:
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        run: |
+          if [[ -n "$CACHIX_AUTH_TOKEN" ]]; then
+            cachix push spool "$RUNNER_TEMP/spool-native"
+          fi
 
 
-      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
+      - uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
+        id: linux-build-cache
         with:
           path: .ccache
           key: linux5-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock', 'mpv/meson.build', 'mpv/meson.options', 'tools/manifests/mpv-native.json', 'tools/manifests/ffmpeg-capabilities.json', 'tools/manifests/toolchain.json', 'tools/manifests/linuxdeploy.json', 'tools/ffmpeg-capabilities.py', 'tools/package-audit.py', 'tools/build-linux-release.sh', 'tools/package-appimage.sh', 'tools/package-linux-bundle.sh', 'tools/lib/build-common.sh', 'tools/lib/qt-deploy.sh', 'CMakeLists.txt') }}
@@ -223,7 +301,7 @@ jobs:
       - name: Run native tests
         run: |
           nix develop .#native -c ctest --test-dir build/linux-release/app \
-            -E '^mpv-video-item$' --parallel "$(nproc)" --output-on-failure
+            -E '^mpv-video-item' --parallel "$(nproc)" --output-on-failure
 
 
       - name: Lint compiled QML
@@ -341,14 +419,21 @@ jobs:
         run: bash tools/package-arch.sh
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
-        if: ${{ inputs.release || github.event_name == 'workflow_dispatch' }}
         with:
           name: spool-for-jellyfin-linux
           path: |
             dist/*.AppImage
             dist/*-linux-x86_64.tar.zst
             dist/*.pkg.tar.zst
-          retention-days: 1
+          if-no-files-found: error
+          retention-days: ${{ inputs.release && 1 || 7 }}
+
+      - name: Save Linux build cache
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release && steps.linux-build-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
+        with:
+          path: .ccache
+          key: ${{ steps.linux-build-cache.outputs.cache-primary-key }}
 
   macos-dmg:
     name: macOS DMG (${{ matrix.arch }})
@@ -357,8 +442,6 @@ jobs:
     # Public repositories receive unlimited standard GitHub-hosted runner
     # minutes, so pushes, pull requests, and releases exercise macOS too.
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_macos }}
-    env:
-      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
     strategy:
       # Apple Silicon and Intel Macs each get a native build; one failing
       # architecture should still let the other produce its DMG.
@@ -372,6 +455,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
         with:
+          persist-credentials: false
           submodules: recursive
 
       - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035 # v34
@@ -380,9 +464,8 @@ jobs:
             experimental-features = nix-command flakes
             keep-env-derivations = true
             keep-outputs = true
-            # Relocking fetches every input afresh, and nixpkgs tarballs are
-            # large enough that the default five-second connect timeout trips
-            # on a slow runner.
+            # Pinned nixpkgs archives still need a reasonable connect timeout
+            # when a runner has no local copy.
             connect-timeout = 30
             download-attempts = 5
 
@@ -398,34 +481,45 @@ jobs:
           restore-prefixes-first-match: nix-native-${{ runner.os }}-${{ matrix.arch }}-
           gc-max-store-size-macos: 8G
           # Cache hygiene: see the lint job above.
-          save: ${{ !inputs.release }}
-          purge: true
+          save: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release }}
+          purge: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release }}
           purge-prefixes: nix-native-${{ runner.os }}-${{ matrix.arch }}-
           purge-created: P7D
           purge-primary-key: never
       - uses: cachix/cachix-action@3ba601ff5bbb07c7220846facfa2cd81eeee15a1 # v16
-        if: ${{ env.CACHIX_AUTH_TOKEN != '' }}
         with:
           name: spool
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
           skipPush: true
-      - name: Build and cache tailored Qt
+      - name: Build tailored Qt
         run: |
           nix build --accept-flake-config .#native-qt-cache \
             --out-link "$RUNNER_TEMP/spool-native-qt" --print-build-logs
+      - name: Publish tailored Qt
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' }}
+        env:
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        run: |
           if [[ -n "$CACHIX_AUTH_TOKEN" ]]; then
-            cachix push spool "$(readlink "$RUNNER_TEMP/spool-native-qt")"
+            cachix push spool "$RUNNER_TEMP/spool-native-qt"
           fi
-      - name: Publish cached nix run package
-        if: ${{ env.CACHIX_AUTH_TOKEN != '' }}
+      - name: Build cached nix run package
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' }}
         run: |
           nix build --accept-flake-config .#native-cache \
             --out-link "$RUNNER_TEMP/spool-native" --print-build-logs
-          cachix push spool "$(readlink "$RUNNER_TEMP/spool-native")"
+      - name: Publish native cache
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' }}
+        env:
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        run: |
+          if [[ -n "$CACHIX_AUTH_TOKEN" ]]; then
+            cachix push spool "$RUNNER_TEMP/spool-native"
+          fi
 
 
 
-      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
+      - uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
+        id: macos-build-cache
         with:
           path: |
             build/macos/mpv
@@ -460,9 +554,8 @@ jobs:
             printf 'overriding nixpkgs with %s\n' "$url"
             overrides=(--override-input nixpkgs "$url")
           fi
-          mv flake.lock flake.lock.repository
-          # Every input is refetched here, so a single dropped connection
-          # would otherwise fail the build before it starts compiling.
+          # Preserve all unrelated pins: removing the lock refetched Qt's
+          # dependencies after the cache build and produced a different Qt.
           for attempt in 1 2 3; do
             if nix flake lock --override-input mpv-src "git+file:$PWD/mpv?rev=$revision&shallow=1" \
               ${overrides[@]+"${overrides[@]}"}; then
@@ -486,13 +579,45 @@ jobs:
       - name: Lint compiled QML
         run: nix develop .#native --no-write-lock-file -c cmake --build build/macos/app --target jellyfin-native_qmllint_strict
 
+      - name: Load bundled Vulkan runtime
+        run: |
+          python3 - <<'PY'
+          import ctypes
+          import os
+          from pathlib import Path
+
+          contents = Path("build/macos/install/Spool.app/Contents").resolve()
+          os.environ["VK_DRIVER_FILES"] = str(contents / "Resources/vulkan/icd.d/MoltenVK_icd.json")
+          # Exercise dyld, not merely the symbolic dependency audit. Neither
+          # load may fall back to a Nix/Homebrew library outside the bundle.
+          ctypes.CDLL(str(contents / "Frameworks/libMoltenVK.dylib"))
+          loader = ctypes.CDLL(str(contents / "Frameworks/libvulkan.1.dylib"))
+          class Extension(ctypes.Structure):
+              _fields_ = [("name", ctypes.c_char * 256), ("version", ctypes.c_uint32)]
+          enumerate_extensions = loader.vkEnumerateInstanceExtensionProperties
+          enumerate_extensions.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(Extension)]
+          enumerate_extensions.restype = ctypes.c_int32
+          count = ctypes.c_uint32()
+          result = enumerate_extensions(None, ctypes.byref(count), None)
+          if result != 0:
+              raise SystemExit(f"Vulkan extension enumeration failed: {result}")
+          extensions = (Extension * count.value)()
+          result = enumerate_extensions(None, ctypes.byref(count), extensions)
+          if result != 0:
+              raise SystemExit(f"Vulkan extension enumeration failed: {result}")
+          names = {entry.name.decode() for entry in extensions}
+          if "VK_EXT_metal_surface" not in names:
+              raise SystemExit(f"MoltenVK Metal surface extension missing: {sorted(names)}")
+          print("Bundled Vulkan loader and MoltenVK load successfully; Metal surface extension available")
+          PY
+
       - name: Launch-test macOS app UI
         env:
           JELLYFIN_LAUNCH_TEST_QPA_PLATFORM: cocoa
         run: nix develop .#native --no-write-lock-file -c bash tools/launch-native-app.sh build/macos/install/Spool.app
 
       - name: Sign macOS application
-        if: ${{ inputs.enable_macos_signing }}
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.enable_macos_signing }}
         env:
           MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
@@ -502,7 +627,7 @@ jobs:
       - name: Package DMG
         run: nix develop .#native --no-write-lock-file -c bash tools/package-macos-dmg.sh
       - name: Sign macOS disk image
-        if: ${{ inputs.enable_macos_signing }}
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.enable_macos_signing }}
         env:
           MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
@@ -514,25 +639,27 @@ jobs:
           mountpoint="$RUNNER_TEMP/spool-dmg"
           mkdir -p "$mountpoint"
           hdiutil attach -readonly -nobrowse -mountpoint "$mountpoint" dist/*.dmg
-          trap 'hdiutil detach "$mountpoint"' EXIT
+          trap 'bash tools/detach-dmg.sh "$mountpoint"' EXIT
           app="$(find "$mountpoint" -maxdepth 1 -name '*.app' -print -quit)"
           test -n "$app"
           python3 tools/package-audit.py inventory "$app" --output "$RUNNER_TEMP/macos-dmg.inventory.tsv"
-          python3 tools/package-audit.py macho "$app"
+          python3 tools/package-audit.py macho "$app" \
+            --root Contents/Frameworks/libvulkan.1.dylib \
+            --root Contents/Frameworks/libMoltenVK.dylib
           test -z "$(find "$app" -name '*.qmltypes' -print -quit)"
           if [[ '${{ inputs.enable_macos_signing }}' == true ]]; then
             codesign --verify --strict --deep --verbose=2 "$app"
           fi
           JELLYFIN_LAUNCH_TEST_QPA_PLATFORM=cocoa \
             bash tools/launch-native-app.sh "$app"
-          hdiutil detach "$mountpoint"
+          bash tools/detach-dmg.sh "$mountpoint"
           trap - EXIT
       - name: Package macOS analysis input
         run: |
           dmg="$(printf '%s\n' dist/*.dmg)"
           tar -czf "${dmg}.app.tar.gz" -C build/macos/install Spool.app
       - name: Notarize and staple DMG
-        if: ${{ inputs.enable_macos_signing }}
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.enable_macos_signing }}
         timeout-minutes: 20
         continue-on-error: true
         env:
@@ -542,13 +669,24 @@ jobs:
         run: tools/notarize-macos.sh dist/*.dmg
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
-        if: ${{ inputs.release || github.event_name == 'workflow_dispatch' }}
         with:
           name: spool-for-jellyfin-macos-dmg-${{ matrix.arch }}
           path: |
             dist/*.dmg
             dist/*.dmg.app.tar.gz
-          retention-days: 1
+          if-no-files-found: error
+          retention-days: ${{ inputs.release && 1 || 7 }}
+
+      - name: Save macOS build cache
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release && steps.macos-build-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
+        with:
+          path: |
+            build/macos/mpv
+            build/macos/mpv-prefix
+            build/macos/app
+            ~/Library/Caches/ccache
+          key: ${{ steps.macos-build-cache.outputs.cache-primary-key }}
 
   webos-ipk:
     name: webOS IPK
@@ -558,6 +696,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
         with:
+          persist-credentials: false
           submodules: recursive
 
       - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035 # v34
@@ -570,8 +709,8 @@ jobs:
           restore-prefixes-first-match: nix-${{ runner.os }}-
           gc-max-store-size-linux: 4G
           # Cache hygiene: see the lint job above.
-          save: ${{ !inputs.release }}
-          purge: true
+          save: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release }}
+          purge: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release }}
           purge-prefixes: nix-${{ runner.os }}-
           purge-created: P7D
           purge-primary-key: never
@@ -613,12 +752,9 @@ jobs:
             nix develop -c bash tools/webos-native/build-webos.sh "$phase"
           done
 
-      # A release runs on a tag, and a tag gets its own cache scope: anything
-      # saved here is a second copy of what master already holds, against a
-      # quota both share. A tag run can still restore master's copy, so master
-      # is left as the only writer.
+      # Tags and PR merge refs restore without creating duplicate cache copies.
       - name: Save webOS dependency cache
-        if: ${{ steps.webos-cache.outputs.cache-hit != 'true' && !inputs.release }}
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && steps.webos-cache.outputs.cache-hit != 'true' && !inputs.release }}
         uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
         with:
           path: |
@@ -723,11 +859,11 @@ jobs:
           PY
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
-        if: ${{ inputs.release || github.event_name == 'workflow_dispatch' }}
         with:
           name: spool-for-jellyfin-webos-ipk
           path: build/*.ipk
-          retention-days: 1
+          if-no-files-found: error
+          retention-days: ${{ inputs.release && 1 || 7 }}
 
   android-apks:
     name: Android ${{ matrix.abi }} APK
@@ -739,11 +875,10 @@ jobs:
         abi: [arm64-v8a, armeabi-v7a, x86_64]
     needs: lint
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_android }}
-    env:
-      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
         with:
+          persist-credentials: false
           submodules: recursive
 
       - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035 # v34
@@ -756,18 +891,21 @@ jobs:
       # #android-emulator) and native Qt Quick/desktop-only modules, but still
       # needs matching host code generators to cross-compile Qt and the app.
       - uses: cachix/cachix-action@3ba601ff5bbb07c7220846facfa2cd81eeee15a1 # v16
-        if: ${{ env.CACHIX_AUTH_TOKEN != '' }}
         with:
           name: spool
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
           skipPush: true
 
       # Realising the shell into a profile is what makes its closure a root
       # that can be pushed; without one there is nothing to name.
-      - name: Materialise and publish the Android dev shell
+      - name: Materialise the Android dev shell
         run: |
           nix develop --accept-flake-config .#android \
             --profile "$RUNNER_TEMP/android-shell" -c true
+      - name: Publish the Android dev shell
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' }}
+        env:
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        run: |
           if [[ -n "$CACHIX_AUTH_TOKEN" ]]; then
             cachix push spool "$RUNNER_TEMP/android-shell"
           fi
@@ -817,7 +955,7 @@ jobs:
             '
 
       - name: Prepare Android release keystore
-        if: ${{ inputs.release }}
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release }}
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
         run: |
@@ -828,10 +966,10 @@ jobs:
 
       - name: Build the Android APK
         env:
-          SPOOL_ANDROID_KEYSTORE_PATH: ${{ inputs.release && format('{0}/spool-release.p12', runner.temp) || '' }}
-          SPOOL_ANDROID_KEYSTORE_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
-          SPOOL_ANDROID_KEYSTORE_STORE_PASS: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
-          SPOOL_ANDROID_KEYSTORE_KEY_PASS: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
+          SPOOL_ANDROID_KEYSTORE_PATH: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release && format('{0}/spool-release.p12', runner.temp) || '' }}
+          SPOOL_ANDROID_KEYSTORE_ALIAS: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release && secrets.ANDROID_RELEASE_KEY_ALIAS || '' }}
+          SPOOL_ANDROID_KEYSTORE_STORE_PASS: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release && secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD || '' }}
+          SPOOL_ANDROID_KEYSTORE_KEY_PASS: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release && secrets.ANDROID_RELEASE_KEY_PASSWORD || '' }}
           ANDROID_ABI: ${{ matrix.abi }}
         run: nix develop .#android -c bash tools/android/build-apks.sh
 
@@ -857,7 +995,7 @@ jobs:
           PY
 
       - name: Verify Android release signing identity
-        if: ${{ inputs.release }}
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release }}
         env:
           EXPECTED_CERT_SHA256: 0c9deff0513eed6d43521df31ad6d2d8e928c029b146d902f4bcc25a883c1fb8
         run: |
@@ -871,7 +1009,7 @@ jobs:
           "
 
       - name: Save Android toolchain cache
-        if: ${{ steps.android-cache.outputs.cache-hit != 'true' && !inputs.release }}
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && steps.android-cache.outputs.cache-hit != 'true' && !inputs.release }}
         uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
         with:
           path: |
@@ -900,7 +1038,8 @@ jobs:
         with:
           name: spool-for-jellyfin-android-apks-${{ matrix.abi }}
           path: dist/android/*.apk
-          retention-days: 1
+          if-no-files-found: error
+          retention-days: ${{ inputs.release && 1 || 7 }}
 
       # The Gradle project this ABI was packaged from, without its native
       # libraries. The universal job puts the union of every ABI's libs.xml
@@ -908,7 +1047,11 @@ jobs:
       # resources.arsc that names both architectures.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
         with:
-          name: spool-for-jellyfin-android-universal-inputs-${{ matrix.abi }}
+          # Named outside the spool-* family on purpose: the release job
+          # collects every spool-* artifact, flattens them together and
+          # publishes whatever lands at the top. These are build inputs for one
+          # later job, not something anybody should be offered a download of.
+          name: internal-android-universal-inputs-${{ matrix.abi }}
           path: dist/android/universal-inputs/${{ matrix.abi }}
           retention-days: 1
 
@@ -920,10 +1063,10 @@ jobs:
     # them and then packages the two that a real device can run.
     needs: android-apks
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_android }}
-    env:
-      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
+        with:
+          persist-credentials: false
 
       - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035 # v34
         with:
@@ -931,10 +1074,8 @@ jobs:
             experimental-features = nix-command flakes
 
       - uses: cachix/cachix-action@3ba601ff5bbb07c7220846facfa2cd81eeee15a1 # v16
-        if: ${{ env.CACHIX_AUTH_TOKEN != '' }}
         with:
           name: spool
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
           skipPush: true
 
       # No x86_64: nothing that reaches a living room or a pocket runs it, and
@@ -952,16 +1093,16 @@ jobs:
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: spool-for-jellyfin-android-universal-inputs-arm64-v8a
+          name: internal-android-universal-inputs-arm64-v8a
           path: dist/android/universal-inputs/arm64-v8a
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: spool-for-jellyfin-android-universal-inputs-armeabi-v7a
+          name: internal-android-universal-inputs-armeabi-v7a
           path: dist/android/universal-inputs/armeabi-v7a
 
       - name: Prepare Android release keystore
-        if: ${{ inputs.release }}
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release }}
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
         run: |
@@ -972,10 +1113,10 @@ jobs:
 
       - name: Package the universal APK
         env:
-          SPOOL_ANDROID_KEYSTORE_PATH: ${{ inputs.release && format('{0}/spool-release.p12', runner.temp) || '' }}
-          SPOOL_ANDROID_KEYSTORE_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
-          SPOOL_ANDROID_KEYSTORE_STORE_PASS: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
-          SPOOL_ANDROID_KEYSTORE_KEY_PASS: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
+          SPOOL_ANDROID_KEYSTORE_PATH: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release && format('{0}/spool-release.p12', runner.temp) || '' }}
+          SPOOL_ANDROID_KEYSTORE_ALIAS: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release && secrets.ANDROID_RELEASE_KEY_ALIAS || '' }}
+          SPOOL_ANDROID_KEYSTORE_STORE_PASS: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release && secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD || '' }}
+          SPOOL_ANDROID_KEYSTORE_KEY_PASS: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release && secrets.ANDROID_RELEASE_KEY_PASSWORD || '' }}
         run: |
           nix develop .#android -c bash tools/android/build-universal-apk.sh \
             dist/android/spool-universal.apk \
@@ -984,7 +1125,7 @@ jobs:
             dist/android/spool-armeabi-v7a.apk
 
       - name: Verify Android release signing identity
-        if: ${{ inputs.release }}
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release }}
         env:
           EXPECTED_CERT_SHA256: 0c9deff0513eed6d43521df31ad6d2d8e928c029b146d902f4bcc25a883c1fb8
         run: |
@@ -1013,7 +1154,8 @@ jobs:
         with:
           name: spool-for-jellyfin-android-apk-universal
           path: dist/android/spool-universal.apk
-          retention-days: 1
+          if-no-files-found: error
+          retention-days: ${{ inputs.release && 1 || 7 }}
 
   windows-x64:
     name: Windows x64 portable and installer
@@ -1025,27 +1167,13 @@ jobs:
       QT_VERSION: ${{ needs.toolchain.outputs.qt_version }}
       QT_ARCH: win64_${{ needs.toolchain.outputs.qt_windows_kit }}
       JELLYFIN_QT_ROOT: C:\Qt\${{ needs.toolchain.outputs.qt_version }}\${{ needs.toolchain.outputs.qt_windows_kit }}
-      JELLYFIN_QCORO_ROOT: C:\Qt\qcoro-0.13-msvc2022
-      QCORO_REVISION: d1b52b5db2ff9560185c39a4ed9f944dc610c235
+      JELLYFIN_QCORO_ROOT: C:\Qt\${{ needs.toolchain.outputs.qcoro_windows_prefix }}
 
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
         with:
+          persist-credentials: false
           submodules: recursive
-
-      - name: Install build and packaging tools
-        shell: pwsh
-        run: |
-          choco install meson --version=1.9.1 -y --no-progress
-          choco install nasm nsis imagemagick.tool -y --no-progress
-          $env:PATH = "C:\Program Files\LLVM\bin;C:\Program Files\Meson;C:\Program Files\NASM;${env:ProgramFiles(x86)}\NSIS;$env:PATH"
-          # The launch screen carries the version, so it is rendered at
-          # configure time rather than kept in the tree.
-          foreach ($tool in @('cmake', 'ninja', 'clang', 'lld-link', 'meson', 'nasm', 'makensis', 'magick')) {
-            $command = Get-Command $tool -ErrorAction SilentlyContinue
-            if (-not $command) { throw "Required build tool is missing: $tool" }
-            Write-Host "$tool -> $($command.Source)"
-          }
 
       - name: Install upstream FFmpeg build environment
         id: msys2
@@ -1055,14 +1183,20 @@ jobs:
           path-type: inherit
           install: make diffutils pkgconf
 
+      - name: Install build and packaging tools
+        shell: pwsh
+        env:
+          MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
+        run: tools\windows\install-build-tools.ps1
+
       - name: Restore Qt and QCoro
         id: qt-cache
         uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
         with:
           path: |
             C:\Qt\${{ needs.toolchain.outputs.qt_version }}\${{ needs.toolchain.outputs.qt_windows_kit }}
-            C:\Qt\qcoro-0.13-msvc2022
-          key: windows-qt-${{ needs.toolchain.outputs.qt_version }}-qcoro-d1b52b5db2ff9560185c39a4ed9f944dc610c235-v2
+            C:\Qt\${{ needs.toolchain.outputs.qcoro_windows_prefix }}
+          key: windows-qt-${{ needs.toolchain.outputs.qt_version }}-qcoro-${{ needs.toolchain.outputs.qcoro_revision }}-${{ hashFiles('tools/manifests/qt-windows-6.11.json') }}
 
       - name: Install Qt from pinned official archives
         if: steps.qt-cache.outputs.cache-hit != 'true'
@@ -1072,39 +1206,16 @@ jobs:
       - name: Build QCoro
         if: steps.qt-cache.outputs.cache-hit != 'true'
         shell: pwsh
-        run: |
-          . tools\windows\common.ps1
-          Import-MsvcEnvironment
-          $source = Join-Path $env:RUNNER_TEMP 'qcoro'
-          $build = Join-Path $env:RUNNER_TEMP 'qcoro-build'
-          git clone --filter=blob:none --no-checkout https://github.com/danvratil/qcoro.git $source
-          git -C $source fetch --depth 1 origin $env:QCORO_REVISION
-          git -C $source checkout --detach FETCH_HEAD
-          cmake -S $source -B $build -G Ninja `
-            -DCMAKE_BUILD_TYPE=Release `
-            "-DCMAKE_PREFIX_PATH=$env:JELLYFIN_QT_ROOT" `
-            "-DCMAKE_INSTALL_PREFIX=$env:JELLYFIN_QCORO_ROOT" `
-            -DQCORO_BUILD_EXAMPLES=OFF `
-            -DQCORO_BUILD_TESTING=OFF `
-            -DQCORO_WITH_QTDBUS=OFF `
-            -DQCORO_WITH_QML=OFF `
-            -DQCORO_WITH_QTQUICK=OFF `
-            -DQCORO_WITH_QTTEST=OFF `
-            -DQCORO_WITH_QTWEBSOCKETS=OFF
-          if ($LASTEXITCODE -ne 0) { throw 'QCoro configuration failed.' }
-          cmake --build $build
-          if ($LASTEXITCODE -ne 0) { throw 'QCoro build failed.' }
-          cmake --install $build
-          if ($LASTEXITCODE -ne 0) { throw 'QCoro installation failed.' }
+        run: tools\windows\install-qcoro.ps1 -Force
 
       - name: Save Qt and QCoro
-        if: ${{ steps.qt-cache.outputs.cache-hit != 'true' && !inputs.release }}
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && steps.qt-cache.outputs.cache-hit != 'true' && !inputs.release }}
         uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
         with:
           path: |
             C:\Qt\${{ needs.toolchain.outputs.qt_version }}\${{ needs.toolchain.outputs.qt_windows_kit }}
-            C:\Qt\qcoro-0.13-msvc2022
-          key: windows-qt-${{ needs.toolchain.outputs.qt_version }}-qcoro-d1b52b5db2ff9560185c39a4ed9f944dc610c235-v2
+            C:\Qt\${{ needs.toolchain.outputs.qcoro_windows_prefix }}
+          key: windows-qt-${{ needs.toolchain.outputs.qt_version }}-qcoro-${{ needs.toolchain.outputs.qcoro_revision }}-${{ hashFiles('tools/manifests/qt-windows-6.11.json') }}
 
       - name: Read mpv revision
         id: mpv-revision
@@ -1117,7 +1228,7 @@ jobs:
         uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
         with:
           path: build/windows-deps/mpv
-          key: windows-mpv-${{ runner.os }}-${{ steps.mpv-revision.outputs.revision }}-${{ hashFiles('tools/windows/build-mpv.ps1', 'tools/windows/build-ffmpeg.ps1', 'tools/windows/build-ffmpeg.sh', 'tools/windows/check-ffmpeg.py', 'tools/windows/common.ps1', 'tools/manifests/mpv-native.json', 'tools/manifests/ffmpeg-capabilities.json', 'tools/manifests/toolchain.json', 'tools/ffmpeg-capabilities.py') }}
+          key: windows-mpv-${{ runner.os }}-${{ steps.mpv-revision.outputs.revision }}-${{ hashFiles('tools/windows/build-mpv.ps1', 'tools/windows/build-ffmpeg.ps1', 'tools/windows/build-ffmpeg.sh', 'tools/windows/check-ffmpeg.py', 'tools/windows/build-shader-tools.ps1', 'tools/windows/common.ps1', 'tools/manifests/mpv-native.json', 'tools/manifests/ffmpeg-capabilities.json', 'tools/manifests/toolchain.json', 'tools/ffmpeg-capabilities.py') }}
 
       - name: Build libmpv from the fork
         if: steps.mpv-cache.outputs.cache-hit != 'true'
@@ -1128,11 +1239,11 @@ jobs:
         run: tools\windows\build-mpv.ps1 -Clean
 
       - name: Save source-built libmpv
-        if: ${{ steps.mpv-cache.outputs.cache-hit != 'true' && !inputs.release }}
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && steps.mpv-cache.outputs.cache-hit != 'true' && !inputs.release }}
         uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
         with:
           path: build/windows-deps/mpv
-          key: windows-mpv-${{ runner.os }}-${{ steps.mpv-revision.outputs.revision }}-${{ hashFiles('tools/windows/build-mpv.ps1', 'tools/windows/build-ffmpeg.ps1', 'tools/windows/build-ffmpeg.sh', 'tools/windows/check-ffmpeg.py', 'tools/windows/common.ps1', 'tools/manifests/mpv-native.json', 'tools/manifests/ffmpeg-capabilities.json', 'tools/manifests/toolchain.json', 'tools/ffmpeg-capabilities.py') }}
+          key: windows-mpv-${{ runner.os }}-${{ steps.mpv-revision.outputs.revision }}-${{ hashFiles('tools/windows/build-mpv.ps1', 'tools/windows/build-ffmpeg.ps1', 'tools/windows/build-ffmpeg.sh', 'tools/windows/check-ffmpeg.py', 'tools/windows/build-shader-tools.ps1', 'tools/windows/common.ps1', 'tools/manifests/mpv-native.json', 'tools/manifests/ffmpeg-capabilities.json', 'tools/manifests/toolchain.json', 'tools/ffmpeg-capabilities.py') }}
 
       - name: Build application
         shell: pwsh
@@ -1148,26 +1259,23 @@ jobs:
 
 
       - name: Build portable and installer packages
-        if: ${{ inputs.release || github.event_name == 'workflow_dispatch' }}
         shell: pwsh
         run: tools\windows\package.ps1
 
       - name: Upload portable executable
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
-        if: ${{ inputs.release || github.event_name == 'workflow_dispatch' }}
         with:
           name: spool-for-jellyfin-windows-x64-portable
           path: |
             dist/*-Portable.exe
           if-no-files-found: error
-          retention-days: 1
+          retention-days: ${{ inputs.release && 1 || 7 }}
 
       - name: Upload installer executable
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
-        if: ${{ inputs.release || github.event_name == 'workflow_dispatch' }}
         with:
           name: spool-for-jellyfin-windows-x64-installer
           path: |
             dist/*-Setup.exe
           if-no-files-found: error
-          retention-days: 1
+          retention-days: ${{ inputs.release && 1 || 7 }}

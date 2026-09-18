@@ -60,6 +60,25 @@ function Get-Msys2Root {
     return $root
 }
 
+function Expand-WindowsSourceArchive {
+    param(
+        [Parameter(Mandatory)] [string] $Archive,
+        [Parameter(Mandatory)] [string] $Destination,
+        [int] $StripComponents = 0
+    )
+    $tar = Join-Path $env:SystemRoot 'System32\tar.exe'
+    if (-not (Test-Path -LiteralPath $tar)) {
+        # Wine lacks inbox bsdtar, and MSYS tar's compression subprocess
+        # cannot run reliably there. Python is already a build prerequisite.
+        & python (Join-Path $PSScriptRoot 'extract-archive.py') `
+            $Archive $Destination --strip-components $StripComponents
+        if ($LASTEXITCODE -ne 0) { throw "Extracting $Archive failed." }
+        return
+    }
+    & $tar -xf $Archive -C $Destination "--strip-components=$StripComponents"
+    if ($LASTEXITCODE -ne 0) { throw "Extracting $Archive failed." }
+}
+
 # tools\manifests\toolchain.json is the single place the Qt and FFmpeg
 # versions are set; nothing here should repeat one.
 function Get-ToolchainManifest {
@@ -72,6 +91,88 @@ function Get-DefaultQtRoot {
     return "C:\Qt\$($qt.version)\$($qt.windowsKit)"
 }
 
+function Get-DefaultQCoroRoot {
+    return "C:\Qt\$((Get-ToolchainManifest).qcoro.windowsPrefix)"
+}
+
+# Include the working tree and build contract, not just the submodule commit:
+# local edits must never reuse a DLL or disposable source mirror from before them.
+function Get-MpvSourceRevision {
+    $root = Get-RepositoryRoot
+    $mpv = Join-Path $root 'mpv'
+    $revision = & git -C $mpv rev-parse HEAD 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $revision) {
+        throw 'Cannot establish the libmpv source identity; a Git checkout is required.'
+    }
+    $files = & git -C $mpv -c core.quotePath=false ls-files --cached --others --exclude-standard
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot enumerate the libmpv working tree.' }
+    $inputs = [Collections.Generic.List[string]]::new()
+    $inputs.Add($revision.Trim())
+    foreach ($file in ($files | Sort-Object -Unique)) {
+        $path = Join-Path $mpv $file
+        $hash = if (Test-Path -LiteralPath $path -PathType Leaf) {
+            (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+        } else { 'deleted' }
+        $inputs.Add("$file=$hash")
+    }
+    foreach ($file in @(
+        'tools/windows/build-mpv.ps1', 'tools/windows/common.ps1',
+        'tools/windows/build-ffmpeg.ps1', 'tools/windows/build-ffmpeg.sh',
+        'tools/windows/check-ffmpeg.py', 'tools/windows/build-shader-tools.ps1',
+        'tools/windows/extract-archive.py',
+        'tools/manifests/mpv-native.json', 'tools/manifests/ffmpeg-capabilities.json',
+        'tools/manifests/toolchain.json', 'tools/ffmpeg-capabilities.py'
+    )) {
+        $inputs.Add("$file=$((Get-FileHash -LiteralPath (Join-Path $root $file) -Algorithm SHA256).Hash)")
+    }
+    foreach ($name in @('cl.exe', 'clang.exe', 'lld-link.exe')) {
+        $tool = Get-Command $name -ErrorAction Stop
+        $inputs.Add("$name=$((Get-FileHash -LiteralPath $tool.Source -Algorithm SHA256).Hash)")
+    }
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        return [Convert]::ToHexString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes(
+            ($inputs -join "`n")))).ToLowerInvariant()
+    } finally { $sha.Dispose() }
+}
+
+function Get-MpvRevisionStampPath {
+    param([Parameter(Mandatory)] [string] $Directory)
+    return (Join-Path $Directory '.spool-mpv-revision')
+}
+
+function Read-MpvRevisionStamp {
+    param([Parameter(Mandatory)] [string] $Directory)
+    $stamp = Get-MpvRevisionStampPath -Directory $Directory
+    if (-not (Test-Path -LiteralPath $stamp)) {
+        return $null
+    }
+    return (Get-Content -LiteralPath $stamp -Raw).Trim()
+}
+
+function Write-MpvRevisionStamp {
+    param(
+        [Parameter(Mandatory)] [string] $Directory,
+        [string] $Revision
+    )
+    if (-not $Revision) {
+        return
+    }
+    [IO.File]::WriteAllText((Get-MpvRevisionStampPath -Directory $Directory), "$Revision`n",
+        [Text.UTF8Encoding]::new($false))
+}
+
+# True when $Prefix holds a libmpv built from the submodule as it stands now.
+# Missing source identity is an error, never permission to accept an old DLL.
+function Test-MpvBuildCurrent {
+    param([Parameter(Mandatory)] [string] $Prefix)
+    if (-not (Test-Path -LiteralPath (Join-Path $Prefix 'lib\mpv.lib'))) {
+        return $false
+    }
+    $revision = Get-MpvSourceRevision
+    return ((Read-MpvRevisionStamp -Directory $Prefix) -eq $revision)
+}
+
 function Initialize-WindowsBuildEnvironment {
     Import-MsvcEnvironment
 
@@ -81,7 +182,7 @@ function Initialize-WindowsBuildEnvironment {
     }
 
     $qtRoot = if ($env:JELLYFIN_QT_ROOT) { $env:JELLYFIN_QT_ROOT } else { Get-DefaultQtRoot }
-    $qcoroRoot = if ($env:JELLYFIN_QCORO_ROOT) { $env:JELLYFIN_QCORO_ROOT } else { 'C:\Qt\qcoro-0.13-msvc2022' }
+    $qcoroRoot = if ($env:JELLYFIN_QCORO_ROOT) { $env:JELLYFIN_QCORO_ROOT } else { Get-DefaultQCoroRoot }
     $mpvRoot = if ($env:JELLYFIN_MPV_ROOT) { $env:JELLYFIN_MPV_ROOT } else { Join-Path (Get-RepositoryRoot) 'build\windows-deps\mpv' }
 
     foreach ($path in @($qtRoot, $qcoroRoot)) {
