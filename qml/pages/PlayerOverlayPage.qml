@@ -101,6 +101,8 @@ FocusScope {
         return playlistQueue || episodeQueue
     }
     readonly property var transportActions: {
+        if (audioOnly)
+            return ["prevQueue", "pause", "nextQueue"]
         const values = []
         const previousEpisode = (queueNavigationAvailable && playQueue.canGoPrevious) || episodeContextMissing
         const nextEpisode = (queueNavigationAvailable && playQueue.canGoNext) || episodeContextMissing
@@ -222,9 +224,9 @@ FocusScope {
 
     function actionTooltip(action) {
         if (action === "prevQueue")
-            return playlistQueue ? "Play previous item" : "Play previous episode"
+            return audioOnly ? "Previous track" : playlistQueue ? "Play previous item" : "Play previous episode"
         if (action === "nextQueue")
-            return playlistQueue ? "Play next item" : "Play next episode"
+            return audioOnly ? "Next track" : playlistQueue ? "Play next item" : "Play next episode"
         if (action === "back")
             return "Back 10 seconds"
         if (action === "forward")

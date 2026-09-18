@@ -50,7 +50,7 @@ FocusScope {
 
     Component.onCompleted: {
         if (search)
-        search.loadSuggestions()
+            search.loadSuggestions()
         field.text = query
         field.focusField()
     }
@@ -114,14 +114,23 @@ FocusScope {
         return showSuggestions && suggestionsRow.focusList()
     }
 
+    function activateSuggestion(index) {
+        if (index < 0)
+            return
+        ItemActivation.open(search.suggestions.get(index), {
+                                "source": "suggestion",
+                                "returnRoute": "search",
+                                "browseRoute": ""
+                            }, App, shell, search.suggestions, index)
+    }
+
     function activate() {
         if (field.activeFocus && !field.editing) {
             field.activate()
             return
         }
         if (suggestionsRow.activeFocus) {
-            if (shell && suggestionsRow.currentIndex >= 0)
-                shell.openDetailsAt(search.suggestions, suggestionsRow.currentIndex, "suggestion", "search")
+            activateSuggestion(suggestionsRow.currentIndex)
             return
         }
         results.activate()
@@ -146,10 +155,10 @@ FocusScope {
 
     readonly property real keyboardInset: {
         if (!Qt.inputMethod.visible)
-        return 0
+            return 0
         const keyboard = Qt.inputMethod.keyboardRectangle
         if (keyboard.height <= 0)
-        return 0
+            return 0
         const pageBottom = root.mapToItem(null, 0, root.height).y
         return Math.max(0, Math.min(root.height, pageBottom - keyboard.y))
     }
@@ -181,7 +190,7 @@ FocusScope {
                 enterKeyType: Qt.EnterKeySearch
                 onTextEdited: text => root.setQuery(text)
                 onAccepted: if (root.search)
-                root.search.submit()
+                                root.search.submit()
             }
 
             BusySpinner {
@@ -210,10 +219,7 @@ FocusScope {
             loading: root.suggestionsBusy
             emptyText: "Loading suggestions..."
             visible: root.query.length < 2
-            onActivated: index => {
-                if (root.shell)
-                    root.shell.openDetailsAt(model, index, "suggestion", "search")
-            }
+            onActivated: index => root.activateSuggestion(index)
         }
 
         EmptyPlaceholder {
@@ -240,7 +246,7 @@ FocusScope {
             onCurrentSectionChanged: {
                 const section = sectionAt(currentSection)
                 if (section && activeFocus)
-                root.preferredKind = String(section.key || "")
+                    root.preferredKind = String(section.key || "")
             }
             onEdgeUp: field.focusField()
             onActivated: (section, index, item) => root.activateResult(section, index, item)

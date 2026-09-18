@@ -40,6 +40,11 @@ function hasChildren(item) {
 function plan(item, context) {
     const ctx = context || ({})
     const type = itemType(item)
+    if (type === "Audio")
+        return {
+            "action": "playModel",
+            "browseRoute": ""
+        }
     if (type === "Person")
         return {
             "action": "person",

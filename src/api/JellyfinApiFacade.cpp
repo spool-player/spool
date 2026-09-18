@@ -108,7 +108,7 @@ namespace {
         if (collectionType == QStringLiteral("boxsets"))
             return QStringLiteral("BoxSet");
         if (collectionType == QStringLiteral("music"))
-            return QStringLiteral("MusicArtist,MusicAlbum,Audio");
+            return QStringLiteral("MusicAlbum");
         if (collectionType == QStringLiteral("books"))
             return QStringLiteral("Book,AudioBook");
         if (collectionType == QStringLiteral("photos"))
@@ -949,7 +949,7 @@ QCoro::Task<PagedMovieItems> JellyfinApiFacade::fetchBrowsePage(
         break;
     case BrowseKind::Genre: {
         const bool music = descriptor.collectionType == QStringLiteral("music");
-        const QString types = music ? QStringLiteral("MusicAlbum,Audio") : QStringLiteral("Movie,Series");
+        const QString types = music ? QStringLiteral("MusicAlbum") : QStringLiteral("Movie,Series");
         builder.recursive()
             .add(QStringLiteral("genres"), descriptor.name)
             .includeItemTypes(types)

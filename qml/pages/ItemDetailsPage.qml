@@ -899,6 +899,10 @@ FocusScope {
     }
 
     function openSimilarItem(index) {
+        if (index >= 0 && String(Content.detailSimilarItems.get(index).itemType || "") === "Audio") {
+            App.playFromModel(Content.detailSimilarItems, index)
+            return
+        }
         if (index >= 0 && shell)
             shell.openDetailsAt(Content.detailSimilarItems, index, "similar", detailsReturnRoute)
     }
