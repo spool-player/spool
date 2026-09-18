@@ -362,6 +362,22 @@ QByteArray MpvOptionProfile::loadFileOptions(const PlaybackSession& session)
     return QByteArrayLiteral("demuxer=lavf,demuxer-lavf-format=hls,initial-audio-sync=no");
 }
 
+bool MpvOptionProfile::needsVideoSurface(const PlaybackSession& session)
+{
+    // An audio item's embedded cover may be reported as a video stream.
+    // Artwork belongs to the now-playing UI, not a native video output.
+    if (session.itemType.compare(QStringLiteral("Audio"), Qt::CaseInsensitive) == 0)
+        return false;
+    bool hasAudio = false;
+    for (const MediaStreamInfo& stream : session.mediaStreams) {
+        if (stream.type.compare(QStringLiteral("Video"), Qt::CaseInsensitive) == 0)
+            return true;
+        if (stream.type.compare(QStringLiteral("Audio"), Qt::CaseInsensitive) == 0)
+            hasAudio = true;
+    }
+    return !hasAudio;
+}
+
 std::vector<MpvOption> MpvOptionProfile::preInitializeOptions(const MpvConfigPolicy& policy)
 {
     std::vector<MpvOption> options {
@@ -423,9 +439,9 @@ QByteArray MpvOptionProfile::systemCertificateBundle()
 #endif
 }
 
-std::vector<MpvOption> MpvOptionProfile::applicationOptions(Platform platform, const QString& audioOutputMode,
-    const QByteArray& logPath, const QByteArray& demuxerMaxBytes, const QByteArray& demuxerMaxBackBytes,
-    int parallelRequests, bool embeddedVideo, const QByteArray& shaderCachePath,
+std::vector<MpvOption> MpvOptionProfile::applicationOptions(Platform platform, bool needsVideoSurface,
+    const QString& audioOutputMode, const QByteArray& logPath, const QByteArray& demuxerMaxBytes,
+    const QByteArray& demuxerMaxBackBytes, int parallelRequests, bool embeddedVideo, const QByteArray& shaderCachePath,
     const QByteArray& certificateBundlePath, RenderQuality quality)
 {
     const bool webOS = platform == Platform::WebOS;
@@ -455,6 +471,12 @@ std::vector<MpvOption> MpvOptionProfile::applicationOptions(Platform platform, c
         { "curl-parallel-requests", QByteArray::number(network.parallelRequests) },
         { "force-window", "no" },
     };
+    if (!needsVideoSurface) {
+        // vid=no includes attached pictures; vo=null also keeps explicit track
+        // selection from creating a surface-dependent output without a wid.
+        options.push_back({ "vid", "no" });
+        options.push_back({ "audio-display", "no" });
+    }
     if (!certificateBundlePath.isEmpty())
         options.push_back({ "tls-ca-file", certificateBundlePath });
     if (!webOS) {
@@ -465,7 +487,7 @@ std::vector<MpvOption> MpvOptionProfile::applicationOptions(Platform platform, c
 
     if (webOS) {
         options.push_back({ "initial-audio-sync", embeddedVideo ? "yes" : "no" });
-        options.push_back({ "vo", embeddedVideo ? "libmpv" : "starfish" });
+        options.push_back({ "vo", !needsVideoSurface ? "null" : embeddedVideo ? "libmpv" : "starfish" });
         options.push_back({ "vd", embeddedVideo ? "lavc" : "starfish" });
         options.push_back({ "ao", starfishAudio ? "starfish,null" : "alsa,null" });
         if (!embeddedVideo)
@@ -510,7 +532,7 @@ std::vector<MpvOption> MpvOptionProfile::applicationOptions(Platform platform, c
         //
         // No render-quality options here: libplacebo is not in this path, so
         // there is nothing for them to tune.
-        options.push_back({ "vo", "mediacodec_embed" });
+        options.push_back({ "vo", needsVideoSurface ? "mediacodec_embed" : "null" });
         options.push_back({ "hwdec", "mediacodec" });
         options.push_back({ "audio-fallback-to-null", "yes" });
         if (normalizedAudioOutput != QStringLiteral("auto"))
@@ -518,7 +540,7 @@ std::vector<MpvOption> MpvOptionProfile::applicationOptions(Platform platform, c
         else
             options.push_back({ "ao", "audiotrack,opensles,null" });
     } else {
-        options.push_back({ "vo", "libmpv" });
+        options.push_back({ "vo", needsVideoSurface ? "libmpv" : "null" });
         options.push_back({ "audio-fallback-to-null", "yes" });
         // Everything above this line ran at libplacebo's defaults before,
         // which is a great deal of work for a Mali-class part to do sixty

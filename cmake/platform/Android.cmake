@@ -38,6 +38,8 @@ function(jellyfin_configure_android_targets native_target core_target)
     target_sources(${native_target} PRIVATE
         src/platform/android/AndroidNativeAppWindow.cpp
         src/platform/android/AndroidApplicationServices.cpp
+        src/platform/android/AndroidLocalMediaSession.cpp
+        src/platform/android/AndroidLocalMediaSession.h
         src/platform/android/AndroidProcessIntegration.cpp
         src/platform/UpdateController.cpp
         src/platform/UpdateController.h

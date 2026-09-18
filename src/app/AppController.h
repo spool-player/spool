@@ -135,6 +135,7 @@ public:
     Q_INVOKABLE bool openLibraryById(const QString& libraryId);
     Q_INVOKABLE void playFromModel(QObject *model, int index, bool fromStart = false);
     Q_INVOKABLE void playItemId(const QString& itemId, bool fromStart = false);
+    void stopPlayback();
     Q_INVOKABLE void playQueueNext();
     Q_INVOKABLE void playQueuePrevious();
     Q_INVOKABLE void playQueueItem(int index);

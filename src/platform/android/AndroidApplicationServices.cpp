@@ -1,5 +1,7 @@
 #include "platform/PlatformApplicationServices.h"
 
+#include "AndroidLocalMediaSession.h"
+
 #include "app/AppController.h"
 #include "player/PlayerController.h"
 
@@ -12,11 +14,13 @@ struct PlatformApplicationServices::PlatformData {
     explicit PlatformData(AppController& controller)
         : controller(&controller)
         , player(controller.player())
+        , mediaSession(controller)
     {
     }
 
     AppController *controller = nullptr;
     PlayerController *player = nullptr;
+    AndroidLocalMediaSession mediaSession;
 };
 
 PlatformApplicationServices::PlatformApplicationServices(
@@ -37,7 +41,11 @@ void PlatformApplicationServices::start()
             if (state == Qt::ApplicationActive) {
                 platform->player->resyncForForeground();
             } else if (state == Qt::ApplicationSuspended || state == Qt::ApplicationHidden) {
-                if (platform->player->sessionActive() && !platform->player->paused())
+                // Audio is protected by LocalMediaPlaybackService and must survive a
+                // hidden Activity. Future Android picture-in-picture overlay miniplayer
+                // support belongs here for video, without changing music's service owner.
+                if (platform->player->sessionActive() && !platform->player->paused()
+                    && platform->player->mediaKind() != QStringLiteral("audio"))
                     platform->player->setPaused(true);
             }
         });

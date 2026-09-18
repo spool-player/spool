@@ -26,6 +26,8 @@ public final class RemoteMediaSessionBridge {
     private static final String EXTRA_ACTION = "action";
 
     private static RemoteMediaSessionBridge activeBridge;
+    private static boolean localPlaybackActive;
+    private static final Handler MAIN = new Handler(Looper.getMainLooper());
 
     private final Activity activity;
     private final NotificationManager notifications;
@@ -33,6 +35,7 @@ public final class RemoteMediaSessionBridge {
     private final RemoteVolumeProvider volumeProvider;
     private boolean playing;
     private boolean notificationPermissionRequested;
+    private Runnable pendingUpdate;
 
     public RemoteMediaSessionBridge(Activity activity)
     {
@@ -83,6 +86,33 @@ public final class RemoteMediaSessionBridge {
     public void update(String title, String artist, String album, String targetName, long durationMs, long positionMs,
         boolean playing, double playbackRate, int volume)
     {
+        MAIN.post(() -> {
+            activeBridge = this;
+            pendingUpdate = ()
+                -> publish(title, artist, album, targetName, durationMs, positionMs, playing, playbackRate, volume);
+            if (!localPlaybackActive)
+                pendingUpdate.run();
+        });
+    }
+
+    // Local playback takes the one system-control surface. Retain remote state so
+    // returning to remote control does not need to wait for another server update.
+    static void setLocalPlaybackActive(boolean active)
+    {
+        if (localPlaybackActive == active)
+            return;
+        localPlaybackActive = active;
+        if (activeBridge == null)
+            return;
+        if (active)
+            activeBridge.hide();
+        else if (activeBridge.pendingUpdate != null)
+            activeBridge.pendingUpdate.run();
+    }
+
+    private void publish(String title, String artist, String album, String targetName, long durationMs, long positionMs,
+        boolean playing, double playbackRate, int volume)
+    {
         activeBridge = this;
         this.playing = playing;
         volumeProvider.setCurrentVolume(Math.max(0, Math.min(100, volume)));
@@ -112,12 +142,26 @@ public final class RemoteMediaSessionBridge {
 
     public void clear()
     {
+        MAIN.post(() -> {
+            pendingUpdate = null;
+            hide();
+            if (activeBridge == this)
+                activeBridge = null;
+        });
+    }
+
+    public void release()
+    {
+        clear();
+        MAIN.post(session::release);
+    }
+
+    private void hide()
+    {
         session.setPlaybackState(new PlaybackState.Builder().setState(PlaybackState.STATE_STOPPED, 0, 0.0f).build());
         session.setMetadata(null);
         session.setActive(false);
         notifications.cancel(NOTIFICATION_ID);
-        if (activeBridge == this)
-            activeBridge = null;
     }
 
     private Notification buildNotification(String title, String targetName)
@@ -212,7 +256,7 @@ public final class RemoteMediaSessionBridge {
         @Override public void onReceive(Context context, Intent intent)
         {
             RemoteMediaSessionBridge bridge = activeBridge;
-            if (bridge != null)
+            if (bridge != null && !localPlaybackActive)
                 nativeControl(intent.getIntExtra(EXTRA_ACTION, 2), 0);
         }
     }

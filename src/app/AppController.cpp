@@ -663,6 +663,16 @@ void AppController::playAlbumFrom(const MovieItem& track, bool fromStart)
         });
 }
 
+void AppController::stopPlayback()
+{
+    // A system stop can arrive between tracks, while no mpv session exists.
+    // Invalidate negotiation as well so its reply cannot restart stopped music.
+    m_playbackLoadGeneration.invalidate();
+    setPlaybackTransition(false);
+    setBusy(false);
+    m_player->stop();
+}
+
 void AppController::playQueueNext()
 {
     if (!m_playQueue->canGoNext()) {

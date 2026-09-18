@@ -38,8 +38,8 @@ std::vector<MpvOption> profileOptions(const MpvConfigPolicy& policy, MpvOptionPr
     bool embeddedVideo = false, const QByteArray& shaderCachePath = QByteArrayLiteral("/tmp/mpv-shaders"))
 {
     std::vector<MpvOption> options = MpvOptionProfile::preInitializeOptions(policy);
-    std::vector<MpvOption> applicationOptions = MpvOptionProfile::applicationOptions(platform, audioOutputMode, logPath,
-        demuxerMaxBytes, demuxerMaxBackBytes, parallelRequests, embeddedVideo, shaderCachePath);
+    std::vector<MpvOption> applicationOptions = MpvOptionProfile::applicationOptions(platform, true, audioOutputMode,
+        logPath, demuxerMaxBytes, demuxerMaxBackBytes, parallelRequests, embeddedVideo, shaderCachePath);
     options.insert(options.end(), applicationOptions.cbegin(), applicationOptions.cend());
     return options;
 }
@@ -102,7 +102,7 @@ JELLYFIN_TEST_MAIN("mpv-option-profile")
             "no candidate leaves the bundle unset rather than pointing at nothing");
 
         const std::vector<MpvOption> options = MpvOptionProfile::applicationOptions(MpvOptionProfile::Platform::Desktop,
-            QStringLiteral("auto"), QByteArrayLiteral("/tmp/mpv.log"), QByteArrayLiteral("64M"),
+            true, QStringLiteral("auto"), QByteArrayLiteral("/tmp/mpv.log"), QByteArrayLiteral("64M"),
             QByteArrayLiteral("32M"), 1, false, QByteArrayLiteral("/tmp/shaders"), QFile::encodeName(bundle));
         require(valueFor(options, "tls-ca-file") == QFile::encodeName(bundle),
             "a resolved certificate bundle must reach mpv as tls-ca-file");
@@ -166,6 +166,36 @@ JELLYFIN_TEST_MAIN("mpv-option-profile")
         "Android direct output should decode straight into that surface rather than copying back");
     require(valueFor(androidDirect, "scale").isEmpty(),
         "direct output does not reach libplacebo, so a render quality profile would be meaningless");
+
+    {
+        PlaybackSession music;
+        music.itemType = QStringLiteral("Audio");
+        MediaStreamInfo audio;
+        audio.type = QStringLiteral("Audio");
+        MediaStreamInfo picture;
+        picture.type = QStringLiteral("Video");
+        picture.codec = QStringLiteral("mjpeg");
+        music.mediaStreams = { picture, audio };
+        require(!MpvOptionProfile::needsVideoSurface(music),
+            "an audio item's attached picture must not request a video surface");
+        const auto musicOptions = MpvOptionProfile::applicationOptions(MpvOptionProfile::Platform::Android,
+            MpvOptionProfile::needsVideoSurface(music), QStringLiteral("auto"), QByteArrayLiteral("/tmp/mpv.log"));
+        require(valueFor(musicOptions, "vo") == "null" && valueFor(musicOptions, "vid") == "no"
+                && valueFor(musicOptions, "audio-display") == "no",
+            "audio playback must neither select cover art nor create a surface-dependent video output");
+
+        music.itemType.clear();
+        music.mediaStreams = { audio };
+        require(!MpvOptionProfile::needsVideoSurface(music),
+            "audio-only stream metadata must not require an item type to disable video");
+        music.itemType = QStringLiteral("MusicVideo");
+        music.mediaStreams = { picture, audio };
+        require(MpvOptionProfile::needsVideoSurface(music), "music videos must retain their video output");
+        const auto videoOptions = MpvOptionProfile::applicationOptions(MpvOptionProfile::Platform::Android,
+            MpvOptionProfile::needsVideoSurface(music), QStringLiteral("auto"), QByteArrayLiteral("/tmp/mpv.log"));
+        require(valueFor(videoOptions, "vo") == "mediacodec_embed" && valueFor(videoOptions, "vid") != "no",
+            "a video session after audio must restore direct output and video track selection");
+    }
 
     MpvConfigPolicy standardConfig;
     standardConfig.mode = MpvConfigPolicy::Mode::Standard;

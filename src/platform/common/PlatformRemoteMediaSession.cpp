@@ -40,7 +40,8 @@ namespace {
 
         ~AndroidRemoteMediaSession() override
         {
-            clear();
+            if (m_bridge.isValid())
+                m_bridge.callMethod<void>("release", "()V");
             if (androidRemoteMediaSession == this)
                 androidRemoteMediaSession.clear();
         }

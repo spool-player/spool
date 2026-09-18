@@ -129,6 +129,13 @@ Back exits playback immediately, and tapping the video outside the controls
 toggles the OSD. Android TV retains remote-oriented navigation. Future mobile
 targets can enable the same option without Android-specific QML.
 
+Music continues in the background through an Android media-playback foreground
+service, with system/lock-screen controls for play, pause, seek, queue navigation
+and stop. Audio focus loss and headphone disconnection pause playback. Local
+music takes priority over remote-control notifications while it is active.
+Video still pauses when the app is hidden; picture-in-picture overlay playback
+is not implemented.
+
 Automatic picture-quality adjustment restarts an active stream at its saved
 position, retaining pause, selected tracks and per-file sync delays. On Android,
 the ladder can ultimately switch from Enhanced to Direct MediaCodec output.

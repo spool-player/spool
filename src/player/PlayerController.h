@@ -279,10 +279,9 @@ private:
     void prepareIdleMpv();
     void destroyIdleMpv(const char *reason);
     mpv_handle *takeIdleMpvHandle();
-    bool configureAndInitializeMpv(mpv_handle *handle, bool embeddedVideo);
+    bool configureAndInitializeMpv(mpv_handle *handle, bool needsVideoSurface, bool embeddedVideo);
     void observeMpvProperties(mpv_handle *handle);
     void scheduleMpvTeardown();
-    static QString mediaKindForSession(const PlaybackSession& session);
     void handleMpvEvent(mpv_event *event);
     void startProgressReporting();
     void stopProgressReporting(bool failed = false, bool completed = false);

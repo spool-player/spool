@@ -379,7 +379,7 @@ void PlayerController::prepareIdleMpv()
         return;
     }
 
-    if (!configureAndInitializeMpv(handle, false)) {
+    if (!configureAndInitializeMpv(handle, true, false)) {
         mpv_terminate_destroy(handle);
         qWarning() << "player: idle mpv initialization failed";
         return;
@@ -409,7 +409,7 @@ mpv_handle *PlayerController::takeIdleMpvHandle()
     return handle;
 }
 
-bool PlayerController::configureAndInitializeMpv(mpv_handle *handle, bool embeddedVideo)
+bool PlayerController::configureAndInitializeMpv(mpv_handle *handle, bool needsVideoSurface, bool embeddedVideo)
 {
     if (!handle)
         return false;
@@ -429,8 +429,8 @@ bool PlayerController::configureAndInitializeMpv(mpv_handle *handle, bool embedd
         certificateBundle = MpvOptionProfile::systemCertificateBundle();
     if (certificateBundle.isEmpty())
         qWarning() << "player: no certificate bundle; playback TLS will use libcurl's built-in trust";
-    auto applicationOptions = MpvOptionProfile::applicationOptions(platform, m_audioOutputMode, mpvLogPath(),
-        m_demuxerMaxBytes, m_demuxerMaxBackBytes, parallelRequests, embeddedVideo, mpvShaderCachePath(),
+    auto applicationOptions = MpvOptionProfile::applicationOptions(platform, needsVideoSurface, m_audioOutputMode,
+        mpvLogPath(), m_demuxerMaxBytes, m_demuxerMaxBackBytes, parallelRequests, embeddedVideo, mpvShaderCachePath(),
         certificateBundle, m_renderQuality);
     applicationOptions.push_back({ "sub-fonts-dir", m_subtitleFontsPath });
     // mpv's OSD — the performance stats overlay among it — is drawn by libass
@@ -464,16 +464,14 @@ bool PlayerController::configureAndInitializeMpv(mpv_handle *handle, bool embedd
         "--terminal=no",
         "--osc=no",
     };
-    char *embeddingArguments[std::size(embeddingOptions) + 2] {};
+    char *embeddingArguments[std::size(embeddingOptions) + 4] {};
     for (size_t i = 0; i < std::size(embeddingOptions); ++i)
         embeddingArguments[i] = embeddingOptions[i];
     // --gpu-api picks one of mpv's own ra_ctx backends: a native context and
-    // swapchain of its own. Neither handle this function builds has one. Both
-    // are --vo=libmpv --wid=-1 --force-window=no, so mpv never owns a surface
-    // on desktop: the embedded handle renders into the texture Qt owns through
-    // libplacebo, and the idle handle renders nothing until it is adopted as
-    // that one. Which backend libplacebo uses comes from the render API the
-    // video item asks for, not from here.
+    // swapchain of its own. Video and idle handles use --vo=libmpv, while
+    // audio uses --vo=null below. None owns a desktop surface. The embedded
+    // handle renders into Qt's texture; its render API chooses libplacebo's
+    // backend, not this option.
     //
     // Naming an API would only constrain contexts that are never created, and
     // would name one this build may not have. Windows builds libmpv without its
@@ -486,6 +484,16 @@ bool PlayerController::configureAndInitializeMpv(mpv_handle *handle, bool embedd
     QByteArray softwareDecodeOption = QByteArrayLiteral("--hwdec=no");
     if (!m_hardwareDecoding)
         embeddingArguments[std::size(embeddingOptions)] = softwareDecodeOption.data();
+    char audioVideoOutputOption[] = "--vo=null";
+    char audioVideoTrackOption[] = "--vid=no";
+    char audioDisplayOption[] = "--audio-display=no";
+    if (!needsVideoSurface) {
+        embeddingArguments[0] = audioVideoOutputOption;
+        // Keep the argument list contiguous when hardware decoding is enabled.
+        size_t index = std::size(embeddingOptions) + (m_hardwareDecoding ? 0 : 1);
+        embeddingArguments[index++] = audioVideoTrackOption;
+        embeddingArguments[index] = audioDisplayOption;
+    }
     if (usesUserMpvConfig())
         qInfo() << "player: user mpv config enabled; embedding overrides vo, gpu-api, gpu-context,"
                    " wid, force-window, idle, keep-open, input-vo-keyboard, input-cursor, terminal and osc";
@@ -738,20 +746,6 @@ void PlayerController::updateHdrOutput(bool applySubtitleOptions)
 QString PlayerController::mediaKind() const
 {
     return m_mediaKind;
-}
-
-QString PlayerController::mediaKindForSession(const PlaybackSession& session)
-{
-    bool hasAudio = false;
-    for (const MediaStreamInfo& stream : session.mediaStreams) {
-        if (stream.type.compare(QStringLiteral("Video"), Qt::CaseInsensitive) == 0)
-            return QStringLiteral("video");
-        if (stream.type.compare(QStringLiteral("Audio"), Qt::CaseInsensitive) == 0)
-            hasAudio = true;
-    }
-    if (hasAudio || session.itemType.compare(QStringLiteral("Audio"), Qt::CaseInsensitive) == 0)
-        return QStringLiteral("audio");
-    return QStringLiteral("video");
 }
 
 bool PlayerController::paused() const
@@ -1054,8 +1048,10 @@ bool PlayerController::ensureMpv(bool needsVideoSurface, bool embeddedVideo)
     QElapsedTimer startupTimer;
     startupTimer.start();
 
-    if (embeddedVideo)
-        destroyIdleMpv("embedded software video output");
+    // The prewarmed core carries a video output profile. Audio must be
+    // initialized without one, just as embedded video needs its own profile.
+    if (embeddedVideo || !needsVideoSurface)
+        destroyIdleMpv(embeddedVideo ? "embedded software video output" : "audio-only output");
     mpv_handle *handle = takeIdleMpvHandle();
     const bool idlePrepared = handle != nullptr;
     if (!handle) {
@@ -1068,7 +1064,7 @@ bool PlayerController::ensureMpv(bool needsVideoSurface, bool embeddedVideo)
             return false;
         }
 
-        if (!configureAndInitializeMpv(handle, embeddedVideo)) {
+        if (!configureAndInitializeMpv(handle, needsVideoSurface, embeddedVideo)) {
             mpv_terminate_destroy(handle);
             m_errorText = QStringLiteral("Failed to initialize libmpv.");
             emit playbackStateChanged();
@@ -1128,8 +1124,8 @@ void PlayerController::handleVideoRenderError(const QString& message)
 
 void PlayerController::play(const PlaybackSession& session, bool startPaused)
 {
-    const QString nextMediaKind = mediaKindForSession(session);
-    const bool needsVideoSurface = nextMediaKind == QStringLiteral("video");
+    const bool needsVideoSurface = MpvOptionProfile::needsVideoSurface(session);
+    const QString nextMediaKind = needsVideoSurface ? QStringLiteral("video") : QStringLiteral("audio");
     const bool embeddedVideo = needsVideoSurface && platformUsesEmbeddedVideo(session, m_directVideoOutput);
     Diagnostics::Task task(QStringLiteral("player_play"),
         { { QStringLiteral("itemId"), session.itemId }, { QStringLiteral("title"), session.title },
@@ -1141,6 +1137,14 @@ void PlayerController::play(const PlaybackSession& session, bool startPaused)
     if (m_mpvLifecycle.handle()) {
         qInfo() << "player: tearing down stale mpv before play";
         teardownMpv();
+        if (m_mpvLifecycle.handle()) {
+            // A timed-out render-context release preserves the old core.
+            // Never load a different media kind into its output profile.
+            m_errorText = QStringLiteral("Failed to release the previous playback surface.");
+            m_statusText = QStringLiteral("Playback unavailable");
+            emit playbackStateChanged();
+            return;
+        }
     }
     resetRenderStrain();
 

@@ -49,6 +49,7 @@ public:
     static bool isHdrOutput(bool starfishOutput, bool hdrInput, const QByteArray& targetTransfer);
     static QByteArray preloadedSubtitleStreams(const PlaybackSession& session, const QString& preferredLanguage);
     static QByteArray loadFileOptions(const PlaybackSession& session);
+    static bool needsVideoSurface(const PlaybackSession& session);
     static bool useWebOSSoftwareVideo(const PlaybackSession& session);
 
     static QByteArray certificateBundle(const QStringList& candidates);
@@ -56,8 +57,9 @@ public:
     static QByteArray inputKey(int key, int modifiers, const QString& text);
 
     static std::vector<MpvOption> preInitializeOptions(const MpvConfigPolicy& policy);
-    static std::vector<MpvOption> applicationOptions(Platform platform, const QString& audioOutputMode,
-        const QByteArray& logPath, const QByteArray& demuxerMaxBytes = QByteArrayLiteral("64M"),
+    static std::vector<MpvOption> applicationOptions(Platform platform, bool needsVideoSurface,
+        const QString& audioOutputMode, const QByteArray& logPath,
+        const QByteArray& demuxerMaxBytes = QByteArrayLiteral("64M"),
         const QByteArray& demuxerMaxBackBytes = QByteArrayLiteral("32M"), int parallelRequests = 1,
         bool embeddedVideo = false, const QByteArray& shaderCachePath = {},
         const QByteArray& certificateBundlePath = {}, RenderQuality quality = RenderQuality::Balanced);
