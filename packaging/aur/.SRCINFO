@@ -15,6 +15,6 @@ pkgbase = spool-bin
 	options = !debug
 	options = !lto
 	source = https://github.com/spool-player/spool/releases/download/v0.7.18/Spool-for-Jellyfin-0.7.18-linux-x86_64.tar.zst
-	sha256sums = SKIP
+	sha256sums = 2fc5c8cc36b0c1714360bc1b6151730e1ef5fb396bed0068253f38923d52c9e6
 
 pkgname = spool-bin

@@ -20,7 +20,7 @@ _bundle="Spool-for-Jellyfin-${pkgver}-linux-x86_64"
 source=("https://github.com/spool-player/spool/releases/download/v${pkgver}/${_bundle}.tar.zst")
 # Written by tools/update-aur-checksums.sh from SHA256SUMS.txt once the release
 # above is published; SKIP until then.
-sha256sums=('SKIP')
+sha256sums=('2fc5c8cc36b0c1714360bc1b6151730e1ef5fb396bed0068253f38923d52c9e6')
 
 package() {
     install -dm755 "$pkgdir/opt/spool"
