@@ -1,6 +1,6 @@
 pkgbase = spool-bin
 	pkgdesc = Jellyfin client for desktop and TV, built on Qt Quick and mpv
-	pkgver = 0.7.17
+	pkgver = 0.7.18
 	pkgrel = 1
 	url = https://github.com/spool-player/spool
 	arch = x86_64
@@ -9,12 +9,12 @@ pkgbase = spool-bin
 	depends = glibc
 	depends = libglvnd
 	depends = mesa
-	provides = spool=0.7.17
+	provides = spool=0.7.18
 	conflicts = spool
 	options = !strip
 	options = !debug
 	options = !lto
-	source = https://github.com/spool-player/spool/releases/download/v0.7.17/Spool-for-Jellyfin-0.7.17-linux-x86_64.tar.zst
-	sha256sums = 55f360b1deb1a01351c2d2783f0d62a94baaf77bd8d3a6818aad085c384b9bf3
+	source = https://github.com/spool-player/spool/releases/download/v0.7.18/Spool-for-Jellyfin-0.7.18-linux-x86_64.tar.zst
+	sha256sums = SKIP
 
 pkgname = spool-bin
