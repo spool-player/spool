@@ -21,7 +21,7 @@ MAX_FILE = 8 * 1024 * 1024
 MAX_FILES = 512
 EXTENSIONS = {".mjs", ".js", ".qml", ".json", ".png", ".jpg", ".jpeg", ".svg", ".webp", ".ttf", ".otf", ".txt", ".map"}
 TEXT = {".mjs", ".js", ".qml", ".json", ".svg", ".txt", ".map"}
-MODULES = {"QtQuick", "QtQuick.Controls", "QtQuick.Layouts", "QtQml", "Spool.Ui"}
+MODULES = {"QtQuick", "QtQuick.Controls", "QtQuick.Layouts", "QtQml"}
 PERMISSIONS = {"network:configured-origins", "storage:source", "credentials:source"}
 CHANNELS = {"desktop", "webos", "android-direct", "google-play", "apple-bundled"}
 NATIVE_MAGIC = (b"\x7fELF", b"MZ", b"\xcf\xfa\xed\xfe", b"\xfe\xed\xfa\xcf", b"\xca\xfe\xba\xbe", b"\0asm")
@@ -72,7 +72,7 @@ def validate_manifest(manifest: dict, paths: set[str]) -> None:
             raise ValueError(f"invalid extension declarations: {key}")
     # Offered unknown extensions are harmless. Required unknown host services
     # are not: reject rather than evaluating a module that cannot work.
-    supported = {"http", "source-context", "native-list", "ui-host"}
+    supported = {"http", "source-context", "timers"}
     if not set(manifest["requires"]) <= supported:
         raise ValueError("unsupported required host extension")
     if not isinstance(manifest["entry"], str) or manifest["entry"] not in paths or not manifest["entry"].endswith(".mjs"):
