@@ -44,3 +44,11 @@ Validation does not authenticate publisher identity. A release digest or provena
 For unreleased provider development, configure `-DSPOOL_JELLYFIN_SOURCE_DIR=/absolute/path/to/spool-jellyfin`. This explicit local override uses the same source validation and resource construction path, without changing the committed pin or fetching/tagging a release. CMake watches provider logic, UI, resources and manifest changes. Clear the cache option to return to pinned bytes.
 
 Bundling this alpha source does not switch normal app operations away from the existing native Jellyfin implementation; application-level migration remains unfinished. Runtime ZIP installation still needs authenticated metadata and transactional activation/recovery.
+
+## Native source identity
+
+`ProviderRegistry` owns one runtime per registered portable module and maintains persistent source UUIDs in the existing durable database, separate from disposable caches. A host-created `(module ID, account ID, source key)` identifies the configured source across launches; changing a token, authorised origin or display label does not change that UUID. Account/source keys must be opaque identifiers, not credential-bearing URLs.
+
+`restoreSources()` restores identity and enable/disable metadata only. `configureSource()` supplies current configuration/credentials and native-authorised origins explicitly; these are not copied into the public source index or its QML snapshot. `callSource()` retains the exact source generation across the coroutine boundary. Disabling/removing a source cancels its work without changing other accounts, and removing a source does not remove the account or its credentials. Interrupted modules become unavailable without resetting other modules.
+
+The application registers its bundled portable module and restores this index after the first frame. Automatic migration of legacy account configuration and normal application browsing/playback to these contexts is not complete. The `Sources` QML singleton currently exposes only the cached public metadata snapshot; it does not expose arbitrary cross-source worker calls to provider UI.

@@ -8,6 +8,7 @@
 #include "app/RouterController.h"
 #include "app/UserItemStateController.h"
 #include "cache/DatabaseManager.h"
+#include "common/AsyncTask.h"
 #include "common/LogRotation.h"
 #include "common/TlsTrust.h"
 #include "diagnostics/Diagnostics.h"
@@ -612,6 +613,21 @@ int main(int argc, char **argv)
     // controller, which hold their parts by pointer, so they are declared
     // before them.
     JellyfinNative::ProviderRegistry providers;
+    providers.registerModule(
+        QStringLiteral("spool.jellyfin"), QStringLiteral("qrc:/providers/spool.jellyfin/logic/provider.mjs"));
+    QObject::connect(
+        &window, &QQuickWindow::frameSwapped, &providers,
+        [&providers, &database] {
+            QTimer::singleShot(3000, &providers, [&providers, &database] {
+                JellyfinNative::Async::runScoped(
+                    &providers, providers.restoreSources(&database), [] {},
+                    [](const std::exception_ptr&) {
+                        qWarning("Portable source metadata could not be restored; existing accounts were retained.");
+                    },
+                    "restore portable sources");
+            });
+        },
+        Qt::SingleShotConnection);
     auto jellyfin = std::make_unique<JellyfinNative::JellyfinProvider>(JellyfinNative::JellyfinProviderContext {
         networkAccessManager, &tlsTrust, &database, capabilities.deviceName, QString::fromLatin1(kAppVersion) });
     providers.add(jellyfin.get());
@@ -811,6 +827,7 @@ int main(int argc, char **argv)
     platformInfo->insert(QStringLiteral("splashImageUrl"), splashImageUrl(appRootPath));
     qmlRegisterSingletonInstance("JellyfinWebOS", 1, 0, "App", controller.get());
     qmlRegisterSingletonInstance("JellyfinWebOS", 1, 0, "ProviderCapabilities", providers.capabilities());
+    qmlRegisterSingletonInstance("JellyfinWebOS", 1, 0, "Sources", &providers);
     provider->registerQmlSingletons();
     qmlRegisterSingletonInstance("JellyfinWebOS", 1, 0, "Art", artworkService.get());
     qmlRegisterSingletonInstance("JellyfinWebOS", 1, 0, "Browse", controller->browse());
