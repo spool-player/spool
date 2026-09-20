@@ -737,6 +737,11 @@ int main(int argc, char **argv)
     while (providerQmlFiles.hasNext())
         providerQmlSources.append(QUrl(QStringLiteral("qrc") + providerQmlFiles.next()));
     providerQmlCache->addSources(providerQmlSources);
+    QObject::connect(providerQmlCache, &JellyfinNative::ProviderQmlCache::finished, &app,
+        [providerQmlCache, expected = providerQmlSources.size()] {
+            logLine("provider QML: warmed %d/%lld components", providerQmlCache->retainedCount(),
+                static_cast<long long>(expected));
+        });
     QObject::connect(
         &window, &QQuickWindow::frameSwapped, providerQmlCache, [providerQmlCache] { providerQmlCache->start(); },
         Qt::SingleShotConnection);
