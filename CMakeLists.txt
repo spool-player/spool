@@ -265,6 +265,7 @@ set(SPOOL_SHELL_SOURCES
     src/provider/ScriptRuntime.cpp
     src/provider/ScriptRuntime.h
     src/provider/ProviderRegistry.cpp
+    src/provider/ProviderRegistrySources.cpp
     src/provider/ProviderRegistry.h
     src/provider/RemotePlayback.h
     src/provider/SearchSource.h
@@ -815,6 +816,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         router-controller tests/app/RouterControllerTest.cpp
         library-query tests/app/LibraryQueryTest.cpp
         content-model-controller tests/app/ContentModelControllerTest.cpp
+        search-controller tests/app/SearchControllerTest.cpp
         remote-control-controller tests/app/RemoteControlControllerTest.cpp
         spool-remote-protocol tests/app/SpoolRemoteProtocolTest.cpp
         spool-link-codec tests/app/SpoolLinkCodecTest.cpp
@@ -855,6 +857,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     set(JELLYFIN_TESTS_providers
         local-provider tests/providers/LocalProviderTest.cpp
         script-runtime tests/providers/ScriptRuntimeTest.cpp
+        source-registry tests/providers/SourceRegistryTest.cpp
         provider-qml-cache tests/providers/ProviderQmlCacheTest.cpp
     )
     set(JELLYFIN_TESTS_player

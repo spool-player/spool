@@ -27,6 +27,9 @@ void SearchController::setQuery(const QString& query)
 {
     const QString trimmed = query.trimmed();
     if (m_query != trimmed) {
+        // A response arriving during debounce belongs to the old text, even
+        // though the replacement request has not been submitted yet.
+        m_searchGeneration.invalidate();
         m_query = trimmed;
         emit queryChanged();
     }
@@ -76,6 +79,7 @@ void SearchController::search(const QString& query)
 {
     const QString trimmed = query.trimmed();
     if (m_query != trimmed) {
+        m_searchGeneration.invalidate();
         m_query = trimmed;
         emit queryChanged();
     }

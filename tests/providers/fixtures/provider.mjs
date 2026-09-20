@@ -1,6 +1,7 @@
 export function createSource(config) {
     let calls = 0;
     return {
+        bump: function() { return {calls: ++calls, label: config.label}; },
         raw: function(args, host) {
             return host.http(config.origin + '/' + args.path);
         },
