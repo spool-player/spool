@@ -1,6 +1,10 @@
 #pragma once
 
 #include "Provider.h"
+#include <QCoroTask>
+#include <QUrl>
+#include <QVariantList>
+#include <memory>
 
 #include <QObject>
 #include <QString>
@@ -8,6 +12,8 @@
 #include <vector>
 
 namespace JellyfinNative {
+
+class DatabaseManager;
 
 // The active provider's capability flags as twelve booleans, registered in
 // QML as the ProviderCapabilities singleton. The property names are the
@@ -96,9 +102,22 @@ private:
 // Providers are added by whoever constructs them and are not owned here.
 class ProviderRegistry final : public QObject {
     Q_OBJECT
+    Q_PROPERTY(QVariantList configuredSources READ configuredSources NOTIFY configuredSourcesChanged)
 
 public:
     explicit ProviderRegistry(QObject *parent = nullptr);
+    ~ProviderRegistry() override;
+
+    // Portable modules are process-wide; configured source factories are
+    // independent accounts/servers. Browsing selection never owns their life.
+    void registerModule(const QString& moduleId, const QString& entryPoint);
+    QCoro::Task<void> restoreSources(DatabaseManager *database);
+    QCoro::Task<QString> configureSource(QString moduleId, QString accountId, QString sourceKey, QString label,
+        QVariantMap configuration, QList<QUrl> authorisedOrigins);
+    QCoro::Task<QVariantMap> callSource(QString sourceId, QString operation, QVariantMap arguments = {});
+    QCoro::Task<void> setSourceEnabled(QString sourceId, bool enabled);
+    QCoro::Task<void> removeSource(QString sourceId);
+    QVariantList configuredSources() const;
 
     void add(Provider *provider);
     Provider *provider(const QString& id) const;
@@ -122,9 +141,15 @@ public:
 
 signals:
     void activeChanged();
+    void configuredSourcesChanged();
+    void sourceRemoved(const QString& sourceId);
 
 private:
     void refreshCapabilities();
+    void refreshSourceSnapshot();
+    QCoro::Task<void> persistSources();
+    struct PortableState;
+    std::unique_ptr<PortableState> m_portable;
 
     std::vector<Provider *> m_providers;
     Provider *m_active = nullptr;

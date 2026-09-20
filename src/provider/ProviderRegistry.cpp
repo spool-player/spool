@@ -17,11 +17,6 @@ void ProviderCapabilities::setFlags(Provider::Capabilities flags)
     emit changed();
 }
 
-ProviderRegistry::ProviderRegistry(QObject *parent)
-    : QObject(parent)
-{
-}
-
 void ProviderRegistry::add(Provider *provider)
 {
     if (!provider || std::find(m_providers.begin(), m_providers.end(), provider) != m_providers.end())
