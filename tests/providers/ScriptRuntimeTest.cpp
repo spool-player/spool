@@ -120,6 +120,9 @@ JELLYFIN_TEST_MAIN("script-runtime")
         "native worker timers resume source Promise continuations");
     rejects(runtime->call("a", "delay", { { "milliseconds", -1 } }), "negative delay rejected");
     rejects(runtime->call("a", "delay", { { "milliseconds", 10001 } }), "timer duration is bounded");
+    rejects(runtime->call("a", "delay", { { "milliseconds", 1.5 } }), "fractional timer values are not truncated");
+    rejects(
+        runtime->call("a", "delay", { { "milliseconds", 4294967296.0 } }), "timer values cannot wrap native integers");
     rejects(runtime->call("a", "denied", { { "url", "http://127.0.0.1:1/private" } }), "unauthorised origin rejected");
     rejects(runtime->call("a", "throws"), "synchronous exceptions settle operations");
     rejects(runtime->call("a", "cycle"), "cyclic results fail bounded conversion");
