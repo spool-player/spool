@@ -116,24 +116,33 @@ JELLYFIN_TEST_MAIN("script-runtime")
         "redirects are not followed with source credentials");
     rejects(runtime->call("a", "raw", { { "path", "oversized" } }), "decompressed responses are bounded");
     rejects(runtime->call("a", "raw", { { "path", "truncated" } }), "truncated successful responses reject");
+    require(QCoro::waitFor(runtime->call("a", "delay", { { "milliseconds", 10 } })).value("completed").toBool(),
+        "native worker timers resume source Promise continuations");
+    rejects(runtime->call("a", "delay", { { "milliseconds", -1 } }), "negative delay rejected");
+    rejects(runtime->call("a", "delay", { { "milliseconds", 10001 } }), "timer duration is bounded");
     rejects(runtime->call("a", "denied", { { "url", "http://127.0.0.1:1/private" } }), "unauthorised origin rejected");
     rejects(runtime->call("a", "throws"), "synchronous exceptions settle operations");
     rejects(runtime->call("a", "cycle"), "cyclic results fail bounded conversion");
     rejects(runtime->call("a", "largeInteger"), "unsafe integer results rejected");
     rejects(runtime->call("a", "missing"), "missing feature reports unsupported operation");
+    auto pendingTimer = runtime->call("a", "delay", { { "milliseconds", 10000 } });
     cancelSlow = [&] { runtime->removeSource("a"); };
     auto pending = runtime->call("a", "raw", { { "path", "slow" } });
     rejects(std::move(pending), "source removal cancels pending operations");
+    rejects(std::move(pendingTimer), "source removal also cancels timer continuations");
     require(QCoro::waitFor(runtime->call("b", "state")).value("calls").toInt() == 2,
         "removal leaves other source operational");
     QCoro::waitFor(add("a"));
     require(QCoro::waitFor(runtime->call("a", "state")).value("calls").toInt() == 0,
         "replacement gets a fresh source generation");
+    rejects(runtime->call("b", "never"), "operation deadline settles a Promise that never resolves");
+    require(QCoro::waitFor(runtime->call("b", "state")).value("calls").toInt() == 2,
+        "timing out one operation does not disable the source");
     auto shutdownPending = runtime->call("b", "never");
     runtime.reset();
     rejects(std::move(shutdownPending), "shutdown settles retained operations");
 
-    for (const QString method : { QStringLiteral("spin"), QStringLiteral("asyncSpin") }) {
+    for (const QString method : { QStringLiteral("spin"), QStringLiteral("asyncSpin"), QStringLiteral("timerSpin") }) {
         ScriptRuntime runaway(entry);
         QCoro::waitFor(runaway.addSource("a", {}, {}));
         QElapsedTimer elapsed;

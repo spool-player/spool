@@ -212,6 +212,29 @@ public:
         // error is a stable code, never the untrusted exception's string value.
         cancel("provider_error");
     }
+    Q_INVOKABLE void delay(int milliseconds, QJSValue resolveCallback, QJSValue rejectCallback)
+    {
+        if (settled)
+            return;
+        if (milliseconds < 0 || milliseconds > 10000 || timers.size() >= 16) {
+            rejectCallback.call({ engine->toScriptValue(QStringLiteral("timer_limit")) });
+            return;
+        }
+        auto *timer = new QTimer(this);
+        timer->setSingleShot(true);
+        timers.insert(timer);
+        connect(timer, &QTimer::timeout, this, [this, timer, resolveCallback]() mutable {
+            timers.remove(timer);
+            timer->deleteLater();
+            if (settled)
+                return;
+            watchdog->arm();
+            resolveCallback.call();
+            if (engine->isInterrupted())
+                cancel("script_interrupted");
+        });
+        timer->start(milliseconds);
+    }
     Q_INVOKABLE void request(
         const QString& address, const QVariantMap& options, QJSValue resolveCallback, QJSValue rejectCallback)
     {
@@ -296,6 +319,11 @@ private:
     void release()
     {
         deadline.stop();
+        const auto pendingTimers = std::exchange(timers, {});
+        for (QTimer *timer : pendingTimers) {
+            timer->stop();
+            timer->deleteLater();
+        }
         const auto pending = std::exchange(replies, {});
         for (QNetworkReply *reply : pending) {
             disconnect(reply, nullptr, this, nullptr);
@@ -311,6 +339,7 @@ private:
     QList<QUrl> origins;
     QTimer deadline;
     QSet<QNetworkReply *> replies;
+    QSet<QTimer *> timers;
     bool settled = false;
 };
 
@@ -350,6 +379,11 @@ public:
                     http: function(url, options) {
                         return new Promise(function(resolve, reject) {
                             bridge.request(url, options || {}, resolve, reject);
+                        });
+                    },
+                    delay: function(milliseconds) {
+                        return new Promise(function(resolve, reject) {
+                            bridge.delay(milliseconds, resolve, reject);
                         });
                     }
                 });

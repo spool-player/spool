@@ -4,6 +4,12 @@ export function createSource(config) {
         raw: function(args, host) {
             return host.http(config.origin + '/' + args.path);
         },
+        delay: function(args, host) {
+            return host.delay(args.milliseconds).then(function() { return {completed: true}; });
+        },
+        timerSpin: function(args, host) {
+            return host.delay(10).then(function() { while (true) {} });
+        },
         page: function(args, host) {
             return host.http(config.origin + '/items', {
                 headers: {Authorization: config.token}

@@ -8,13 +8,15 @@ An ES module exports `createSource(configuration)`, returning an object whose ow
 
 `host.http(url, {method, headers, body})` returns a Promise for `{status, body}`. The source's authorised HTTP(S) origins are selected by native code. Redirects are returned to the provider, not automatically followed. Cookies are neither loaded nor saved implicitly. HTTP error statuses remain inspectable; transport failure rejects. Parse and normalise response text in the worker. Never return backend response payloads indiscriminately.
 
+`host.delay(milliseconds)` supplies a worker-owned one-shot Promise timer for protocol polling/backoff. Delays are limited to 0–10,000 ms and 16 outstanding timers per operation. Timers are cancelled with their owning operation/source; they never become process-global recurring polling.
+
 Native limits: 8 MiB decoded HTTP responses; 1 MiB request bodies; four concurrent HTTP requests per operation; eight operations per source; 32 active operations and 64 queued submissions per runtime; 16 source objects per runtime. Operation deadline is 15 seconds, transport inactivity deadline 10 seconds, and uninterrupted JS execution budget 500 ms. The watchdog covers Promise continuations as well as direct calls. Exceeding execution budget disables the module; create a fresh runtime for explicit recovery.
 
 Results are plain owned native values, bounded to 50,000 values, nesting depth 20, arrays of 10,000 elements and 4 MiB of string data. Non-finite and unsafe numeric values are rejected. Represent large counters and exact timestamps as decimal strings. IDs are opaque strings. Source IDs are host authority, not provider-controlled credential selectors.
 
 Removing a source cancels its outstanding native requests and completes pending operations with an error. Other sources remain available. Shutdown also completes outstanding operations. Native callers receive `QCoro::Task<QVariantMap>` on their calling thread. There are no cross-thread `QJSValue` objects.
 
-This is a trusted/reviewed in-process execution profile, **not a sandbox**. Timers, durable secret/storage services, module manager and UI-to-worker RPC are not yet public services. Do not declare that the full portable-provider plan is implemented by this runtime alone.
+This is a trusted/reviewed in-process execution profile, **not a sandbox**. Durable secret/storage services, module manager and UI-to-worker RPC are not yet public services. Do not declare that the full portable-provider plan is implemented by this runtime alone.
 
 ## Contract runner
 
