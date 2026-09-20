@@ -45,7 +45,8 @@ class PackageTest(unittest.TestCase):
         self.assertIn("logic/provider.mjs", files)
 
     def test_required_extensions_permissions_and_api_fail_closed(self):
-        for key, value in (("requires", {"unknown": "0.1"}), ("permissions", ["shell"]), ("api", "0.2"), ("format", 2)):
+        for key, value in (("requires", {"unknown": "0.1"}), ("requires", {"ui-host": "0.1"}),
+                           ("requires", {"native-list": "0.1"}), ("permissions", ["shell"]), ("api", "0.2"), ("format", 2)):
             with self.subTest(key=key):
                 files = fixture()
                 manifest = json.loads(files["manifest.json"])
@@ -80,6 +81,15 @@ class PackageTest(unittest.TestCase):
             package.read_package(self.archive(files))
         files = fixture()
         files["ui/Hidden.qml"] = b"import QtQuick\nItem {}"
+        with self.assertRaises(ValueError):
+            package.read_package(self.archive(files))
+
+    def test_unavailable_public_ui_module_rejected(self):
+        files = fixture()
+        manifest = json.loads(files["manifest.json"])
+        manifest["ui"] = {"modules": ["Spool.Ui"], "components": ["ui/Page.qml"]}
+        files["manifest.json"] = json.dumps(manifest).encode()
+        files["ui/Page.qml"] = b"import Spool.Ui\nPage {}"
         with self.assertRaises(ValueError):
             package.read_package(self.archive(files))
 
