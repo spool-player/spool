@@ -26,6 +26,7 @@
 #include "player/MpvVideoItem.h"
 #include "player/PlayerController.h"
 #include "provider/Provider.h"
+#include "provider/ProviderQmlCache.h"
 #include "provider/ProviderRegistry.h"
 #include "providers/local/LocalProvider.h"
 #if defined(SPOOL_ANDROID) || defined(JELLYFIN_NATIVE_WEBOS)
@@ -38,6 +39,7 @@
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
+#include <QDirIterator>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
@@ -728,6 +730,18 @@ int main(int argc, char **argv)
 
     // Parented to the engine so it outlives every incubator and dies with it.
     window.engine()->setIncubationController(new BoostedIncubationController(window.engine()));
+    auto *providerQmlCache = new JellyfinNative::ProviderQmlCache(window.engine());
+    QList<QUrl> providerQmlSources;
+    QDirIterator providerQmlFiles(QStringLiteral(":/qt/qml/JellyfinWebOS/qml/providers"), { QStringLiteral("*.qml") },
+        QDir::Files, QDirIterator::Subdirectories);
+    while (providerQmlFiles.hasNext())
+        providerQmlSources.append(QUrl(QStringLiteral("qrc") + providerQmlFiles.next()));
+    providerQmlCache->addSources(providerQmlSources);
+    QObject::connect(
+        &window, &QQuickWindow::frameSwapped, providerQmlCache, [providerQmlCache] { providerQmlCache->start(); },
+        Qt::SingleShotConnection);
+    QObject::connect(controller.get(), &JellyfinNative::AppController::aggressiveMemoryPressure, providerQmlCache,
+        &JellyfinNative::ProviderQmlCache::clear);
     window.engine()->addImageProvider(
         QStringLiteral("artwork"), new JellyfinNative::ArtworkImageProvider(artworkService.get()));
     window.engine()->addImageProvider(QStringLiteral("mpv-overlay"), window.createOverlayImageProvider());
