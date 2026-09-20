@@ -341,6 +341,42 @@ qt_add_executable(jellyfin-native
     src/app/GraphicsStartup.h
 )
 
+# Bundle immutable, verified source bytes. This resource path also exercises
+# source loading with no developer-generated QML/JS cache in provider tests.
+find_package(Python3 3.11 REQUIRED COMPONENTS Interpreter)
+set(SPOOL_JELLYFIN_SOURCE_DIR "" CACHE PATH "Explicit development override for the portable Jellyfin source")
+set(SPOOL_PROVIDER_RESOURCE_DIR "${CMAKE_CURRENT_BINARY_DIR}/portable-providers")
+set(spool_provider_bundle_args
+    "${CMAKE_CURRENT_SOURCE_DIR}/providers/lock.json" "${SPOOL_PROVIDER_RESOURCE_DIR}")
+if(SPOOL_JELLYFIN_SOURCE_DIR)
+    list(APPEND spool_provider_bundle_args --jellyfin-source "${SPOOL_JELLYFIN_SOURCE_DIR}")
+    file(GLOB_RECURSE spool_provider_override_files CONFIGURE_DEPENDS
+        "${SPOOL_JELLYFIN_SOURCE_DIR}/logic/*"
+        "${SPOOL_JELLYFIN_SOURCE_DIR}/ui/*"
+        "${SPOOL_JELLYFIN_SOURCE_DIR}/resources/*")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        ${spool_provider_override_files}
+        "${SPOOL_JELLYFIN_SOURCE_DIR}/manifest.json"
+        "${SPOOL_JELLYFIN_SOURCE_DIR}/LICENSE"
+        "${SPOOL_JELLYFIN_SOURCE_DIR}/NOTICE")
+endif()
+file(GLOB spool_provider_archives CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/providers/bundled/*.zip")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/providers/lock.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/bundle-providers.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/provider-package.py"
+    ${spool_provider_archives})
+execute_process(
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/bundle-providers.py"
+        ${spool_provider_bundle_args}
+    RESULT_VARIABLE spool_provider_bundle_result
+    ERROR_VARIABLE spool_provider_bundle_error
+    OUTPUT_QUIET)
+if(NOT spool_provider_bundle_result EQUAL 0)
+    message(FATAL_ERROR "Bundling provider sources failed: ${spool_provider_bundle_error}")
+endif()
+target_sources(jellyfin-native PRIVATE "${SPOOL_PROVIDER_RESOURCE_DIR}/providers.qrc")
+
 set(JELLYFIN_NATIVE_TARGETS jellyfin-core jellyfin-native)
 jellyfin_configure_platform_targets(jellyfin-native jellyfin-core)
 foreach(target IN LISTS JELLYFIN_NATIVE_TARGETS)
@@ -904,11 +940,16 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         endforeach()
     endforeach()
 
-    find_package(Python3 REQUIRED COMPONENTS Interpreter)
     add_test(NAME provider-package
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/provider_package_test.py")
     add_executable(provider-contract-runner sdk/provider-contract-runner.cpp)
     target_link_libraries(provider-contract-runner PRIVATE Qt6::Core Qt6::Qml)
+    target_sources(provider-contract-runner PRIVATE "${SPOOL_PROVIDER_RESOURCE_DIR}/providers.qrc")
+    add_test(NAME bundled-jellyfin
+        COMMAND provider-contract-runner "${CMAKE_CURRENT_SOURCE_DIR}/tests/providers/fixtures/bundled-jellyfin.mjs")
+    add_test(NAME bundled-jellyfin-interpreter
+        COMMAND provider-contract-runner "${CMAKE_CURRENT_SOURCE_DIR}/tests/providers/fixtures/bundled-jellyfin.mjs")
+    set_tests_properties(bundled-jellyfin-interpreter PROPERTIES ENVIRONMENT "QV4_FORCE_INTERPRETER=1")
     if(JELLYFIN_NATIVE_WEBOS)
         set(JELLYFIN_FFMPEG_AUDIT_PLATFORM webos)
     elseif(APPLE)

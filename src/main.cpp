@@ -746,10 +746,12 @@ int main(int argc, char **argv)
     window.engine()->setIncubationController(new BoostedIncubationController(window.engine()));
     auto *providerQmlCache = new JellyfinNative::ProviderQmlCache(window.engine());
     QList<QUrl> providerQmlSources;
-    QDirIterator providerQmlFiles(QStringLiteral(":/qt/qml/JellyfinWebOS/qml/providers"), { QStringLiteral("*.qml") },
-        QDir::Files, QDirIterator::Subdirectories);
-    while (providerQmlFiles.hasNext())
-        providerQmlSources.append(QUrl(QStringLiteral("qrc") + providerQmlFiles.next()));
+    for (const QString& root :
+        { QStringLiteral(":/qt/qml/JellyfinWebOS/qml/providers"), QStringLiteral(":/providers") }) {
+        QDirIterator providerQmlFiles(root, { QStringLiteral("*.qml") }, QDir::Files, QDirIterator::Subdirectories);
+        while (providerQmlFiles.hasNext())
+            providerQmlSources.append(QUrl(QStringLiteral("qrc") + providerQmlFiles.next()));
+    }
     providerQmlCache->addSources(providerQmlSources);
     QObject::connect(providerQmlCache, &JellyfinNative::ProviderQmlCache::finished, &app,
         [providerQmlCache, expected = providerQmlSources.size()] {
