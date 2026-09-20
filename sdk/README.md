@@ -36,3 +36,11 @@ The test module exports `run()`, returning a Promise or throwing on failure. It 
 `tools/provider-package.py build PATH --output provider.zip` creates a deterministic source ZIP. `validate provider.zip` checks its manifest, required host features, known permissions, declared UI components/imports, paths, file types and size limits. Unknown offered and optional extensions are allowed; missing required extensions reject the package. Every QML component must be listed so it can be validated and warmed.
 
 Validation does not authenticate publisher identity. A release digest or provenance attestation is not a substitute for an authenticated catalogue with freshness, rotation and revocation. The application does not yet install or activate these ZIPs. Do not enable downloaded code in store builds on the strength of this tool.
+
+## Bundled sources and development overrides
+
+`providers/lock.json` pins the provider repository revision, source ZIP size and SHA-256. Normal CMake configuration validates the checked-in ZIP and embeds the exact source files under `qrc:/providers/<module-id>/`. It never downloads a mutable latest release. The bundled Jellyfin source contract is executed in both normal and interpreter-only Qt modes by ctest.
+
+For unreleased provider development, configure `-DSPOOL_JELLYFIN_SOURCE_DIR=/absolute/path/to/spool-jellyfin`. This explicit local override uses the same source validation and resource construction path, without changing the committed pin or fetching/tagging a release. CMake watches provider logic, UI, resources and manifest changes. Clear the cache option to return to pinned bytes.
+
+Bundling this alpha source does not switch normal app operations away from the existing native Jellyfin implementation; application-level migration remains unfinished. Runtime ZIP installation still needs authenticated metadata and transactional activation/recovery.

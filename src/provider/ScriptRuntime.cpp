@@ -382,6 +382,8 @@ public:
                         });
                     },
                     delay: function(milliseconds) {
+                        if (!Number.isInteger(milliseconds) || milliseconds < 0 || milliseconds > 10000)
+                            return Promise.reject("timer_limit");
                         return new Promise(function(resolve, reject) {
                             bridge.delay(milliseconds, resolve, reject);
                         });

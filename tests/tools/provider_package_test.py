@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import importlib.util
+import hashlib
 import json
 import pathlib
 import stat
@@ -11,6 +12,9 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location("provider_package", ROOT / "tools/provider-package.py")
 package = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(package)
+bundle_spec = importlib.util.spec_from_file_location("bundle_providers", ROOT / "tools/bundle-providers.py")
+bundle = importlib.util.module_from_spec(bundle_spec)
+bundle_spec.loader.exec_module(bundle)
 
 
 def fixture():
@@ -98,6 +102,30 @@ class PackageTest(unittest.TestCase):
             package.build(source, b)
             self.assertEqual(a.read_bytes(), b.read_bytes())
             self.assertEqual(package.read_package(a)[1], fixture())
+
+    def test_build_rejects_changed_pin_and_mismatched_identity(self):
+        archive = self.archive(fixture())
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            target = root / "provider.zip"
+            target.write_bytes(archive.read_bytes())
+            valid = {"id": "test.provider", "version": "0.1.0", "repository": "https://example.invalid/provider",
+                     "revision": "a" * 40, "archive": "provider.zip", "size": target.stat().st_size,
+                     "sha256": hashlib.sha256(target.read_bytes()).hexdigest()}
+            lock = root / "lock.json"
+            for key, value in (("sha256", "0" * 64), ("size", valid["size"] + 1),
+                               ("id", "different.provider"), ("version", "0.1.1")):
+                with self.subTest(key=key):
+                    pin = dict(valid)
+                    pin[key] = value
+                    lock.write_text(json.dumps({"format": 1, "providers": [pin]}))
+                    with self.assertRaises(ValueError):
+                        bundle.materialize(lock, root / "output")
+                    self.assertFalse((root / "output/providers.qrc").exists())
+            lock.write_text(json.dumps({"format": 1, "providers": [valid]}))
+            bundle.materialize(lock, root / "output")
+            self.assertEqual((root / "output/test.provider/logic/provider.mjs").read_bytes(),
+                             fixture()["logic/provider.mjs"])
 
 
 if __name__ == "__main__":
