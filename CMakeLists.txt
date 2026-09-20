@@ -260,6 +260,10 @@ set(SPOOL_SHELL_SOURCES
     src/provider/GroupPlayback.h
     src/provider/PlaybackSource.h
     src/provider/Provider.h
+    src/provider/ProviderQmlCache.cpp
+    src/provider/ProviderQmlCache.h
+    src/provider/ScriptRuntime.cpp
+    src/provider/ScriptRuntime.h
     src/provider/ProviderRegistry.cpp
     src/provider/ProviderRegistry.h
     src/provider/RemotePlayback.h
@@ -814,6 +818,8 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     endif()
     set(JELLYFIN_TESTS_providers
         local-provider tests/providers/LocalProviderTest.cpp
+        script-runtime tests/providers/ScriptRuntimeTest.cpp
+        provider-qml-cache tests/providers/ProviderQmlCacheTest.cpp
     )
     set(JELLYFIN_TESTS_player
         playback-timeline tests/player/PlaybackTimelineTest.cpp
@@ -899,6 +905,10 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     endforeach()
 
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME provider-package
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/provider_package_test.py")
+    add_executable(provider-contract-runner sdk/provider-contract-runner.cpp)
+    target_link_libraries(provider-contract-runner PRIVATE Qt6::Core Qt6::Qml)
     if(JELLYFIN_NATIVE_WEBOS)
         set(JELLYFIN_FFMPEG_AUDIT_PLATFORM webos)
     elseif(APPLE)
