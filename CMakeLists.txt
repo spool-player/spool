@@ -304,6 +304,8 @@ set(SPOOL_JELLYFIN_SOURCES
     src/api/PlaybackBandwidthPolicy.h
     src/api/PlaybackNegotiation.cpp
     src/api/PlaybackNegotiation.h
+    src/api/ProviderBenchmark.cpp
+    src/api/ProviderBenchmark.h
     src/app/LibraryManagementController.cpp
     src/app/LibraryManagementController.h
     src/app/QuickConnectController.cpp
