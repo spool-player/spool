@@ -12,6 +12,8 @@
 
 #include <vector>
 
+class QNetworkAccessManager;
+
 namespace JellyfinNative {
 
 class DatabaseManager;
@@ -104,6 +106,12 @@ private:
 class ProviderRegistry final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QVariantList configuredSources READ configuredSources NOTIFY configuredSourcesChanged)
+    Q_PROPERTY(bool isInstalling READ isInstalling NOTIFY installStatusChanged)
+    Q_PROPERTY(QString installStatus READ installStatus NOTIFY installStatusChanged)
+    Q_PROPERTY(int installProgress READ installProgress NOTIFY installStatusChanged)
+    Q_PROPERTY(QString installError READ installError NOTIFY installStatusChanged)
+    Q_PROPERTY(QVariantList availableProviders READ availableProviders NOTIFY availableProvidersChanged)
+    Q_PROPERTY(bool hasInstalledProviders READ hasInstalledProviders NOTIFY installedProvidersChanged)
 
 public:
     explicit ProviderRegistry(QObject *parent = nullptr);
@@ -117,12 +125,30 @@ public:
         QVariantMap configuration, QList<QUrl> authorisedOrigins);
     QCoro::Task<QVariantMap> callSource(
         QString sourceId, QString operation, QVariantMap arguments = {}, QString scope = {});
-    QCoro::Task<ProviderMediaPage> callSourceMediaPage(QString sourceId, QString operation,
-        QVariantMap arguments = {}, QString scope = {}, int maximumItems = 100);
+    QCoro::Task<ProviderMediaPage> callSourceMediaPage(
+        QString sourceId, QString operation, QVariantMap arguments = {}, QString scope = {}, int maximumItems = 100);
     void cancelSourceScope(const QString& sourceId, const QString& scope);
     QCoro::Task<void> setSourceEnabled(QString sourceId, bool enabled);
     QCoro::Task<void> removeSource(QString sourceId);
     QVariantList configuredSources() const;
+
+    void setNetworkAccessManager(QNetworkAccessManager *network);
+    void setProvidersDirectory(const QString& path);
+    QString providersDirectory() const;
+    void scanInstalledModules();
+    bool hasModule(const QString& moduleId) const;
+    QCoro::Task<bool> downloadAndInstallProvider(QString moduleId, QUrl url = QUrl());
+
+    bool isInstalling() const;
+    QString installStatus() const;
+    int installProgress() const;
+    QString installError() const;
+    QVariantList availableProviders() const;
+    bool hasInstalledProviders() const;
+
+    Q_INVOKABLE bool isInstalled(const QString& moduleId) const;
+    Q_INVOKABLE void installProvider(const QString& moduleId);
+    Q_INVOKABLE bool switchProvider(const QString& providerId);
 
     void add(Provider *provider);
     Provider *provider(const QString& id) const;
@@ -148,6 +174,10 @@ signals:
     void activeChanged();
     void configuredSourcesChanged();
     void sourceRemoved(const QString& sourceId);
+    void installStatusChanged();
+    void availableProvidersChanged();
+    void installedProvidersChanged();
+    void providerInstalled(const QString& moduleId);
 
 private:
     void refreshCapabilities();
