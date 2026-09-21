@@ -30,6 +30,8 @@ FocusScope {
         switch (nextRoute) {
         case "login":
             return "login"
+        case "providerPicker":
+            return "providerPicker"
         case "libraryGrid":
             return "libraryGrid"
         case "itemDetails":
@@ -55,6 +57,8 @@ FocusScope {
         switch (key) {
         case "login":
             return Qt.resolvedUrl("../providers/jellyfin/LoginPage.qml")
+        case "providerPicker":
+            return Qt.resolvedUrl("../pages/ProviderPickerPage.qml")
         case "libraryGrid":
             return Qt.resolvedUrl("../pages/LibraryGridPage.qml")
         case "itemDetails":
@@ -186,7 +190,7 @@ FocusScope {
     }
 
     function dropTransientPages() {
-        for (const key of ["login"]) {
+        for (const key of ["login", "providerPicker"]) {
             const loader = pages[key]
             if (loader && loader !== activeLoader) {
                 delete pages[key]

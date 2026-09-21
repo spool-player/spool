@@ -17,6 +17,7 @@ FocusScope {
 
     readonly property var profiles: Session.accountProfiles
     readonly property int profileCount: profiles.length
+    readonly property int totalItemCount: root.profileCount + 2
     // Tiles take the room a lane offers, but never more room than there is:
     // a pane narrower than one tile shrinks the tile rather than clipping it.
     readonly property int tileSize: {
@@ -29,6 +30,7 @@ FocusScope {
 
     signal profileChosen(string profileId)
     signal addRequested
+    signal changeProviderRequested
     signal contextRequested(string profileId, Item anchor, string serverName, string serverUrl)
 
     function controls() {
@@ -50,7 +52,7 @@ FocusScope {
             return false
         const direction = key === Qt.Key_Left ? "left" : key === Qt.Key_Right ? "right" : key === Qt.Key_Up ? "up" :
                                                                                                               "down"
-        const next = ProfileNavigation.move(grid.currentIndex, root.profileCount, grid.columnCount(), direction)
+        const next = ProfileNavigation.move(grid.currentIndex, root.totalItemCount - 1, grid.columnCount(), direction)
         if (next < 0 || next === grid.currentIndex)
             return false
         grid.currentIndex = next
@@ -103,8 +105,8 @@ FocusScope {
             // Whole cells, and never more of them than there are tiles to put in
             // them: sizing to the columns the pane could hold left a row of two
             // accounts hugging the left edge of four columns of empty space.
-            readonly property int columnsInUse: Math.max(1, Math.min(root.profileCount + 1, Math.floor(parent.width
-                                                                                                       / cellSpan)))
+            readonly property int columnsInUse: Math.max(1, Math.min(root.totalItemCount, Math.floor(parent.width
+                                                                                                     / cellSpan)))
 
             anchors.top: parent.top
             anchors.topMargin: content.headingSpan
@@ -117,7 +119,7 @@ FocusScope {
             focus: false
             keyNavigationEnabled: false
             boundsBehavior: Flickable.StopAtBounds
-            model: root.profileCount + 1
+            model: root.totalItemCount
             currentIndex: 0
             onCountChanged: if (currentIndex >= count)
                                 currentIndex = Math.max(0, count - 1)
@@ -148,6 +150,8 @@ FocusScope {
                 required property int index
 
                 readonly property var profile: cell.index < root.profileCount ? root.profiles[cell.index] : null
+                readonly property bool isAddTile: cell.index === root.profileCount
+                readonly property bool isProviderTile: cell.index === root.profileCount + 1
 
                 width: grid.cellWidth
                 height: grid.cellHeight
@@ -166,9 +170,14 @@ FocusScope {
                     anchors.top: parent.top
                     anchors.topMargin: root.cellPadding
                     tileSize: root.tileSize
-                    addTile: cell.profile === null
-                    username: cell.profile ? String(cell.profile.userName || "Saved account") : "Add account"
-                    serverName: cell.profile ? String(cell.profile.serverName || "Jellyfin Server") : ""
+                    addTile: cell.isAddTile
+                    actionTile: cell.isProviderTile
+                    actionIcon: "swap_horiz"
+                    providerName: cell.profile ? "Jellyfin" : ""
+                    username: cell.profile ? String(cell.profile.userName || "Saved account") : (cell.isAddTile ? "Add account" :
+                                                                                                                  "Change provider")
+                    serverName: cell.profile ? String(cell.profile.serverName || "Jellyfin Server") : (
+                                                   cell.isProviderTile ? "Switch media source" : "")
                     serverAddress: cell.profile ? String(cell.profile.serverHost || cell.profile.serverUrl || "") : ""
                     needsSignIn: cell.profile ? Boolean(cell.profile.needsAuthentication) : false
                     focused: cell.GridView.isCurrentItem && grid.activeFocus
@@ -177,8 +186,10 @@ FocusScope {
                         InputKeys.focus(grid)
                         if (cell.profile)
                             root.profileChosen(String(cell.profile.profileId || ""))
-                        else
+                        else if (cell.isAddTile)
                             root.addRequested()
+                        else if (cell.isProviderTile)
+                            root.changeProviderRequested()
                     }
                     onContextRequested: {
                         if (!cell.profile)

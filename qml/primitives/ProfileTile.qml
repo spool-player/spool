@@ -11,11 +11,14 @@ FocusScope {
     property string username: ""
     property string serverName: ""
     property string serverAddress: ""
+    property string providerName: ""
     property bool needsSignIn: false
     property bool addTile: false
+    property bool actionTile: false
+    property string actionIcon: "add"
     property bool focused: activeFocus
 
-    readonly property int labelHeight: Metrics.scaled(addTile ? 34 : 66)
+    readonly property int labelHeight: Metrics.scaled((addTile || actionTile) ? 34 : 66)
 
     readonly property string initial: {
         const name = String(username).trim()
@@ -47,23 +50,24 @@ FocusScope {
         width: root.tileSize
         height: root.tileSize
         radius: Theme.radiusLarge
-        color: root.addTile ? Theme.bgRaised : root.avatarColor
-        border.width: root.focused ? Theme.focusBorderWidth : root.addTile || (hover.hovered && Metrics.pointerActive)
+        color: (root.addTile || root.actionTile) ? Theme.bgRaised : root.avatarColor
+        border.width: root.focused ? Theme.focusBorderWidth : (root.addTile || root.actionTile || (hover.hovered
+                                                                                                   && Metrics.pointerActive))
                                      ? Theme.hoverBorderWidth : 0
         border.color: root.focused ? Theme.accent : Theme.border
         antialiasing: true
 
         MaterialIcon {
             anchors.centerIn: parent
-            visible: root.addTile
-            name: "add"
+            visible: root.addTile || root.actionTile
+            name: root.actionIcon
             iconSize: Math.round(root.tileSize * 0.3)
             iconColor: root.focused ? Theme.accent : Theme.textSecondary
         }
 
         AppText {
             anchors.centerIn: parent
-            visible: !root.addTile
+            visible: !root.addTile && !root.actionTile
             text: root.initial
             font.pixelSize: Math.round(root.tileSize * 0.4)
             font.weight: Font.DemiBold
@@ -131,8 +135,12 @@ FocusScope {
 
         SecondaryText {
             width: parent.width
-            visible: !root.addTile && root.serverName.length > 0
-            text: root.serverName
+            visible: !root.addTile && !root.actionTile && (root.providerName.length > 0 || root.serverName.length > 0)
+            text: root.providerName.length > 0 && root.serverName.length > 0 ? (root.providerName + " • "
+                                                                                + root.serverName) : (
+                                                                                   root.providerName.length > 0
+                                                                                   ? root.providerName :
+                                                                                     root.serverName)
             color: Theme.textMuted
             font.pixelSize: Metrics.scaled(13)
             horizontalAlignment: Text.AlignHCenter
@@ -142,7 +150,7 @@ FocusScope {
 
         SecondaryText {
             width: parent.width
-            visible: !root.addTile && root.serverAddress.length > 0
+            visible: !root.addTile && !root.actionTile && root.serverAddress.length > 0
             text: root.serverAddress
             color: Theme.textDisabled
             font.pixelSize: Metrics.scaled(12)

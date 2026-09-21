@@ -55,9 +55,7 @@ FocusScope {
     readonly property string chosenServerName: selectedServerName.length > 0 ? selectedServerName : fallbackServerName
     readonly property string chosenServerAddress: selectedServerAddress.length > 0 ? selectedServerAddress :
                                                                                      Session.serverUrl
-    readonly property bool canNavigateBack: Boolean(shell && shell.canCancelSwitchUser) || (addMode && (
-                                                                                                hasSavedAccounts
-                                                                                                || addStep === 2))
+    readonly property bool canNavigateBack: true
 
     focus: true
 
@@ -164,7 +162,12 @@ FocusScope {
         }
         if (!addMode && shell && shell.canCancelSwitchUser)
             return shell.cancelSwitchUser()
-        return false
+        if (Router.canGoBack) {
+            Router.back()
+            return true
+        }
+        Router.replace("providerPicker")
+        return true
     }
 
     function routeKey(key, phase, repeat) {
@@ -298,6 +301,7 @@ FocusScope {
             dense: root.dense
             onProfileChosen: profileId => root.enterProfile(profileId)
             onAddRequested: root.openAddAccount()
+            onChangeProviderRequested: Router.push("providerPicker")
             onContextRequested: (profileId, anchor, serverName, serverUrl) => profileDialogs.show(profileId, anchor, serverName,
                                                                                                   serverUrl)
         }
