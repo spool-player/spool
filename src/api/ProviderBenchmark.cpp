@@ -112,7 +112,7 @@ QCoro::Task<int> ProviderBenchmark::run(DatabaseManager *database, ProviderRegis
     config.insert(QStringLiteral("deviceId"),
         nativeApi->deviceId().isEmpty() ? QStringLiteral("spool-benchmark") : nativeApi->deviceId());
     config.insert(QStringLiteral("deviceName"), QStringLiteral("Spool Benchmark"));
-    config.insert(QStringLiteral("clientVersion"), QStringLiteral("0.7.15"));
+    config.insert(QStringLiteral("clientVersion"), QStringLiteral("0.8.0"));
 
     QList<QUrl> origins { QUrl(serverUrl) };
     const QString sourceId = co_await registry->configureSource(
