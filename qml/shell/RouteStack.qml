@@ -107,24 +107,24 @@ FocusScope {
     function showRoute() {
         const key = pageKey(route)
         const existing = pages[key]
-        const promoted = existing && existing.status === Loader.Loading
-        // Somebody is looking at the screen waiting for this page. The
-        // incubator's whole purpose is to protect frames it does not know are
-        // being wasted: it spreads a cold build over eighteen of them and the
-        // gui thread sits idle for half that window. Build it in one go.
-        const loader = loaderFor(key, true)
-        pendingLoader = loader
-        // Finish in-flight incubation synchronously when someone is actively
-        // waiting on this exact page: a promoted prewarm the user beat to the
-        // punch, or the startup route while nothing else is on screen yet.
-        if (promoted || activeRoute === "")
-            loader.asynchronous = false
-        const warm = loader.status === Loader.Ready && Boolean(loader.item)
+        // Classify the cache BEFORE loaderFor() can synchronously create a page.
+        // Start timing there too: otherwise cold construction disappears from
+        // the sample and the newly constructed page is misreported as a hit.
+        const promoted = Boolean(existing && existing.status === Loader.Loading)
+        const warm = Boolean(existing && existing.status === Loader.Ready && existing.item)
         const cacheHit = warm ? "hit" : promoted ? "promoted" : "miss"
+        pendingLoader = null
         uiTransitionToken = InputLatency.beginUiTransition("route:" + route + (warm ? ":warm" : ":cold"), activeRoute, route,
                                                            cacheHit)
         settleWatchdog.restart()
-        if (warm) {
+
+        const loader = loaderFor(key, true)
+        pendingLoader = loader
+        // Finishing a promoted loader can emit onLoaded synchronously and
+        // activate it here. Do not activate the same page a second time below.
+        if (promoted || activeRoute === "")
+            loader.asynchronous = false
+        if (pendingLoader === loader && loader.status === Loader.Ready && Boolean(loader.item)) {
             InputLatency.mark(uiTransitionToken, "instance")
             activatePending()
         }

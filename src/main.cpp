@@ -924,6 +924,8 @@ int main(int argc, char **argv)
     // with what each one cost written out, so page-switch cost is a number in
     // CI rather than an impression.
     JellyfinNative::RenderBenchmarkHooks benchmarkHooks;
+    benchmarkHooks.providerId = provider ? provider->id() : QString();
+    benchmarkHooks.providerRuntime = QStringLiteral("native");
     benchmarkHooks.libraries = controller->libraries();
     benchmarkHooks.openLibrary = [controller = controller.get()](int index) { controller->openLibrary(index); };
     benchmarkHooks.outstandingArtworkRequests

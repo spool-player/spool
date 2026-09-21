@@ -28,7 +28,12 @@ struct RenderBenchmarkHooks {
     // decodeMsTotal, decodedPixelsTotal and decodedImagesTotal, as the
     // artwork service counts them.
     std::function<QVariantMap()> artworkDecodeTotals;
-    // Sheds every cache the app can, so a walk measures cold pages.
+    // Identifies the implementation actually serving the UI, not merely a
+    // registered module. Update this when the JS application path is wired.
+    QString providerId;
+    QString providerRuntime;
+    // Requests application memory-pressure eviction. This does not flush Qt's
+    // disk/AOT caches, the OS page cache, or necessarily every resident page.
     std::function<void()> forceColdCaches;
 };
 
@@ -89,6 +94,9 @@ private:
     // been swapped, so the harness has to keep asking for one.
     QQuickWindow *m_window = nullptr;
     QTimer *m_pump = nullptr;
+    QTimer *m_stepDeadline = nullptr;
+    int m_pumpIntervalMs = 8;
+    QVariantList m_failures;
 
     // The idle probe is the same kind of timer on the same interval as the
     // transition gap timer, so a pause that would show up as a dropped frame
@@ -122,9 +130,8 @@ private:
     // How long to sit still between steps. Doubles as the idle-probe window,
     // so the noise floor is sampled over the same span a transition occupies.
     int m_settleMs = 120;
-    // Drop every cached page before each step, so the walk measures what a
-    // route costs to build rather than what it costs to reveal. This is the
-    // case a television lives in, where memory keeps nothing resident.
+    // Request memory-pressure eviction before each step. Record actual
+    // cache-hit classification separately; this is not a fully cold process.
     bool m_forceCold = false;
 
     int m_position = -1;

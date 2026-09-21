@@ -842,6 +842,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     )
     set(JELLYFIN_TESTS_diagnostics
         input-latency-monitor tests/diagnostics/InputLatencyMonitorTest.cpp
+        route-transition-timing tests/diagnostics/RouteTransitionTimingTest.cpp
         system-performance-monitor tests/diagnostics/SystemPerformanceMonitorTest.cpp
     )
     set(JELLYFIN_TESTS_discovery
