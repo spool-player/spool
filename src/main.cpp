@@ -202,7 +202,8 @@ FILE *openAppLogFile(const QString& appRootPath)
 void configurePersistentStartupCaches(const QString& cacheRoot)
 {
     const QString qtShaderCache = QDir(cacheRoot).filePath(QStringLiteral("qtshadercache"));
-    const QString qmlDiskCache = QDir(cacheRoot).filePath(QStringLiteral("qmlcache"));
+    const QString qmlDiskCache
+        = QDir(cacheRoot).filePath(QStringLiteral("qmlcache-") + QString::fromLatin1(kAppVersion));
     QDir().mkpath(qtShaderCache);
     QDir().mkpath(qmlDiskCache);
 
@@ -550,6 +551,24 @@ int main(int argc, char **argv)
     JellyfinNative::Diagnostics::EventLoopWatchdog eventLoopWatchdog(&app);
 
     const QStringList arguments = app.arguments();
+    for (int i = 1; i < arguments.size(); ++i) {
+        const QString& arg = arguments.at(i);
+        if (arg.startsWith(QLatin1Char('{')) && arg.endsWith(QLatin1Char('}'))) {
+            const QJsonDocument doc = QJsonDocument::fromJson(arg.toUtf8());
+            if (doc.isObject()) {
+                const QJsonObject obj = doc.object();
+                const QJsonObject params = obj.contains(QStringLiteral("parameters"))
+                    ? obj.value(QStringLiteral("parameters")).toObject()
+                    : (obj.contains(QStringLiteral("params")) ? obj.value(QStringLiteral("params")).toObject() : obj);
+                for (auto it = params.begin(); it != params.end(); ++it) {
+                    const QString key = it.key();
+                    const QString val = it.value().toVariant().toString();
+                    if (!val.isEmpty())
+                        qputenv(key.toUtf8(), val.toUtf8());
+                }
+            }
+        }
+    }
     if (arguments.contains(QStringLiteral("--diagnose-and-exit"))
         || arguments.contains(QStringLiteral("--dump-diagnostics"))) {
         JellyfinNative::Diagnostics::dumpDiagnostics(QStringLiteral("command-line"));
