@@ -260,6 +260,8 @@ set(SPOOL_SHELL_SOURCES
     src/provider/GroupPlayback.h
     src/provider/PlaybackSource.h
     src/provider/Provider.h
+    src/provider/ProviderPackage.cpp
+    src/provider/ProviderPackage.h
     src/provider/ProviderQmlCache.cpp
     src/provider/ProviderQmlCache.h
     src/provider/ProviderUiContext.cpp
@@ -353,6 +355,7 @@ qt_add_executable(jellyfin-native
 # Bundle immutable, verified source bytes. This resource path also exercises
 # source loading with no developer-generated QML/JS cache in provider tests.
 find_package(Python3 3.11 REQUIRED COMPONENTS Interpreter)
+find_package(ZLIB REQUIRED)
 set(SPOOL_JELLYFIN_SOURCE_DIR "" CACHE PATH "Explicit development override for the portable Jellyfin source")
 set(SPOOL_PROVIDER_RESOURCE_DIR "${CMAKE_CURRENT_BINARY_DIR}/portable-providers")
 set(spool_provider_bundle_args
@@ -563,6 +566,7 @@ qt_add_qml_module(jellyfin-native
         qml/pages/SettingsPage.qml
         qml/pages/SettingsNavigation.js
         qml/pages/SubtitleSettingsPanel.qml
+        qml/pages/ProviderPickerPage.qml
         qml/primitives/ActionButton.qml
         qml/providers/jellyfin/LoginPage.qml
         qml/providers/jellyfin/LoginAccountStep.qml
@@ -791,6 +795,7 @@ target_link_libraries(jellyfin-core PUBLIC
     Qt6::Sql
     Qt6::OpenGL
     Qt6::WebSockets
+    ZLIB::ZLIB
 )
 if(NOT ANDROID)
     target_link_libraries(jellyfin-core PUBLIC Qt6::GuiPrivate)
@@ -872,6 +877,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         source-registry tests/providers/SourceRegistryTest.cpp
         provider-ui-context tests/providers/ProviderUiContextTest.cpp
         provider-qml-cache tests/providers/ProviderQmlCacheTest.cpp
+        provider-package-unpack tests/providers/ProviderPackageTest.cpp
     )
     set(JELLYFIN_TESTS_player
         playback-timeline tests/player/PlaybackTimelineTest.cpp
