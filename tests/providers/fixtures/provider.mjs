@@ -2,6 +2,12 @@ export function createSource(config) {
     let calls = 0;
     return {
         bump: function() { return {calls: ++calls, label: config.label}; },
+        candidates: function(args) {
+            const rows = [];
+            for (let i = 0; i < args.count; ++i)
+                rows.push({id: String(i), title: config.label + ' ' + i, variantId: 'file-' + i});
+            return {items: rows, exhausted: true};
+        },
         raw: function(args, host) {
             return host.http(config.origin + '/' + args.path);
         },

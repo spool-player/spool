@@ -17,7 +17,8 @@ public:
     ~ScriptRuntime() override;
 
     QCoro::Task<QVariantMap> addSource(QString sourceId, QVariantMap configuration, QList<QUrl> origins);
-    QCoro::Task<QVariantMap> call(QString sourceId, QString method, QVariantMap arguments = {});
+    QCoro::Task<QVariantMap> call(QString sourceId, QString method, QVariantMap arguments = {}, QString scope = {});
+    void cancelScope(const QString& sourceId, const QString& scope);
     void removeSource(const QString& sourceId);
 
 private:

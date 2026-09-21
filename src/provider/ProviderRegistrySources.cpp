@@ -238,7 +238,8 @@ QCoro::Task<QString> ProviderRegistry::configureSource(QString moduleId, QString
     co_return id;
 }
 
-QCoro::Task<QVariantMap> ProviderRegistry::callSource(QString sourceId, QString operation, QVariantMap arguments)
+QCoro::Task<QVariantMap> ProviderRegistry::callSource(
+    QString sourceId, QString operation, QVariantMap arguments, QString scope)
 {
     Q_ASSERT(thread() == QThread::currentThread());
     auto *source = m_portable->find(sourceId);
@@ -249,7 +250,8 @@ QCoro::Task<QVariantMap> ProviderRegistry::callSource(QString sourceId, QString 
     const QString module = source->module;
     QVariantMap result;
     try {
-        result = co_await m_portable->modules.value(module)->call(sourceId, std::move(operation), std::move(arguments));
+        result = co_await m_portable->modules.value(module)->call(
+            sourceId, std::move(operation), std::move(arguments), std::move(scope));
     } catch (const std::exception& error) {
         const QByteArray code(error.what());
         if (guard && (code == "script_interrupted" || code == "source_unavailable")) {
@@ -269,6 +271,15 @@ QCoro::Task<QVariantMap> ProviderRegistry::callSource(QString sourceId, QString 
     if (!source || !source->enabled || !source->active || source->generation != generation)
         throw std::runtime_error("source_generation_changed");
     co_return result;
+}
+
+void ProviderRegistry::cancelSourceScope(const QString& sourceId, const QString& scope)
+{
+    const auto *source = m_portable->find(sourceId);
+    if (source && source->active) {
+        if (auto *runtime = m_portable->modules.value(source->module))
+            runtime->cancelScope(sourceId, scope);
+    }
 }
 
 QCoro::Task<void> ProviderRegistry::setSourceEnabled(QString sourceId, bool enabled)
