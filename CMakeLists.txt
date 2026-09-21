@@ -262,6 +262,8 @@ set(SPOOL_SHELL_SOURCES
     src/provider/Provider.h
     src/provider/ProviderQmlCache.cpp
     src/provider/ProviderQmlCache.h
+    src/provider/ProviderUiContext.cpp
+    src/provider/ProviderUiContext.h
     src/provider/ScriptRuntime.cpp
     src/provider/ScriptRuntime.h
     src/provider/ProviderRegistry.cpp
@@ -859,6 +861,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         local-provider tests/providers/LocalProviderTest.cpp
         script-runtime tests/providers/ScriptRuntimeTest.cpp
         source-registry tests/providers/SourceRegistryTest.cpp
+        provider-ui-context tests/providers/ProviderUiContextTest.cpp
         provider-qml-cache tests/providers/ProviderQmlCacheTest.cpp
     )
     set(JELLYFIN_TESTS_player

@@ -159,6 +159,7 @@ namespace {
 class ScriptOperation final : public QObject {
     Q_OBJECT
 public:
+    QString scope;
     ScriptOperation(QJSEngine *engine, QNetworkAccessManager *network, ScriptWatchdog *watchdog, Completion completion,
         QList<QUrl> origins, QObject *parent)
         : QObject(parent)
@@ -425,7 +426,8 @@ public:
         completion->addResult(QVariantMap { { QStringLiteral("sourceId"), id } });
         completion->finish();
     }
-    void call(const QString& id, const QString& method, const QVariantMap& args, const Completion& completion)
+    void call(const QString& id, const QString& method, const QVariantMap& args, const QString& scope,
+        const Completion& completion)
     {
         auto source = sources.find(id);
         if (!engine || engine->isInterrupted() || source == sources.end()) {
@@ -443,6 +445,7 @@ public:
         }
         auto *operation
             = new ScriptOperation(engine.get(), network.get(), watchdog.get(), completion, source->origins, this);
+        operation->scope = scope;
         source->operations.insert(operation);
         ++activeOperations;
         connect(operation, &QObject::destroyed, this, [this, id, operation] {
@@ -459,6 +462,16 @@ public:
                 for (ScriptOperation *pending : source.operations)
                     pending->cancel("script_interrupted");
             }
+        }
+    }
+    void cancelScope(const QString& id, const QString& scope)
+    {
+        const auto source = sources.constFind(id);
+        if (scope.isEmpty() || source == sources.cend())
+            return;
+        for (ScriptOperation *operation : source->operations) {
+            if (operation->scope == scope)
+                operation->cancel("action_cancelled");
         }
     }
     void remove(const QString& id)
@@ -546,7 +559,7 @@ QCoro::Task<QVariantMap> ScriptRuntime::addSource(QString sourceId, QVariantMap 
     return awaitResult(std::move(future));
 }
 
-QCoro::Task<QVariantMap> ScriptRuntime::call(QString sourceId, QString method, QVariantMap arguments)
+QCoro::Task<QVariantMap> ScriptRuntime::call(QString sourceId, QString method, QVariantMap arguments, QString scope)
 {
     auto completion = std::make_shared<QPromise<QVariantMap>>();
     completion->start();
@@ -559,12 +572,19 @@ QCoro::Task<QVariantMap> ScriptRuntime::call(QString sourceId, QString method, Q
     QMetaObject::invokeMethod(
         d->worker,
         [state = d.get(), worker = d->worker, sourceId = std::move(sourceId), method = std::move(method),
-            arguments = std::move(arguments), completion] {
+            arguments = std::move(arguments), scope = std::move(scope), completion] {
             --state->queued;
-            worker->call(sourceId, method, arguments, completion);
+            worker->call(sourceId, method, arguments, scope, completion);
         },
         Qt::QueuedConnection);
     return awaitResult(std::move(future));
+}
+
+void ScriptRuntime::cancelScope(const QString& sourceId, const QString& scope)
+{
+    QMetaObject::invokeMethod(
+        d->worker, [worker = d->worker, sourceId, scope] { worker->cancelScope(sourceId, scope); },
+        Qt::QueuedConnection);
 }
 
 void ScriptRuntime::removeSource(const QString& sourceId)
