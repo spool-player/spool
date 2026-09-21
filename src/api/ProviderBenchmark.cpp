@@ -122,7 +122,7 @@ QCoro::Task<int> ProviderBenchmark::run(DatabaseManager *database, ProviderRegis
     std::vector<BenchResult> results;
 
     // 1. Fetch Libraries
-    {
+    try {
         BenchResult res;
         res.name = QStringLiteral("fetchLibraries");
         std::cout << "Benchmarking " << res.name.toStdString() << "..." << std::flush;
@@ -144,77 +144,91 @@ QCoro::Task<int> ProviderBenchmark::run(DatabaseManager *database, ProviderRegis
         }
         std::cout << " done.\n";
         results.push_back(std::move(res));
+    } catch (const std::exception& e) {
+        std::cout << " failed: " << e.what() << "\n";
     }
 
     // Find the target library descriptor
-    auto libs = co_await nativeApi->fetchLibraries();
     BrowseDescriptor libDesc;
-    for (const auto& lib : libs) {
-        if (lib.name.compare(options.libraryName, Qt::CaseInsensitive) == 0) {
-            libDesc.id = lib.id;
-            libDesc.name = lib.name;
-            libDesc.collectionType = lib.collectionType;
-            libDesc.kind = BrowseKind::Library;
-            break;
+    try {
+        auto libs = co_await nativeApi->fetchLibraries();
+        for (const auto& lib : libs) {
+            if (lib.name.compare(options.libraryName, Qt::CaseInsensitive) == 0) {
+                libDesc.id = lib.id;
+                libDesc.name = lib.name;
+                libDesc.collectionType = lib.collectionType;
+                libDesc.kind = BrowseKind::Library;
+                break;
+            }
         }
-    }
-    if (!libDesc.isValid() && !libs.empty()) {
-        libDesc.id = libs[0].id;
-        libDesc.name = libs[0].name;
-        libDesc.collectionType = libs[0].collectionType;
-        libDesc.kind = BrowseKind::Library;
+        if (!libDesc.isValid() && !libs.empty()) {
+            libDesc.id = libs[0].id;
+            libDesc.name = libs[0].name;
+            libDesc.collectionType = libs[0].collectionType;
+            libDesc.kind = BrowseKind::Library;
+        }
+    } catch (const std::exception& e) {
+        std::cout << "Failed to query libraries for browsing: " << e.what() << "\n";
     }
 
     // 2. Browse Page 1 (100 items)
     if (libDesc.isValid()) {
-        BenchResult res;
-        res.name = QStringLiteral("browsePage: ") + libDesc.name + QStringLiteral(" [0..100]");
-        std::cout << "Benchmarking " << res.name.toStdString() << "..." << std::flush;
-        co_await nativeApi->fetchBrowsePage(libDesc, 0, 100);
-        co_await jsAdapter.fetchBrowsePage(libDesc, 0, 100);
+        try {
+            BenchResult res;
+            res.name = QStringLiteral("browsePage: ") + libDesc.name + QStringLiteral(" [0..100]");
+            std::cout << "Benchmarking " << res.name.toStdString() << "..." << std::flush;
+            co_await nativeApi->fetchBrowsePage(libDesc, 0, 100);
+            co_await jsAdapter.fetchBrowsePage(libDesc, 0, 100);
 
-        for (int i = 0; i < options.iterations; ++i) {
-            QElapsedTimer t;
-            t.start();
-            auto page = co_await nativeApi->fetchBrowsePage(libDesc, 0, 100);
-            res.nativeTimes.push_back(t.nsecsElapsed() / 1000000.0);
-            res.nativeItems = page.items.size();
+            for (int i = 0; i < options.iterations; ++i) {
+                QElapsedTimer t;
+                t.start();
+                auto page = co_await nativeApi->fetchBrowsePage(libDesc, 0, 100);
+                res.nativeTimes.push_back(t.nsecsElapsed() / 1000000.0);
+                res.nativeItems = page.items.size();
 
-            t.restart();
-            auto jsPage = co_await jsAdapter.fetchBrowsePage(libDesc, 0, 100);
-            res.jsTimes.push_back(t.nsecsElapsed() / 1000000.0);
-            res.jsItems = jsPage.items.size();
+                t.restart();
+                auto jsPage = co_await jsAdapter.fetchBrowsePage(libDesc, 0, 100);
+                res.jsTimes.push_back(t.nsecsElapsed() / 1000000.0);
+                res.jsItems = jsPage.items.size();
+            }
+            std::cout << " done.\n";
+            results.push_back(std::move(res));
+        } catch (const std::exception& e) {
+            std::cout << " failed: " << e.what() << "\n";
         }
-        std::cout << " done.\n";
-        results.push_back(std::move(res));
     }
 
     // 3. Browse Page 2 (100 items)
     if (libDesc.isValid()) {
-        BenchResult res;
-        res.name = QStringLiteral("browsePage: ") + libDesc.name + QStringLiteral(" [100..200]");
-        std::cout << "Benchmarking " << res.name.toStdString() << "..." << std::flush;
-        co_await nativeApi->fetchBrowsePage(libDesc, 100, 100);
-        co_await jsAdapter.fetchBrowsePage(libDesc, 100, 100);
+        try {
+            BenchResult res;
+            res.name = QStringLiteral("browsePage: ") + libDesc.name + QStringLiteral(" [100..200]");
+            std::cout << "Benchmarking " << res.name.toStdString() << "..." << std::flush;
+            co_await nativeApi->fetchBrowsePage(libDesc, 100, 100);
+            co_await jsAdapter.fetchBrowsePage(libDesc, 100, 100);
 
-        for (int i = 0; i < options.iterations; ++i) {
-            QElapsedTimer t;
-            t.start();
-            auto page = co_await nativeApi->fetchBrowsePage(libDesc, 100, 100);
-            res.nativeTimes.push_back(t.nsecsElapsed() / 1000000.0);
-            res.nativeItems = page.items.size();
+            for (int i = 0; i < options.iterations; ++i) {
+                QElapsedTimer t;
+                t.start();
+                auto page = co_await nativeApi->fetchBrowsePage(libDesc, 100, 100);
+                res.nativeTimes.push_back(t.nsecsElapsed() / 1000000.0);
+                res.nativeItems = page.items.size();
 
-            t.restart();
-            auto jsPage = co_await jsAdapter.fetchBrowsePage(libDesc, 100, 100);
-            res.jsTimes.push_back(t.nsecsElapsed() / 1000000.0);
-            res.jsItems = jsPage.items.size();
+                t.restart();
+                auto jsPage = co_await jsAdapter.fetchBrowsePage(libDesc, 100, 100);
+                res.jsTimes.push_back(t.nsecsElapsed() / 1000000.0);
+                res.jsItems = jsPage.items.size();
+            }
+            std::cout << " done.\n";
+            results.push_back(std::move(res));
+        } catch (const std::exception& e) {
+            std::cout << " failed: " << e.what() << "\n";
         }
-        std::cout << " done.\n";
-        results.push_back(std::move(res));
     }
 
     // 4. Search
-    {
+    try {
         BenchResult res;
         res.name = QStringLiteral("searchItems (\"") + options.searchQuery + QStringLiteral("\", 80)");
         std::cout << "Benchmarking " << res.name.toStdString() << "..." << std::flush;
@@ -235,10 +249,12 @@ QCoro::Task<int> ProviderBenchmark::run(DatabaseManager *database, ProviderRegis
         }
         std::cout << " done.\n";
         results.push_back(std::move(res));
+    } catch (const std::exception& e) {
+        std::cout << " failed: " << e.what() << "\n";
     }
 
     // 5. Next Up
-    {
+    try {
         BenchResult res;
         res.name = QStringLiteral("fetchNextUpEpisodes (24)");
         std::cout << "Benchmarking " << res.name.toStdString() << "..." << std::flush;
@@ -259,10 +275,12 @@ QCoro::Task<int> ProviderBenchmark::run(DatabaseManager *database, ProviderRegis
         }
         std::cout << " done.\n";
         results.push_back(std::move(res));
+    } catch (const std::exception& e) {
+        std::cout << " failed: " << e.what() << "\n";
     }
 
     // 6. Resume Items
-    {
+    try {
         BenchResult res;
         res.name = QStringLiteral("fetchResumeItems (24)");
         std::cout << "Benchmarking " << res.name.toStdString() << "..." << std::flush;
@@ -283,6 +301,8 @@ QCoro::Task<int> ProviderBenchmark::run(DatabaseManager *database, ProviderRegis
         }
         std::cout << " done.\n";
         results.push_back(std::move(res));
+    } catch (const std::exception& e) {
+        std::cout << " failed: " << e.what() << "\n";
     }
 
     // Print summary table
