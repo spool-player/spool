@@ -13,6 +13,9 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QGuiApplication>
+#include <QSysInfo>
+#include <QSGRendererInterface>
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QTimer>
@@ -92,10 +95,28 @@ RenderBenchmark::RenderBenchmark(RenderBenchmarkHooks hooks, RouterController *r
     });
 
     m_pump = new QTimer(this);
-    m_pump->setInterval(8);
+    m_pumpIntervalMs = std::clamp(envInt("SPOOL_BENCH_PUMP_MS", 8), 0, 1000);
+    m_pump->setInterval(std::max(1, m_pumpIntervalMs));
     connect(m_pump, &QTimer::timeout, this, [this] {
         if (m_window)
             m_window->requestUpdate();
+    });
+
+    // One owned timer, stopped on success. Previously each step left an
+    // uncancelled singleShot behind, which could time out a later transition.
+    m_stepDeadline = new QTimer(this);
+    m_stepDeadline->setSingleShot(true);
+    connect(m_stepDeadline, &QTimer::timeout, this, [this] {
+        if (!m_awaitingSample)
+            return;
+        const QString route = m_script.value(m_position);
+        qWarning() << "render benchmark: route" << route << "never reported a frame";
+        m_failures.append(QVariantMap { { QStringLiteral("route"), route },
+            { QStringLiteral("pass"), m_pass }, { QStringLiteral("step"), m_position },
+            { QStringLiteral("reason"), QStringLiteral("route_timeout") } });
+        m_awaitingSample = false;
+        m_pump->stop();
+        QTimer::singleShot(0, this, [this] { step(); });
     });
 
     m_scrollGapTimer = new QChronoTimer(this);
@@ -190,7 +211,8 @@ void RenderBenchmark::beginScrollWalk()
     qInfo() << "render benchmark: walking" << m_libraryName << (m_listMode ? "as a list" : "as a grid");
     applyViewMode();
     m_scrollPosition = 0;
-    m_pump->start();
+    if (m_pumpIntervalMs > 0)
+        m_pump->start();
     // Times how long the library has had to arrive, which is what the first
     // step's patience is measured against.
     m_scrollClock.start();
@@ -345,29 +367,29 @@ void RenderBenchmark::step()
 
     m_awaitingSample = true;
     m_stepTimer.start();
-    m_pump->start();
+    if (m_pumpIntervalMs > 0)
+        m_pump->start();
+    m_stepDeadline->start(m_stepTimeoutMs);
     m_router->replace(route);
     if (m_window)
         m_window->requestUpdate();
 
-    // A route that never reports is a failure worth seeing rather than a
-    // hang: give up on it and carry on with the rest of the walk.
-    QTimer::singleShot(m_stepTimeoutMs, this, [this, route] {
-        if (!m_awaitingSample)
-            return;
-        qWarning() << "render benchmark: route" << route << "never reported a frame";
-        m_awaitingSample = false;
-        m_pump->stop();
-        QTimer::singleShot(0, this, [this] { step(); });
-    });
+
 }
 
 void RenderBenchmark::recordSample()
 {
-    m_awaitingSample = false;
-    m_pump->stop();
     QVariantMap metrics = m_latency->lastRouteMetrics();
+    // A timed-out transition may publish late while a different route is now
+    // awaited. It must not stand in for the current step's result.
+    if (metrics.value(QStringLiteral("routeTo")).toString() != m_script.value(m_position))
+        return;
+    m_awaitingSample = false;
+    m_stepDeadline->stop();
+    m_pump->stop();
     if (!metrics.isEmpty() && m_pass >= 0) {
+        metrics.insert(QStringLiteral("requestToSampleMs"),
+            static_cast<double>(m_stepTimer.nsecsElapsed()) / 1000000.0);
         metrics.insert(QStringLiteral("pass"), m_pass);
         metrics.insert(QStringLiteral("step"), m_position);
         m_samples.append(metrics);
@@ -390,15 +412,43 @@ void RenderBenchmark::finish()
         samples.append(QJsonObject::fromVariantMap(sample.toMap()));
 
     QJsonObject report;
+    // Schema 2 includes synchronous route construction. Do not compare its
+    // route totals to schema-1 reports that started timing after construction.
+    report.insert(QStringLiteral("schemaVersion"), 2);
+    report.insert(QStringLiteral("measurementScope"), QStringLiteral("route-transition"));
+    report.insert(QStringLiteral("timingOrigin"), QStringLiteral("before-page-construction"));
+    report.insert(QStringLiteral("presentationObservable"), QStringLiteral("qt-frameSwapped"));
+    report.insert(QStringLiteral("providerPipelineMeasured"), false);
+    report.insert(QStringLiteral("providerId"), m_hooks.providerId);
+    report.insert(QStringLiteral("providerRuntime"), m_hooks.providerRuntime);
+    report.insert(QStringLiteral("qtVersion"), QString::fromLatin1(qVersion()));
+    report.insert(QStringLiteral("qpaPlatform"), QGuiApplication::platformName());
+    report.insert(QStringLiteral("cpuArchitecture"), QSysInfo::currentCpuArchitecture());
+    report.insert(QStringLiteral("buildAbi"), QSysInfo::buildAbi());
+    report.insert(QStringLiteral("deviceLabel"), qEnvironmentVariable("SPOOL_BENCH_DEVICE_LABEL"));
+    report.insert(QStringLiteral("framePumpMs"), m_pumpIntervalMs);
+    report.insert(QStringLiteral("warmupPasses"), m_warmup);
+    report.insert(QStringLiteral("settleMs"), m_settleMs);
+    report.insert(QStringLiteral("stepTimeoutMs"), m_stepTimeoutMs);
+    report.insert(QStringLiteral("cacheMode"), m_forceCold ? QStringLiteral("memory-pressure-eviction")
+                                                        : QStringLiteral("resident-after-warmup"));
+    report.insert(QStringLiteral("interpreterRequested"), qEnvironmentVariable("QV4_FORCE_INTERPRETER"));
+    report.insert(QStringLiteral("complete"), m_failures.isEmpty());
+    report.insert(QStringLiteral("failures"), QJsonArray::fromVariantList(m_failures));
+    if (m_window) {
+        report.insert(QStringLiteral("windowWidth"), m_window->width());
+        report.insert(QStringLiteral("windowHeight"), m_window->height());
+        report.insert(QStringLiteral("devicePixelRatio"), m_window->devicePixelRatio());
+        report.insert(QStringLiteral("graphicsApi"), static_cast<int>(m_window->rendererInterface()->graphicsApi()));
+    }
     report.insert(QStringLiteral("recordedAt"), QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
     report.insert(QStringLiteral("script"), QJsonArray::fromStringList(m_script));
     report.insert(QStringLiteral("iterations"), m_iterations);
     report.insert(QStringLiteral("cold"), m_forceCold);
     report.insert(QStringLiteral("frameBudgetMs"), m_latency ? m_latency->frameBudgetMs() : 16.67);
-    // Which paint path produced these numbers. It decides whether the frame
-    // gaps mean anything: the software backend rasterises on the CPU, so on a
-    // small runner a gap is mostly llvmpipe's throughput rather than anything
-    // this application did.
+    // Preserve the requested backend alongside the actual renderer API.
+    // Qt Quick's software adaptation is not the Mesa llvmpipe OpenGL driver;
+    // neither offscreen swap callbacks nor timer lateness prove display pacing.
     report.insert(QStringLiteral("quickBackend"), qEnvironmentVariable("QT_QUICK_BACKEND"));
     // What a frame-budget timer drifted by while the app was doing nothing.
     // A transition gap only means something when it is worse than this.
@@ -415,19 +465,21 @@ void RenderBenchmark::finish()
     report.insert(QStringLiteral("listMode"), m_listMode);
 
     const QByteArray json = QJsonDocument(report).toJson(QJsonDocument::Indented);
+    bool written = true;
     if (m_outputPath.isEmpty()) {
         qInfo().noquote() << json;
     } else {
         QDir().mkpath(QFileInfo(m_outputPath).absolutePath());
         QFile file(m_outputPath);
         if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-            file.write(json);
+            written = file.write(json) == json.size() && file.flush();
             qInfo() << "render benchmark: wrote" << m_samples.size() << "samples to" << m_outputPath;
         } else {
+            written = false;
             qWarning() << "render benchmark: could not write" << m_outputPath;
         }
     }
-    QCoreApplication::exit(m_samples.isEmpty() && m_scrollSamples.isEmpty() ? 1 : 0);
+    QCoreApplication::exit(!written || !m_failures.isEmpty() || (m_samples.isEmpty() && m_scrollSamples.isEmpty()) ? 1 : 0);
 }
 
 } // namespace JellyfinNative
