@@ -85,9 +85,18 @@ JELLYFIN_TEST_MAIN("source-registry")
         require(
             QCoro::waitFor(std::move(second)).value("label") == "B", "second account is not an active-provider switch");
         require(QCoro::waitFor(std::move(third)).value("label") == "C", "another module runs independently");
+        const auto typedA = QCoro::waitFor(registry.callSourceMediaPage(a, "mediaPage", {{"count", 2}}));
+        const auto typedB = QCoro::waitFor(registry.callSourceMediaPage(b, "mediaPage", {{"count", 2}}));
+        require(typedA.sourceId == a && typedB.sourceId == b
+            && typedA.items.front().sourceId == a && typedB.items.front().sourceId == b,
+            "typed pages preserve registry-created source identities");
+        auto typedPending = registry.callSourceMediaPage(a, "delayedMediaPage");
         auto pending = registry.callSource(a, "delay", { { "milliseconds", 10000 } });
         QCoro::waitFor(registry.setSourceEnabled(a, false));
         rejects(std::move(pending), "disabling a source cancels its pending operation");
+        rejects(std::move(typedPending), "disabling a source also cancels its typed page");
+        rejects(registry.callSourceMediaPage(a, "mediaPage", {{"count", 1}}),
+            "disabled source cannot supply a typed page");
         rejects(registry.callSource(a, "bump"), "disabled source cannot be used");
         require(QCoro::waitFor(registry.callSource(b, "bump")).value("calls").toInt() == 2,
             "disabling A leaves B's context and state unchanged");

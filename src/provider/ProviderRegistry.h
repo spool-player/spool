@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Provider.h"
+#include "ProviderMediaPage.h"
 #include <QCoroTask>
 #include <QUrl>
 #include <QVariantList>
@@ -116,6 +117,8 @@ public:
         QVariantMap configuration, QList<QUrl> authorisedOrigins);
     QCoro::Task<QVariantMap> callSource(
         QString sourceId, QString operation, QVariantMap arguments = {}, QString scope = {});
+    QCoro::Task<ProviderMediaPage> callSourceMediaPage(QString sourceId, QString operation,
+        QVariantMap arguments = {}, QString scope = {}, int maximumItems = 100);
     void cancelSourceScope(const QString& sourceId, const QString& scope);
     QCoro::Task<void> setSourceEnabled(QString sourceId, bool enabled);
     QCoro::Task<void> removeSource(QString sourceId);

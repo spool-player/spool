@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ProviderMediaPage.h"
+
 #include <QCoroTask>
 #include <QObject>
 #include <QUrl>
@@ -18,6 +20,10 @@ public:
 
     QCoro::Task<QVariantMap> addSource(QString sourceId, QVariantMap configuration, QList<QUrl> origins);
     QCoro::Task<QVariantMap> call(QString sourceId, QString method, QVariantMap arguments = {}, QString scope = {});
+    // Bulk listing path: decode directly on the worker into typed native
+    // items. No QVariant tree or row conversion is handed to the GUI thread.
+    QCoro::Task<ProviderMediaPage> callMediaPage(QString sourceId, QString method, QVariantMap arguments = {},
+        QString scope = {}, int maximumItems = 100);
     void cancelScope(const QString& sourceId, const QString& scope);
     void removeSource(const QString& sourceId);
 
