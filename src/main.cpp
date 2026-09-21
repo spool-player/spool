@@ -1,4 +1,5 @@
 #include "api/JellyfinProvider.h"
+#include "api/ProviderBenchmark.h"
 #include "app/AppController.h"
 #include "app/ArtworkImageProvider.h"
 #include "app/ArtworkService.h"
@@ -685,6 +686,28 @@ int main(int argc, char **argv)
         logLine("provider: %s (backend: %s)", qPrintable(provider->id()), qPrintable(jellyfin->backendName()));
     } else {
         logLine("provider: %s", qPrintable(provider->id()));
+    }
+
+    if (arguments.contains(QStringLiteral("--benchmark-providers"))
+        || qEnvironmentVariableIsSet("SPOOL_BENCHMARK_PROVIDERS") || qgetenv("SPOOL_BENCH") == "providers") {
+        JellyfinNative::ProviderBenchmarkOptions options;
+        options.iterations
+            = optionValue(arguments, QStringLiteral("--iterations"), "SPOOL_BENCH_ITERATIONS", QStringLiteral("5"))
+                  .toInt();
+        if (options.iterations <= 0)
+            options.iterations = 5;
+        const QString lib = optionValue(arguments, QStringLiteral("--library"), "SPOOL_BENCH_LIBRARY");
+        if (!lib.isEmpty())
+            options.libraryName = lib;
+        const QString q = optionValue(arguments, QStringLiteral("--query"), "SPOOL_BENCH_QUERY");
+        if (!q.isEmpty())
+            options.searchQuery = q;
+        options.outputPath = optionValue(arguments, QStringLiteral("--output"), "SPOOL_BENCH_OUTPUT");
+
+        const int exitCode
+            = QCoro::waitFor(JellyfinNative::ProviderBenchmark::run(&database, &providers, jellyfin.get(), options));
+        JellyfinNative::Diagnostics::shutdown();
+        return exitCode;
     }
 
     const JellyfinNative::CpuTopology cpuTopology = JellyfinNative::detectCpuTopology();
