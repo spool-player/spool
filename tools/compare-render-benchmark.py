@@ -20,10 +20,10 @@ from collections import defaultdict
 from pathlib import Path
 
 METRICS = [
-    ("maxGapMs", "worst frame gap"),
+    ("maxGapMs", "timer lateness"),
     ("wallMs", "wall"),
     ("guiCpuMs", "gui cpu"),
-    ("instanceMs", "construct"),
+    ("instanceMs", "instance ready"),
     ("actualSwaps", "swaps"),
 ]
 
@@ -68,11 +68,17 @@ def main() -> int:
 
     report = load(args.current)
     samples = report.get("samples", [])
+    if report.get("complete") is False or report.get("failures"):
+        print("render benchmark: incomplete run; inspect failures before comparing", file=sys.stderr)
+        return 1
     if not samples:
         print("render benchmark: no samples recorded", file=sys.stderr)
         return 1
     current = summarise(report)
     baseline_report = load(args.baseline) if args.baseline and args.baseline.exists() else None
+    if baseline_report and (baseline_report.get("complete") is False or baseline_report.get("failures")):
+        print("render benchmark: incomplete baseline; refusing comparison", file=sys.stderr)
+        return 1
     baseline = summarise(baseline_report) if baseline_report else None
     budget = float(samples[0].get("frameBudgetMs", 16.7))
     cold = report.get("cold", False)
@@ -80,6 +86,11 @@ def main() -> int:
         current.keys() == baseline.keys()
         and cold == baseline_report.get("cold", False)
         and report.get("quickBackend", "") == baseline_report.get("quickBackend", "")
+        and all(report.get(key) == baseline_report.get(key) for key in (
+            "schemaVersion", "timingOrigin", "script", "qpaPlatform", "graphicsApi",
+            "framePumpMs", "windowWidth", "windowHeight", "devicePixelRatio",
+            "library", "listMode", "frameBudgetMs", "measurementScope",
+        ))
     )
     overall = sum(entry["wallMs"] for entry in current.values())
     was_overall = sum(entry["wallMs"] for entry in baseline.values()) if comparable else None
@@ -93,20 +104,23 @@ def main() -> int:
         f"Overall transition time: **{overall:.1f} ms**{format_delta(overall, was_overall)} "
         "(sum of per-route medians; idle settle delays excluded).",
         "",
-        "Route timings, CPU shares, construction costs and frame gaps are diagnostic only.",
+        "Route timings and CPU shares are diagnostic. Timer lateness is not a dropped-frame count.",
+        "Swap callbacks are not measured panel presentation; provider response processing is not isolated here.",
     ]
+    if report.get("schemaVersion", 1) < 2:
+        lines += ["", "Legacy timing: synchronous page construction may be excluded and cold loads labelled warm."]
     if args.warn_only:
         lines += ["", "Warning-only on shared CI runners. Run on dedicated hardware before enabling performance gates."]
     if baseline and not comparable:
-        lines += ["", "Baseline route set, warm/cold mode or rendering backend differs; no overall comparison made."]
-    lines += ["", "| route | " + " | ".join(label for _, label in METRICS) + " | worst gap |",
+        lines += ["", "Baseline workload, timing origin or rendering environment differs; no comparison made."]
+    lines += ["", "| route | " + " | ".join(label for _, label in METRICS) + " | max lateness |",
               "|" + "---|" * (len(METRICS) + 2)]
     for route in sorted(current):
         entry = current[route]
         cells = [route]
         for key, _ in METRICS:
             value = entry[key]
-            was = baseline.get(route, {}).get(key) if baseline else None
+            was = baseline.get(route, {}).get(key) if comparable else None
             unit = "" if key == "actualSwaps" else " ms"
             precision = 0 if key == "actualSwaps" else 1
             cells.append(f"{value:.{precision}f}{unit}{format_delta(value, was)}")
