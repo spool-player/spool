@@ -1,12 +1,20 @@
 #include "ProviderRegistry.h"
 
+#include "ProviderPackage.h"
 #include "ScriptRuntime.h"
 #include "cache/DatabaseManager.h"
 
+#include <QCoroNetworkReply>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QPointer>
 #include <QRegularExpression>
 #include <QScopeGuard>
@@ -63,6 +71,13 @@ struct ProviderRegistry::PortableState {
     }
 
     QPointer<DatabaseManager> database;
+    QPointer<QNetworkAccessManager> network;
+    QString providersDirectory;
+    bool isInstalling = false;
+    QString installStatus;
+    int installProgress = 0;
+    QString installError;
+
     QHash<QString, ScriptRuntime *> modules;
     QList<Source> sources;
     QVariantList snapshot;
@@ -404,6 +419,274 @@ void ProviderRegistry::refreshSourceSnapshot()
         m_portable->snapshot = std::move(snapshot);
         emit configuredSourcesChanged();
     }
+}
+
+void ProviderRegistry::setNetworkAccessManager(QNetworkAccessManager *network)
+{
+    m_portable->network = network;
+}
+
+void ProviderRegistry::setProvidersDirectory(const QString& path)
+{
+    m_portable->providersDirectory = path;
+}
+
+QString ProviderRegistry::providersDirectory() const
+{
+    return m_portable->providersDirectory;
+}
+
+bool ProviderRegistry::hasModule(const QString& moduleId) const
+{
+    return m_portable->modules.contains(moduleId);
+}
+
+bool ProviderRegistry::isInstalled(const QString& moduleId) const
+{
+    if (moduleId == QStringLiteral("local"))
+        return true;
+    return hasModule(moduleId);
+}
+
+bool ProviderRegistry::isInstalling() const
+{
+    return m_portable->isInstalling;
+}
+
+QString ProviderRegistry::installStatus() const
+{
+    return m_portable->installStatus;
+}
+
+int ProviderRegistry::installProgress() const
+{
+    return m_portable->installProgress;
+}
+
+QString ProviderRegistry::installError() const
+{
+    return m_portable->installError;
+}
+
+bool ProviderRegistry::hasInstalledProviders() const
+{
+    return !m_portable->modules.isEmpty();
+}
+
+QVariantList ProviderRegistry::availableProviders() const
+{
+    QVariantList list;
+    {
+        QVariantMap jf;
+        jf.insert(QStringLiteral("id"), QStringLiteral("spool.jellyfin"));
+        jf.insert(QStringLiteral("name"), QStringLiteral("Jellyfin"));
+        jf.insert(QStringLiteral("description"), QStringLiteral("Connect to your personal Jellyfin media server"));
+        jf.insert(QStringLiteral("icon"), QStringLiteral("jellyfin"));
+        jf.insert(QStringLiteral("installed"), hasModule(QStringLiteral("spool.jellyfin")));
+        jf.insert(QStringLiteral("category"), QStringLiteral("Streaming Server"));
+        jf.insert(QStringLiteral("requiresAuth"), true);
+        list.append(jf);
+    }
+    {
+        QVariantMap loc;
+        loc.insert(QStringLiteral("id"), QStringLiteral("local"));
+        loc.insert(QStringLiteral("name"), QStringLiteral("Local Videos"));
+        loc.insert(QStringLiteral("description"), QStringLiteral("Browse videos stored on this device"));
+        loc.insert(QStringLiteral("icon"), QStringLiteral("folder"));
+        loc.insert(QStringLiteral("installed"), true);
+        loc.insert(QStringLiteral("category"), QStringLiteral("Device"));
+        loc.insert(QStringLiteral("requiresAuth"), false);
+        list.append(loc);
+    }
+    return list;
+}
+
+void ProviderRegistry::scanInstalledModules()
+{
+    if (m_portable->providersDirectory.isEmpty())
+        return;
+    QDir dir(m_portable->providersDirectory);
+    if (!dir.exists())
+        return;
+    const auto entries = dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
+    for (const auto& info : entries) {
+        const QDir subDir(info.absoluteFilePath());
+        const QString manifestPath = subDir.filePath(QStringLiteral("manifest.json"));
+        if (!QFile::exists(manifestPath))
+            continue;
+        QFile manifestFile(manifestPath);
+        if (!manifestFile.open(QIODevice::ReadOnly))
+            continue;
+        const auto doc = QJsonDocument::fromJson(manifestFile.readAll());
+        if (!doc.isObject())
+            continue;
+        const auto obj = doc.object();
+        const QString id = obj.value(QStringLiteral("id")).toString();
+        const QString entry = obj.value(QStringLiteral("entry")).toString();
+        if (!id.isEmpty() && !entry.isEmpty() && !m_portable->modules.contains(id)) {
+            const QString entryPoint = subDir.filePath(entry);
+            if (QFile::exists(entryPoint)) {
+                try {
+                    registerModule(id, entryPoint);
+                } catch (const std::exception& e) {
+                    qWarning("Failed to register installed module %s: %s", qPrintable(id), e.what());
+                }
+            }
+        }
+    }
+    emit installedProvidersChanged();
+    emit availableProvidersChanged();
+}
+
+void ProviderRegistry::installProvider(const QString& moduleId)
+{
+    if (m_portable->isInstalling)
+        return;
+    downloadAndInstallProvider(moduleId);
+}
+
+bool ProviderRegistry::switchProvider(const QString& providerId)
+{
+    return setActive(providerId);
+}
+
+QCoro::Task<bool> ProviderRegistry::downloadAndInstallProvider(QString moduleId, QUrl url)
+{
+    if (m_portable->isInstalling)
+        co_return false;
+
+    m_portable->isInstalling = true;
+    m_portable->installProgress = 5;
+    m_portable->installStatus = QStringLiteral("Connecting...");
+    m_portable->installError.clear();
+    emit installStatusChanged();
+
+    if (url.isEmpty()) {
+        if (moduleId == QStringLiteral("spool.jellyfin")) {
+            url = QUrl(QStringLiteral("https://github.com/spool-player/spool-jellyfin/releases/download/v0.1.0-alpha.1/"
+                                      "spool-jellyfin-0.1.0-alpha.1.zip"));
+        } else {
+            m_portable->isInstalling = false;
+            m_portable->installError = QStringLiteral("Unknown provider module: %1").arg(moduleId);
+            emit installStatusChanged();
+            co_return false;
+        }
+    }
+
+    QByteArray archiveData;
+    bool downloadSuccess = false;
+
+    if (m_portable->network) {
+        QUrl currentUrl = url;
+        int redirectCount = 0;
+        constexpr int maxRedirects = 5;
+
+        while (redirectCount < maxRedirects) {
+            QNetworkRequest request(currentUrl);
+            request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
+            request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("Spool/0.8.0"));
+
+            QNetworkReply *reply = m_portable->network->get(request);
+            connect(reply, &QNetworkReply::downloadProgress, this, [this](qint64 received, qint64 total) {
+                if (total > 0) {
+                    m_portable->installProgress = std::clamp(static_cast<int>(10 + (received * 75) / total), 10, 85);
+                    m_portable->installStatus = QStringLiteral("Downloading (%1%)...").arg(m_portable->installProgress);
+                    emit installStatusChanged();
+                }
+            });
+
+            co_await reply;
+
+            const int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            if (statusCode == 301 || statusCode == 302 || statusCode == 303 || statusCode == 307 || statusCode == 308) {
+                const QVariant redirectVar = reply->header(QNetworkRequest::LocationHeader);
+                if (redirectVar.isValid()) {
+                    currentUrl = currentUrl.resolved(redirectVar.toUrl());
+                    reply->deleteLater();
+                    ++redirectCount;
+                    continue;
+                }
+            }
+
+            if (reply->error() == QNetworkReply::NoError && statusCode >= 200 && statusCode < 300) {
+                archiveData = reply->readAll();
+                downloadSuccess = true;
+            } else {
+                qWarning("Download from %s failed with status %d: %s", qPrintable(currentUrl.toString()), statusCode,
+                    qPrintable(reply->errorString()));
+            }
+            reply->deleteLater();
+            break;
+        }
+    }
+
+    // If online download failed or no network, check local fallback files
+    if (!downloadSuccess || archiveData.isEmpty()) {
+        const QString fallbackPath = QStringLiteral("providers/bundled/spool-jellyfin-0.1.0-alpha.1.zip");
+        if (QFile::exists(fallbackPath)) {
+            QFile file(fallbackPath);
+            if (file.open(QIODevice::ReadOnly)) {
+                archiveData = file.readAll();
+                downloadSuccess = true;
+            }
+        }
+    }
+
+    if (!downloadSuccess || archiveData.isEmpty()) {
+        m_portable->isInstalling = false;
+        m_portable->installError = QStringLiteral("Failed to download provider package.");
+        emit installStatusChanged();
+        co_return false;
+    }
+
+    m_portable->installStatus = QStringLiteral("Validating package...");
+    m_portable->installProgress = 90;
+    emit installStatusChanged();
+
+    QString errorMsg;
+    auto parsed = ProviderPackage::parseAndValidate(archiveData, &errorMsg);
+    if (!parsed) {
+        m_portable->isInstalling = false;
+        m_portable->installError = QStringLiteral("Package validation failed: %1").arg(errorMsg);
+        emit installStatusChanged();
+        co_return false;
+    }
+
+    m_portable->installStatus = QStringLiteral("Installing files...");
+    m_portable->installProgress = 95;
+    emit installStatusChanged();
+
+    const QString entryPoint = ProviderPackage::install(*parsed, m_portable->providersDirectory, &errorMsg);
+    if (entryPoint.isEmpty()) {
+        m_portable->isInstalling = false;
+        m_portable->installError = QStringLiteral("Installation failed: %1").arg(errorMsg);
+        emit installStatusChanged();
+        co_return false;
+    }
+
+    try {
+        if (!m_portable->modules.contains(parsed->id))
+            registerModule(parsed->id, entryPoint);
+    } catch (const std::exception& e) {
+        m_portable->isInstalling = false;
+        m_portable->installError = QString::fromUtf8(e.what());
+        emit installStatusChanged();
+        co_return false;
+    }
+
+    if (parsed->id == QStringLiteral("spool.jellyfin")) {
+        setActive(QStringLiteral("jellyfin"));
+    }
+
+    m_portable->isInstalling = false;
+    m_portable->installProgress = 100;
+    m_portable->installStatus = QStringLiteral("Ready");
+    emit installStatusChanged();
+    emit installedProvidersChanged();
+    emit availableProvidersChanged();
+    emit providerInstalled(moduleId);
+
+    co_return true;
 }
 
 } // namespace JellyfinNative
