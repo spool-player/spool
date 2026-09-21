@@ -48,6 +48,21 @@ JELLYFIN_TEST_MAIN("source-registry")
     account.userId = QStringLiteral("user-a");
     account.accessToken = secret;
     database.upsertAccountProfile(account);
+    {
+        ProviderRegistry bundled;
+        bundled.registerModule("spool.jellyfin", "qrc:/providers/spool.jellyfin/logic/provider.mjs");
+        QCoro::waitFor(bundled.restoreSources(&database));
+        const QString source = QCoro::waitFor(bundled.configureSource("spool.jellyfin", "jellyfin-account", "library",
+            "Bundled source", { { "server", "https://fixture.invalid" }, { "userId", "user" }, { "token", secret } },
+            { QUrl("https://fixture.invalid") }));
+        const auto artwork = QCoro::waitFor(bundled.callSource(source, "artwork", { { "itemId", "film" } }));
+        const QUrl url(artwork.value("url").toString());
+        require(url.host() == "fixture.invalid" && url.path() == "/Items/film/Images/Primary",
+            "the actual bundled source executes through the worker registry");
+        require(artwork.value("headers").toMap().value("X-Emby-Token") == secret && !url.toString().contains(secret),
+            "bundled artwork returns resource-specific credentials outside the URL");
+        QCoro::waitFor(bundled.removeSource(source));
+    }
     const auto configure
         = [&](ProviderRegistry& registry, const QString& module, const QString& account, const QString& label) {
               return registry.configureSource(module, account, "server-key", label,

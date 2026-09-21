@@ -370,7 +370,13 @@ public:
             }
         });
         watchdog->arm();
-        module = engine->importModule(entryPoint);
+        const QUrl entryUrl(entryPoint);
+        // importModule's entry argument is a file name, unlike an ES import's
+        // URL specifier. Native Qt resource files use :/ rather than qrc:/.
+        const QString moduleFile = entryUrl.scheme() == QStringLiteral("qrc") ? QLatin1Char(':') + entryUrl.path()
+            : entryUrl.isLocalFile()                                          ? entryUrl.toLocalFile()
+                                                                              : entryPoint;
+        module = engine->importModule(moduleFile);
         // Promise syntax is the portable baseline; no Node/browser globals or
         // async-function syntax is required from the bundled Qt JS engine.
         invoke = engine->evaluate(QStringLiteral(R"JS(

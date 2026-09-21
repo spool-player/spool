@@ -943,6 +943,8 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         endforeach()
     endforeach()
 
+    qt_add_resources(provider_test_bundle_sources "${SPOOL_PROVIDER_RESOURCE_DIR}/providers.qrc")
+    target_sources(providers-tests PRIVATE ${provider_test_bundle_sources})
     add_test(NAME provider-package
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/provider_package_test.py")
     add_executable(provider-contract-runner sdk/provider-contract-runner.cpp)
