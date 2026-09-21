@@ -293,6 +293,8 @@ set(SPOOL_JELLYFIN_SOURCES
     src/api/ItemsQuery.h
     src/api/JellyfinApiFacade.cpp
     src/api/JellyfinApiFacade.h
+    src/api/JellyfinJsAdapter.cpp
+    src/api/JellyfinJsAdapter.h
     src/api/JellyfinSession.h
     src/api/JellyfinSettingsBridge.cpp
     src/api/JellyfinProvider.cpp
@@ -812,6 +814,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         items-query tests/api/ItemsQueryTest.cpp
         playback-negotiation tests/api/PlaybackNegotiationTest.cpp
         jellyfin-api-facade-url tests/api/JellyfinApiFacadeUrlTest.cpp
+        jellyfin-js-adapter tests/api/JellyfinJsAdapterTest.cpp
     )
     set(JELLYFIN_TESTS_app
         browse-session-controller tests/app/BrowseSessionControllerTest.cpp
@@ -954,6 +957,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     add_test(NAME provider-media-page-interpreter COMMAND providers-tests provider-media-page)
     set_tests_properties(provider-media-page-interpreter PROPERTIES ENVIRONMENT "QV4_FORCE_INTERPRETER=1;${JELLYFIN_TEST_ENV}")
     target_sources(providers-tests PRIVATE ${spool_provider_bundle_sources})
+    target_sources(api-tests PRIVATE ${spool_provider_bundle_sources})
     add_test(NAME provider-package
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/provider_package_test.py")
     add_executable(provider-contract-runner sdk/provider-contract-runner.cpp)
