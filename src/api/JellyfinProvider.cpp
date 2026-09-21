@@ -14,7 +14,9 @@
 #include "../models/DiscoveredServerModel.h"
 #include "../platform/PlatformPlaybackRuntime.h"
 #include "../player/PlayerController.h"
+#include "../provider/ProviderRegistry.h"
 #include "JellyfinApiFacade.h"
+#include "JellyfinJsAdapter.h"
 #include "JellyfinSettingsBridge.h"
 #if defined(JELLYFIN_NATIVE_WEBOS)
 #include "../platform/webos/WebOSDeviceName.h"
@@ -30,9 +32,19 @@ namespace JellyfinNative {
 
 JellyfinProvider::JellyfinProvider(const JellyfinProviderContext& context, QObject *parent)
     : Provider(parent)
+    , m_backend(context.backend)
+    , m_registry(context.registry)
+    , m_deviceName(context.deviceName)
+    , m_appVersion(context.appVersion)
     , m_database(context.database)
     , m_tlsTrust(context.tlsTrust)
 {
+    if (m_backend == Backend::JavaScript) {
+        if (!m_registry)
+            throw std::runtime_error("javascript_provider_unavailable");
+        m_jsAdapter = std::make_unique<JellyfinJsAdapter>(m_registry, this);
+    }
+
     m_api = new JellyfinApiFacade(context.network, context.tlsTrust, this);
     m_api->setDeviceIdentity({}, context.deviceName, context.appVersion);
 #if defined(JELLYFIN_NATIVE_WEBOS)
@@ -89,7 +101,14 @@ JellyfinProvider::JellyfinProvider(const JellyfinProviderContext& context, QObje
     connect(m_session, &SessionController::logoutStarted, this, &Provider::signOutStarted);
 
     // The session drives the parts that only make sense while signed in.
-    connect(m_session, &SessionController::authenticatedChanged, this, [this](const AuthSession&) {
+    connect(m_session, &SessionController::authenticatedChanged, this, [this](const AuthSession& auth) {
+        if (m_backend == Backend::JavaScript) {
+            Async::runScoped(
+                this, configureJsSourceAsync(auth), []() {},
+                [this](const std::exception_ptr& error) { emit errorOccurred(exceptionMessage(error)); });
+            return;
+        }
+
         if (m_artwork)
             m_artwork->setAuthorizationHeader(m_api->authorizationHeader());
         if (m_syncPlay)
@@ -131,6 +150,9 @@ JellyfinProvider::JellyfinProvider(const JellyfinProviderContext& context, QObje
     });
     connect(m_session, &SessionController::loggedOut, this, [this]() {
         leaveSessionServices();
+        if (m_jsAdapter)
+            m_jsAdapter->clear();
+        m_jsSourceId.clear();
         if (m_artwork)
             m_artwork->setAuthorizationHeader({});
         if (m_management)
@@ -154,38 +176,41 @@ QString JellyfinProvider::displayName() const
 
 Provider::Capabilities JellyfinProvider::capabilities() const
 {
+    if (m_backend == Backend::JavaScript) {
+        return Auth | Discovery | Search | UserItemState | PlaybackReporting | Segments | QuickConnect;
+    }
     return Auth | Discovery | Search | UserItemState | PlaybackReporting | Segments | LibraryManagement | SyncPlay
         | RemoteControl | QuickConnect | PeerRelay | StreamQuality;
 }
 
 PlaybackSource *JellyfinProvider::playback()
 {
-    return m_api;
+    return m_backend == Backend::JavaScript ? m_jsAdapter->playback() : m_api;
 }
 
 Catalog *JellyfinProvider::catalog()
 {
-    return m_api;
+    return m_backend == Backend::JavaScript ? m_jsAdapter->catalog() : m_api;
 }
 
 ArtworkSource *JellyfinProvider::artwork()
 {
-    return m_api;
+    return m_backend == Backend::JavaScript ? m_jsAdapter->artwork() : m_api;
 }
 
 SearchSource *JellyfinProvider::search()
 {
-    return m_api;
+    return m_backend == Backend::JavaScript ? m_jsAdapter->search() : m_api;
 }
 
 UserItemStateSink *JellyfinProvider::itemState()
 {
-    return m_api;
+    return m_backend == Backend::JavaScript ? m_jsAdapter->itemState() : m_api;
 }
 
 StreamQualityControl *JellyfinProvider::streamQuality()
 {
-    return m_api;
+    return m_backend == Backend::JavaScript ? nullptr : m_api;
 }
 
 GroupPlayback *JellyfinProvider::groupPlayback()
@@ -261,6 +286,8 @@ void JellyfinProvider::shutdown()
 
 bool JellyfinProvider::ready() const
 {
+    if (m_backend == Backend::JavaScript)
+        return m_session->authenticated() && m_jsAdapter && m_jsAdapter->signedIn();
     return m_session->authenticated();
 }
 
@@ -280,7 +307,10 @@ bool JellyfinProvider::restoreFromStorage(QVariantMap values, std::vector<Accoun
 
 void JellyfinProvider::setDeviceId(const QString& deviceId)
 {
+    m_deviceId = deviceId;
     m_api->setDeviceId(deviceId);
+    if (m_jsAdapter)
+        m_jsAdapter->setDeviceId(deviceId);
 }
 
 void JellyfinProvider::setLocale(const QString& bcp47)
@@ -291,6 +321,32 @@ void JellyfinProvider::setLocale(const QString& bcp47)
 bool JellyfinProvider::handleUnauthorized(const std::exception_ptr& error)
 {
     return m_session->handleUnauthorized(error);
+}
+
+QCoro::Task<void> JellyfinProvider::configureJsSourceAsync(const AuthSession& session)
+{
+    if (!m_registry)
+        co_return;
+    const QString serverUrl = m_session->serverUrl();
+    if (serverUrl.isEmpty() || session.userId.isEmpty() || session.accessToken.isEmpty())
+        co_return;
+
+    QVariantMap config { { QStringLiteral("server"), serverUrl }, { QStringLiteral("userId"), session.userId },
+        { QStringLiteral("token"), session.accessToken },
+        { QStringLiteral("deviceId"), m_deviceId.isEmpty() ? QStringLiteral("spool") : m_deviceId },
+        { QStringLiteral("deviceName"), m_deviceName.isEmpty() ? QStringLiteral("Spool") : m_deviceName },
+        { QStringLiteral("clientVersion"), m_appVersion.isEmpty() ? QStringLiteral("0.1.0") : m_appVersion } };
+    QList<QUrl> origins { QUrl(serverUrl) };
+    const QString sourceId = co_await m_registry->configureSource(
+        QStringLiteral("spool.jellyfin"), session.userId, QStringLiteral("library"), serverUrl, config, origins);
+
+    m_jsSourceId = sourceId;
+    m_jsAdapter->configure(sourceId, serverUrl, session.accessToken);
+    if (m_artwork)
+        m_artwork->setAuthorizationHeader(m_api->authorizationHeader());
+    m_discovery->stop();
+    setHasDefaultProfile(true);
+    emit sessionStarted();
 }
 
 void JellyfinProvider::resumeServerDiscovery()

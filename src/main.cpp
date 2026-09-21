@@ -629,34 +629,44 @@ int main(int argc, char **argv)
     JellyfinNative::ProviderRegistry providers;
     providers.registerModule(
         QStringLiteral("spool.jellyfin"), QStringLiteral("qrc:/providers/spool.jellyfin/logic/provider.mjs"));
-    QObject::connect(
-        &window, &QQuickWindow::frameSwapped, &providers,
-        [&providers, &database] {
-            QTimer::singleShot(3000, &providers, [&providers, &database] {
-                JellyfinNative::Async::runScoped(
-                    &providers, providers.restoreSources(&database), [] {},
-                    [](const std::exception_ptr&) {
-                        qWarning("Portable source metadata could not be restored; existing accounts were retained.");
-                    },
-                    "restore portable sources");
-            });
-        },
-        Qt::SingleShotConnection);
-    auto jellyfin = std::make_unique<JellyfinNative::JellyfinProvider>(JellyfinNative::JellyfinProviderContext {
-        networkAccessManager, &tlsTrust, &database, capabilities.deviceName, QString::fromLatin1(kAppVersion) });
+    try {
+        QCoro::waitFor(providers.restoreSources(&database));
+    } catch (const std::exception& error) {
+        qWarning("Portable source metadata could not be restored: %s", error.what());
+    }
+
+    const QString requestedBackend = optionValue(
+        arguments, QStringLiteral("--jellyfin-backend"), "SPOOL_JELLYFIN_BACKEND", QStringLiteral("native"))
+                                         .toLower();
+    QString requestedProvider
+        = optionValue(arguments, QStringLiteral("--provider"), "SPOOL_PROVIDER", QStringLiteral("jellyfin"));
+
+    JellyfinNative::JellyfinProvider::Backend backend = JellyfinNative::JellyfinProvider::Backend::Native;
+    if (requestedBackend == QStringLiteral("js") || requestedBackend == QStringLiteral("javascript")
+        || requestedProvider == QStringLiteral("jellyfin-js")) {
+        backend = JellyfinNative::JellyfinProvider::Backend::JavaScript;
+        if (requestedProvider == QStringLiteral("jellyfin-js"))
+            requestedProvider = QStringLiteral("jellyfin");
+    }
+
+    auto jellyfin = std::make_unique<JellyfinNative::JellyfinProvider>(
+        JellyfinNative::JellyfinProviderContext { networkAccessManager, &tlsTrust, &database, &providers,
+            capabilities.deviceName, QString::fromLatin1(kAppVersion), backend });
     providers.add(jellyfin.get());
     auto local
         = std::make_unique<JellyfinNative::LocalProvider>(optionValue(arguments, QStringLiteral("--library-root"),
             "SPOOL_LOCAL_LIBRARY", QStandardPaths::writableLocation(QStandardPaths::MoviesLocation)));
     providers.add(local.get());
-    const QString requestedProvider
-        = optionValue(arguments, QStringLiteral("--provider"), "SPOOL_PROVIDER", jellyfin->id());
     if (!providers.setActive(requestedProvider)) {
         logLine("provider: unknown provider %s; using %s", qPrintable(requestedProvider), qPrintable(jellyfin->id()));
         providers.setActive(jellyfin.get());
     }
     JellyfinNative::Provider *provider = providers.active();
-    logLine("provider: %s", qPrintable(provider->id()));
+    if (provider == jellyfin.get()) {
+        logLine("provider: %s (backend: %s)", qPrintable(provider->id()), qPrintable(jellyfin->backendName()));
+    } else {
+        logLine("provider: %s", qPrintable(provider->id()));
+    }
 
     const JellyfinNative::CpuTopology cpuTopology = JellyfinNative::detectCpuTopology();
     logLine("artwork: cpu logical=%d physical=%d smt=%s source=%s decodeThreads=%d", cpuTopology.logicalCpus,
@@ -925,7 +935,7 @@ int main(int argc, char **argv)
     // CI rather than an impression.
     JellyfinNative::RenderBenchmarkHooks benchmarkHooks;
     benchmarkHooks.providerId = provider ? provider->id() : QString();
-    benchmarkHooks.providerRuntime = QStringLiteral("native");
+    benchmarkHooks.providerRuntime = (provider == jellyfin.get()) ? jellyfin->backendName() : QStringLiteral("native");
     benchmarkHooks.libraries = controller->libraries();
     benchmarkHooks.openLibrary = [controller = controller.get()](int index) { controller->openLibrary(index); };
     benchmarkHooks.outstandingArtworkRequests
