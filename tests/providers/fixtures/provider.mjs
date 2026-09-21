@@ -8,6 +8,17 @@ export function createSource(config) {
                 rows.push({id: String(i), title: config.label + ' ' + i, variantId: 'file-' + i});
             return {items: rows, exhausted: true};
         },
+        mediaPage: function(args) {
+            const rows = [];
+            for (let i = 0; i < args.count; ++i)
+                rows.push({id: String(i), sourceId: 'spoofed', title: config.label + ' ' + i,
+                    type: 'Movie', year: 2020, externalIds: {Tmdb: String(i + 1)},
+                    runtimeTicks: '12345678900'});
+            return {items: rows, cursor: null, total: args.count, exhausted: true};
+        },
+        delayedMediaPage: function(args, host) {
+            return host.delay(10000).then(function() { return {items: [], exhausted: true}; });
+        },
         raw: function(args, host) {
             return host.http(config.origin + '/' + args.path);
         },

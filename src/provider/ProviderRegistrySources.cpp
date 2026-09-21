@@ -273,6 +273,41 @@ QCoro::Task<QVariantMap> ProviderRegistry::callSource(
     co_return result;
 }
 
+QCoro::Task<ProviderMediaPage> ProviderRegistry::callSourceMediaPage(
+    QString sourceId, QString operation, QVariantMap arguments, QString scope, int maximumItems)
+{
+    Q_ASSERT(thread() == QThread::currentThread());
+    auto *source = m_portable->find(sourceId);
+    if (!source || !source->enabled || !source->active)
+        throw std::runtime_error("source_unavailable");
+    QPointer<ProviderRegistry> guard(this);
+    const quint64 generation = source->generation;
+    const QString module = source->module;
+    ProviderMediaPage result;
+    try {
+        result = co_await m_portable->modules.value(module)->callMediaPage(
+            sourceId, std::move(operation), std::move(arguments), std::move(scope), maximumItems);
+    } catch (const std::exception& error) {
+        const QByteArray code(error.what());
+        if (guard && (code == "script_interrupted" || code == "source_unavailable")) {
+            for (auto& candidate : m_portable->sources) {
+                if (candidate.module == module) {
+                    candidate.active = false;
+                    ++candidate.generation;
+                }
+            }
+            refreshSourceSnapshot();
+        }
+        throw;
+    }
+    if (!guard)
+        throw std::runtime_error("source_registry_removed");
+    source = m_portable->find(sourceId);
+    if (!source || !source->enabled || !source->active || source->generation != generation)
+        throw std::runtime_error("source_generation_changed");
+    co_return result;
+}
+
 void ProviderRegistry::cancelSourceScope(const QString& sourceId, const QString& scope)
 {
     const auto *source = m_portable->find(sourceId);

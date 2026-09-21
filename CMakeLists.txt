@@ -254,6 +254,8 @@ set(SPOOL_SHELL_SOURCES
     src/provider/ProviderQmlCache.h
     src/provider/ProviderUiContext.cpp
     src/provider/ProviderUiContext.h
+    src/provider/ProviderMediaPage.cpp
+    src/provider/ProviderMediaPage.h
     src/provider/ScriptRuntime.cpp
     src/provider/ScriptRuntime.h
     src/provider/ProviderRegistry.cpp
@@ -806,6 +808,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     set(JELLYFIN_TESTS_providers
         local-provider tests/providers/LocalProviderTest.cpp
         script-runtime tests/providers/ScriptRuntimeTest.cpp
+        provider-media-page tests/providers/ProviderMediaPageTest.cpp
         source-registry tests/providers/SourceRegistryTest.cpp
         provider-ui-context tests/providers/ProviderUiContextTest.cpp
         provider-qml-cache tests/providers/ProviderQmlCacheTest.cpp
@@ -886,6 +889,8 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         endforeach()
     endforeach()
 
+    add_test(NAME provider-media-page-interpreter COMMAND providers-tests provider-media-page)
+    set_tests_properties(provider-media-page-interpreter PROPERTIES ENVIRONMENT "QV4_FORCE_INTERPRETER=1;${JELLYFIN_TEST_ENV}")
     target_sources(providers-tests PRIVATE ${spool_provider_bundle_sources})
     add_test(NAME provider-package
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/provider_package_test.py")
