@@ -633,8 +633,17 @@ int main(int argc, char **argv)
     // controller, which hold their parts by pointer, so they are declared
     // before them.
     JellyfinNative::ProviderRegistry providers;
-    providers.registerModule(
-        QStringLiteral("spool.jellyfin"), QStringLiteral("qrc:/providers/spool.jellyfin/logic/provider.mjs"));
+    providers.setNetworkAccessManager(networkAccessManager);
+    const QString providersDir = QDir(JellyfinNative::persistentDataRoot()).filePath(QStringLiteral("providers"));
+    QDir().mkpath(providersDir);
+    providers.setProvidersDirectory(providersDir);
+    providers.scanInstalledModules();
+
+    if (!providers.hasModule(QStringLiteral("spool.jellyfin"))
+        && QFile::exists(QStringLiteral(":/providers/spool.jellyfin/logic/provider.mjs"))) {
+        providers.registerModule(
+            QStringLiteral("spool.jellyfin"), QStringLiteral("qrc:/providers/spool.jellyfin/logic/provider.mjs"));
+    }
     try {
         QCoro::waitFor(providers.restoreSources(&database));
     } catch (const std::exception& error) {
@@ -831,11 +840,16 @@ int main(int argc, char **argv)
     provider->setLocale(localization->bcp47Locale());
     QObject::connect(localization.get(), &JellyfinNative::LocalizationManager::localeChanged, provider,
         [provider, loc = localization.get()]() { provider->setLocale(loc->bcp47Locale()); });
-    // A source with its own sign-in opens on it; one without goes straight
-    // to home.
-    auto router = std::make_unique<JellyfinNative::RouterController>(
-        provider->capabilities().testFlag(JellyfinNative::Provider::Auth) ? QStringLiteral("login")
-                                                                          : QStringLiteral("home"));
+    QString initialRoute;
+    if (requestedProvider == QStringLiteral("local")) {
+        initialRoute = QStringLiteral("home");
+    } else if (!providers.hasInstalledProviders()) {
+        initialRoute = QStringLiteral("providerPicker");
+    } else {
+        initialRoute = provider->capabilities().testFlag(JellyfinNative::Provider::Auth) ? QStringLiteral("login")
+                                                                                         : QStringLiteral("home");
+    }
+    auto router = std::make_unique<JellyfinNative::RouterController>(initialRoute);
     JellyfinNative::ApplicationHooks applicationHooks;
     applicationHooks.player = player.get();
     applicationHooks.settings = controller->settings();

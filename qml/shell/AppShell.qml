@@ -363,6 +363,8 @@ KeyRouter {
     }
 
     function defaultRoute() {
+        if (!Sources.hasInstalledProviders)
+            return "providerPicker"
         return root.signedIn ? "home" : "login"
     }
 
@@ -1045,9 +1047,9 @@ KeyRouter {
             // window lane; top and bottom can briefly coexist and leave the
             // bar stretched across the viewport.
             y: root.navBarAtBottom ? Math.max(0, parent.height - height) : 0
-            height: root.chromeRoute === "login" ? 0 : Metrics.topBarHeightPx
+            height: (root.chromeRoute === "login" || root.chromeRoute === "providerPicker") ? 0 : Metrics.topBarHeightPx
             edge: root.navBarAtBottom ? "bottom" : "top"
-            visible: root.chromeRoute !== "login"
+            visible: root.chromeRoute !== "login" && root.chromeRoute !== "providerPicker"
             z: 1
             // Same reason as the height above: the rail marks where you are,
             // not where you are going, so it does not blink its selection off
@@ -1105,6 +1107,7 @@ KeyRouter {
                 // The remote control page is this bar in full, so it would only
                 // duplicate itself there.
                 visible: shown && root.chromeRoute !== "remoteControl" && root.chromeRoute !== "login"
+                         && root.chromeRoute !== "providerPicker"
                 enabled: visible
                 onOpenRequested: root.pushRoute("remoteControl")
             }
