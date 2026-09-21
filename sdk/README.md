@@ -62,3 +62,31 @@ Use `requestList(operation, arguments, append)` for bulk rows. The operation ret
 `complete(result)` returns an action result with native `sourceId` authority; `close()` returns cancellation. Both settle once. Dismissing a component must call `close()`, and destroying the native context cancels outstanding work. Each context owns a separate native operation scope: closing a picker does not remove its source or cancel another picker on that source. Source removal/disable closes its open contexts.
 
 The `tests/providers/fixtures/Selection.qml` action exercises a 2,000-row virtualised list, async completion and dismissal. This bridge is not yet the full negotiated UI-host extension: shared routing, focus restoration, localisation/notification services and real Jellyfin component migration remain incomplete. Packages requiring `ui-host`, `native-list` or `Spool.Ui` continue to fail compatibility validation until that full public surface is provided.
+
+## Native typed listing path (integration in progress)
+
+`ScriptRuntime::callMediaPage()` and the generation-guarded
+`ProviderRegistry::callSourceMediaPage()` return `QCoro::Task<ProviderMediaPage>`.
+The operation still returns the existing normalized JS page shape
+`{items, cursor, total, exhausted}`. The worker validates/converts those fields
+**directly** into native-owned media items; it does not first create a generic
+`QVariantMap` tree and then convert all rows on the GUI thread. Small RPCs and
+custom UI actions retain `callSource()` and their existing bounded native maps.
+
+Each returned item carries the host-created source ID alongside `MovieItem`
+and its complete normalized external-ID map. Keep that envelope through
+routing/caching; do not discard it simply to fit an old single-source model.
+Ticks accept safe nonnegative JS integers or exact decimal strings within
+signed 64-bit range. Unknown totals stay optional and cursors stay opaque.
+The caller selects a row bound (100 by default, hard ceiling 1,000); this is an
+allocation/safety limit, not evidence that a 1,000-row page meets any latency
+budget. Source removal, operation-scope cancellation and watchdog behaviour
+are shared with ordinary calls.
+
+This decoder covers the current provider's **listing** schema. It is not a
+completed catalog adapter, details/variant/playback decoder, artwork credential
+bridge, account bootstrap, or native/JS application switch. Add those pieces
+and test against real Jellyfin before describing the portable client as wired.
+The existing native Jellyfin implementation remains the normal application
+path. These host-side types are experimental internals, not a new public SDK
+version or a reason to rebuild the portable provider ZIP.

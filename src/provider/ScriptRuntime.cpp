@@ -20,6 +20,7 @@
 #include <cmath>
 #include <condition_variable>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <thread>
 #include <utility>
@@ -28,16 +29,63 @@ namespace JellyfinNative {
 namespace {
     using Completion = std::shared_ptr<QPromise<QVariantMap>>;
 
-    void fail(const Completion& completion, const char *code)
+    template <typename T>
+    void fail(const std::shared_ptr<QPromise<T>>& completion, const char *code)
     {
         completion->setException(std::make_exception_ptr(std::runtime_error(code)));
         completion->finish();
     }
 
-    QCoro::Task<QVariantMap> awaitResult(QFuture<QVariantMap> future)
+    template <typename T>
+    QCoro::Task<T> awaitResult(QFuture<T> future)
     {
         auto result = qCoro(future);
         co_return co_await result.takeResult();
+    }
+
+    // Type erasure is per operation, not per item/property. Both small RPCs
+    // and bulk native pages use the same cancellation/HTTP/watchdog lifecycle.
+    struct ResultSink {
+        virtual ~ResultSink() = default;
+        virtual void prepare(const QJSValue& value) = 0;
+        virtual void complete() = 0;
+        virtual void reject(const char *code) = 0;
+    };
+    using OperationCompletion = std::shared_ptr<ResultSink>;
+
+    template <typename T, typename Decoder>
+    class TypedResultSink final : public ResultSink {
+    public:
+        TypedResultSink(std::shared_ptr<QPromise<T>> promise, Decoder decoder)
+            : promise(std::move(promise))
+            , decoder(std::move(decoder))
+        {
+        }
+        void prepare(const QJSValue& value) override
+        {
+            result.emplace(decoder(value));
+        }
+        void complete() override
+        {
+            promise->addResult(std::move(result.value()));
+            promise->finish();
+            result.reset();
+        }
+        void reject(const char *code) override
+        {
+            fail(promise, code);
+        }
+
+    private:
+        std::shared_ptr<QPromise<T>> promise;
+        Decoder decoder;
+        std::optional<T> result;
+    };
+
+    template <typename T, typename Decoder>
+    OperationCompletion resultSink(std::shared_ptr<QPromise<T>> promise, Decoder decoder)
+    {
+        return std::make_shared<TypedResultSink<T, Decoder>>(std::move(promise), std::move(decoder));
     }
 
     // Sleeps while JS is idle. Qt explicitly permits setInterrupted() from another
@@ -160,7 +208,7 @@ class ScriptOperation final : public QObject {
     Q_OBJECT
 public:
     QString scope;
-    ScriptOperation(QJSEngine *engine, QNetworkAccessManager *network, ScriptWatchdog *watchdog, Completion completion,
+    ScriptOperation(QJSEngine *engine, QNetworkAccessManager *network, ScriptWatchdog *watchdog, OperationCompletion completion,
         QList<QUrl> origins, QObject *parent)
         : QObject(parent)
         , engine(engine)
@@ -177,14 +225,14 @@ public:
     ~ScriptOperation() override
     {
         if (!settled)
-            fail(completion, "runtime_shutdown");
+            completion->reject("runtime_shutdown");
     }
     void cancel(const char *code)
     {
         if (settled)
             return;
         settled = true;
-        fail(completion, code);
+        completion->reject(code);
         release();
     }
     Q_INVOKABLE void resolve(const QJSValue& result)
@@ -194,14 +242,11 @@ public:
         try {
             if (!result.isObject() || result.isArray() || result.isError())
                 throw std::runtime_error("invalid_result");
-            int nodes = 0;
-            qsizetype bytes = 0;
-            QVariantMap owned = ownValue(result, nodes, bytes).toMap();
+            completion->prepare(result);
             if (engine->isInterrupted())
                 throw std::runtime_error("script_interrupted");
             settled = true;
-            completion->addResult(std::move(owned));
-            completion->finish();
+            completion->complete();
             release();
         } catch (const std::exception&) {
             cancel("invalid_result");
@@ -336,7 +381,7 @@ private:
     QJSEngine *engine;
     QNetworkAccessManager *network;
     ScriptWatchdog *watchdog;
-    Completion completion;
+    OperationCompletion completion;
     QList<QUrl> origins;
     QTimer deadline;
     QSet<QNetworkReply *> replies;
@@ -427,20 +472,20 @@ public:
         completion->finish();
     }
     void call(const QString& id, const QString& method, const QVariantMap& args, const QString& scope,
-        const Completion& completion)
+        const OperationCompletion& completion)
     {
         auto source = sources.find(id);
         if (!engine || engine->isInterrupted() || source == sources.end()) {
-            fail(completion, "source_unavailable");
+            completion->reject("source_unavailable");
             return;
         }
         if (source->operations.size() >= 8 || activeOperations >= 32) {
-            fail(completion, "operation_limit");
+            completion->reject("operation_limit");
             return;
         }
         if (method.startsWith(QLatin1Char('_')) || !source->object.hasOwnProperty(method)
             || !source->object.property(method).isCallable()) {
-            fail(completion, "unsupported_operation");
+            completion->reject("unsupported_operation");
             return;
         }
         auto *operation
@@ -569,12 +614,46 @@ QCoro::Task<QVariantMap> ScriptRuntime::call(QString sourceId, QString method, Q
         fail(completion, "queue_limit");
         return awaitResult(std::move(future));
     }
+    const auto sink = resultSink(completion, [](const QJSValue& value) {
+        int nodes = 0;
+        qsizetype bytes = 0;
+        return ownValue(value, nodes, bytes).toMap();
+    });
     QMetaObject::invokeMethod(
         d->worker,
         [state = d.get(), worker = d->worker, sourceId = std::move(sourceId), method = std::move(method),
-            arguments = std::move(arguments), scope = std::move(scope), completion] {
+            arguments = std::move(arguments), scope = std::move(scope), sink] {
             --state->queued;
-            worker->call(sourceId, method, arguments, scope, completion);
+            worker->call(sourceId, method, arguments, scope, sink);
+        },
+        Qt::QueuedConnection);
+    return awaitResult(std::move(future));
+}
+
+QCoro::Task<ProviderMediaPage> ScriptRuntime::callMediaPage(
+    QString sourceId, QString method, QVariantMap arguments, QString scope, int maximumItems)
+{
+    auto completion = std::make_shared<QPromise<ProviderMediaPage>>();
+    completion->start();
+    auto future = completion->future();
+    if (maximumItems < 1 || maximumItems > 1000) {
+        fail(completion, "invalid_page_limit");
+        return awaitResult(std::move(future));
+    }
+    if (d->queued.fetch_add(1) >= 64) {
+        --d->queued;
+        fail(completion, "queue_limit");
+        return awaitResult(std::move(future));
+    }
+    const auto sink = resultSink(completion, [sourceId, maximumItems](const QJSValue& value) {
+        return Detail::readProviderMediaPage(value, sourceId, maximumItems);
+    });
+    QMetaObject::invokeMethod(
+        d->worker,
+        [state = d.get(), worker = d->worker, sourceId = std::move(sourceId), method = std::move(method),
+            arguments = std::move(arguments), scope = std::move(scope), sink] {
+            --state->queued;
+            worker->call(sourceId, method, arguments, scope, sink);
         },
         Qt::QueuedConnection);
     return awaitResult(std::move(future));
