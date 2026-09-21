@@ -364,7 +364,8 @@ execute_process(
 if(NOT spool_provider_bundle_result EQUAL 0)
     message(FATAL_ERROR "Bundling provider sources failed: ${spool_provider_bundle_error}")
 endif()
-target_sources(jellyfin-native PRIVATE "${SPOOL_PROVIDER_RESOURCE_DIR}/providers.qrc")
+qt_add_resources(spool_provider_bundle_sources "${SPOOL_PROVIDER_RESOURCE_DIR}/providers.qrc")
+target_sources(jellyfin-native PRIVATE ${spool_provider_bundle_sources})
 
 set(JELLYFIN_NATIVE_TARGETS jellyfin-core jellyfin-native)
 jellyfin_configure_platform_targets(jellyfin-native jellyfin-core)
@@ -881,13 +882,12 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         endforeach()
     endforeach()
 
-    qt_add_resources(provider_test_bundle_sources "${SPOOL_PROVIDER_RESOURCE_DIR}/providers.qrc")
-    target_sources(providers-tests PRIVATE ${provider_test_bundle_sources})
+    target_sources(providers-tests PRIVATE ${spool_provider_bundle_sources})
     add_test(NAME provider-package
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/provider_package_test.py")
     add_executable(provider-contract-runner sdk/provider-contract-runner.cpp)
     target_link_libraries(provider-contract-runner PRIVATE Qt6::Core Qt6::Qml)
-    target_sources(provider-contract-runner PRIVATE "${SPOOL_PROVIDER_RESOURCE_DIR}/providers.qrc")
+    target_sources(provider-contract-runner PRIVATE ${spool_provider_bundle_sources})
     add_test(NAME bundled-jellyfin
         COMMAND provider-contract-runner "${CMAKE_CURRENT_SOURCE_DIR}/tests/providers/fixtures/bundled-jellyfin.mjs")
     add_test(NAME bundled-jellyfin-interpreter
