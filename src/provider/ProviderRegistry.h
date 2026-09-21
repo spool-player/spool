@@ -114,7 +114,9 @@ public:
     QCoro::Task<void> restoreSources(DatabaseManager *database);
     QCoro::Task<QString> configureSource(QString moduleId, QString accountId, QString sourceKey, QString label,
         QVariantMap configuration, QList<QUrl> authorisedOrigins);
-    QCoro::Task<QVariantMap> callSource(QString sourceId, QString operation, QVariantMap arguments = {});
+    QCoro::Task<QVariantMap> callSource(
+        QString sourceId, QString operation, QVariantMap arguments = {}, QString scope = {});
+    void cancelSourceScope(const QString& sourceId, const QString& scope);
     QCoro::Task<void> setSourceEnabled(QString sourceId, bool enabled);
     QCoro::Task<void> removeSource(QString sourceId);
     QVariantList configuredSources() const;
