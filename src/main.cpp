@@ -664,23 +664,12 @@ int main(int argc, char **argv)
         qWarning("Portable source metadata could not be restored: %s", error.what());
     }
 
-    const QString requestedBackend = optionValue(
-        arguments, QStringLiteral("--jellyfin-backend"), "SPOOL_JELLYFIN_BACKEND", QStringLiteral("native"))
-                                         .toLower();
-    QString requestedProvider
+    const QString requestedProvider
         = optionValue(arguments, QStringLiteral("--provider"), "SPOOL_PROVIDER", QStringLiteral("jellyfin"));
-
-    JellyfinNative::JellyfinProvider::Backend backend = JellyfinNative::JellyfinProvider::Backend::Native;
-    if (requestedBackend == QStringLiteral("js") || requestedBackend == QStringLiteral("javascript")
-        || requestedProvider == QStringLiteral("jellyfin-js")) {
-        backend = JellyfinNative::JellyfinProvider::Backend::JavaScript;
-        if (requestedProvider == QStringLiteral("jellyfin-js"))
-            requestedProvider = QStringLiteral("jellyfin");
-    }
 
     auto jellyfin = std::make_unique<JellyfinNative::JellyfinProvider>(
         JellyfinNative::JellyfinProviderContext { networkAccessManager, &tlsTrust, &database, &providers,
-            capabilities.deviceName, QString::fromLatin1(kAppVersion), backend });
+            capabilities.deviceName, QString::fromLatin1(kAppVersion) });
     providers.add(jellyfin.get());
     auto local
         = std::make_unique<JellyfinNative::LocalProvider>(optionValue(arguments, QStringLiteral("--library-root"),
@@ -691,11 +680,7 @@ int main(int argc, char **argv)
         providers.setActive(jellyfin.get());
     }
     JellyfinNative::Provider *provider = providers.active();
-    if (provider == jellyfin.get()) {
-        logLine("provider: %s (backend: %s)", qPrintable(provider->id()), qPrintable(jellyfin->backendName()));
-    } else {
-        logLine("provider: %s", qPrintable(provider->id()));
-    }
+    logLine("provider: %s", qPrintable(provider->id()));
 
     if (arguments.contains(QStringLiteral("--benchmark-providers"))
         || qEnvironmentVariableIsSet("SPOOL_BENCHMARK_PROVIDERS") || qgetenv("SPOOL_BENCH") == "providers") {
@@ -991,7 +976,7 @@ int main(int argc, char **argv)
     // CI rather than an impression.
     JellyfinNative::RenderBenchmarkHooks benchmarkHooks;
     benchmarkHooks.providerId = provider ? provider->id() : QString();
-    benchmarkHooks.providerRuntime = (provider == jellyfin.get()) ? jellyfin->backendName() : QStringLiteral("native");
+    benchmarkHooks.providerRuntime = (provider == jellyfin.get()) ? QStringLiteral("js") : QStringLiteral("native");
     benchmarkHooks.libraries = controller->libraries();
     benchmarkHooks.openLibrary = [controller = controller.get()](int index) { controller->openLibrary(index); };
     benchmarkHooks.outstandingArtworkRequests

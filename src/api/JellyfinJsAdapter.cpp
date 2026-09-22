@@ -3,6 +3,7 @@
 #include "../common/MetaJson.h"
 #include "../provider/ProviderMediaPage.h"
 #include "../provider/ProviderRegistry.h"
+#include "PlaybackNegotiation.h"
 
 #include <QDebug>
 #include <QJsonArray>
@@ -115,6 +116,8 @@ void JellyfinJsAdapter::clear()
     m_sourceId.clear();
     m_serverUrl.clear();
     m_sessionToken.clear();
+    m_bitrateOverride = 0;
+    m_heightOverride = 0;
     if (m_playback)
         m_playback->emitCredentialsChanged();
 }
@@ -122,6 +125,12 @@ void JellyfinJsAdapter::clear()
 void JellyfinJsAdapter::setDeviceId(const QString& deviceId)
 {
     m_deviceId = deviceId;
+}
+
+void JellyfinJsAdapter::setVideoCodecCapabilities(QStringList videoCodecs, bool restrictVideoCodecs)
+{
+    m_videoCodecs = std::move(videoCodecs);
+    m_restrictVideoCodecs = restrictVideoCodecs;
 }
 
 PlaybackSource *JellyfinJsAdapter::playback()
@@ -532,11 +541,27 @@ QCoro::Task<PlaybackSession> JellyfinJsAdapter::resolvePlayback(MovieItem movie,
     if (variantId.isEmpty())
         variantId = movie.id;
 
+    qint64 sourceBitrate = 0;
+    for (const MediaSourceInfo& source : movie.mediaSources)
+        sourceBitrate = std::max<qint64>(sourceBitrate, source.bitRate);
+
+    const bool shouldTranscode
+        = forceTranscode || (m_bitrateOverride > 0 && sourceBitrate > 0 && m_bitrateOverride < sourceBitrate);
+
     QVariantMap args;
     args.insert(QStringLiteral("itemId"), movie.id);
     args.insert(QStringLiteral("variantId"), variantId);
-    args.insert(QStringLiteral("forceTranscode"), forceTranscode);
+    args.insert(QStringLiteral("forceTranscode"), shouldTranscode);
     args.insert(QStringLiteral("positionTicks"), movie.resumeTicks);
+
+    const qint64 maxBitrate = m_bitrateOverride > 0 ? m_bitrateOverride : 120'000'000;
+    args.insert(QStringLiteral("maxBitrate"), maxBitrate);
+    if (m_heightOverride > 0)
+        args.insert(QStringLiteral("maxHeight"), m_heightOverride);
+
+    const QJsonObject profile
+        = PlaybackNegotiation::buildDeviceProfile(maxBitrate, m_heightOverride, m_videoCodecs, m_restrictVideoCodecs);
+    args.insert(QStringLiteral("deviceProfile"), profile.toVariantMap());
 
     QVariantMap result = co_await m_registry->callSource(m_sourceId, QStringLiteral("resolve"), args);
 
@@ -620,8 +645,12 @@ QUrl JellyfinJsAdapter::mediaOrigin() const
 
 QString JellyfinJsAdapter::trickplayTileUrl(const QString& itemId, int width, int tileIndex) const
 {
-    return m_serverUrl + QStringLiteral("/Items/") + itemId + QStringLiteral("/Images/Trickplay/")
-        + QString::number(width) + QLatin1Char('/') + QString::number(tileIndex);
+    if (m_serverUrl.isEmpty() || itemId.isEmpty() || width <= 0 || tileIndex < 0)
+        return {};
+    return serverUrlWithPath(m_serverUrl,
+        { QStringLiteral("Videos"), itemId, QStringLiteral("Trickplay"), QString::number(width),
+            QStringLiteral("%1.jpg").arg(tileIndex) })
+        .toString(QUrl::FullyEncoded);
 }
 
 QCoro::Task<void> JellyfinJsAdapter::reportPlaybackStart(
