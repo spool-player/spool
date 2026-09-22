@@ -29,64 +29,31 @@
 
 ## Module Seam
 
-The goal is one core that several backends can sit on (spool-jellyfin,
-spool-plex, spool-stremio). `CMakeLists.txt` groups sources into
-`SPOOL_PLATFORM_SOURCES`, `SPOOL_PLAYER_SOURCES`, `SPOOL_SHELL_SOURCES`,
-`SPOOL_JELLYFIN_SOURCES` and `SPOOL_LOCAL_SOURCES` to mark where that cut
-goes. They still build as one library; the grouping exists so the split stays
-mechanical.
+The app knows no media backend. Every source is a provider package (JS logic
+and QML screens) run by `src/provider/`; `docs/providers.md` describes the
+pieces and `sdk/` is the provider contract (API 0.2). Jellyfin lives in
+spool-player/spool-jellyfin and is bundled from the pin in
+`providers/lock.json`.
 
-- Core (the platform, player and shell groups plus everything under
-  `src/platform`, `src/player`, `src/media`, `src/provider`, `src/common`,
-  `src/cache` and `src/diagnostics`) never includes `src/api/`,
-  `src/discovery/` or `src/providers/`. `tools/check-module-seam.sh` enforces
-  that and runs as the `module-seam` ctest; `--strict` also treats every file
-  still listed in `SPOOL_JELLYFIN_SOURCES` as provider and passes too.
-- A media source is a `Provider` (`src/provider/Provider.h`): an id, a
-  display name, capability flags, and the interfaces it serves. `playback()`
-  (`PlaybackSource`), `catalog()` (`Catalog`) and `artwork()`
-  (`ArtworkSource`) are required; `search()`, `itemState()`,
-  `streamQuality()`, `groupPlayback()` and `remotePlayback()` are null
-  without the matching capability. Session-shaped hooks (`ready()`,
-  `restoreFromStorage()`, `setDeviceId()`, `handleUnauthorized()`) and
-  signals (`sessionStarted`, `sessionEnded`, `busyChanged`, `errorOccurred`,
-  `toastRequested`, `contentChanged`) are how the app hears about the source
-  without knowing which one it is. `AppController` is the composition root,
-  is core, and talks to the source through nothing else.
-- `ProviderRegistry` holds every provider the build knows and the active one,
-  and publishes the active flags as the `ProviderCapabilities` QML singleton
-  (twelve booleans: auth, discovery, search, userItemState,
-  playbackReporting, segments, libraryManagement, syncPlay, remoteControl,
-  quickConnect, peerRelay, streamQuality). Shared QML gates every
-  provider-specific control on one of those names; a provider registers the
-  singletons only its own QML reaches (`Session`, `SyncPlay`,
-  `RemoteControl`, `Management`, `QuickConnect`, `Discovery`,
-  `DiscoveredServers`) from `registerQmlSingletons()`, and shared QML never
-  names them without first checking the capability.
-- Two providers exist. `JellyfinProvider` (`src/api`) composes everything
-  Jellyfin-specific: the facade, discovery and its cached server list, the
-  session, QuickConnect, remote control, and after `attach()` SyncPlay,
-  library management and the settings bridge; it owns their session-driven
-  lifecycle. `LocalProvider` (`src/providers/local`) serves a folder of media
-  files with no server: it is deliberately simple, proves the shell needs
-  nothing a folder cannot give it, and stays as the contract's permanent
-  fixture (`local-provider` ctest). `main.cpp` registers both and activates
-  one: `--provider <id>` or `SPOOL_PROVIDER` (default `jellyfin`), and for
-  the local one `--library-root <dir>` or `SPOOL_LOCAL_LIBRARY` (default the
-  Videos directory). With no `auth` capability the shell opens on home.
-- The player talks to its media source only through `PlaybackSource`, the
-  queue and pages through `Catalog`, `SearchSource` and `UserItemStateSink`,
-  the quality picker through `StreamQualityControl`, and SyncPlay and remote
-  control through `GroupPlayback` and `RemotePlayback`. `JellyfinApiFacade`,
-  `SyncPlayController` and `RemoteControlController` implement those.
-  `SettingsController` emits the preferences a source needs and takes the
-  account's remote settings back through `applyRemote*()`;
-  `JellyfinSettingsBridge` in `src/api` is the Jellyfin side of that. Its
-  schema drops the account rows when the active provider has no `auth`.
-  `configurePlatformPlaybackCapabilities()` takes an applier callback, not
-  the facade. Nothing under `src/platform` or `src/diagnostics` includes
-  `AppController`: the platform layer takes `ApplicationHooks` and the render
-  benchmark `RenderBenchmarkHooks`, both filled in by `main.cpp`.
+- Core is everything under `src/` except `src/providers/` (native providers;
+  only `LocalProvider` today) and `src/main.cpp`, the composition root. Core
+  never includes `src/providers/`; `tools/check-module-seam.sh` is the
+  `module-seam` ctest.
+- The app sees one `Provider`, `SourceHub`, which routes to every enabled
+  account. IDs leaving it are scoped (`<8 hex>:<id>`) and stay opaque to
+  routes, caches and QML. Pages reach media through `Catalog`,
+  `SearchSource`, `UserItemStateSink`, `ArtworkSource`, `PlaybackSource` and
+  `StreamQualityControl`, never a provider type.
+- Shared QML gates optional controls on the `ProviderCapabilities` singleton
+  (search, userItemState, playbackReporting, segments, groupPlayback,
+  remoteControl, streamQuality, trickplay): what the enabled accounts can do
+  between them. Provider-specific UI is the provider's own QML, mounted by
+  `shell/ProviderSurface` with a `ProviderUiContext`; item-menu entries come
+  from the manifest's `actions`.
+- Group playback and remote control are generic (`GroupPlaybackController`,
+  `AppControllerRemote.cpp`); providers translate their protocol into
+  `group` and `remote` events. Do not touch `src/player` or
+  `qml/pages/Player*` for provider work beyond renames.
 - `qml/primitives` and `qml/theme` reach exactly two singletons, `Art.url` and
   `Settings.uiScalePercent`. Keep it that way; page- and shell-level QML is
   where backend-shaped data belongs.
