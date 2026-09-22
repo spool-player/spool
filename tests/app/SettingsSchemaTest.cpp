@@ -91,7 +91,6 @@ void requiredPersistedKeysArePresentExactlyOnce()
 {
     const QStringList expectedKeys {
         QStringLiteral("appearance/uiScalePercent"),
-        QStringLiteral("remote/showCastButton"),
         QStringLiteral("remote/acceptCommands"),
         QStringLiteral("artwork/format"),
         QStringLiteral("artwork/webpQuality"),
@@ -144,6 +143,7 @@ void requiredPersistedKeysArePresentExactlyOnce()
         QStringLiteral("input/yellowButton"),
         QStringLiteral("input/blueButton"),
         QStringLiteral("updates/automatic"),
+        QStringLiteral("providers/updates"),
         QStringLiteral("playback/videoOutput"),
         QStringLiteral("playback/renderQuality"),
         QStringLiteral("playback/autoAdjustQuality"),
@@ -382,14 +382,14 @@ void groupsAreDeclaredContiguously()
 }
 void pageRowsShareTheSchemaContract()
 {
-    const QStringList pageKeys { QStringLiteral("session/account"), QStringLiteral("action/switchUser"),
-        QStringLiteral("action/logout"), QStringLiteral("i18n/locale"), QStringLiteral("theme/accent"),
-        QStringLiteral("theme/reducedMotion"), QStringLiteral("theme/railLabels"), QStringLiteral("theme/renderMode"),
-        QStringLiteral("theme/antialiasedText"), QStringLiteral("theme/technicalMetadata"),
-        QStringLiteral("action/subtitleSettings"), QStringLiteral("action/resetSubtitleAppearance"),
-        QStringLiteral("about/version"), QStringLiteral("action/openSourceNotices"), QStringLiteral("about/locale"),
-        QStringLiteral("shell/diagnostics"), QStringLiteral("shell/latencyGuard"),
-        QStringLiteral("shell/latencyOverlay"), QStringLiteral("action/clearLatencyStatistics") };
+    const QStringList pageKeys { QStringLiteral("action/accounts"), QStringLiteral("action/providers"),
+        QStringLiteral("i18n/locale"), QStringLiteral("theme/accent"), QStringLiteral("theme/reducedMotion"),
+        QStringLiteral("theme/railLabels"), QStringLiteral("theme/renderMode"), QStringLiteral("theme/antialiasedText"),
+        QStringLiteral("theme/technicalMetadata"), QStringLiteral("action/subtitleSettings"),
+        QStringLiteral("action/resetSubtitleAppearance"), QStringLiteral("about/version"),
+        QStringLiteral("action/openSourceNotices"), QStringLiteral("about/locale"), QStringLiteral("shell/diagnostics"),
+        QStringLiteral("shell/latencyGuard"), QStringLiteral("shell/latencyOverlay"),
+        QStringLiteral("action/clearLatencyStatistics") };
     for (const QString& key : pageKeys) {
         const SettingSpec& spec = requiredSpec(key);
         require(!spec.persisted, QStringLiteral("page-owned row %1 must not be persisted").arg(key));
@@ -407,28 +407,17 @@ void pageRowsShareTheSchemaContract()
         QStringLiteral("diagnostics controls should be hidden below Expert detail"));
 }
 
-void accountRowsFollowTheAuthCapability()
+void accountRowsAreProviderNeutral()
 {
-    const QStringList accountKeys { QStringLiteral("session/account"), QStringLiteral("action/switchUser"),
-        QStringLiteral("action/logout") };
-    for (const QString& key : accountKeys)
-        require(requiredSpec(key).requiresAuth, QStringLiteral("account row %1 must require auth").arg(key));
-    require(!requiredSpec(QStringLiteral("action/manageCertificates")).requiresAuth,
-        QStringLiteral("certificate management is core and must not require auth"));
-
-    QSet<QString> withAuth;
-    for (const QVariant& item : settingSchemaModel(true))
-        withAuth.insert(item.toMap().value(QStringLiteral("key")).toString());
-    QSet<QString> withoutAuth;
-    for (const QVariant& item : settingSchemaModel(false))
-        withoutAuth.insert(item.toMap().value(QStringLiteral("key")).toString());
-    for (const QString& key : accountKeys) {
-        require(withAuth.contains(key), QStringLiteral("account row %1 exists with auth").arg(key));
-        require(!withoutAuth.contains(key), QStringLiteral("account row %1 must not exist without auth").arg(key));
-    }
-    const QSet<QString> dropped = withAuth - withoutAuth;
-    require(dropped == stringSet(accountKeys),
-        QStringLiteral("only the account rows depend on auth; dropped: %1").arg(dropped.values().join(", ")));
+    for (const QString& key : { QStringLiteral("action/accounts"), QStringLiteral("action/providers"),
+             QStringLiteral("providers/updates"), QStringLiteral("action/manageCertificates") })
+        requiredSpec(key);
+    QSet<QString> keys;
+    for (const QVariant& item : settingSchemaModel())
+        keys.insert(item.toMap().value(QStringLiteral("key")).toString());
+    for (const QString& gone :
+        { QStringLiteral("session/account"), QStringLiteral("action/logout"), QStringLiteral("remote/showCastButton") })
+        require(!keys.contains(gone), QStringLiteral("%1 belonged to the native Jellyfin client").arg(gone));
 }
 
 void subtitleChoicesExplainTheirBehavior()
@@ -589,7 +578,7 @@ JELLYFIN_TEST_MAIN("settings-schema")
     schemaModelExposesEverySpecOnce();
     groupsAreDeclaredContiguously();
     pageRowsShareTheSchemaContract();
-    accountRowsFollowTheAuthCapability();
+    accountRowsAreProviderNeutral();
     subtitleChoicesExplainTheirBehavior();
     systemLanguageLabelNamesResolvedLanguage();
     buttonChoicesAndLabelsExposePlayerActions();
