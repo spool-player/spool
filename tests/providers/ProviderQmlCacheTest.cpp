@@ -37,6 +37,7 @@ void waitUntil(const std::function<bool()>& condition)
 
 JELLYFIN_TEST_MAIN("provider-qml-cache")
 {
+    qputenv("QT_QPA_PLATFORM", "offscreen");
     QGuiApplication app(argc, argv);
     QTemporaryDir directory;
     require(directory.isValid(), "fixture directory created");
