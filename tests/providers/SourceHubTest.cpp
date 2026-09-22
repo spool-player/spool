@@ -124,6 +124,10 @@ JELLYFIN_TEST_MAIN("source-hub")
         byIds.size() == 3 && byIds[0].id == remoteItem && byIds[1].id == latest[1].id && byIds[2].id == latest[0].id,
         "lookups across accounts keep the order asked for");
 
+    require(QCoro::waitFor(hub.fetchSimilarItems(remoteItem)).empty()
+            && QCoro::waitFor(hub.fetchLibraryFilterOptions(hub.scoped(remote, QStringLiteral("lib")))).isEmpty(),
+        "operations a provider leaves out answer empty rather than failing");
+
     ArtworkSource::ImageRequest image;
     image.itemId = remoteItem;
     image.tag = QStringLiteral("t");
