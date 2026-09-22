@@ -254,8 +254,10 @@ QCoro::Task<void> ProviderRegistry::restore()
             persist(true);
     }
     m_restored = true;
-    emit restoredChanged();
+    // Accounts first: the shell picks its first route when restored changes,
+    // from bindings on the account list.
     emit accountsChanged();
+    emit restoredChanged();
     for (const ProviderAccount& account : m_accounts) {
         if (account.enabled)
             Async::runScoped(this, start(account.id), [] { }, [](const std::exception_ptr&) { }, "provider start");
