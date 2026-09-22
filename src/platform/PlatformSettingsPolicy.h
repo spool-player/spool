@@ -40,7 +40,6 @@ bool platformSupportsDirectVideoOutput();
 // to it after a viewer has watched the first few seconds stutter.
 const char *platformDefaultVideoOutput();
 bool platformUsesPerOutputAudioDelay();
-bool platformDefaultCastButtonEnabled();
 bool platformDefaultRemoteControlTargetEnabled();
 QString normalizedPlatformAudioRoute(const QString& output);
 QString platformAudioRouteDisplayName(const QString& output);

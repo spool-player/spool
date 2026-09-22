@@ -1,5 +1,5 @@
 import QtQuick
-import JellyfinWebOS
+import Spool
 import "../theme"
 import "../primitives"
 
@@ -66,7 +66,7 @@ FocusScope {
     // SyncPlay is only read behind its capability, so a source without group
     // watch never has the singleton evaluated; the chrome and the transport
     // bar take it from here rather than reaching for it themselves.
-    readonly property var syncPlay: ProviderCapabilities.syncPlay ? SyncPlay : null
+    readonly property var syncPlay: ProviderCapabilities.groupPlayback ? Group : null
     readonly property bool syncPlayActive: syncPlay ? syncPlay.enabled : false
     readonly property bool syncPlayWaiting: syncPlayActive && syncPlay.waitingForPlayback
     readonly property bool syncPlayMenuOpen: chrome.syncPlayMenuOpen

@@ -439,108 +439,23 @@ public:
             removeCacheValue(nameSpace, key);
     }
 
-    std::vector<AccountProfile> accountProfiles()
+    // Sign-ins the native Jellyfin client saved, read once to carry them
+    // over to provider accounts.
+    QVariantList legacyAccounts()
     {
-        std::vector<AccountProfile> profiles;
+        QVariantList accounts;
         QSqlQuery query(m_database);
         if (!query.exec(QStringLiteral("SELECT profile_id, server_id, server_name, server_url, user_id, user_name, "
-                                       "avatar_tag, last_used_at, created_at, needs_authentication "
-                                       "FROM profiles ORDER BY last_used_at DESC, created_at ASC"))) {
-            qWarning() << "database: profile load failed" << query.lastError().text();
-            return profiles;
+                                       "last_used_at FROM profiles")))
+            return accounts;
+        while (query.next()) {
+            accounts.append(QVariantMap { { QStringLiteral("serverId"), query.value(1) },
+                { QStringLiteral("serverName"), query.value(2) }, { QStringLiteral("server"), query.value(3) },
+                { QStringLiteral("userId"), query.value(4) }, { QStringLiteral("userName"), query.value(5) },
+                { QStringLiteral("lastUsed"), query.value(6) },
+                { QStringLiteral("token"), CredentialStore::load(query.value(0).toString()) } });
         }
-        while (query.next())
-            profiles.push_back(accountProfileFromQuery(query));
-        return profiles;
-    }
-
-    std::optional<AccountProfile> activateAccountProfile(const QString& profileId)
-    {
-        if (profileId.isEmpty() || !m_database.transaction())
-            return std::nullopt;
-
-        QSqlQuery query(m_database);
-        query.prepare(QStringLiteral("SELECT profile_id, server_id, server_name, server_url, user_id, user_name, "
-                                     "avatar_tag, last_used_at, created_at, needs_authentication "
-                                     "FROM profiles WHERE profile_id = ?"));
-        query.addBindValue(profileId);
-        if (!query.exec() || !query.next()) {
-            m_database.rollback();
-            return std::nullopt;
-        }
-
-        AccountProfile profile = accountProfileFromQuery(query);
-        profile.lastUsedAt = QDateTime::currentMSecsSinceEpoch();
-        QSqlQuery touch(m_database);
-        touch.prepare(QStringLiteral("UPDATE profiles SET last_used_at = ? WHERE profile_id = ?"));
-        touch.addBindValue(profile.lastUsedAt);
-        touch.addBindValue(profileId);
-        if (!touch.exec() || !m_database.commit()) {
-            m_database.rollback();
-            return std::nullopt;
-        }
-        return profile;
-    }
-
-    void upsertAccountProfile(const AccountProfile& profile)
-    {
-        const bool credentialSaved
-            = !profile.accessToken.isEmpty() && CredentialStore::save(profile.profileId, profile.accessToken);
-        if (!credentialSaved)
-            CredentialStore::remove(profile.profileId);
-
-        QSqlQuery query(m_database);
-        query.prepare(QStringLiteral(
-            "INSERT INTO profiles(profile_id, server_id, server_name, server_url, user_id, user_name, "
-            "avatar_tag, last_used_at, created_at, needs_authentication) "
-            "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(profile_id) DO UPDATE SET "
-            "server_id = excluded.server_id, server_name = excluded.server_name, "
-            "server_url = excluded.server_url, user_id = excluded.user_id, user_name = excluded.user_name, "
-            "avatar_tag = excluded.avatar_tag, last_used_at = excluded.last_used_at, "
-            "needs_authentication = excluded.needs_authentication"));
-        const auto bindText
-            = [&query](const QString& value) { query.addBindValue(value.isNull() ? QStringLiteral("") : value); };
-        bindText(profile.profileId);
-        bindText(profile.serverId);
-        bindText(profile.serverName);
-        bindText(profile.serverUrl);
-        bindText(profile.userId);
-        bindText(profile.userName);
-        bindText(profile.avatarTag);
-        query.addBindValue(profile.lastUsedAt);
-        query.addBindValue(profile.createdAt);
-        query.addBindValue(profile.needsAuthentication || !credentialSaved);
-        if (!query.exec())
-            qWarning() << "database: profile upsert failed" << query.lastError().text();
-    }
-
-    void expireAccountProfile(const QString& profileId)
-    {
-        QSqlQuery query(m_database);
-        query.prepare(QStringLiteral("UPDATE profiles SET needs_authentication = 1 WHERE profile_id = ?"));
-        query.addBindValue(profileId);
-        if (!query.exec())
-            qWarning() << "database: profile expiration failed" << query.lastError().text();
-        CredentialStore::remove(profileId);
-    }
-
-    void removeAccountProfile(const QString& profileId)
-    {
-        QSqlQuery query(m_database);
-        query.prepare(QStringLiteral("DELETE FROM profiles WHERE profile_id = ?"));
-        query.addBindValue(profileId);
-        if (!query.exec())
-            qWarning() << "database: profile removal failed" << query.lastError().text();
-        CredentialStore::remove(profileId);
-    }
-
-    void clearAccountProfiles()
-    {
-        QSqlQuery query(m_database);
-        if (!query.exec(QStringLiteral("DELETE FROM profiles")))
-            qWarning() << "database: profile clear failed" << query.lastError().text();
-        CredentialStore::clear();
+        return accounts;
     }
 
     void close()
@@ -558,15 +473,6 @@ private:
         database.close();
         database = {};
         QSqlDatabase::removeDatabase(connectionName);
-    }
-    static AccountProfile accountProfileFromQuery(const QSqlQuery& query)
-    {
-        const QString profileId = query.value(0).toString();
-        const QString accessToken = CredentialStore::load(profileId);
-        return { profileId, query.value(1).toString(), query.value(2).toString(), query.value(3).toString(),
-            query.value(4).toString(), query.value(5).toString(), accessToken, query.value(6).toString(),
-            query.value(7).toLongLong(), query.value(8).toLongLong(),
-            query.value(9).toBool() || accessToken.isEmpty() };
     }
     QSqlDatabase m_database;
     QSqlDatabase m_cacheDatabase;
@@ -674,68 +580,12 @@ void DatabaseManager::shutdown()
     m_worker = nullptr;
 }
 
-QCoro::Task<QString> DatabaseManager::loadLastServerUrlAsync()
+QCoro::Task<QVariantList> DatabaseManager::loadLegacyAccountsAsync()
 {
     if (!co_await awaitInitialization())
-        co_return QString();
+        co_return QVariantList {};
     DatabaseWorker *worker = m_worker;
-    co_return co_await workerTask(worker,
-        [worker]() { return worker ? worker->value(QStringLiteral("login/serverUrl")).toString() : QString(); });
-}
-
-QCoro::Task<QString> DatabaseManager::loadLastUsernameAsync()
-{
-    if (!co_await awaitInitialization())
-        co_return QString();
-    DatabaseWorker *worker = m_worker;
-    co_return co_await workerTask(
-        worker, [worker]() { return worker ? worker->value(QStringLiteral("login/username")).toString() : QString(); });
-}
-
-void DatabaseManager::saveLoginHints(const QString& serverUrl, const QString& username)
-{
-    invokeOnWorkerAsync([this, serverUrl, username]() {
-        m_worker->setValue(QStringLiteral("login/serverUrl"), serverUrl);
-        m_worker->setValue(QStringLiteral("login/username"), username);
-    });
-}
-
-QCoro::Task<std::vector<AccountProfile>> DatabaseManager::loadAccountProfilesAsync()
-{
-    if (!co_await awaitInitialization())
-        co_return std::vector<AccountProfile> {};
-    DatabaseWorker *worker = m_worker;
-    co_return co_await workerTask(
-        worker, [worker]() { return worker ? worker->accountProfiles() : std::vector<AccountProfile> {}; });
-}
-
-QCoro::Task<std::optional<AccountProfile>> DatabaseManager::activateAccountProfileAsync(const QString& profileId)
-{
-    if (!co_await awaitInitialization())
-        co_return std::nullopt;
-    DatabaseWorker *worker = m_worker;
-    co_return co_await workerTask(
-        worker, [worker, profileId]() { return worker ? worker->activateAccountProfile(profileId) : std::nullopt; });
-}
-
-void DatabaseManager::upsertAccountProfile(const AccountProfile& profile)
-{
-    invokeOnWorkerAsync([this, profile]() { m_worker->upsertAccountProfile(profile); });
-}
-
-void DatabaseManager::expireAccountProfile(const QString& profileId)
-{
-    invokeOnWorkerAsync([this, profileId]() { m_worker->expireAccountProfile(profileId); });
-}
-
-void DatabaseManager::removeAccountProfile(const QString& profileId)
-{
-    invokeOnWorkerAsync([this, profileId]() { m_worker->removeAccountProfile(profileId); });
-}
-
-void DatabaseManager::clearAccountProfiles()
-{
-    invokeOnWorkerAsync([this]() { m_worker->clearAccountProfiles(); });
+    co_return co_await workerTask(worker, [worker]() { return worker ? worker->legacyAccounts() : QVariantList {}; });
 }
 
 QCoro::Task<QString> DatabaseManager::loadDeviceIdAsync()
@@ -750,34 +600,6 @@ QCoro::Task<QString> DatabaseManager::loadDeviceIdAsync()
 void DatabaseManager::saveDeviceId(const QString& deviceId)
 {
     invokeOnWorkerAsync([this, deviceId]() { m_worker->setValue(QStringLiteral("client/deviceId"), deviceId); });
-}
-
-QCoro::Task<QJsonArray> DatabaseManager::loadDiscoveredServersAsync()
-{
-    if (!co_await awaitInitialization())
-        co_return QJsonArray();
-    DatabaseWorker *worker = m_worker;
-    co_return co_await workerTask(worker, [worker]() {
-        if (!worker)
-            return QJsonArray();
-        constexpr qint64 maxAgeMs = 7LL * 24 * 60 * 60 * 1000;
-        const QByteArray encoded = worker->cacheValue(QStringLiteral("discovery"), QStringLiteral("servers"), maxAgeMs);
-        QJsonParseError error;
-        const QJsonDocument document = QJsonDocument::fromJson(encoded, &error);
-        if (error.error == QJsonParseError::NoError && document.isArray())
-            return document.array();
-        if (!encoded.isEmpty())
-            worker->removeCacheValue(QStringLiteral("discovery"), QStringLiteral("servers"));
-        return QJsonArray();
-    });
-}
-
-void DatabaseManager::saveDiscoveredServers(const QJsonArray& servers)
-{
-    const QByteArray encoded = QJsonDocument(servers).toJson(QJsonDocument::Compact);
-    constexpr qint64 ttlMs = 7LL * 24 * 60 * 60 * 1000;
-    saveCacheEntry(QStringLiteral("discovery"), QStringLiteral("servers"), encoded, ttlMs);
-    evictCacheEntries(512);
 }
 
 QCoro::Task<QJsonObject> DatabaseManager::loadHomePayloadAsync(const QString& key, int schemaVersion)
@@ -833,8 +655,7 @@ QCoro::Task<StartupState> DatabaseManager::loadStartupStateAsync(const QStringLi
     co_return co_await workerTask(worker, [worker, keys, initialization]() {
         if (!worker || !initialization.result())
             return StartupState {};
-        return StartupState { worker->value(QStringLiteral("client/deviceId")).toString(), worker->values(keys),
-            worker->accountProfiles() };
+        return StartupState { worker->value(QStringLiteral("client/deviceId")).toString(), worker->values(keys) };
     });
 }
 

@@ -1,5 +1,5 @@
 import QtQuick
-import JellyfinWebOS
+import Spool
 import "../primitives"
 import "../theme"
 

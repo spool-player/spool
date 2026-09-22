@@ -6,7 +6,10 @@
 #include <QCoroTask>
 
 #include <QDebug>
+#include <QFuture>
 #include <QPointer>
+#include <QPromise>
+#include <QThreadPool>
 
 #include <exception>
 #include <functional>
@@ -14,6 +17,30 @@
 #include <utility>
 
 namespace JellyfinNative::Async {
+
+// Runs `work` on `pool` (the global pool by default) and hands back a future
+// a coroutine can await, for disk and CPU work that must stay off the GUI
+// thread. A one-thread pool runs its work strictly in order.
+template <typename Work> auto background(Work work, QThreadPool *pool = QThreadPool::globalInstance())
+{
+    using Result = std::invoke_result_t<Work>;
+    auto promise = std::make_shared<QPromise<Result>>();
+    promise->start();
+    QFuture<Result> future = promise->future();
+    pool->start([promise, work = std::move(work)]() mutable {
+        try {
+            if constexpr (std::is_void_v<Result>) {
+                work();
+            } else {
+                promise->addResult(work());
+            }
+        } catch (...) {
+            promise->setException(std::current_exception());
+        }
+        promise->finish();
+    });
+    return future;
+}
 
 namespace detail {
     template <typename Failure>

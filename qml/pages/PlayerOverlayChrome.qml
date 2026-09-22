@@ -2,11 +2,10 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Layouts
-import JellyfinWebOS
+import Spool
 import "../theme"
 import "../primitives"
 import "../shell" as Shell
-import "../providers/jellyfin" as Provider
 
 Item {
     id: root
@@ -432,7 +431,7 @@ Item {
         width: root.dp(420)
         z: 55
         active: root.overlay.syncPlay !== null
-        sourceComponent: Provider.SyncPlayMenu {
+        sourceComponent: Shell.GroupMenu {
             onRequestClose: root.overlay.closeMenu()
         }
     }

@@ -264,8 +264,12 @@ FocusScope {
     }
 
     function rowDescription(row) {
-        if (row.key === "session/account")
-            return ProviderCapabilities.auth ? Session.serverUrl : ""
+        if (row.key === "action/accounts") {
+            const count = Providers.accounts.length
+            return count === 1 ? "1 account" : count + " accounts"
+        }
+        if (row.key === "action/providers" && Store.updates.length > 0)
+            return Store.updates.length === 1 ? "1 update" : Store.updates.length + " updates"
         if (row.key === "subtitles/mode" || row.key === "audio/trackMode") {
             const index = rowCurrentIndex(row)
             const labels = rowOptions(row)
@@ -293,18 +297,13 @@ FocusScope {
     }
 
     function rowValueText(row) {
-        if (row.key === "action/switchUser")
-            return "Choose"
-        if (row.key === "action/logout")
-            return "Sign out"
+        if (row.key === "action/accounts" || row.key === "action/providers")
+            return "Manage"
         if (row.key === "action/openSourceNotices" || row.key === "action/exportDiagnostics" || row.key
                 === "action/subtitleSettings" || row.key === "action/manageCertificates")
             return "Open"
         if (row.key === "action/clearLatencyStatistics" || row.key === "action/clearLogs")
             return "Clear"
-        if (row.key === "session/account")
-            return ProviderCapabilities.auth && Session.activeProfileLabel.length > 0 ? Session.activeProfileLabel :
-                                                                                        "Offline"
 
         if (row.key === "about/version")
             return "v" + Qt.application.version
@@ -438,10 +437,10 @@ FocusScope {
             return
         }
         if (row.type === "action") {
-            if (row.key === "action/switchUser" && shell)
-                shell.switchUser()
-            else if (row.key === "action/logout" && ProviderCapabilities.auth)
-                Session.logout()
+            if (row.key === "action/accounts" && shell)
+                shell.pushRoute("accounts")
+            else if (row.key === "action/providers" && shell)
+                shell.pushRoute("addProvider")
             else if (row.key === "action/manageCertificates")
                 certificateManagerVisible = true
             else if (row.key === "action/clearLatencyStatistics")

@@ -12,7 +12,6 @@
 #include "HomeModelController.h"
 #include "SearchController.h"
 #include "SettingsController.h"
-#include "SpoolRemoteProtocol.h"
 
 #include <QCoroTask>
 #include <QJsonObject>
@@ -29,18 +28,16 @@ namespace JellyfinNative {
 
 class ArtworkService;
 class Catalog;
-class GroupPlayback;
+class GroupPlaybackController;
 class LibraryPrefetchController;
 class PlaybackSource;
-class Provider;
-class RemotePlayback;
+class SourceHub;
 class StreamQualityControl;
 class UserItemStateController;
 class TlsTrustController;
 // The composition root: it owns the source-agnostic controllers, wires them
-// to the player and the queue, and talks to the media source only through
-// the Provider it was handed and the interfaces that provider serves. It
-// knows nothing about which provider that is.
+// to the player and the queue, and reaches media only through the SourceHub,
+// which stands for every enabled account at once.
 class AppController final : public QObject {
     Q_OBJECT
     Q_PROPERTY(bool busy MEMBER m_busy NOTIFY busyChanged)
@@ -50,11 +47,10 @@ class AppController final : public QObject {
     Q_PROPERTY(bool playbackTransition MEMBER m_playbackTransition NOTIFY playbackTransitionChanged)
     Q_PROPERTY(QString busyText MEMBER m_busyText NOTIFY busyChanged)
     Q_PROPERTY(QString errorText MEMBER m_errorText NOTIFY errorTextChanged)
-    Q_PROPERTY(bool hasDefaultProfile READ hasDefaultProfile NOTIFY defaultProfileChanged)
     Q_PROPERTY(bool initialized READ initialized NOTIFY initializedChanged)
 
 public:
-    AppController(DatabaseManager *database, Provider *provider, ArtworkService *artwork, PlayerController *player,
+    AppController(DatabaseManager *database, SourceHub *provider, ArtworkService *artwork, PlayerController *player,
         QObject *parent = nullptr);
 
     ArtworkService *artwork() const
@@ -97,11 +93,14 @@ public:
     {
         return m_settings;
     }
+    GroupPlaybackController *group()
+    {
+        return m_group;
+    }
     bool initialized() const
     {
         return m_initialized;
     }
-    bool hasDefaultProfile() const;
 
     Q_INVOKABLE void initialize();
     void shutdown();
@@ -153,14 +152,14 @@ signals:
     void playbackTransitionChanged();
     void streamingQualityChanged();
     void errorTextChanged();
-    void defaultProfileChanged();
     void initializedChanged();
     void aggressiveMemoryPressure();
     void toastMessage(const QString& message);
     void remoteUiActionRequested(const QString& action);
     void remoteMessageRequested(const QString& message);
     void remoteContentRequested(const QString& itemId, const QString& itemType, const QString& title);
-    void remoteSeekPreviewRequested(qint64 positionTicks, bool active);
+    // The stored or per-instance device identity is known; providers start.
+    void deviceIdentityReady(const QString& deviceId);
     void clearLogsRequested();
     void diagnosticsReportSaved(const QString& path);
 
@@ -185,35 +184,29 @@ private:
     void playQueuedItems(const std::vector<MovieItem>& items, int startIndex, bool fromStart = false);
     bool modelIsOrderedList(MovieGridModel *model) const;
     void playAlbumFrom(const MovieItem& track, bool fromStart);
-    bool inSyncPlayGroup() const;
-    bool remoteTargetSelected() const;
-    // Hands the items to the remote target when one is selected; false
-    // means play them here.
-    bool playRemotely(const std::vector<MovieItem>& items, int startIndex, const QString& command, bool fromStart);
+    bool inGroup() const;
     void groupOrLocalTogglePause();
     void setPlaybackTransition(bool transition);
-    QString queuePlaylistItemId(int index) const;
+    QString queueEntryId(int index) const;
     bool enqueueForGroup(const MovieItem& item, bool queueNext);
     void playQueuedItem(const MovieItem& item, bool fromStart = false);
     void playEpisodeWithContext(const MovieItem& episode, int direction, bool fromStart);
     void playQueueCurrent(bool fromStart = false);
     void startQueuedPlayback(bool fromStart = false);
-    void handleRemotePlay(const QJsonObject& data);
-    void handleSpoolMessage(const SpoolRemoteProtocol::Message& message);
-    void handleRemotePlaystate(const QJsonObject& data);
-    void handleRemoteGeneralCommand(const QJsonObject& data);
+    // AppControllerRemote.cpp: commands another client sent through a source.
+    void handleRemoteCommand(const QString& accountId, const QVariantMap& command);
+    void playRemoteItems(const QString& accountId, const QVariantMap& command);
     // Folder-like containers open their child listing; everything else plays directly.
     void playOrOpen(const MovieItem& item, bool fromStart = false);
     void handlePlaybackStopped(const QString& itemId, qint64 positionTicks, bool completed);
 
     DatabaseManager *m_database = nullptr;
-    Provider *m_provider = nullptr;
+    SourceHub *m_provider = nullptr;
     Catalog *m_catalog = nullptr;
     PlaybackSource *m_playback = nullptr;
     // Null when the provider lacks the matching capability.
     StreamQualityControl *m_quality = nullptr;
-    GroupPlayback *m_group = nullptr;
-    RemotePlayback *m_remote = nullptr;
+    GroupPlaybackController *m_group = nullptr;
     ArtworkService *m_artwork = nullptr;
     PlayerController *m_player = nullptr;
     PlayQueueController *m_playQueue = nullptr;
@@ -238,12 +231,11 @@ private:
     bool m_initialized = false;
     QString m_busyText;
     QString m_errorText;
-    QString m_remoteRepeatMode = QStringLiteral("RepeatNone");
+    QString m_repeatMode = QStringLiteral("RepeatNone");
     RequestGeneration m_libraryLoadGeneration;
     RequestGeneration m_playbackLoadGeneration;
     RequestGeneration m_syncPlayQueueRequestGeneration;
     RequestGeneration m_remotePlaybackRequestGeneration;
-    QString m_remotePlaybackFingerprint;
     bool m_shuttingDown = false;
     bool m_codecFallbackAttempted = false;
     // The ceiling a quality change moved away from, kept only until that

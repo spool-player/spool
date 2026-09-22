@@ -55,10 +55,6 @@ bool platformUsesPerOutputAudioDelay()
 {
     return true;
 }
-bool platformDefaultCastButtonEnabled()
-{
-    return false;
-}
 bool platformDefaultRemoteControlTargetEnabled()
 {
     return true;

@@ -132,14 +132,9 @@ message(STATUS "${spool_splash_output}")
 
 jellyfin_resolve_platform_dependencies()
 
-# The source groups below mark the seam a spool-jellyfin / spool-plex /
-# spool-stremio split would cut along. They all compile into one library for
-# now; keeping them apart here is what makes the split mechanical later.
-#
-# The rule that matters: nothing in the platform, player or shell groups may
-# include src/api/, src/discovery/ or src/providers/. Core reaches a media
-# source only through the interfaces in src/provider/;
-# tools/check-module-seam.sh enforces it as the module-seam test.
+# Core never includes src/providers/ (native providers); every media source
+# is reached through src/provider/. tools/check-module-seam.sh enforces it
+# as the module-seam test.
 
 # Per-OS abstractions. No backend and no UI knowledge.
 set(SPOOL_PLATFORM_SOURCES
@@ -198,8 +193,6 @@ set(SPOOL_PLAYER_SOURCES
 
 # Application plumbing that does not name a media backend.
 set(SPOOL_SHELL_SOURCES
-    src/app/AccountProfile.cpp
-    src/app/AccountProfile.h
     src/app/ArtworkImageProvider.cpp
     src/app/ArtworkImageProvider.h
     src/app/ArtworkPrefetcher.h
@@ -231,14 +224,15 @@ set(SPOOL_SHELL_SOURCES
     src/app/SettingsController.h
     src/app/SettingsSchema.cpp
     src/app/SettingsSchema.h
-    src/app/SpoolLinkCodec.cpp
-    src/app/SpoolLinkCodec.h
-    src/app/SpoolRemoteProtocol.cpp
-    src/app/SpoolRemoteProtocol.h
     src/app/UpdateManifest.cpp
     src/app/UpdateManifest.h
     src/app/AppController.cpp
     src/app/AppController.h
+    src/app/AppControllerRemote.cpp
+    src/app/GroupClock.cpp
+    src/app/GroupClock.h
+    src/app/GroupPlaybackController.cpp
+    src/app/GroupPlaybackController.h
     src/cache/DatabaseManager.cpp
     src/cache/DatabaseManager.h
     src/common/AsyncTask.h
@@ -259,26 +253,33 @@ set(SPOOL_SHELL_SOURCES
     src/provider/Catalog.h
     src/provider/GroupPlayback.h
     src/provider/PlaybackSource.h
+    src/provider/PortableProvider.cpp
+    src/provider/PortableProvider.h
     src/provider/Provider.h
+    src/provider/ProviderCapabilities.h
+    src/provider/ProviderMediaPage.cpp
+    src/provider/ProviderMediaPage.h
     src/provider/ProviderPackage.cpp
     src/provider/ProviderPackage.h
     src/provider/ProviderQmlCache.cpp
     src/provider/ProviderQmlCache.h
+    src/provider/ProviderRegistry.cpp
+    src/provider/ProviderRegistry.h
+    src/provider/ProviderStore.cpp
+    src/provider/ProviderStore.h
     src/provider/ProviderUiContext.cpp
     src/provider/ProviderUiContext.h
-    src/provider/ProviderMediaPage.cpp
-    src/provider/ProviderMediaPage.h
+    src/provider/ScriptBridge.cpp
+    src/provider/ScriptBridge.h
     src/provider/ScriptRuntime.cpp
     src/provider/ScriptRuntime.h
-    src/provider/ProviderRegistry.cpp
-    src/provider/ProviderRegistrySources.cpp
-    src/provider/ProviderRegistry.h
-    src/provider/puff.c
-    src/provider/puff.h
-    src/provider/RemotePlayback.h
     src/provider/SearchSource.h
+    src/provider/SourceHub.cpp
+    src/provider/SourceHub.h
     src/provider/StreamQualityControl.h
     src/provider/UserItemStateSink.h
+    third_party/zstd/bounded_zstd.c
+    third_party/zstd/bounded_zstd.h
     src/diagnostics/Diagnostics.cpp
     src/diagnostics/Diagnostics.h
     src/diagnostics/InputLatencyMonitor.cpp
@@ -289,46 +290,7 @@ set(SPOOL_SHELL_SOURCES
     src/diagnostics/SystemPerformanceMonitor.h
 )
 
-# Jellyfin REST, server discovery, and the controllers and models shaped
-# by them. This is the group a second backend would grow a sibling to.
-set(SPOOL_JELLYFIN_SOURCES
-    src/api/HttpRequestPolicy.h
-    src/api/JellyfinApiFacade.cpp
-    src/api/JellyfinApiFacade.h
-    src/api/JellyfinJsAdapter.cpp
-    src/api/JellyfinJsAdapter.h
-    src/api/JellyfinSession.h
-    src/api/JellyfinSettingsBridge.cpp
-    src/api/JellyfinProvider.cpp
-    src/api/JellyfinProvider.h
-    src/api/JellyfinSettingsBridge.h
-    src/api/PlaybackNegotiation.cpp
-    src/api/PlaybackNegotiation.h
-    src/api/ProviderBenchmark.cpp
-    src/api/ProviderBenchmark.h
-    src/app/LibraryManagementController.cpp
-    src/app/LibraryManagementController.h
-    src/app/QuickConnectController.cpp
-    src/app/QuickConnectController.h
-    src/app/RemoteControlController.cpp
-    src/app/RemoteControlController.h
-    src/app/SpoolLink.cpp
-    src/app/SpoolLink.h
-    src/app/SessionController.cpp
-    src/app/SessionController.h
-    src/app/SyncPlayClock.cpp
-    src/app/SyncPlayClock.h
-    src/app/SyncPlayController.cpp
-    src/app/SyncPlayController.h
-    src/discovery/DiscoveredServer.h
-    src/discovery/DiscoveryController.cpp
-    src/discovery/DiscoveryController.h
-    src/models/DiscoveredServerModel.cpp
-    src/models/DiscoveredServerModel.h
-)
-
-# The folder-of-files provider: the second implementation of the provider
-# contract, kept as its permanent fixture. Nothing in core may include it.
+# The one native provider: media in a folder, and the contract's fixture.
 set(SPOOL_LOCAL_SOURCES
     src/providers/local/LocalProvider.cpp
     src/providers/local/LocalProvider.h
@@ -338,7 +300,6 @@ set(JELLYFIN_CORE_SOURCES
     ${SPOOL_PLATFORM_SOURCES}
     ${SPOOL_PLAYER_SOURCES}
     ${SPOOL_SHELL_SOURCES}
-    ${SPOOL_JELLYFIN_SOURCES}
     ${SPOOL_LOCAL_SOURCES}
 )
 
@@ -350,42 +311,9 @@ qt_add_executable(jellyfin-native
     src/app/GraphicsStartup.h
 )
 
-# Bundle immutable, verified source bytes. This resource path also exercises
-# source loading with no developer-generated QML/JS cache in provider tests.
 find_package(Python3 3.11 REQUIRED COMPONENTS Interpreter)
-set(SPOOL_JELLYFIN_SOURCE_DIR "" CACHE PATH "Explicit development override for the portable Jellyfin source")
-set(SPOOL_PROVIDER_RESOURCE_DIR "${CMAKE_CURRENT_BINARY_DIR}/portable-providers")
-set(spool_provider_bundle_args
-    "${CMAKE_CURRENT_SOURCE_DIR}/providers/lock.json" "${SPOOL_PROVIDER_RESOURCE_DIR}")
-if(SPOOL_JELLYFIN_SOURCE_DIR)
-    list(APPEND spool_provider_bundle_args --jellyfin-source "${SPOOL_JELLYFIN_SOURCE_DIR}")
-    file(GLOB_RECURSE spool_provider_override_files CONFIGURE_DEPENDS
-        "${SPOOL_JELLYFIN_SOURCE_DIR}/logic/*"
-        "${SPOOL_JELLYFIN_SOURCE_DIR}/ui/*"
-        "${SPOOL_JELLYFIN_SOURCE_DIR}/resources/*")
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-        ${spool_provider_override_files}
-        "${SPOOL_JELLYFIN_SOURCE_DIR}/manifest.json"
-        "${SPOOL_JELLYFIN_SOURCE_DIR}/LICENSE"
-        "${SPOOL_JELLYFIN_SOURCE_DIR}/NOTICE")
-endif()
-file(GLOB spool_provider_archives CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/providers/bundled/*.zip")
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/providers/lock.json"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tools/bundle-providers.py"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tools/provider-package.py"
-    ${spool_provider_archives})
-execute_process(
-    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/bundle-providers.py"
-        ${spool_provider_bundle_args}
-    RESULT_VARIABLE spool_provider_bundle_result
-    ERROR_VARIABLE spool_provider_bundle_error
-    OUTPUT_QUIET)
-if(NOT spool_provider_bundle_result EQUAL 0)
-    message(FATAL_ERROR "Bundling provider sources failed: ${spool_provider_bundle_error}")
-endif()
-qt_add_resources(spool_provider_bundle_sources "${SPOOL_PROVIDER_RESOURCE_DIR}/providers.qrc")
-target_sources(jellyfin-native PRIVATE ${spool_provider_bundle_sources})
+include(cmake/ProviderBundle.cmake)
+spool_bundle_providers(jellyfin-native)
 
 set(JELLYFIN_NATIVE_TARGETS jellyfin-core jellyfin-native)
 jellyfin_configure_platform_targets(jellyfin-native jellyfin-core)
@@ -531,7 +459,7 @@ endif()
 
 qt_add_qml_module(jellyfin-native
     ${JELLYFIN_QML_MODULE_OPTIONS}
-    URI JellyfinWebOS
+    URI Spool
     VERSION 1.0
     QML_FILES
         qml/Main.qml
@@ -563,20 +491,10 @@ qt_add_qml_module(jellyfin-native
         qml/pages/SettingsPage.qml
         qml/pages/SettingsNavigation.js
         qml/pages/SubtitleSettingsPanel.qml
-        qml/pages/ProviderPickerPage.qml
+        qml/pages/AccountsPage.qml
+        qml/pages/AddProviderPage.qml
+        qml/pages/ProviderScreenPage.qml
         qml/primitives/ActionButton.qml
-        qml/providers/jellyfin/LoginPage.qml
-        qml/providers/jellyfin/LoginAccountStep.qml
-        qml/providers/jellyfin/LoginBrandPanel.qml
-        qml/providers/jellyfin/LoginProfileDialogs.qml
-        qml/providers/jellyfin/LoginProfilePicker.qml
-        qml/providers/jellyfin/LoginServerStep.qml
-        qml/providers/jellyfin/ProfileNavigation.js
-        qml/providers/jellyfin/RemoteControlPage.qml
-        qml/providers/jellyfin/RemoteControlMenu.qml
-        qml/providers/jellyfin/RemoteNowPlayingBar.qml
-        qml/providers/jellyfin/SyncPlayMenu.qml
-        qml/providers/jellyfin/ManagementDialog.qml
         qml/primitives/AppText.qml
         qml/primitives/AtomicViewReveal.qml
         qml/primitives/BusySpinner.qml
@@ -606,6 +524,7 @@ qt_add_qml_module(jellyfin-native
         qml/primitives/PopupMenuPanel.qml
         qml/primitives/PopupShield.qml
         qml/primitives/ProfileTile.qml
+        qml/primitives/ProviderIcon.qml
         qml/primitives/SectionHeader.qml
         qml/primitives/ServerCard.qml
         qml/primitives/SelectRow.qml
@@ -621,11 +540,14 @@ qt_add_qml_module(jellyfin-native
         qml/shell/KeyRouter.qml
         qml/shell/BusyOverlay.qml
         qml/shell/DiagnosticsOverlay.qml
+        qml/shell/GroupMenu.qml
         qml/shell/InputLatencyWarning.qml
         qml/shell/ItemContextMenu.qml
         qml/shell/RememberedCertificatesDialog.qml
         qml/shell/MediaInfoOverlay.qml
         qml/shell/OverlayDialog.qml
+        qml/shell/ProviderSurface.qml
+        qml/shell/ProviderUpdatePrompt.qml
         qml/shell/PageReadiness.js
         qml/shell/RoutePolicy.js
         qml/shell/RouteStack.qml
@@ -633,7 +555,6 @@ qt_add_qml_module(jellyfin-native
         qml/shell/UpdateDialog.qml
         qml/shell/ToastLayer.qml
         qml/shell/TopBar.qml
-        qml/shell/TopBarNavigation.js
         qml/shell/VideoSurface.qml
         qml/theme/Metrics.qml
         qml/theme/Theme.qml
@@ -809,33 +730,20 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     # by add_test(). One executable per test used to cost more to build on
     # Windows than the application itself, because every one of them repeated a
     # whole-program-optimized link against all of jellyfin-core.
-    set(JELLYFIN_TEST_GROUPS api app cache common diagnostics discovery platform player providers)
+    set(JELLYFIN_TEST_GROUPS app cache common diagnostics platform player providers)
 
-    set(JELLYFIN_TESTS_api
-        http-request-policy tests/api/HttpRequestPolicyTest.cpp
-        stream-quality-control tests/api/StreamQualityControlTest.cpp
-        playback-negotiation tests/api/PlaybackNegotiationTest.cpp
-        jellyfin-api-facade-url tests/api/JellyfinApiFacadeUrlTest.cpp
-        jellyfin-js-adapter tests/api/JellyfinJsAdapterTest.cpp
-    )
     set(JELLYFIN_TESTS_app
         browse-session-controller tests/app/BrowseSessionControllerTest.cpp
         settings-schema tests/app/SettingsSchemaTest.cpp
         settings-controller tests/app/SettingsControllerTest.cpp
-        session-controller tests/app/SessionControllerTest.cpp
         router-controller tests/app/RouterControllerTest.cpp
         library-query tests/app/LibraryQueryTest.cpp
         content-model-controller tests/app/ContentModelControllerTest.cpp
         search-controller tests/app/SearchControllerTest.cpp
-        remote-control-controller tests/app/RemoteControlControllerTest.cpp
-        spool-remote-protocol tests/app/SpoolRemoteProtocolTest.cpp
-        spool-link-codec tests/app/SpoolLinkCodecTest.cpp
-        sync-play-clock tests/app/SyncPlayClockTest.cpp
-        sync-play-queue-handoff tests/app/SyncPlayQueueHandoffTest.cpp
-        sync-play-drift-policy tests/app/SyncPlayDriftPolicyTest.cpp
+        group-clock tests/app/GroupClockTest.cpp
+        group-playback-policy tests/app/GroupPlaybackPolicyTest.cpp
         update-manifest tests/app/UpdateManifestTest.cpp
         artwork-url tests/app/ArtworkUrlTest.cpp
-        provider-registry tests/app/ProviderRegistryTest.cpp
     )
     set(JELLYFIN_TESTS_cache
         database-manager tests/cache/DatabaseManagerTest.cpp
@@ -852,9 +760,6 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         route-transition-timing tests/diagnostics/RouteTransitionTimingTest.cpp
         system-performance-monitor tests/diagnostics/SystemPerformanceMonitorTest.cpp
     )
-    set(JELLYFIN_TESTS_discovery
-        discovery-controller tests/discovery/DiscoveryControllerTest.cpp
-    )
     set(JELLYFIN_TESTS_platform
         screensaver-inhibitor tests/platform/ScreenSaverInhibitorTest.cpp
         native-window-input tests/platform/NativeAppWindowInputTest.cpp
@@ -869,10 +774,13 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         local-provider tests/providers/LocalProviderTest.cpp
         script-runtime tests/providers/ScriptRuntimeTest.cpp
         provider-media-page tests/providers/ProviderMediaPageTest.cpp
-        source-registry tests/providers/SourceRegistryTest.cpp
+        provider-registry tests/providers/ProviderRegistryTest.cpp
+        source-hub tests/providers/SourceHubTest.cpp
+        provider-store tests/providers/ProviderStoreTest.cpp
         provider-ui-context tests/providers/ProviderUiContextTest.cpp
         provider-qml-cache tests/providers/ProviderQmlCacheTest.cpp
         provider-package-unpack tests/providers/ProviderPackageTest.cpp
+        stream-quality-control tests/providers/StreamQualityControlTest.cpp
     )
     set(JELLYFIN_TESTS_player
         playback-timeline tests/player/PlaybackTimelineTest.cpp
@@ -959,13 +867,12 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
 
     add_test(NAME provider-media-page-interpreter COMMAND providers-tests provider-media-page)
     set_tests_properties(provider-media-page-interpreter PROPERTIES ENVIRONMENT "QV4_FORCE_INTERPRETER=1;${JELLYFIN_TEST_ENV}")
-    target_sources(providers-tests PRIVATE ${spool_provider_bundle_sources})
-    target_sources(api-tests PRIVATE ${spool_provider_bundle_sources})
-    add_test(NAME provider-package
+    target_sources(providers-tests PRIVATE ${SPOOL_PROVIDER_BUNDLE_SOURCES})
+    add_test(NAME provider-sdk-tool
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/provider_package_test.py")
     add_executable(provider-contract-runner sdk/provider-contract-runner.cpp)
     target_link_libraries(provider-contract-runner PRIVATE Qt6::Core Qt6::Qml)
-    target_sources(provider-contract-runner PRIVATE ${spool_provider_bundle_sources})
+    target_sources(provider-contract-runner PRIVATE ${SPOOL_PROVIDER_BUNDLE_SOURCES})
     add_test(NAME bundled-jellyfin
         COMMAND provider-contract-runner "${CMAKE_CURRENT_SOURCE_DIR}/tests/providers/fixtures/bundled-jellyfin.mjs")
     add_test(NAME bundled-jellyfin-interpreter
@@ -1082,7 +989,6 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
             viewport-focus-recovery tests/qml/tst_ViewportFocusRecovery.qml
             hold-navigation-controller tests/qml/tst_HoldNavigationController.qml
             library-navigation tests/qml/tst_LibraryNavigation.qml
-            profile-navigation tests/qml/tst_ProfileNavigation.qml
             settings-navigation tests/qml/tst_SettingsNavigation.qml
             settings-disclosure tests/qml/tst_SettingsDisclosure.qml
             settings-row-identity tests/qml/tst_SettingsRowIdentity.qml
@@ -1091,7 +997,6 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
             player-seek-bar-hover tests/qml/tst_PlayerSeekBarHover.qml
             list-scroll-bar tests/qml/tst_ListScrollBar.qml
             inline-slider tests/qml/tst_InlineSlider.qml
-            provider-gating tests/qml/tst_ProviderGating.qml
         )
         # The subtitle panel test has never run on macOS; it was narrowed to
         # Windows alone while chasing that, which silently dropped Linux too.

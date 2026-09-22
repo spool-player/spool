@@ -1,195 +1,190 @@
 #pragma once
 
-#include "Provider.h"
 #include "ProviderMediaPage.h"
+#include "ProviderPackage.h"
+#include "ScriptRuntime.h"
+
 #include <QCoroTask>
+#include <QHash>
+#include <QObject>
+#include <QPointer>
+#include <QSet>
+#include <QThreadPool>
 #include <QUrl>
 #include <QVariantList>
-#include <memory>
 
-#include <QObject>
-#include <QString>
-
+#include <functional>
 #include <vector>
-
-class QNetworkAccessManager;
 
 namespace JellyfinNative {
 
 class DatabaseManager;
+class PortableProvider;
+class Provider;
+class ProviderUiContext;
 
-// The active provider's capability flags as twelve booleans, registered in
-// QML as the ProviderCapabilities singleton. The property names are the
-// contract with shared QML: a gated control binds to one of them by name.
-class ProviderCapabilities final : public QObject {
-    Q_OBJECT
-    Q_PROPERTY(bool auth READ auth NOTIFY changed)
-    Q_PROPERTY(bool discovery READ discovery NOTIFY changed)
-    Q_PROPERTY(bool search READ search NOTIFY changed)
-    Q_PROPERTY(bool userItemState READ userItemState NOTIFY changed)
-    Q_PROPERTY(bool playbackReporting READ playbackReporting NOTIFY changed)
-    Q_PROPERTY(bool segments READ segments NOTIFY changed)
-    Q_PROPERTY(bool libraryManagement READ libraryManagement NOTIFY changed)
-    Q_PROPERTY(bool syncPlay READ syncPlay NOTIFY changed)
-    Q_PROPERTY(bool remoteControl READ remoteControl NOTIFY changed)
-    Q_PROPERTY(bool quickConnect READ quickConnect NOTIFY changed)
-    Q_PROPERTY(bool peerRelay READ peerRelay NOTIFY changed)
-    Q_PROPERTY(bool streamQuality READ streamQuality NOTIFY changed)
+struct ProviderModule {
+    ProviderManifest manifest;
+    // qrc:/providers/<id>/ for bundled packages, a version directory for
+    // installed ones; empty for native modules.
+    QUrl root;
+    bool bundled = false;
+    // A newer installed package shadows the bundled one until removed.
+    bool overridesBundled = false;
+    using NativeFactory
+        = std::function<Provider *(const QString& accountId, const QVariantMap& configuration, QObject *parent)>;
+    NativeFactory native;
+    ScriptRuntime *runtime = nullptr;
+    bool failed = false;
 
-public:
-    explicit ProviderCapabilities(QObject *parent = nullptr);
-
-    Provider::Capabilities flags() const
+    QUrl file(const QString& relative) const
     {
-        return m_flags;
+        return relative.isEmpty() || root.isEmpty() ? QUrl() : root.resolved(QUrl(relative));
     }
-    void setFlags(Provider::Capabilities flags);
-
-    bool auth() const
-    {
-        return m_flags.testFlag(Provider::Auth);
-    }
-    bool discovery() const
-    {
-        return m_flags.testFlag(Provider::Discovery);
-    }
-    bool search() const
-    {
-        return m_flags.testFlag(Provider::Search);
-    }
-    bool userItemState() const
-    {
-        return m_flags.testFlag(Provider::UserItemState);
-    }
-    bool playbackReporting() const
-    {
-        return m_flags.testFlag(Provider::PlaybackReporting);
-    }
-    bool segments() const
-    {
-        return m_flags.testFlag(Provider::Segments);
-    }
-    bool libraryManagement() const
-    {
-        return m_flags.testFlag(Provider::LibraryManagement);
-    }
-    bool syncPlay() const
-    {
-        return m_flags.testFlag(Provider::SyncPlay);
-    }
-    bool remoteControl() const
-    {
-        return m_flags.testFlag(Provider::RemoteControl);
-    }
-    bool quickConnect() const
-    {
-        return m_flags.testFlag(Provider::QuickConnect);
-    }
-    bool peerRelay() const
-    {
-        return m_flags.testFlag(Provider::PeerRelay);
-    }
-    bool streamQuality() const
-    {
-        return m_flags.testFlag(Provider::StreamQuality);
-    }
-
-signals:
-    void changed();
-
-private:
-    Provider::Capabilities m_flags;
 };
 
-// Every provider the build knows about, and the one the app is running on.
-// Providers are added by whoever constructs them and are not owned here.
+// One sign-in on one provider. `group` names accounts that are alternatives
+// to one another, such as users of one server: using one sets the others
+// aside, while accounts in different groups are shown together.
+struct ProviderAccount {
+    QString id;
+    QString module;
+    QString key;
+    QString group;
+    QString label;
+    QString detail;
+    bool enabled = true;
+    QVariantMap configuration;
+    QList<QUrl> origins;
+    qint64 lastUsed = 0;
+};
+
+// Every provider the app can run and every account signed in to one.
+// Accounts persist with their configuration (credentials included, as the
+// old per-server profiles did) and each enabled one runs as a Provider that
+// SourceHub routes to.
 class ProviderRegistry final : public QObject {
     Q_OBJECT
-    Q_PROPERTY(QVariantList configuredSources READ configuredSources NOTIFY configuredSourcesChanged)
-    Q_PROPERTY(bool isInstalling READ isInstalling NOTIFY installStatusChanged)
-    Q_PROPERTY(QString installStatus READ installStatus NOTIFY installStatusChanged)
-    Q_PROPERTY(int installProgress READ installProgress NOTIFY installStatusChanged)
-    Q_PROPERTY(QString installError READ installError NOTIFY installStatusChanged)
-    Q_PROPERTY(QVariantList availableProviders READ availableProviders NOTIFY availableProvidersChanged)
-    Q_PROPERTY(bool hasInstalledProviders READ hasInstalledProviders NOTIFY installedProvidersChanged)
+    Q_PROPERTY(QVariantList modules READ modules NOTIFY modulesChanged)
+    Q_PROPERTY(QVariantList accounts READ accounts NOTIFY accountsChanged)
+    Q_PROPERTY(bool restored READ restored NOTIFY restoredChanged)
+    Q_PROPERTY(bool hasAccounts READ hasAccounts NOTIFY accountsChanged)
 
 public:
-    explicit ProviderRegistry(QObject *parent = nullptr);
+    explicit ProviderRegistry(DatabaseManager *database, QObject *parent = nullptr);
     ~ProviderRegistry() override;
 
-    // Portable modules are process-wide; configured source factories are
-    // independent accounts/servers. Browsing selection never owns their life.
-    void registerModule(const QString& moduleId, const QString& entryPoint);
-    QCoro::Task<void> restoreSources(DatabaseManager *database);
-    QCoro::Task<QString> configureSource(QString moduleId, QString accountId, QString sourceKey, QString label,
-        QVariantMap configuration, QList<QUrl> authorisedOrigins);
+    void setRuntimeEnvironment(QVariantMap device, ScriptRuntime::NetworkHooks hooks);
+    void setInstallDirectory(const QString& path);
+    QString installDirectory() const
+    {
+        return m_installDirectory;
+    }
+    // Registers every package bundled at qrc:/providers/ and every package
+    // installed on disk; the newer version of a provider wins.
+    void loadModules();
+    void addNativeModule(ProviderManifest manifest, ProviderModule::NativeFactory factory);
+    const ProviderModule *module(const QString& id) const;
+    QStringList moduleIds() const;
+
+    // Reads the saved accounts and starts the enabled ones in parallel.
+    QCoro::Task<void> restore();
+    bool restored() const
+    {
+        return m_restored;
+    }
+    bool hasAccounts() const
+    {
+        return !m_accounts.empty();
+    }
+    const std::vector<ProviderAccount>& accountList() const
+    {
+        return m_accounts;
+    }
+
+    // Replaces a module's code in place: running accounts restart on the new
+    // version without the app restarting.
+    QCoro::Task<void> install(ProviderPackageContents package);
+    QCoro::Task<void> uninstall(QString moduleId);
+
     QCoro::Task<QVariantMap> callSource(
         QString sourceId, QString operation, QVariantMap arguments = {}, QString scope = {});
     QCoro::Task<ProviderMediaPage> callSourceMediaPage(
-        QString sourceId, QString operation, QVariantMap arguments = {}, QString scope = {}, int maximumItems = 100);
+        QString sourceId, QString operation, QVariantMap arguments = {}, int maximumItems = 100);
+    QCoro::Task<MovieItem> callSourceItem(QString sourceId, QString operation, QVariantMap arguments = {});
     void cancelSourceScope(const QString& sourceId, const QString& scope);
-    QCoro::Task<void> setSourceEnabled(QString sourceId, bool enabled);
-    QCoro::Task<void> removeSource(QString sourceId);
-    QVariantList configuredSources() const;
+    bool sourceRunning(const QString& sourceId) const;
 
-    void setNetworkAccessManager(QNetworkAccessManager *network);
-    void setProvidersDirectory(const QString& path);
-    QString providersDirectory() const;
-    void scanInstalledModules();
-    bool hasModule(const QString& moduleId) const;
-    QCoro::Task<bool> downloadAndInstallProvider(QString moduleId, QUrl url = QUrl());
+    QVariantList modules() const;
+    QVariantList accounts() const;
 
-    bool isInstalling() const;
-    QString installStatus() const;
-    int installProgress() const;
-    QString installError() const;
-    QVariantList availableProviders() const;
-    bool hasInstalledProviders() const;
+    // Mounting provider QML. beginSetup returns a context for the module's
+    // login component, or null after adding an account straight away for a
+    // provider that needs no sign-in.
+    Q_INVOKABLE QObject *beginSetup(const QString& moduleId);
+    Q_INVOKABLE QObject *openSettings(const QString& accountId);
+    Q_INVOKABLE QObject *openPicker(const QString& accountId, const QVariantMap& arguments);
+    // Shows the account's picker component and waits for the viewer's
+    // choice; empty when they back out.
+    QCoro::Task<QVariantMap> pick(QString accountId, QVariantMap arguments);
+    Q_INVOKABLE QUrl componentUrl(const QString& moduleId, const QString& role) const;
+    Q_INVOKABLE void useAccount(const QString& accountId);
+    Q_INVOKABLE void setAccountEnabled(const QString& accountId, bool enabled);
+    Q_INVOKABLE void removeAccount(const QString& accountId);
 
-    Q_INVOKABLE bool isInstalled(const QString& moduleId) const;
-    Q_INVOKABLE void installProvider(const QString& moduleId);
-    Q_INVOKABLE bool switchProvider(const QString& providerId);
-
-    void add(Provider *provider);
-    Provider *provider(const QString& id) const;
-    const std::vector<Provider *>& providers() const
-    {
-        return m_providers;
-    }
-
-    // Returns false when no provider carries that id; the active one is
-    // then unchanged.
-    bool setActive(const QString& id);
-    void setActive(Provider *provider);
-    Provider *active() const
-    {
-        return m_active;
-    }
-    ProviderCapabilities *capabilities()
-    {
-        return &m_capabilities;
-    }
+    // Called by ProviderUiContext.
+    QCoro::Task<void> allowSetupOrigin(QString draftId, QUrl origin);
+    QString finishSetup(const QString& draftId, const QVariantMap& result);
+    void updateConfiguration(const QString& accountId, const QVariantMap& changes);
+    void restartAccount(const QString& accountId);
+    void endContext(const QString& sourceId);
 
 signals:
-    void activeChanged();
-    void configuredSourcesChanged();
-    void sourceRemoved(const QString& sourceId);
-    void installStatusChanged();
-    void availableProvidersChanged();
-    void installedProvidersChanged();
-    void providerInstalled(const QString& moduleId);
+    void modulesChanged();
+    void accountsChanged();
+    void restoredChanged();
+    void sourceStarted(JellyfinNative::Provider *provider);
+    void sourceStopped(const QString& accountId);
+    void accountAdded(const QString& accountId);
+    void problem(const QString& message);
+    // A provider component the shell should mount now (a picker).
+    void componentRequested(QObject *context);
 
 private:
-    void refreshCapabilities();
-    void refreshSourceSnapshot();
-    QCoro::Task<void> persistSources();
-    struct PortableState;
-    std::unique_ptr<PortableState> m_portable;
+    struct Running {
+        QString module;
+        quint64 generation = 0;
+        QPointer<Provider> provider;
+        QList<QUrl> origins;
+        bool draft = false;
+    };
 
-    std::vector<Provider *> m_providers;
-    Provider *m_active = nullptr;
-    QMetaObject::Connection m_activeCapabilities;
-    ProviderCapabilities m_capabilities;
+    ProviderAccount *account(const QString& id);
+    ScriptRuntime *runtimeFor(ProviderModule& module);
+    QCoro::Task<void> start(QString accountId);
+    void stop(const QString& accountId);
+    void restartModule(const QString& moduleId);
+    // Account metadata goes to the database; configuration, which holds
+    // credentials, goes to the platform credential store when it changed.
+    void persist(bool credentials = false);
+    void registerPackage(ProviderManifest manifest, QUrl root, bool bundled);
+    void handleEvent(const QString& sourceId, const QString& type, const QVariantMap& payload);
+    void handleInterrupted(const QString& moduleId);
+    ProviderUiContext *createContext(const QString& sourceId, const QString& role, const QString& moduleId);
+    template <typename T, typename Call> QCoro::Task<T> guarded(QString sourceId, Call call);
+
+    QPointer<DatabaseManager> m_database;
+    QString m_installDirectory;
+    QVariantMap m_device;
+    ScriptRuntime::NetworkHooks m_hooks;
+    QHash<QString, ProviderModule> m_modules;
+    std::vector<ProviderAccount> m_accounts;
+    QHash<QString, Running> m_running;
+    quint64 m_nextGeneration = 0;
+    bool m_restored = false;
+    QStringList m_removedAccounts;
+    QSet<QString> m_expired;
+    QThreadPool m_credentialPool;
 };
 
 } // namespace JellyfinNative

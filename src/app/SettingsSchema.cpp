@@ -61,6 +61,8 @@ namespace {
     constexpr SettingChoice kRailLabelChoices[]
         = { { "Never", "Never" }, { "On focus", "On focus" }, { "Always", "Always" } };
     constexpr SettingChoice kTextRenderModeChoices[] = { { "0", "Standard" }, { "1", "Curve" } };
+    constexpr SettingChoice kProviderUpdateChoices[]
+        = { { "auto", "Automatic" }, { "ask", "Ask first" }, { "manual", "Only when I check" } };
     constexpr SettingChoice kArtworkFormatChoices[]
         = { { "auto", "Automatic" }, { "webp", "WebP (smaller downloads)" }, { "jpeg", "JPEG (faster to decode)" } };
     constexpr SettingChoice kTechnicalMetadataChoices[]
@@ -281,13 +283,6 @@ SettingSpec SettingSpec::onAndroid() const
     return spec;
 }
 
-SettingSpec SettingSpec::withAuth() const
-{
-    SettingSpec spec = *this;
-    spec.requiresAuth = true;
-    return spec;
-}
-
 SettingSpec SettingSpec::whenSetTo(const char *otherKey, const char *otherValue) const
 {
     SettingSpec spec = *this;
@@ -337,11 +332,8 @@ const QVector<SettingSpec>& settingSpecs()
             "JPEG needs a higher number than WebP to look the same", "82", 40, 100, 1, "",
             SettingTarget::ArtworkJpegQuality)
             .advanced(),
-        toggleSpec("remote/showCastButton", "Remote Control", "Show Cast button",
-            "Choose and control another Jellyfin client", true, SettingTarget::CastButtonEnabled),
         toggleSpec("remote/acceptCommands", "Remote Control", "Allow remote control",
-            "Let other Jellyfin clients play and control media on this device", true,
-            SettingTarget::RemoteControlTargetEnabled),
+            "Let your other devices play and control media here", true, SettingTarget::RemoteControlTargetEnabled),
         selectSpec("audio/trackMode", "Playback", "Audio track", "Which track plays when a video starts", "Default",
             kAudioTrackModeChoices, SettingTarget::AudioTrackMode),
         toggleSpec("playback/rememberSeriesAudioTrack", "Playback", "Remember audio track per series",
@@ -554,11 +546,11 @@ const QVector<SettingSpec>& settingSpecs()
             .onAndroid(),
 #endif
 
-        pageSpec("session/account", "Account", "Signed in as", "", SettingType::ReadOnly).withAuth(),
-        pageSpec("action/switchUser", "Account", "Switch profile", "", SettingType::Action).withAuth(),
-        pageSpec("action/logout", "Account", "Sign out", "Keeps this profile on the device", SettingType::Action)
-            .withAuth(),
-        pageSpec("action/manageCertificates", "Account", "Remembered certificates",
+        pageSpec("action/accounts", "Accounts", "Accounts", "Sign in, switch or remove", SettingType::Action),
+        pageSpec("action/providers", "Accounts", "Providers", "Install, update or remove", SettingType::Action),
+        selectSpec("providers/updates", "Accounts", "Provider updates", "", "ask", kProviderUpdateChoices,
+            SettingTarget::External),
+        pageSpec("action/manageCertificates", "Accounts", "Remembered certificates",
             "Server certificates you chose to trust", SettingType::Action),
 
         pageSpec("action/exportDiagnostics", "Diagnostics", "Export diagnostics",
@@ -651,13 +643,11 @@ QString serializedSettingValue(const SettingSpec& spec, const QVariant& value)
     return normalized.toString();
 }
 
-QVariantList settingSchemaModel(bool auth)
+QVariantList settingSchemaModel()
 {
     QVariantList model;
     model.reserve(settingSpecs().size());
     for (const SettingSpec& spec : settingSpecs()) {
-        if (spec.requiresAuth && !auth)
-            continue;
         QVariantMap row { { QStringLiteral("key"), QLatin1String(spec.key) },
             { QStringLiteral("source"), spec.persisted ? QStringLiteral("settings") : QStringLiteral("page") },
             { QStringLiteral("group"), QLatin1String(spec.group) },

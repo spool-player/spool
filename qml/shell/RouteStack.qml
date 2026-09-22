@@ -5,7 +5,7 @@ import "PageReadiness.js" as PageReadiness
 FocusScope {
     id: root
 
-    property string route: "login"
+    property string route: "home"
     property var shell
     property bool startupReady: true
     focus: true
@@ -13,7 +13,7 @@ FocusScope {
     property var uiTransitionToken: 0
 
     // Resident-page host: pages are created once and route changes switch
-    // visibility + focus only. Login is destroyed on leave;
+    // visibility + focus only. Setup pages are destroyed on leave;
     // itemDetails/personDetails/search are evicted under memory pressure.
     property var pages: ({})
     property var activeLoader: null
@@ -28,20 +28,17 @@ FocusScope {
 
     function pageKey(nextRoute) {
         switch (nextRoute) {
-        case "login":
-            return "login"
-        case "providerPicker":
-            return "providerPicker"
+        case "accounts":
+        case "addProvider":
+        case "providerScreen":
         case "libraryGrid":
-            return "libraryGrid"
+            return nextRoute
         case "itemDetails":
             return "itemDetails"
         case "personDetails":
             return "personDetails"
         case "search":
             return "search"
-        case "remoteControl":
-            return "remoteControl"
         case "openSourceNotices":
             return "openSourceNotices"
         case "settings":
@@ -55,10 +52,12 @@ FocusScope {
 
     function pageSource(key) {
         switch (key) {
-        case "login":
-            return Qt.resolvedUrl("../providers/jellyfin/LoginPage.qml")
-        case "providerPicker":
-            return Qt.resolvedUrl("../pages/ProviderPickerPage.qml")
+        case "accounts":
+            return Qt.resolvedUrl("../pages/AccountsPage.qml")
+        case "addProvider":
+            return Qt.resolvedUrl("../pages/AddProviderPage.qml")
+        case "providerScreen":
+            return Qt.resolvedUrl("../pages/ProviderScreenPage.qml")
         case "libraryGrid":
             return Qt.resolvedUrl("../pages/LibraryGridPage.qml")
         case "itemDetails":
@@ -67,8 +66,6 @@ FocusScope {
             return Qt.resolvedUrl("../pages/PersonDetailsPage.qml")
         case "search":
             return Qt.resolvedUrl("../pages/SearchPage.qml")
-        case "remoteControl":
-            return Qt.resolvedUrl("../providers/jellyfin/RemoteControlPage.qml")
         case "openSourceNotices":
             return Qt.resolvedUrl("../pages/OpenSourceNoticesPage.qml")
         case "settings":
@@ -176,7 +173,7 @@ FocusScope {
         // while it builds. What made a television slow was never the
         // prewarming; it was dropping every page the moment it left the
         // screen and paying to build it again on the way back.
-        if ((!ProviderCapabilities.auth || Session.authenticated) && !prewarmScheduled) {
+        if (Providers.hasAccounts && !prewarmScheduled) {
             prewarmScheduled = true
             // Most-wanted first. The budget stops this queue partway through on
             // a small television, so whatever stands at the front is what
@@ -190,7 +187,7 @@ FocusScope {
     }
 
     function dropTransientPages() {
-        for (const key of ["login", "providerPicker"]) {
+        for (const key of ["accounts", "addProvider", "providerScreen"]) {
             const loader = pages[key]
             if (loader && loader !== activeLoader) {
                 delete pages[key]

@@ -245,10 +245,6 @@ bool platformUsesPerOutputAudioDelay()
 {
     return false;
 }
-bool platformDefaultCastButtonEnabled()
-{
-    return !platformCapabilities().isTV;
-}
 bool platformDefaultRemoteControlTargetEnabled()
 {
     return platformCapabilities().isTV;
