@@ -990,17 +990,19 @@ int main(int argc, char **argv)
         = [controller = controller.get()] { controller->onMemoryPressure(QStringLiteral("critical")); };
     if (auto *benchmark = JellyfinNative::RenderBenchmark::createIfRequested(
             std::move(benchmarkHooks), router.get(), &inputLatencyMonitor, &window, &app)) {
-        if (controller->initialized()) {
+        // The shell picks its first route once accounts are restored; a walk
+        // that starts before then races that choice.
+        const auto started = std::make_shared<bool>(false);
+        const auto begin = [benchmark, started, controller = controller.get(), &providers] {
+            if (*started || !controller->initialized() || !providers.restored())
+                return;
+            *started = true;
             benchmark->start();
-        } else {
-            QObject::connect(
-                controller.get(), &JellyfinNative::AppController::initializedChanged, benchmark,
-                [benchmark, controller = controller.get()] {
-                    if (controller->initialized())
-                        benchmark->start();
-                },
-                Qt::SingleShotConnection);
-        }
+        };
+        QObject::connect(controller.get(), &JellyfinNative::AppController::initializedChanged, benchmark, begin);
+        QObject::connect(
+            &providers, &JellyfinNative::ProviderRegistry::restoredChanged, benchmark, begin, Qt::QueuedConnection);
+        begin();
     }
 
     if (launchTest) {
