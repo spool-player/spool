@@ -273,6 +273,8 @@ set(SPOOL_SHELL_SOURCES
     src/provider/ProviderRegistry.cpp
     src/provider/ProviderRegistrySources.cpp
     src/provider/ProviderRegistry.h
+    src/provider/puff.c
+    src/provider/puff.h
     src/provider/RemotePlayback.h
     src/provider/SearchSource.h
     src/provider/StreamQualityControl.h
@@ -355,7 +357,6 @@ qt_add_executable(jellyfin-native
 # Bundle immutable, verified source bytes. This resource path also exercises
 # source loading with no developer-generated QML/JS cache in provider tests.
 find_package(Python3 3.11 REQUIRED COMPONENTS Interpreter)
-find_package(ZLIB REQUIRED)
 set(SPOOL_JELLYFIN_SOURCE_DIR "" CACHE PATH "Explicit development override for the portable Jellyfin source")
 set(SPOOL_PROVIDER_RESOURCE_DIR "${CMAKE_CURRENT_BINARY_DIR}/portable-providers")
 set(spool_provider_bundle_args
@@ -795,7 +796,6 @@ target_link_libraries(jellyfin-core PUBLIC
     Qt6::Sql
     Qt6::OpenGL
     Qt6::WebSockets
-    ZLIB::ZLIB
 )
 if(NOT ANDROID)
     target_link_libraries(jellyfin-core PUBLIC Qt6::GuiPrivate)

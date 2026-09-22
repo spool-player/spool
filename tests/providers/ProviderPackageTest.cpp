@@ -5,7 +5,6 @@
 #include <QDir>
 #include <QFile>
 #include <QTemporaryDir>
-#include <zlib.h>
 
 #include <cstdlib>
 #include <cstring>
@@ -82,8 +81,8 @@ QByteArray makeStoredZip(const QMap<QString, QByteArray>& entries)
     for (auto it = entries.cbegin(); it != entries.cend(); ++it) {
         const QString name = it.key();
         const QByteArray data = it.value();
-        const uint32_t crc = static_cast<uint32_t>(
-            ::crc32(0L, reinterpret_cast<const Bytef *>(data.constData()), static_cast<uInt>(data.size())));
+        const uint32_t crc = JellyfinNative::ProviderPackage::calculateCrc32(
+            reinterpret_cast<const uint8_t *>(data.constData()), data.size());
         const uint32_t offset = static_cast<uint32_t>(buffer.size());
 
         ZipLocalHeader local {};
