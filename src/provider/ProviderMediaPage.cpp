@@ -270,12 +270,14 @@ namespace {
 
 ProviderMediaPage readProviderMediaPage(const QJSValue& value, int maximumItems)
 {
+    if (maximumItems < 1)
+        invalid();
     requireObject(value);
     const QJSValue rows = value.property(QStringLiteral("items"));
     const QJSValue exhausted = value.property(QStringLiteral("exhausted"));
     if (!exhausted.isBool())
         invalid();
-    const quint32 length = arrayLength(rows, static_cast<quint32>(std::clamp(maximumItems, 1, 1000)));
+    const quint32 length = arrayLength(rows, static_cast<quint32>(std::min(maximumItems, 1000)));
     Reader reader;
     ProviderMediaPage result;
     result.exhausted = exhausted.toBool();

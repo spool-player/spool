@@ -282,22 +282,26 @@ QCoro::Task<void> ProviderRegistry::start(QString accountId)
     m_running.insert(accountId, { module.manifest.id, generation, nullptr, origins, false });
     const QString label = entry->label;
     const Provider::Capabilities capabilities = capabilitiesOf(module.manifest);
-    ScriptRuntime *runtime = runtimeFor(module);
+    // An install or restart may replace the module's runtime while this
+    // waits; the generation says whether this start is still the current one.
+    QPointer<ScriptRuntime> runtime = runtimeFor(module);
     QPointer<ProviderRegistry> guard(this);
+    const auto current = [&] { return guard && runtime && m_running.value(accountId).generation == generation; };
     QVariantMap description;
     try {
         co_await runtime->addSource(accountId, entry->configuration, origins);
+        if (!current())
+            co_return;
         description = co_await runtime->call(accountId, QStringLiteral("describe"));
     } catch (const std::exception& error) {
-        if (!guard)
+        if (!current())
             co_return;
         qWarning("providers: %s did not start: %s", qPrintable(accountId), error.what());
-        if (m_running.value(accountId).generation == generation)
-            stop(accountId);
+        stop(accountId);
         emit problem(QStringLiteral("Couldn't connect to %1").arg(label));
         co_return;
     }
-    if (!guard || m_running.value(accountId).generation != generation)
+    if (!current())
         co_return;
     auto *provider = new PortableProvider(this, accountId, label, capabilities, description, this);
     m_running[accountId].provider = provider;
@@ -703,7 +707,9 @@ QCoro::Task<QVariantMap> ProviderRegistry::pick(QString accountId, QVariantMap a
     auto *context = qobject_cast<ProviderUiContext *>(openPicker(accountId, arguments));
     if (!context)
         throw std::runtime_error("picker_unavailable");
-    emit componentRequested(context);
+    // Mounted on the next turn, once this is waiting: a screen may finish as
+    // soon as it is shown.
+    QTimer::singleShot(0, context, [this, context] { emit componentRequested(context); });
     const auto [result, cancelled] = co_await qCoro(context, &ProviderUiContext::finished);
     co_return cancelled ? QVariantMap {} : result;
 }
