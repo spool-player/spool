@@ -145,10 +145,15 @@ AppController::AppController(
     connect(m_provider, &Provider::toastRequested, this, &AppController::showToast);
     connect(m_provider, &Provider::errorOccurred, this, &AppController::setErrorText);
     connect(m_provider, &Provider::contentChanged, this, [this](const QString& changedItemId) {
-        if (!changedItemId.isEmpty() && m_browse->descriptor().id == changedItemId)
+        if (!changedItemId.isEmpty() && m_browse->descriptor().id == changedItemId) {
             goHome();
-        else
-            beginBrowse();
+            return;
+        }
+        // No item: an account came or went, or a whole library changed, so
+        // the library list and home rows are rebuilt too.
+        if (changedItemId.isEmpty())
+            loadLibraries();
+        beginBrowse();
     });
     connect(m_provider, &Provider::sessionStarted, this, [this]() {
         m_home->loadCachedPayload();

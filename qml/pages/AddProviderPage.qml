@@ -354,7 +354,7 @@ FocusScope {
 
                             AppText {
                                 Layout.fillWidth: true
-                                text: row.isLink ? "Add from a link" : row.modelData.name
+                                text: row.isLink ? "Add from a link" : row.modelData.name || ""
                                 font.pixelSize: Metrics.bodySizePx + Metrics.scaled(1)
                                 font.weight: Font.DemiBold
                                 elide: Text.ElideRight

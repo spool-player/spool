@@ -818,6 +818,11 @@ FocusScope {
         const options = []
         if (showContextPlaybackActions)
             options.push(playAllOption, shuffleOption)
+        for (let index = 0; index < providerActionOptions.count; ++index) {
+            const option = providerActionOptions.itemAt(index)
+            if (option)
+                options.push(option)
+        }
         if (mediaInfoAvailable)
             options.push(mediaInfoOption)
         if (showLetterboxdAction)
@@ -851,6 +856,11 @@ FocusScope {
         } else {
             focusActionIndex(orderedActions().indexOf(menuAction))
         }
+    }
+
+    function runProviderAction(actionId) {
+        overflowOpen = false
+        Sources.runItemAction(actionId, String(item.movieId || ""), typeText)
     }
 
     function openMediaInfo() {
@@ -998,6 +1008,8 @@ FocusScope {
                 openMediaInfo()
             else if (option === letterboxdOption)
                 openLetterboxd()
+            else if (option && option.providerAction)
+                runProviderAction(option.providerAction)
             else if (option)
                 openExternalUrl(option.externalUrl)
         } else {
@@ -1622,6 +1634,21 @@ FocusScope {
                 iconName: "shuffle"
                 label: "Shuffle play"
                 onActivated: root.playDetailContext(true)
+            }
+
+            // Whatever else the item's provider does with it: playlists,
+            // collections, renaming. Declared in its manifest, so free to list.
+            Repeater {
+                id: providerActionOptions
+                model: root.overflowOpen ? Sources.itemActions(String(root.item.movieId || ""), root.typeText) : []
+
+                delegate: MenuOption {
+                    required property var modelData
+                    readonly property string providerAction: String(modelData.id || "")
+                    iconName: String(modelData.icon || "more_horiz")
+                    label: String(modelData.label || "")
+                    onActivated: root.runProviderAction(providerAction)
+                }
             }
 
             MenuOption {

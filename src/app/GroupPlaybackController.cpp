@@ -162,13 +162,18 @@ void GroupPlaybackController::refreshGroups()
 
 void GroupPlaybackController::createGroup(const QString& accountId, const QString& name)
 {
+    // The server announces the group over the account's socket before the
+    // request returns, so events from this account count from now.
+    m_account = accountId;
     Async::runScoped(
         this, m_hub->call(accountId, QStringLiteral("groupCreate"), { { QStringLiteral("name"), name } }),
-        [this, accountId](QVariantMap) {
-            m_account = accountId;
-            beginTimeSync();
+        [this](QVariantMap) { beginTimeSync(); },
+        [this](const std::exception_ptr& error) {
+            if (m_groupId.isEmpty())
+                m_account.clear();
+            emit errorText(exceptionMessage(error));
         },
-        [this](const std::exception_ptr& error) { emit errorText(exceptionMessage(error)); }, "group create");
+        "group create");
 }
 
 void GroupPlaybackController::joinGroup(const QString& groupId)
@@ -176,23 +181,31 @@ void GroupPlaybackController::joinGroup(const QString& groupId)
     const QString account = m_hub->accountOf(groupId);
     if (account.isEmpty())
         return;
+    // As with creating: the joined event can arrive before the reply.
+    m_account = account;
     Async::runScoped(
         this,
         m_hub->call(account, QStringLiteral("groupJoin"), { { QStringLiteral("groupId"), SourceHub::rawId(groupId) } }),
-        [this, account, groupId](QVariantMap) {
-            m_account = account;
-            m_groupId = SourceHub::rawId(groupId);
+        [this, groupId](QVariantMap) {
             m_player->setSyncPlaybackSpeed(1.0);
+            beginTimeSync();
+            if (!m_groupId.isEmpty())
+                return;
+            m_groupId = SourceHub::rawId(groupId);
             for (const QVariant& group : std::as_const(m_groups)) {
                 if (group.toMap().value(QStringLiteral("id")) == groupId)
                     applyInfo(group.toMap());
             }
             m_joinedAtServerMs = serverNowMs();
-            beginTimeSync();
             emit groupChanged();
             sendPlayerBufferingState(true);
         },
-        [this](const std::exception_ptr& error) { emit errorText(exceptionMessage(error)); }, "group join");
+        [this](const std::exception_ptr& error) {
+            if (m_groupId.isEmpty())
+                m_account.clear();
+            emit errorText(exceptionMessage(error));
+        },
+        "group join");
 }
 
 void GroupPlaybackController::leaveGroup()
