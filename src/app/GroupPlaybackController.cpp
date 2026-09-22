@@ -323,6 +323,12 @@ void GroupPlaybackController::handleEvent(const QString& accountId, const QVaria
     } else if (type == QStringLiteral("participants")) {
         m_participants = event.value(QStringLiteral("participants")).toStringList();
         emit groupChanged();
+    } else if (type == QStringLiteral("participantJoined") || type == QStringLiteral("participantLeft")) {
+        const QString name = event.value(QStringLiteral("name")).toString();
+        m_participants.removeAll(name);
+        if (type == QStringLiteral("participantJoined") && !name.isEmpty())
+            m_participants.append(name);
+        emit groupChanged();
     } else if (type == QStringLiteral("state")) {
         m_groupState = event.value(QStringLiteral("state")).toString();
         m_groupStateReason = event.value(QStringLiteral("reason")).toString();

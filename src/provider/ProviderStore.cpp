@@ -47,6 +47,27 @@ ProviderStore::ProviderStore(ProviderRegistry *registry, DatabaseManager *databa
     , m_catalogBase(std::move(catalogBase))
 {
     connect(registry, &ProviderRegistry::modulesChanged, this, &ProviderStore::catalogChanged);
+    Async::runScoped(this, loadOrigins(), [] { }, [](const std::exception_ptr&) { }, "provider origins");
+}
+
+QCoro::Task<void> ProviderStore::loadOrigins()
+{
+    if (m_originsLoaded)
+        co_return;
+    QPointer<ProviderStore> guard(this);
+    const QString stored = co_await m_database->loadSettingAsync(kOriginsKey);
+    // Two callers may race here; the first one to finish wins.
+    if (!guard || m_originsLoaded)
+        co_return;
+    const QJsonObject root = QJsonDocument::fromJson(stored.toUtf8()).object();
+    for (auto it = root.begin(); it != root.end(); ++it) {
+        const QJsonObject origin = it.value().toObject();
+        m_origins.insert(it.key(),
+            { origin.value(QStringLiteral("channel")).toString(),
+                QUrl(origin.value(QStringLiteral("feed")).toString()) });
+    }
+    m_originsLoaded = true;
+    emit catalogChanged();
 }
 
 QUrl ProviderStore::feedUrlFor(const QString& input)
@@ -56,8 +77,13 @@ QUrl ProviderStore::feedUrlFor(const QString& input)
         return {};
     url.setScheme(QStringLiteral("https"));
     QString path = url.path();
-    if (path.endsWith(QStringLiteral(".json")) || path.endsWith(QStringLiteral(".tar.zst")))
+    if (path.endsWith(QStringLiteral(".json")))
         return url;
+    // A package link from a release: its feed is published next to it.
+    if (path.endsWith(QStringLiteral(".tar.zst"))) {
+        url.setPath(path.left(path.lastIndexOf(QLatin1Char('/')) + 1) + QStringLiteral("spool-provider.json"));
+        return url;
+    }
     if (path.endsWith(QStringLiteral(".git")))
         path.chop(4);
     const QString host = url.host().toLower();
@@ -266,9 +292,16 @@ void ProviderStore::updateAll()
 
 void ProviderStore::uninstall(const QString& id)
 {
-    m_origins.remove(id);
-    saveOrigins();
-    Async::runScoped(this, m_registry->uninstall(id), [] { }, [](const std::exception_ptr&) { }, "provider remove");
+    const auto remove = [](ProviderStore *self, QString id) -> QCoro::Task<void> {
+        QPointer<ProviderStore> guard(self);
+        co_await self->loadOrigins();
+        if (!guard)
+            co_return;
+        self->m_origins.remove(id);
+        self->saveOrigins();
+        co_await self->m_registry->uninstall(id);
+    };
+    Async::runScoped(this, remove(this, id), [] { }, [](const std::exception_ptr&) { }, "provider remove");
 }
 
 void ProviderStore::addFromUrl(const QString& input)
@@ -327,6 +360,9 @@ QCoro::Task<void> ProviderStore::installEntry(QVariantMap entry, Origin origin)
         co_await m_registry->install(*package);
         if (!guard)
             co_return;
+        co_await loadOrigins();
+        if (!guard)
+            co_return;
         m_origins.insert(id, origin);
         saveOrigins();
         m_updates.erase(std::remove_if(m_updates.begin(), m_updates.end(),
@@ -354,19 +390,9 @@ void ProviderStore::checkForUpdates(const QString& policy)
 QCoro::Task<void> ProviderStore::checkAsync(QString policy)
 {
     QPointer<ProviderStore> guard(this);
-    if (!m_originsLoaded) {
-        const QString stored = co_await m_database->loadSettingAsync(kOriginsKey);
-        if (!guard)
-            co_return;
-        const QJsonObject root = QJsonDocument::fromJson(stored.toUtf8()).object();
-        for (auto it = root.begin(); it != root.end(); ++it) {
-            const QJsonObject origin = it.value().toObject();
-            m_origins.insert(it.key(),
-                { origin.value(QStringLiteral("channel")).toString(),
-                    QUrl(origin.value(QStringLiteral("feed")).toString()) });
-        }
-        m_originsLoaded = true;
-    }
+    co_await loadOrigins();
+    if (!guard)
+        co_return;
     const bool wantsCommunity = std::any_of(m_origins.begin(), m_origins.end(),
         [](const Origin& origin) { return origin.channel == QStringLiteral("community"); });
     // One small file for first-party providers; the full index only when

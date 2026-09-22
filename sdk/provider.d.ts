@@ -207,6 +207,7 @@ export interface Events {
         | { type: 'connected' }
         | { type: 'joined' | 'update'; groupId: string; name: string; state: string; reason?: string; participants: string[]; at?: number }
         | { type: 'participants'; participants: string[] }
+        | { type: 'participantJoined' | 'participantLeft'; name: string }
         | { type: 'state'; state: 'Idle' | 'Waiting' | 'Paused' | 'Playing'; reason?: string }
         | { type: 'queue'; items: { itemId: string; entryId: string }[]; index: number; positionTicks: string; at?: number; reason?: string }
         | { type: 'command'; command: 'pause' | 'unpause' | 'seek' | 'stop'; at: number; positionTicks: string; entryId?: string; emittedAt?: number }

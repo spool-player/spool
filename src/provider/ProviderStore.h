@@ -88,6 +88,8 @@ private:
         QUrl feed;
     };
 
+    // Where each installed provider came from; every write waits for it.
+    QCoro::Task<void> loadOrigins();
     QCoro::Task<QByteArray> fetch(QUrl url, qint64 limit);
     QCoro::Task<QVariantList> fetchCatalog(QString name);
     QCoro::Task<void> installEntry(QVariantMap entry, Origin origin);

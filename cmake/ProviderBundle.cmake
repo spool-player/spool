@@ -43,6 +43,10 @@ function(spool_bundle_providers target)
                 message(FATAL_ERROR "${package} does not match its pin in providers/lock.json")
             endif()
             file(ARCHIVE_EXTRACT INPUT "${package}" DESTINATION "${root}")
+            # Archive times are zeroed for reproducibility; restamp them so rcc
+            # sees a changed pin as newer than the resource it built before.
+            file(GLOB_RECURSE extracted "${root}/*")
+            file(TOUCH_NOCREATE ${extracted})
         endif()
         file(GLOB_RECURSE files RELATIVE "${root}" "${root}/*")
         list(SORT files)
