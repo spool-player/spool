@@ -517,10 +517,14 @@ QCoro::Task<std::vector<LibraryItem>> SourceHub::fetchLibraries()
         }
     }
     // Two "Movies" rows from two servers read as one; say whose each is.
+    const auto& accounts = m_registry->accountList();
     for (LibraryItem& library : libraries) {
         if (names.value(library.name.toCaseFolded()) > 1) {
-            if (Provider *provider = owner(library.id))
-                library.name += QStringLiteral(" · ") + provider->displayName();
+            const QString account = accountOf(library.id);
+            const auto found
+                = std::find_if(accounts.begin(), accounts.end(), [&](const auto& a) { return a.id == account; });
+            if (found != accounts.end())
+                library.name += QStringLiteral(" · ") + found->label;
         }
     }
     co_return libraries;
@@ -539,13 +543,19 @@ QCoro::Task<std::vector<MovieItem>> SourceHub::fetchItemsByIds(QStringList itemI
     QHash<QString, QStringList> byAccount;
     for (const QString& id : std::as_const(itemIds))
         byAccount[accountOf(id)].append(rawId(id));
-    QHash<QString, MovieItem> found;
+    std::vector<std::pair<QString, QCoro::Task<std::vector<MovieItem>>>> pending;
     for (auto it = byAccount.cbegin(); it != byAccount.cend(); ++it) {
-        Provider *provider = source(it.key());
-        if (!provider)
-            continue;
-        for (MovieItem& item : scopedItems(co_await provider->catalog()->fetchItemsByIds(it.value()), it.key()))
-            found.insert(item.id, std::move(item));
+        if (Provider *provider = source(it.key()))
+            pending.emplace_back(it.key(), provider->catalog()->fetchItemsByIds(it.value()));
+    }
+    QHash<QString, MovieItem> found;
+    for (auto& [accountId, task] : pending) {
+        try {
+            for (MovieItem& item : scopedItems(co_await std::move(task), accountId))
+                found.insert(item.id, std::move(item));
+        } catch (const std::exception& error) {
+            qWarning() << "hub:" << accountId.left(kPrefix) << "items unavailable:" << error.what();
+        }
     }
     std::vector<MovieItem> ordered;
     for (const QString& id : std::as_const(itemIds)) {

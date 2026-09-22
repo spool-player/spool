@@ -28,7 +28,7 @@ MAX_EXPANDED = 32 * 1024 * 1024
 MAX_FILE = 8 * 1024 * 1024
 MAX_FILES = 512
 EXTENSIONS = {".mjs", ".js", ".qml", ".json", ".png", ".jpg", ".svg", ".webp", ".ttf", ".otf", ".txt", ".md", ".map"}
-QML_IMPORTS = {"QtQuick", "QtQuick.Layouts", "QtQuick.Controls", "QtQml", "QtQml.Models", "Spool.Ui"}
+QML_IMPORTS = {"QtQuick", "QtQuick.Layouts", "QtQuick.Controls", "QtQml", "QtQml.Models", "Spool"}
 CAPABILITIES = {"search", "userState", "reporting", "segments", "streamQuality", "trickplay", "discovery",
                 "groupPlayback", "remoteControl"}
 UI_ROLES = {"login", "settings", "picker"}

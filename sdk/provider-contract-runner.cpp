@@ -9,13 +9,13 @@ class ContractResult final : public QObject {
     Q_OBJECT
 public:
     using QObject::QObject;
-    Q_INVOKABLE void complete(bool success)
+    Q_INVOKABLE void complete(bool success, const QString& reason = {})
     {
         if (settled)
             return;
         settled = true;
-        std::fprintf(
-            success ? stdout : stderr, "Qt %s provider contract %s\n", qVersion(), success ? "passed" : "failed");
+        std::fprintf(success ? stdout : stderr, "Qt %s provider contract %s%s%s\n", qVersion(),
+            success ? "passed" : "failed", reason.isEmpty() ? "" : ": ", qPrintable(reason));
         QCoreApplication::exit(success ? 0 : 1);
     }
 
@@ -44,13 +44,13 @@ int main(int argc, char **argv)
             (function(module, result) {
                 try {
                     Promise.resolve(module.run()).then(function() { result.complete(true); },
-                        function() { result.complete(false); });
-                } catch (error) { result.complete(false); }
+                        function(error) { result.complete(false, String(error) + "\n" + (error && error.stack || "")); });
+                } catch (error) { result.complete(false, String(error) + "\n" + (error && error.stack || "")); }
             })
         )JS"));
         invoke.call({ module, engine.newQObject(&result) });
     });
-    QTimer::singleShot(10000, &app, [&] { result.complete(false); });
+    QTimer::singleShot(10000, &app, [&] { result.complete(false, QStringLiteral("timed out")); });
     return app.exec();
 }
 

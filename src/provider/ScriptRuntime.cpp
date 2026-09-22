@@ -372,7 +372,8 @@ QCoro::Task<QVariantMap> ScriptRuntime::call(QString sourceId, QString method, Q
 QCoro::Task<ProviderMediaPage> ScriptRuntime::callMediaPage(
     QString sourceId, QString method, QVariantMap arguments, QString scope, int maximumItems)
 {
-    maximumItems = std::clamp(maximumItems, 1, 1000);
+    // Zero or less is a caller bug; the decoder rejects it.
+    maximumItems = std::min(maximumItems, 1000);
     return d->submit<ProviderMediaPage>(std::move(sourceId), std::move(method), std::move(arguments), std::move(scope),
         [maximumItems](const QJSValue& value) { return Detail::readProviderMediaPage(value, maximumItems); });
 }
