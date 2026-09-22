@@ -2,6 +2,7 @@
 
 #include "ProviderRegistry.h"
 
+#include <QJSEngine>
 #include <QQmlEngine>
 #include <QThread>
 #include <QUuid>
@@ -107,42 +108,41 @@ void ProviderListModel::cancelPending()
     m_position = 0;
 }
 
-ProviderUiContext::ProviderUiContext(ProviderRegistry *registry, QString sourceId, QQmlEngine *engine)
-    : QObject(engine)
+ProviderUiContext::ProviderUiContext(
+    ProviderRegistry *registry, QString sourceId, QString moduleId, QString role, QUrl component)
+    : QObject(registry)
     , m_registry(registry)
-    , m_engine(engine)
     , m_sourceId(std::move(sourceId))
+    , m_moduleId(std::move(moduleId))
+    , m_role(std::move(role))
+    , m_component(std::move(component))
     , m_scope(QUuid::createUuid().toString(QUuid::WithoutBraces))
     , m_rows(this)
 {
     QQmlEngine::setObjectOwnership(this, QQmlEngine::CppOwnership);
     connect(&m_rows, &ProviderListModel::committed, this, [this] {
         const quint64 request = std::exchange(m_listRequest, 0);
-        auto result = std::exchange(m_listResult, {});
-        settle(request, result, true);
-    });
-    connect(registry, &ProviderRegistry::sourceRemoved, this, [this](const QString& id) {
-        if (id == m_sourceId)
-            close();
-    });
-    connect(registry, &QObject::destroyed, this, &ProviderUiContext::close);
-    connect(registry, &ProviderRegistry::configuredSourcesChanged, this, [this] {
-        if (!m_registry)
-            return;
-        const auto sources = m_registry->configuredSources();
-        const bool available = std::any_of(sources.begin(), sources.end(), [this](const QVariant& value) {
-            const auto source = value.toMap();
-            return source.value(QStringLiteral("sourceId")) == m_sourceId
-                && source.value(QStringLiteral("available")).toBool();
-        });
-        if (!available)
-            close();
+        settle(request, std::exchange(m_listResult, {}), true);
     });
 }
 
 ProviderUiContext::~ProviderUiContext()
 {
-    close();
+    if (!m_closed)
+        finish({}, true);
+}
+
+QJSValue ProviderUiContext::promise(Pending *pending)
+{
+    QJSEngine *engine = qjsEngine(this);
+    if (!engine)
+        return {};
+    QJSValue bundle = engine->evaluate(
+        QStringLiteral("(function() { let ok, no; const p = new Promise(function(a, b) { ok = a; no = b; });"
+                       " return {promise: p, resolve: ok, reject: no}; })()"));
+    pending->resolve = bundle.property(QStringLiteral("resolve"));
+    pending->reject = bundle.property(QStringLiteral("reject"));
+    return bundle.property(QStringLiteral("promise"));
 }
 
 QJSValue ProviderUiContext::request(const QString& operation, const QVariantMap& arguments)
@@ -158,109 +158,117 @@ QJSValue ProviderUiContext::requestList(const QString& operation, const QVariant
 QJSValue ProviderUiContext::begin(const QString& operation, const QVariantMap& arguments, bool list, bool append)
 {
     Q_ASSERT(thread() == QThread::currentThread());
-    if (!m_engine)
-        return {};
-    QJSValue bundle = m_engine->evaluate(QStringLiteral(R"JS(
-        (function() {
-            let resolve, reject;
-            const promise = new Promise(function(ok, fail) { resolve = ok; reject = fail; });
-            return {promise: promise, resolve: resolve, reject: reject};
-        })()
-    )JS"));
-    QJSValue promise = bundle.property(QStringLiteral("promise"));
+    Pending pending;
+    QJSValue result = promise(&pending);
     if (m_closed || !m_registry || m_pending.size() >= 8 || (list && m_listRequest)) {
-        bundle.property(QStringLiteral("reject")).call({ QJSValue(QStringLiteral("action_unavailable")) });
-        return promise;
+        pending.reject.call({ QJSValue(QStringLiteral("action_unavailable")) });
+        return result;
     }
     const quint64 id = ++m_next;
-    m_pending.insert(id, { bundle.property(QStringLiteral("resolve")), bundle.property(QStringLiteral("reject")) });
+    m_pending.insert(id, pending);
     if (list)
         m_listRequest = id;
     QPointer<ProviderUiContext> guard(this);
     m_registry->callSource(m_sourceId, operation, arguments, m_scope)
         .then(
-            [guard, id, list, append](QVariantMap result) {
+            [guard, id, list, append](QVariantMap value) {
+                if (!guard || guard->m_closed || !guard->m_pending.contains(id))
+                    return;
+                if (!list)
+                    return guard->settle(id, value, true);
+                const QVariant items = value.take(QStringLiteral("items"));
+                if (items.metaType().id() != QMetaType::QVariantList || !guard->m_rows.enqueue(items.toList(), append))
+                    return guard->settle(id, {}, false);
+                guard->m_listResult = std::move(value);
+            },
+            [guard, id](const std::exception& error) {
+                if (!guard)
+                    return;
+                if (guard->m_listRequest == id) {
+                    guard->m_listRequest = 0;
+                    guard->m_rows.cancelPending();
+                }
+                guard->settle(id, { { QStringLiteral("error"), QString::fromLatin1(error.what()) } }, false);
+            });
+    return result;
+}
+
+QJSValue ProviderUiContext::allowOrigin(const QString& url)
+{
+    Pending pending;
+    QJSValue result = promise(&pending);
+    if (m_closed || !m_registry || m_role != QStringLiteral("login")) {
+        pending.reject.call({ QJSValue(QStringLiteral("origin_denied")) });
+        return result;
+    }
+    const quint64 id = ++m_next;
+    m_pending.insert(id, pending);
+    QPointer<ProviderUiContext> guard(this);
+    m_registry->allowSetupOrigin(m_sourceId, QUrl::fromUserInput(url))
+        .then(
+            [guard, id] {
                 if (guard)
-                    guard->resolved(id, std::move(result), list, append);
+                    guard->settle(id, {}, true);
             },
             [guard, id](const std::exception&) {
                 if (guard)
-                    guard->rejected(id);
+                    guard->settle(id, { { QStringLiteral("error"), QStringLiteral("origin_denied") } }, false);
             });
-    return promise;
-}
-
-void ProviderUiContext::resolved(quint64 id, QVariantMap value, bool list, bool append)
-{
-    if (m_closed || !m_pending.contains(id))
-        return;
-    if (list) {
-        const QVariant items = value.take(QStringLiteral("items"));
-        if (items.metaType().id() != QMetaType::QVariantList || !m_rows.enqueue(items.toList(), append)) {
-            rejected(id);
-            return;
-        }
-        m_listResult = std::move(value);
-    } else {
-        settle(id, value, true);
-    }
-}
-
-void ProviderUiContext::rejected(quint64 id)
-{
-    if (m_listRequest == id) {
-        m_listRequest = 0;
-        m_listResult.clear();
-        m_rows.cancelPending();
-    }
-    settle(id, {}, false);
+    return result;
 }
 
 void ProviderUiContext::settle(quint64 id, const QVariantMap& value, bool success)
 {
-    if (!m_engine || !m_pending.contains(id))
+    QJSEngine *engine = qjsEngine(this);
+    if (!engine || !m_pending.contains(id))
         return;
     const Pending pending = m_pending.take(id);
     int values = 0;
     qsizetype bytes = 0;
-    success = success && smallResult(value, values, bytes);
-    if (success)
-        pending.resolve.call({ m_engine->toScriptValue(value) });
+    if (success && smallResult(value, values, bytes))
+        pending.resolve.call({ engine->toScriptValue(value) });
     else
-        pending.reject.call({ QJSValue(QStringLiteral("action_cancelled_or_failed")) });
+        // Errors are stable codes such as http_401 or invalid_credentials,
+        // which the component maps to its own words.
+        pending.reject.call(
+            { QJSValue(value.value(QStringLiteral("error"), QStringLiteral("request_failed")).toString()) });
 }
 
-void ProviderUiContext::cancelRequests()
+void ProviderUiContext::finish(const QVariantMap& result, bool cancelled)
 {
+    m_closed = true;
     if (m_registry)
         m_registry->cancelSourceScope(m_sourceId, m_scope);
     m_rows.cancelPending();
     m_listRequest = 0;
-    m_listResult.clear();
-    const auto ids = m_pending.keys();
-    for (quint64 id : ids)
+    for (const quint64 id : m_pending.keys())
         settle(id, {}, false);
+    if (m_registry)
+        m_registry->endContext(m_sourceId);
+    emit closedChanged();
+    emit finished(result, cancelled);
 }
 
 void ProviderUiContext::close()
 {
     if (m_closed)
         return;
-    m_closed = true;
-    cancelRequests();
-    emit closedChanged();
-    emit finished({}, true);
+    finish({}, true);
+    deleteLater();
 }
 
 void ProviderUiContext::complete(const QVariantMap& result)
 {
-    if (m_closed)
+    if (m_closed || !m_registry)
         return;
-    m_closed = true;
-    cancelRequests();
-    emit closedChanged();
-    QVariantMap scopedResult = result;
-    scopedResult.insert(QStringLiteral("sourceId"), m_sourceId);
-    emit finished(scopedResult, false);
+    if (m_role == QStringLiteral("login")) {
+        if (m_registry->finishSetup(m_sourceId, result).isEmpty())
+            return;
+    } else if (m_role == QStringLiteral("settings") && result.contains(QStringLiteral("configuration"))) {
+        m_registry->updateConfiguration(m_sourceId, result.value(QStringLiteral("configuration")).toMap());
+        m_registry->restartAccount(m_sourceId);
+    }
+    finish(result, false);
+    deleteLater();
 }
 } // namespace JellyfinNative

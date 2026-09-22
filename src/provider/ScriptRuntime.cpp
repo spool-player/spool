@@ -1,575 +1,342 @@
 #include "ScriptRuntime.h"
 
+#include "ScriptBridge.h"
+
 #include <QAbstractEventDispatcher>
 #include <QCoroFuture>
-#include <QElapsedTimer>
 #include <QFuture>
-#include <QJSEngine>
-#include <QJSValueIterator>
 #include <QNetworkAccessManager>
-#include <QNetworkReply>
-#include <QNetworkRequest>
 #include <QPromise>
-#include <QSet>
 #include <QThread>
-#include <QTimer>
 
-#include <algorithm>
 #include <atomic>
-#include <chrono>
-#include <cmath>
-#include <condition_variable>
-#include <mutex>
 #include <optional>
 #include <stdexcept>
-#include <thread>
-#include <utility>
 
 namespace JellyfinNative {
 namespace {
-    using Completion = std::shared_ptr<QPromise<QVariantMap>>;
-
-    template <typename T>
-    void fail(const std::shared_ptr<QPromise<T>>& completion, const char *code)
+    template <typename T> void fail(const std::shared_ptr<QPromise<T>>& promise, const char *code)
     {
-        completion->setException(std::make_exception_ptr(std::runtime_error(code)));
-        completion->finish();
+        promise->setException(std::make_exception_ptr(std::runtime_error(code)));
+        promise->finish();
     }
 
-    template <typename T>
-    QCoro::Task<T> awaitResult(QFuture<T> future)
+    template <typename T> QCoro::Task<T> awaitResult(QFuture<T> future)
     {
         auto result = qCoro(future);
         co_return co_await result.takeResult();
     }
 
-    // Type erasure is per operation, not per item/property. Both small RPCs
-    // and bulk native pages use the same cancellation/HTTP/watchdog lifecycle.
-    struct ResultSink {
-        virtual ~ResultSink() = default;
-        virtual void prepare(const QJSValue& value) = 0;
-        virtual void complete() = 0;
-        virtual void reject(const char *code) = 0;
-    };
-    using OperationCompletion = std::shared_ptr<ResultSink>;
-
-    template <typename T, typename Decoder>
-    class TypedResultSink final : public ResultSink {
+    template <typename T, typename Decoder> class TypedSink final : public ScriptResultSink {
     public:
-        TypedResultSink(std::shared_ptr<QPromise<T>> promise, Decoder decoder)
-            : promise(std::move(promise))
-            , decoder(std::move(decoder))
+        TypedSink(std::shared_ptr<QPromise<T>> promise, Decoder decoder)
+            : m_promise(std::move(promise))
+            , m_decoder(std::move(decoder))
         {
         }
         void prepare(const QJSValue& value) override
         {
-            result.emplace(decoder(value));
+            m_result.emplace(m_decoder(value));
         }
         void complete() override
         {
-            promise->addResult(std::move(result.value()));
-            promise->finish();
-            result.reset();
+            m_promise->addResult(std::move(*m_result));
+            m_promise->finish();
         }
         void reject(const char *code) override
         {
-            fail(promise, code);
+            fail(m_promise, code);
         }
 
     private:
-        std::shared_ptr<QPromise<T>> promise;
-        Decoder decoder;
-        std::optional<T> result;
+        std::shared_ptr<QPromise<T>> m_promise;
+        Decoder m_decoder;
+        std::optional<T> m_result;
     };
 
-    template <typename T, typename Decoder>
-    OperationCompletion resultSink(std::shared_ptr<QPromise<T>> promise, Decoder decoder)
-    {
-        return std::make_shared<TypedResultSink<T, Decoder>>(std::move(promise), std::move(decoder));
-    }
-
-    // Sleeps while JS is idle. Qt explicitly permits setInterrupted() from another
-    // thread. The mutex protects engine lifetime, not JS heap access.
-    class ScriptWatchdog {
-    public:
-        explicit ScriptWatchdog(QJSEngine *engine)
-            : m_engine(engine)
-            , m_thread([this] { run(); })
-        {
+    // Promise syntax is the baseline: no Node/browser globals are provided and
+    // none are required. Source-level services outlive any one operation.
+    constexpr auto kGlue = R"JS((function() {
+        function promised(start) {
+            return new Promise(function(resolve, reject) { start(resolve, reject); });
         }
-        ~ScriptWatchdog()
-        {
-            {
-                std::lock_guard lock(m_mutex);
-                m_stopping = true;
-                m_engine->setInterrupted(true);
-            }
-            m_changed.notify_one();
-            m_thread.join();
-        }
-        void arm()
-        {
-            std::lock_guard lock(m_mutex);
-            m_armed = true;
-            m_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
-            m_changed.notify_one();
-        }
-        void disarm()
-        {
-            std::lock_guard lock(m_mutex);
-            m_armed = false;
-            m_changed.notify_one();
-        }
-        void interrupt()
-        {
-            std::lock_guard lock(m_mutex);
-            m_engine->setInterrupted(true);
-        }
-
-    private:
-        void run()
-        {
-            std::unique_lock lock(m_mutex);
-            while (!m_stopping) {
-                m_changed.wait(lock, [this] { return m_stopping || m_armed; });
-                if (m_stopping)
-                    break;
-                const auto deadline = m_deadline;
-                if (!m_changed.wait_until(lock, deadline,
-                        [this, deadline] { return m_stopping || !m_armed || m_deadline != deadline; })) {
-                    m_engine->setInterrupted(true);
-                    m_armed = false;
+        function sourceHost(bridge, device) {
+            return Object.freeze({
+                device: device,
+                http: function(url, options) {
+                    return promised(function(ok, no) { bridge.http(String(url), options || {}, ok, no); });
+                },
+                delay: function(ms) {
+                    return promised(function(ok, no) { bridge.delay(ms | 0, ok, no); });
+                },
+                emit: function(type, payload) { bridge.emitEvent(String(type), payload); },
+                socket: function(url, options) {
+                    const socket = {onopen: null, onmessage: null, onclose: null};
+                    const id = bridge.socket(String(url), (options && options.headers) || {},
+                        function() { if (socket.onopen) socket.onopen(); },
+                        function(text) { if (socket.onmessage) socket.onmessage(text); },
+                        function(code) { if (socket.onclose) socket.onclose(code); });
+                    if (!id)
+                        throw new Error('socket_denied');
+                    socket.send = function(text) { bridge.socketSend(id, String(text)); };
+                    socket.close = function() { bridge.socketClose(id); };
+                    return socket;
                 }
-            }
-        }
-        QJSEngine *m_engine;
-        std::mutex m_mutex;
-        std::condition_variable m_changed;
-        bool m_stopping = false;
-        bool m_armed = false;
-        std::chrono::steady_clock::time_point m_deadline;
-        std::thread m_thread;
-    };
-
-    // Validation and ownership conversion in one walk; no JSON stringify/parse
-    // round-trip, no JS object retained by native models. Limits also reject cycles.
-    QVariant ownValue(const QJSValue& value, int& nodes, qsizetype& bytes, int depth = 0)
-    {
-        if (++nodes > 50000 || depth > 20 || bytes > 4 * 1024 * 1024)
-            throw std::runtime_error("result_limit");
-        if (value.isNull() || value.isUndefined())
-            return {};
-        if (value.isBool())
-            return value.toBool();
-        if (value.isNumber()) {
-            const double number = value.toNumber();
-            if (!std::isfinite(number) || std::abs(number) > 9007199254740991.0)
-                throw std::runtime_error("unsafe_number");
-            return number;
-        }
-        if (value.isString()) {
-            const QString text = value.toString();
-            bytes += text.size() * sizeof(QChar);
-            if (bytes > 4 * 1024 * 1024)
-                throw std::runtime_error("result_limit");
-            return text;
-        }
-        if (value.isCallable() || value.isQObject() || !value.isObject())
-            throw std::runtime_error("invalid_result");
-        if (value.isArray()) {
-            const quint32 length = value.property(QStringLiteral("length")).toUInt();
-            if (length > 10000)
-                throw std::runtime_error("result_limit");
-            QVariantList list;
-            list.reserve(length);
-            for (quint32 i = 0; i < length; ++i)
-                list.append(ownValue(value.property(i), nodes, bytes, depth + 1));
-            return list;
-        }
-        QVariantMap map;
-        QJSValueIterator iterator(value);
-        while (iterator.hasNext()) {
-            iterator.next();
-            bytes += iterator.name().size() * sizeof(QChar);
-            map.insert(iterator.name(), ownValue(iterator.value(), nodes, bytes, depth + 1));
-        }
-        return map;
-    }
-
-    bool sameOrigin(const QUrl& left, const QUrl& right)
-    {
-        return left.scheme() == right.scheme() && left.host() == right.host()
-            && left.port(left.scheme() == QStringLiteral("https") ? 443 : 80)
-            == right.port(right.scheme() == QStringLiteral("https") ? 443 : 80);
-    }
-} // namespace
-
-class ScriptOperation final : public QObject {
-    Q_OBJECT
-public:
-    QString scope;
-    ScriptOperation(QJSEngine *engine, QNetworkAccessManager *network, ScriptWatchdog *watchdog, OperationCompletion completion,
-        QList<QUrl> origins, QObject *parent)
-        : QObject(parent)
-        , engine(engine)
-        , network(network)
-        , watchdog(watchdog)
-        , completion(std::move(completion))
-        , origins(std::move(origins))
-    {
-        deadline.setSingleShot(true);
-        deadline.setInterval(15000);
-        connect(&deadline, &QTimer::timeout, this, [this] { cancel("operation_timeout"); });
-        deadline.start();
-    }
-    ~ScriptOperation() override
-    {
-        if (!settled)
-            completion->reject("runtime_shutdown");
-    }
-    void cancel(const char *code)
-    {
-        if (settled)
-            return;
-        settled = true;
-        completion->reject(code);
-        release();
-    }
-    Q_INVOKABLE void resolve(const QJSValue& result)
-    {
-        if (settled)
-            return;
-        try {
-            if (!result.isObject() || result.isArray() || result.isError())
-                throw std::runtime_error("invalid_result");
-            completion->prepare(result);
-            if (engine->isInterrupted())
-                throw std::runtime_error("script_interrupted");
-            settled = true;
-            completion->complete();
-            release();
-        } catch (const std::exception&) {
-            cancel("invalid_result");
-        }
-    }
-    Q_INVOKABLE void reject(const QJSValue&)
-    {
-        // Provider exceptions can carry tokens and response bodies. The public
-        // error is a stable code, never the untrusted exception's string value.
-        cancel("provider_error");
-    }
-    Q_INVOKABLE void delay(int milliseconds, QJSValue resolveCallback, QJSValue rejectCallback)
-    {
-        if (settled)
-            return;
-        if (milliseconds < 0 || milliseconds > 10000 || timers.size() >= 16) {
-            rejectCallback.call({ engine->toScriptValue(QStringLiteral("timer_limit")) });
-            return;
-        }
-        auto *timer = new QTimer(this);
-        timer->setSingleShot(true);
-        timers.insert(timer);
-        connect(timer, &QTimer::timeout, this, [this, timer, resolveCallback]() mutable {
-            timers.remove(timer);
-            timer->deleteLater();
-            if (settled)
-                return;
-            watchdog->arm();
-            resolveCallback.call();
-            if (engine->isInterrupted())
-                cancel("script_interrupted");
-        });
-        timer->start(milliseconds);
-    }
-    Q_INVOKABLE void request(
-        const QString& address, const QVariantMap& options, QJSValue resolveCallback, QJSValue rejectCallback)
-    {
-        if (settled)
-            return;
-        const QUrl url(address);
-        const bool allowed = url.isValid() && url.userInfo().isEmpty()
-            && (url.scheme() == QStringLiteral("https") || url.scheme() == QStringLiteral("http"))
-            && std::any_of(
-                origins.begin(), origins.end(), [&url](const QUrl& origin) { return sameOrigin(url, origin); });
-        if (!allowed || replies.size() >= 4) {
-            rejectCallback.call({ engine->toScriptValue(QStringLiteral("request_denied")) });
-            return;
-        }
-        const QByteArray method = options.value(QStringLiteral("method"), QStringLiteral("GET")).toString().toLatin1();
-        if (method != "GET" && method != "POST" && method != "DELETE" && method != "PUT" && method != "PATCH") {
-            rejectCallback.call({ engine->toScriptValue(QStringLiteral("method_denied")) });
-            return;
-        }
-        const QByteArray body = options.value(QStringLiteral("body")).toString().toUtf8();
-        if (body.size() > 1024 * 1024) {
-            rejectCallback.call({ engine->toScriptValue(QStringLiteral("request_limit")) });
-            return;
-        }
-        QNetworkRequest request(url);
-        request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
-        request.setAttribute(QNetworkRequest::CookieLoadControlAttribute, QNetworkRequest::Manual);
-        request.setAttribute(QNetworkRequest::CookieSaveControlAttribute, QNetworkRequest::Manual);
-        request.setTransferTimeout(10000);
-        const QVariantMap headers = options.value(QStringLiteral("headers")).toMap();
-        for (auto it = headers.cbegin(); it != headers.cend(); ++it) {
-            const QByteArray name = it.key().toLatin1();
-            const QByteArray value = it.value().toString().toUtf8();
-            if (name.contains('\r') || name.contains('\n') || value.contains('\r') || value.contains('\n')
-                || name.compare("host", Qt::CaseInsensitive) == 0
-                || name.compare("content-length", Qt::CaseInsensitive) == 0) {
-                rejectCallback.call({ engine->toScriptValue(QStringLiteral("header_denied")) });
-                return;
-            }
-            request.setRawHeader(name, value);
-        }
-        QNetworkReply *reply = network->sendCustomRequest(request, method, body);
-        reply->setReadBufferSize(256 * 1024);
-        replies.insert(reply);
-        auto buffer = std::make_shared<QByteArray>();
-        connect(reply, &QIODevice::readyRead, this, [this, reply, buffer] {
-            const QByteArray chunk = reply->readAll();
-            if (buffer->size() + chunk.size() > 8 * 1024 * 1024) {
-                cancel("response_limit");
-                return;
-            }
-            buffer->append(chunk);
-        });
-        connect(
-            reply, &QNetworkReply::finished, this, [this, reply, buffer, resolveCallback, rejectCallback]() mutable {
-                replies.remove(reply);
-                reply->deleteLater();
-                if (settled)
-                    return;
-                const QByteArray finalBytes = reply->readAll();
-                if (buffer->size() + finalBytes.size() > 8 * 1024 * 1024) {
-                    cancel("response_limit");
-                    return;
-                }
-                buffer->append(finalBytes);
-                const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-                watchdog->arm();
-                if (status == 0 || (status < 400 && reply->error() != QNetworkReply::NoError)) {
-                    rejectCallback.call({ engine->toScriptValue(QStringLiteral("network_error")) });
-                } else {
-                    QJSValue response = engine->newObject();
-                    response.setProperty(QStringLiteral("status"), status);
-                    response.setProperty(QStringLiteral("body"), QString::fromUtf8(*buffer));
-                    resolveCallback.call({ response });
-                }
-                if (engine->isInterrupted())
-                    cancel("script_interrupted");
             });
-    }
-
-private:
-    void release()
-    {
-        deadline.stop();
-        const auto pendingTimers = std::exchange(timers, {});
-        for (QTimer *timer : pendingTimers) {
-            timer->stop();
-            timer->deleteLater();
         }
-        const auto pending = std::exchange(replies, {});
-        for (QNetworkReply *reply : pending) {
-            disconnect(reply, nullptr, this, nullptr);
-            reply->abort();
-            reply->deleteLater();
-        }
-        deleteLater();
-    }
-    QJSEngine *engine;
-    QNetworkAccessManager *network;
-    ScriptWatchdog *watchdog;
-    OperationCompletion completion;
-    QList<QUrl> origins;
-    QTimer deadline;
-    QSet<QNetworkReply *> replies;
-    QSet<QTimer *> timers;
-    bool settled = false;
-};
-
-class ScriptWorker final : public QObject {
-public:
-    explicit ScriptWorker(QString entryPoint)
-        : entryPoint(std::move(entryPoint))
-    {
-    }
-    void initialize()
-    {
-        engine = std::make_unique<QJSEngine>();
-        watchdog = std::make_unique<ScriptWatchdog>(engine.get());
-        network = std::make_unique<QNetworkAccessManager>();
-        auto *dispatcher = QAbstractEventDispatcher::instance();
-        connect(dispatcher, &QAbstractEventDispatcher::awake, this, [this] {
-            if (watchdog)
-                watchdog->arm();
-        });
-        connect(dispatcher, &QAbstractEventDispatcher::aboutToBlock, this, [this] {
-            if (!watchdog)
-                return;
-            watchdog->disarm();
-            if (engine->isInterrupted()) {
-                for (auto& source : sources)
-                    for (ScriptOperation *operation : source.operations)
-                        operation->cancel("script_interrupted");
-            }
-        });
-        watchdog->arm();
-        const QUrl entryUrl(entryPoint);
-        // importModule's entry argument is a file name, unlike an ES import's
-        // URL specifier. Native Qt resource files use :/ rather than qrc:/.
-        const QString moduleFile = entryUrl.scheme() == QStringLiteral("qrc") ? QLatin1Char(':') + entryUrl.path()
-            : entryUrl.isLocalFile()                                          ? entryUrl.toLocalFile()
-                                                                              : entryPoint;
-        module = engine->importModule(moduleFile);
-        // Promise syntax is the portable baseline; no Node/browser globals or
-        // async-function syntax is required from the bundled Qt JS engine.
-        invoke = engine->evaluate(QStringLiteral(R"JS(
-            (function(source, method, args, bridge) {
+        return {
+            create: function(module, configuration, bridge, device) {
+                return module.createSource(configuration, sourceHost(bridge, device));
+            },
+            call: function(source, method, args, operation, bridge, device) {
                 const host = Object.freeze({
+                    device: device,
                     http: function(url, options) {
-                        return new Promise(function(resolve, reject) {
-                            bridge.request(url, options || {}, resolve, reject);
+                        return promised(function(ok, no) { operation.http(String(url), options || {}, ok, no); });
+                    },
+                    delay: function(ms) {
+                        if (!Number.isInteger(ms) || ms < 0 || ms > 10000)
+                            return Promise.reject(new Error('timer_limit'));
+                        return promised(function(ok, no) { operation.delay(ms, ok, no); });
+                    },
+                    discover: function(options) {
+                        options = options || {};
+                        return promised(function(ok, no) {
+                            operation.discover(options.port | 0, String(options.message || ''),
+                                options.timeout === undefined ? 1500 : options.timeout | 0, ok, no);
                         });
                     },
-                    delay: function(milliseconds) {
-                        if (!Number.isInteger(milliseconds) || milliseconds < 0 || milliseconds > 10000)
-                            return Promise.reject("timer_limit");
-                        return new Promise(function(resolve, reject) {
-                            bridge.delay(milliseconds, resolve, reject);
-                        });
-                    }
+                    emit: function(type, payload) { bridge.emitEvent(String(type), payload); }
                 });
                 try {
                     Promise.resolve(source[method](args, host)).then(
-                        function(value) { bridge.resolve(value); },
-                        function(error) { bridge.reject(error); });
-                } catch (error) { bridge.reject(error); }
-            })
-        )JS"));
-    }
-    void add(QString id, QVariantMap config, QList<QUrl> origins, const Completion& completion)
+                        function(value) { operation.resolve(value); },
+                        function(error) { operation.reject(error); });
+                } catch (error) { operation.reject(error); }
+            }
+        };
+    })())JS";
+} // namespace
+
+class ScriptWorker final : public QObject {
+public:
+    using EventSink = std::function<void(const QString&, const QString&, const QVariantMap&)>;
+
+    ScriptWorker(QString entryPoint, QVariantMap device, ScriptRuntime::NetworkHooks hooks, EventSink events,
+        std::function<void()> interrupted)
+        : m_entryPoint(std::move(entryPoint))
+        , m_device(std::move(device))
+        , m_hooks(std::move(hooks))
+        , m_events(std::move(events))
+        , m_interrupted(std::move(interrupted))
     {
-        if (!engine)
+    }
+
+    void add(const QString& id, const QVariantMap& configuration, const QList<QUrl>& origins,
+        const std::shared_ptr<QPromise<QVariantMap>>& promise)
+    {
+        if (!m_engine)
             initialize();
-        if (engine->isInterrupted() || module.isError()) {
-            fail(completion, "module_unavailable");
-            return;
+        if (m_engine->isInterrupted() || m_module.isError()
+            || !m_module.property(QStringLiteral("createSource")).isCallable())
+            return fail(promise, "module_unavailable");
+        if (id.isEmpty() || m_sources.contains(id) || m_sources.size() >= 32)
+            return fail(promise, "source_conflict_or_limit");
+        ScriptAccess access { m_engine.get(), m_network.get(), origins, m_hooks.socket };
+        auto *host = new ScriptSourceHost(
+            access,
+            [events = m_events, id](const QString& type, const QVariantMap& payload) { events(id, type, payload); },
+            this);
+        QJSEngine::setObjectOwnership(host, QJSEngine::CppOwnership);
+        const QJSValue bridge = m_engine->newQObject(host);
+        m_watchdog->arm();
+        const QJSValue object = m_glue.property(QStringLiteral("create"))
+                                    .call({ m_module, m_engine->toScriptValue(configuration), bridge, m_jsDevice });
+        if (object.isError() || !object.isObject() || m_engine->isInterrupted()) {
+            delete host;
+            checkInterrupted();
+            return fail(promise, "source_initialization_failed");
         }
-        if (id.isEmpty() || sources.contains(id) || sources.size() >= 16) {
-            fail(completion, "source_conflict_or_limit");
-            return;
-        }
-        watchdog->arm();
-        QJSValue source = module.property(QStringLiteral("createSource")).call({ engine->toScriptValue(config) });
-        if (source.isError() || !source.isObject() || engine->isInterrupted()) {
-            fail(completion, "source_initialization_failed");
-            return;
-        }
-        sources.insert(id, { source, std::move(origins), {} });
-        completion->addResult(QVariantMap { { QStringLiteral("sourceId"), id } });
-        completion->finish();
+        m_sources.insert(id, { object, bridge, host, {} });
+        promise->addResult(QVariantMap { { QStringLiteral("sourceId"), id } });
+        promise->finish();
     }
+
     void call(const QString& id, const QString& method, const QVariantMap& args, const QString& scope,
-        const OperationCompletion& completion)
+        const std::shared_ptr<ScriptResultSink>& sink)
     {
-        auto source = sources.find(id);
-        if (!engine || engine->isInterrupted() || source == sources.end()) {
-            completion->reject("source_unavailable");
-            return;
-        }
-        if (source->operations.size() >= 8 || activeOperations >= 32) {
-            completion->reject("operation_limit");
-            return;
-        }
+        const auto source = m_sources.find(id);
+        if (!m_engine || m_engine->isInterrupted() || source == m_sources.end())
+            return sink->reject("source_unavailable");
+        if (source->operations.size() >= 8 || m_activeOperations >= 32)
+            return sink->reject("operation_limit");
         if (method.startsWith(QLatin1Char('_')) || !source->object.hasOwnProperty(method)
-            || !source->object.property(method).isCallable()) {
-            completion->reject("unsupported_operation");
-            return;
-        }
-        auto *operation
-            = new ScriptOperation(engine.get(), network.get(), watchdog.get(), completion, source->origins, this);
-        operation->scope = scope;
+            || !source->object.property(method).isCallable())
+            return sink->reject("unsupported_operation");
+        auto *operation = new ScriptOperation(source->host->access(), sink, scope, this);
         source->operations.insert(operation);
-        ++activeOperations;
+        ++m_activeOperations;
         connect(operation, &QObject::destroyed, this, [this, id, operation] {
-            --activeOperations;
-            auto source = sources.find(id);
-            if (source != sources.end())
-                source->operations.remove(operation);
+            --m_activeOperations;
+            if (const auto found = m_sources.find(id); found != m_sources.end())
+                found->operations.remove(operation);
         });
         QJSEngine::setObjectOwnership(operation, QJSEngine::CppOwnership);
-        watchdog->arm();
-        invoke.call({ source->object, QJSValue(method), engine->toScriptValue(args), engine->newQObject(operation) });
-        if (engine->isInterrupted()) {
-            for (auto& source : sources) {
-                for (ScriptOperation *pending : source.operations)
-                    pending->cancel("script_interrupted");
-            }
-        }
+        m_watchdog->arm();
+        m_glue.property(QStringLiteral("call"))
+            .call({ source->object, QJSValue(method), m_engine->toScriptValue(args), m_engine->newQObject(operation),
+                source->bridge, m_jsDevice });
+        checkInterrupted();
     }
+
     void cancelScope(const QString& id, const QString& scope)
     {
-        const auto source = sources.constFind(id);
-        if (scope.isEmpty() || source == sources.cend())
+        const auto source = m_sources.constFind(id);
+        if (scope.isEmpty() || source == m_sources.cend())
             return;
         for (ScriptOperation *operation : source->operations) {
-            if (operation->scope == scope)
+            if (operation->scope() == scope)
                 operation->cancel("action_cancelled");
         }
     }
+
     void remove(const QString& id)
     {
-        auto source = sources.find(id);
-        if (source == sources.end())
+        const auto source = m_sources.find(id);
+        if (source == m_sources.end())
             return;
-        for (ScriptOperation *operation : source->operations)
+        for (ScriptOperation *operation : std::as_const(source->operations))
             operation->cancel("source_removed");
-        sources.erase(source);
+        delete source->host;
+        m_sources.erase(source);
     }
+
     void shutdown()
     {
-        const auto ids = sources.keys();
-        for (const auto& id : ids)
+        for (const QString& id : m_sources.keys())
             remove(id);
-        // Destroy bridges before the engine and its JS callbacks.
-        const auto operations = findChildren<ScriptOperation *>(QString(), Qt::FindDirectChildrenOnly);
-        qDeleteAll(operations);
-        invoke = QJSValue();
-        module = QJSValue();
-        watchdog.reset();
-        network.reset();
-        engine.reset();
+        // Bridges hold JS callbacks: destroy them before the engine.
+        qDeleteAll(findChildren<ScriptOperation *>(QString(), Qt::FindDirectChildrenOnly));
+        m_glue = {};
+        m_module = {};
+        m_jsDevice = {};
+        m_watchdog.reset();
+        m_network.reset();
+        m_engine.reset();
     }
 
 private:
     struct Source {
         QJSValue object;
-        QList<QUrl> origins;
+        QJSValue bridge;
+        ScriptSourceHost *host = nullptr;
         QSet<ScriptOperation *> operations;
     };
-    QString entryPoint;
-    std::unique_ptr<QJSEngine> engine;
-    std::unique_ptr<ScriptWatchdog> watchdog;
-    std::unique_ptr<QNetworkAccessManager> network;
-    QJSValue module;
-    QJSValue invoke;
-    QHash<QString, Source> sources;
-    int activeOperations = 0;
+
+    void initialize()
+    {
+        m_engine = std::make_unique<QJSEngine>();
+        m_watchdog = std::make_unique<ScriptWatchdog>(m_engine.get());
+        m_network = std::make_unique<QNetworkAccessManager>();
+        if (m_hooks.network)
+            m_hooks.network(m_network.get());
+        // Every callback into JS runs from an event this thread wakes for, so
+        // arming on wake and disarming before sleep covers timers, replies,
+        // socket messages and Promise continuations alike.
+        auto *dispatcher = QAbstractEventDispatcher::instance();
+        connect(dispatcher, &QAbstractEventDispatcher::awake, this, [this] {
+            if (m_watchdog)
+                m_watchdog->arm();
+        });
+        connect(dispatcher, &QAbstractEventDispatcher::aboutToBlock, this, [this] {
+            if (m_watchdog) {
+                m_watchdog->disarm();
+                checkInterrupted();
+            }
+        });
+        m_watchdog->arm();
+        const QUrl entry(m_entryPoint);
+        // importModule takes a file name: qrc:/x is :/x and file URLs are paths.
+        const QString file = entry.scheme() == QStringLiteral("qrc") ? QLatin1Char(':') + entry.path()
+            : entry.isLocalFile()                                    ? entry.toLocalFile()
+                                                                     : m_entryPoint;
+        m_module = m_engine->importModule(file);
+        m_glue = m_engine->evaluate(QString::fromLatin1(kGlue));
+        m_jsDevice = m_engine->toScriptValue(m_device);
+        m_engine->globalObject()
+            .property(QStringLiteral("Object"))
+            .property(QStringLiteral("freeze"))
+            .call({ m_jsDevice });
+    }
+
+    void checkInterrupted()
+    {
+        if (!m_engine || !m_engine->isInterrupted() || m_reportedInterrupt)
+            return;
+        m_reportedInterrupt = true;
+        for (auto& source : m_sources) {
+            for (ScriptOperation *operation : std::as_const(source.operations))
+                operation->cancel("script_interrupted");
+        }
+        m_interrupted();
+    }
+
+    QString m_entryPoint;
+    QVariantMap m_device;
+    ScriptRuntime::NetworkHooks m_hooks;
+    EventSink m_events;
+    std::function<void()> m_interrupted;
+    std::unique_ptr<QJSEngine> m_engine;
+    std::unique_ptr<ScriptWatchdog> m_watchdog;
+    std::unique_ptr<QNetworkAccessManager> m_network;
+    QJSValue m_module;
+    QJSValue m_glue;
+    QJSValue m_jsDevice;
+    QHash<QString, Source> m_sources;
+    int m_activeOperations = 0;
+    bool m_reportedInterrupt = false;
 };
 
 struct ScriptRuntime::Private {
     QThread thread;
-    ScriptWorker *worker;
+    ScriptWorker *worker = nullptr;
     std::atomic<int> queued = 0;
+
+    template <typename T, typename Decoder>
+    QCoro::Task<T> submit(QString sourceId, QString method, QVariantMap arguments, QString scope, Decoder decoder)
+    {
+        auto promise = std::make_shared<QPromise<T>>();
+        promise->start();
+        auto future = promise->future();
+        if (queued.fetch_add(1) >= 64) {
+            --queued;
+            fail(promise, "queue_limit");
+            return awaitResult(std::move(future));
+        }
+        auto sink = std::make_shared<TypedSink<T, Decoder>>(promise, std::move(decoder));
+        QMetaObject::invokeMethod(
+            worker,
+            [this, sourceId = std::move(sourceId), method = std::move(method), arguments = std::move(arguments),
+                scope = std::move(scope), sink] {
+                --queued;
+                worker->call(sourceId, method, arguments, scope, sink);
+            },
+            Qt::QueuedConnection);
+        return awaitResult(std::move(future));
+    }
 };
 
-ScriptRuntime::ScriptRuntime(QString entryPoint, QObject *parent)
+ScriptRuntime::ScriptRuntime(QString entryPoint, QVariantMap device, NetworkHooks hooks, QObject *parent)
     : QObject(parent)
     , d(std::make_unique<Private>())
 {
-    d->worker = new ScriptWorker(std::move(entryPoint));
+    d->worker = new ScriptWorker(
+        std::move(entryPoint), std::move(device), std::move(hooks),
+        [this](const QString& sourceId, const QString& type, const QVariantMap& payload) {
+            QMetaObject::invokeMethod(
+                this, [this, sourceId, type, payload] { emit event(sourceId, type, payload); }, Qt::QueuedConnection);
+        },
+        [this] { QMetaObject::invokeMethod(this, [this] { emit interrupted(); }, Qt::QueuedConnection); });
     d->worker->moveToThread(&d->thread);
     connect(&d->thread, &QThread::finished, d->worker, &QObject::deleteLater);
     d->thread.setObjectName(QStringLiteral("provider-js"));
@@ -585,78 +352,35 @@ ScriptRuntime::~ScriptRuntime()
 
 QCoro::Task<QVariantMap> ScriptRuntime::addSource(QString sourceId, QVariantMap configuration, QList<QUrl> origins)
 {
-    auto completion = std::make_shared<QPromise<QVariantMap>>();
-    completion->start();
-    auto future = completion->future();
-    if (d->queued.fetch_add(1) >= 64) {
-        --d->queued;
-        fail(completion, "queue_limit");
-        return awaitResult(std::move(future));
-    }
+    auto promise = std::make_shared<QPromise<QVariantMap>>();
+    promise->start();
+    auto future = promise->future();
     QMetaObject::invokeMethod(
         d->worker,
-        [state = d.get(), worker = d->worker, sourceId = std::move(sourceId), configuration = std::move(configuration),
-            origins = std::move(origins), completion]() mutable {
-            --state->queued;
-            worker->add(std::move(sourceId), std::move(configuration), std::move(origins), completion);
-        },
+        [worker = d->worker, sourceId = std::move(sourceId), configuration = std::move(configuration),
+            origins = std::move(origins), promise] { worker->add(sourceId, configuration, origins, promise); },
         Qt::QueuedConnection);
     return awaitResult(std::move(future));
 }
 
 QCoro::Task<QVariantMap> ScriptRuntime::call(QString sourceId, QString method, QVariantMap arguments, QString scope)
 {
-    auto completion = std::make_shared<QPromise<QVariantMap>>();
-    completion->start();
-    auto future = completion->future();
-    if (d->queued.fetch_add(1) >= 64) {
-        --d->queued;
-        fail(completion, "queue_limit");
-        return awaitResult(std::move(future));
-    }
-    const auto sink = resultSink(completion, [](const QJSValue& value) {
-        int nodes = 0;
-        qsizetype bytes = 0;
-        return ownValue(value, nodes, bytes).toMap();
-    });
-    QMetaObject::invokeMethod(
-        d->worker,
-        [state = d.get(), worker = d->worker, sourceId = std::move(sourceId), method = std::move(method),
-            arguments = std::move(arguments), scope = std::move(scope), sink] {
-            --state->queued;
-            worker->call(sourceId, method, arguments, scope, sink);
-        },
-        Qt::QueuedConnection);
-    return awaitResult(std::move(future));
+    return d->submit<QVariantMap>(std::move(sourceId), std::move(method), std::move(arguments), std::move(scope),
+        [](const QJSValue& value) { return ownScriptValue(value).toMap(); });
 }
 
 QCoro::Task<ProviderMediaPage> ScriptRuntime::callMediaPage(
     QString sourceId, QString method, QVariantMap arguments, QString scope, int maximumItems)
 {
-    auto completion = std::make_shared<QPromise<ProviderMediaPage>>();
-    completion->start();
-    auto future = completion->future();
-    if (maximumItems < 1 || maximumItems > 1000) {
-        fail(completion, "invalid_page_limit");
-        return awaitResult(std::move(future));
-    }
-    if (d->queued.fetch_add(1) >= 64) {
-        --d->queued;
-        fail(completion, "queue_limit");
-        return awaitResult(std::move(future));
-    }
-    const auto sink = resultSink(completion, [sourceId, maximumItems](const QJSValue& value) {
-        return Detail::readProviderMediaPage(value, sourceId, maximumItems);
-    });
-    QMetaObject::invokeMethod(
-        d->worker,
-        [state = d.get(), worker = d->worker, sourceId = std::move(sourceId), method = std::move(method),
-            arguments = std::move(arguments), scope = std::move(scope), sink] {
-            --state->queued;
-            worker->call(sourceId, method, arguments, scope, sink);
-        },
-        Qt::QueuedConnection);
-    return awaitResult(std::move(future));
+    maximumItems = std::clamp(maximumItems, 1, 1000);
+    return d->submit<ProviderMediaPage>(std::move(sourceId), std::move(method), std::move(arguments), std::move(scope),
+        [maximumItems](const QJSValue& value) { return Detail::readProviderMediaPage(value, maximumItems); });
+}
+
+QCoro::Task<MovieItem> ScriptRuntime::callItem(QString sourceId, QString method, QVariantMap arguments)
+{
+    return d->submit<MovieItem>(std::move(sourceId), std::move(method), std::move(arguments), QString(),
+        [](const QJSValue& value) { return Detail::readProviderItem(value.property(QStringLiteral("item"))); });
 }
 
 void ScriptRuntime::cancelScope(const QString& sourceId, const QString& scope)
@@ -673,5 +397,3 @@ void ScriptRuntime::removeSource(const QString& sourceId)
 }
 
 } // namespace JellyfinNative
-
-#include "ScriptRuntime.moc"

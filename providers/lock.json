@@ -1,14 +1,11 @@
 {
-  "format": 1,
+  "format": 2,
   "providers": [
     {
       "id": "spool.jellyfin",
-      "version": "0.1.0-alpha.1",
-      "repository": "https://github.com/spool-player/spool-jellyfin",
-      "revision": "7accf4daf6d4665bbfe2252f1a1a67481793fb55",
-      "archive": "bundled/spool-jellyfin-0.1.0-alpha.1.zip",
-      "size": 11290,
-      "sha256": "af5c6f0ff647d607691640f875017e73835cf6f13b7f2504b3c03e7c0a7c5436"
+      "version": "0.2.0",
+      "archive": "bundled/spool.jellyfin-0.2.0.tar.zst",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
     }
   ]
 }

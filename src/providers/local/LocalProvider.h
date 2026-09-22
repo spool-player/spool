@@ -15,10 +15,8 @@
 
 #include <vector>
 
-// The providers a build ships live here, one directory each. The Jellyfin
-// provider still sits in src/api and src/app; it moves to
-// src/providers/jellyfin/ in Phase 5, once the core/ and providers/ layout
-// lands.
+// Native providers live here, one directory each. Every other provider is
+// JavaScript and QML loaded at run time.
 
 namespace JellyfinNative {
 
@@ -36,7 +34,7 @@ class LocalProvider final : public Provider,
     Q_OBJECT
 
 public:
-    explicit LocalProvider(QString libraryRoot, QObject *parent = nullptr);
+    LocalProvider(QString accountId, QString libraryRoot, QObject *parent = nullptr);
     ~LocalProvider() override;
 
     QString id() const override;
@@ -59,22 +57,17 @@ public:
     {
         return this;
     }
-    void registerQmlSingletons() override { }
-
     bool ready() const override
     {
         return true;
     }
-    // Scans the folder and announces the session, since there is no sign-in
-    // to wait for.
-    bool restoreFromStorage(QVariantMap values, std::vector<AccountProfile> profiles) override;
 
     QString libraryRoot() const
     {
         return m_root;
     }
-    // Reads the folder again. Called once from restoreFromStorage(); a test
-    // calls it directly.
+    // Reads the folder synchronously; construction already does so off the
+    // GUI thread, so only tests call this.
     void scan();
 
     // Catalog, SearchSource, UserItemStateSink
@@ -119,16 +112,18 @@ private:
     };
     class Playback;
 
+    static std::vector<Record> scanFolder(const QString& folder);
+    void setRecords(std::vector<Record> records);
     const Record *record(const QString& itemId) const;
     Record *record(const QString& itemId);
     std::vector<MovieItem> items(int startIndex, int limit) const;
 
+    QString m_accountId;
     QString m_root;
     QString m_libraryName;
     std::vector<Record> m_records;
     QHash<QString, size_t> m_index;
     Playback *m_playback = nullptr;
-    bool m_scanned = false;
 };
 
 } // namespace JellyfinNative

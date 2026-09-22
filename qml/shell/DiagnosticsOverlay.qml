@@ -1,6 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
-import JellyfinWebOS
+import Spool
 import "../theme"
 import "../primitives"
 
@@ -10,7 +10,7 @@ Item {
     property string focusedItemId: ""
     // Only read behind the capability: a source without SyncPlay has no such
     // singleton to report on.
-    readonly property var syncPlay: ProviderCapabilities.syncPlay ? SyncPlay : null
+    readonly property var syncPlay: ProviderCapabilities.groupPlayback ? Group : null
     readonly property bool syncPlayActive: syncPlay ? syncPlay.enabled : false
 
     function formatBytes(bytes) {
@@ -117,7 +117,7 @@ Item {
             SecondaryText {
                 visible: root.syncPlayActive
                 Layout.maximumWidth: Metrics.scaled(396)
-                text: !root.syncPlayActive ? "" : "SyncPlay  " + (root.syncPlay.groupState || "Unknown") + (
+                text: !root.syncPlayActive ? "" : "Group  " + (root.syncPlay.groupState || "Unknown") + (
                                                  root.syncPlay.groupStateReason ? " / "
                                                                                   + root.syncPlay.groupStateReason :
                                                                                   "") + (root.syncPlay.waitingForPlayback
@@ -127,9 +127,10 @@ Item {
             SecondaryText {
                 visible: root.syncPlayActive
                 Layout.maximumWidth: Metrics.scaled(396)
-                text: !root.syncPlayActive ? "" : "Time sync  " + root.syncPlay.timeSyncDevice + "  offset "
-                                             + root.signedMs(root.syncPlay.clockOffsetMs) + "  ping " + Number(
-                                                 root.syncPlay.pingMs || 0).toFixed(2) + " ms"
+                text: !root.syncPlayActive ? "" : "Time sync  " + "server  offset " + root.signedMs(
+                                                 root.syncPlay.clockOffsetMs) + "  ping " + Number(root.syncPlay.pingMs
+                                                                                                   || 0).toFixed(2)
+                                             + " ms"
                 elide: Text.ElideRight
             }
             SecondaryText {
