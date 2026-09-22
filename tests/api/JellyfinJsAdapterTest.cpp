@@ -82,8 +82,19 @@ JELLYFIN_TEST_MAIN("jellyfin-js-adapter")
         "mediaRequestHeaders contains X-Emby-Token");
 
     const QString trickplay = adapter.trickplayTileUrl(QStringLiteral("item-42"), 320, 5);
-    require(trickplay == "https://media.test.local:8096/Items/item-42/Images/Trickplay/320/5",
+    require(trickplay == "https://media.test.local:8096/Videos/item-42/Trickplay/320/5.jpg",
         "trickplay tile URL formatted correctly");
+
+    // Test StreamQualityControl
+    require(adapter.bitrateOverride() == 0, "initial bitrate override is 0");
+    require(adapter.heightOverride() == 0, "initial height override is 0");
+    require(adapter.autoDescription() == QStringLiteral("Direct Play"), "initial autoDescription is Direct Play");
+    adapter.setOverride(10'000'000, 720);
+    require(adapter.bitrateOverride() == 10'000'000, "bitrate override set");
+    require(adapter.heightOverride() == 720, "height override set");
+    const auto ladder = adapter.ladder(20'000'000);
+    require(!ladder.empty(), "ladder is populated");
+    require(ladder.front().bitrate <= 20'000'000, "ladder rungs capped at source bitrate");
 
     // Test clearing
     adapter.clear();

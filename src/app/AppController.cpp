@@ -243,6 +243,10 @@ AppController::AppController(
                 m_qualityFallbackHeight = 0;
                 if (m_quality)
                     m_quality->setOverride(restoredBitrate, restoredHeight);
+                else {
+                    m_genericBitrateOverride = restoredBitrate;
+                    m_genericHeightOverride = restoredHeight;
+                }
                 emit streamingQualityChanged();
                 const MovieItem resumeItem = PlaybackFailurePolicy::retryItem(m_activePlaybackItem, positionTicks);
                 setBusy(true, QStringLiteral("Restoring the previous quality…"));
@@ -1547,28 +1551,35 @@ void AppController::openNamedCollection(const QString& kind, const QString& valu
 
 QVariantList AppController::streamingQualityOptions() const
 {
-    if (!m_quality)
-        return {};
-    const qint64 override = m_quality->bitrateOverride();
+    const qint64 override = m_quality ? m_quality->bitrateOverride() : m_genericBitrateOverride;
+    const int heightOverride = m_quality ? m_quality->heightOverride() : m_genericHeightOverride;
     QVariantList options;
     options.push_back(QVariantMap {
         { QStringLiteral("label"), QStringLiteral("Auto") },
-        { QStringLiteral("detail"), m_quality->autoDescription() },
+        { QStringLiteral("detail"), m_quality ? m_quality->autoDescription() : QStringLiteral("Direct Play") },
         { QStringLiteral("bitrate"), 0 },
-        { QStringLiteral("selected"), override <= 0 },
+        { QStringLiteral("height"), 0 },
+        { QStringLiteral("selected"), override <= 0 && heightOverride <= 0 },
     });
 
     qint64 sourceBitrate = 0;
     for (const MediaSourceInfo& source : m_activePlaybackItem.mediaSources)
         sourceBitrate = std::max<qint64>(sourceBitrate, source.bitRate);
 
-    for (const StreamQualityControl::Rung& rung : m_quality->ladder(sourceBitrate)) {
+    std::vector<StreamQualityControl::Rung> rungs;
+    if (m_quality)
+        rungs = m_quality->ladder(sourceBitrate);
+    if (rungs.empty())
+        rungs = StreamQualityControl::defaultLadder(sourceBitrate);
+
+    for (const StreamQualityControl::Rung& rung : rungs) {
         options.push_back(QVariantMap {
             { QStringLiteral("label"), rung.label },
             { QStringLiteral("detail"), QString() },
             { QStringLiteral("bitrate"), rung.bitrate },
             { QStringLiteral("height"), rung.height },
-            { QStringLiteral("selected"), override == rung.bitrate },
+            { QStringLiteral("selected"),
+                override == rung.bitrate && (heightOverride == 0 || heightOverride == rung.height) },
         });
     }
     return options;
@@ -1576,13 +1587,16 @@ QVariantList AppController::streamingQualityOptions() const
 
 void AppController::selectStreamingQuality(qint64 bitrate, int height)
 {
-    if (!m_quality)
-        return;
-    const qint64 previousBitrate = m_quality->bitrateOverride();
-    const int previousHeight = m_quality->heightOverride();
+    const qint64 previousBitrate = m_quality ? m_quality->bitrateOverride() : m_genericBitrateOverride;
+    const int previousHeight = m_quality ? m_quality->heightOverride() : m_genericHeightOverride;
     if (previousBitrate == bitrate && previousHeight == height)
         return;
-    m_quality->setOverride(bitrate, height);
+    if (m_quality)
+        m_quality->setOverride(bitrate, height);
+    else {
+        m_genericBitrateOverride = bitrate;
+        m_genericHeightOverride = height;
+    }
     emit streamingQualityChanged();
 
     // The source chose direct play or transcoding against the ceiling it was

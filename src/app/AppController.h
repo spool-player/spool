@@ -251,6 +251,8 @@ private:
     // one that was playing instead of ending playback.
     qint64 m_qualityFallbackBitrate = -1;
     int m_qualityFallbackHeight = 0;
+    qint64 m_genericBitrateOverride = 0;
+    int m_genericHeightOverride = 0;
     // Held for the process lifetime so a second local instance picks the next
     // slot and reports a device identity of its own.
     std::unique_ptr<QLockFile> m_instanceLock;
