@@ -5,7 +5,7 @@
       "id": "spool.jellyfin",
       "version": "0.2.0",
       "archive": "bundled/spool.jellyfin-0.2.0.tar.zst",
-      "sha256": "c2931a9bbe27caa6c72b07ecc0b965fcd1f821d1a81f702ff9b48353b1a0f866"
+      "sha256": "468005d7e2cc7ac349f65321833e0f1b8bfe42aa638216b7e6170c5640687b9d"
     }
   ]
 }
