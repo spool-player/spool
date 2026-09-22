@@ -781,6 +781,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         provider-qml-cache tests/providers/ProviderQmlCacheTest.cpp
         provider-package-unpack tests/providers/ProviderPackageTest.cpp
         stream-quality-control tests/providers/StreamQualityControlTest.cpp
+        live-jellyfin tests/providers/LiveJellyfinTest.cpp
     )
     set(JELLYFIN_TESTS_player
         playback-timeline tests/player/PlaybackTimelineTest.cpp
@@ -865,6 +866,13 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         endforeach()
     endforeach()
 
+    # Test binaries share one QML disk cache across builds whose bundled
+    # provider resources all carry the same reproducible timestamp.
+    foreach(test_name IN LISTS JELLYFIN_TESTS_providers)
+        if(NOT test_name MATCHES "/")
+            set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT "QML_DISABLE_DISK_CACHE=1")
+        endif()
+    endforeach()
     add_test(NAME provider-media-page-interpreter COMMAND providers-tests provider-media-page)
     set_tests_properties(provider-media-page-interpreter PROPERTIES ENVIRONMENT "QV4_FORCE_INTERPRETER=1;${JELLYFIN_TEST_ENV}")
     target_sources(providers-tests PRIVATE ${SPOOL_PROVIDER_BUNDLE_SOURCES})
@@ -877,7 +885,8 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         COMMAND provider-contract-runner "${CMAKE_CURRENT_SOURCE_DIR}/tests/providers/fixtures/bundled-jellyfin.mjs")
     add_test(NAME bundled-jellyfin-interpreter
         COMMAND provider-contract-runner "${CMAKE_CURRENT_SOURCE_DIR}/tests/providers/fixtures/bundled-jellyfin.mjs")
-    set_tests_properties(bundled-jellyfin-interpreter PROPERTIES ENVIRONMENT "QV4_FORCE_INTERPRETER=1")
+    set_tests_properties(bundled-jellyfin bundled-jellyfin-interpreter PROPERTIES ENVIRONMENT "QML_DISABLE_DISK_CACHE=1")
+    set_property(TEST bundled-jellyfin-interpreter APPEND PROPERTY ENVIRONMENT "QV4_FORCE_INTERPRETER=1")
     if(JELLYFIN_NATIVE_WEBOS)
         set(JELLYFIN_FFMPEG_AUDIT_PLATFORM webos)
     elseif(APPLE)

@@ -205,8 +205,10 @@ FILE *openAppLogFile(const QString& appRootPath)
 void configurePersistentStartupCaches(const QString& cacheRoot)
 {
     const QString qtShaderCache = QDir(cacheRoot).filePath(QStringLiteral("qtshadercache"));
-    const QString qmlDiskCache
-        = QDir(cacheRoot).filePath(QStringLiteral("qmlcache-") + QString::fromLatin1(kAppVersion));
+    // Resource timestamps are fixed in reproducible builds, so compiled QML
+    // and provider modules are only valid for this exact version and bundle.
+    const QString qmlDiskCache = QDir(cacheRoot).filePath(QStringLiteral("qmlcache-") + QString::fromLatin1(kAppVersion)
+        + QLatin1Char('-') + QStringLiteral(SPOOL_PROVIDER_BUNDLE_DIGEST));
     QDir().mkpath(qtShaderCache);
     QDir().mkpath(qmlDiskCache);
 
