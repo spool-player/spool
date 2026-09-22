@@ -34,6 +34,7 @@ function(jellyfin_configure_android_targets native_target core_target)
         src/platform/common/LinuxPerformanceSampler.cpp
         src/platform/desktop/DesktopMpvConfigPolicy.cpp
         src/platform/android/AndroidPlaybackSurface.cpp
+        src/platform/desktop/DesktopPlaybackRuntime.cpp
     )
     target_sources(${native_target} PRIVATE
         src/platform/android/AndroidNativeAppWindow.cpp
@@ -43,7 +44,6 @@ function(jellyfin_configure_android_targets native_target core_target)
         src/platform/UpdateController.h
         src/platform/android/AndroidUpdateInstaller.cpp
         src/platform/android/AndroidUpdateInstaller.h
-        src/platform/desktop/DesktopPlaybackRuntime.cpp
     )
     target_link_libraries(${core_target} PUBLIC MPV::MPV)
     # liblog carries diagnostics to logcat, the only readable output on Android.
