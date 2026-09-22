@@ -1,92 +1,104 @@
-# Spool provider SDK: experimental API 0.1
+# Spool provider SDK (API 0.2)
 
-The compatibility revision is exactly `0.1`. Additive fixes retain that revision; a breaking change requires `0.2`. Spool and provider release versions are independent. No historical-version adapter is implemented.
+A provider teaches Spool a media source: a server, a service, a folder. It is a
+small package of JavaScript (the logic) and optional QML (its own sign-in,
+settings and picker screens). Spool runs every provider the same way, whether
+bundled with the app, installed from the store or added from a link.
 
-## Worker profile
+| File | What it is |
+| --- | --- |
+| `provider.d.ts` | The contract: `createSource`, every operation, events and the screen context |
+| `spool-provider.py` | Builds, validates and describes packages (`build`, `validate`, `feed`) |
+| `provider-contract-runner.cpp` | Runs a provider's `tests/contract.mjs` in Qt's JS engine, as Spool does |
 
-An ES module exports `createSource(configuration)`, returning an object whose own methods implement operations. Each operation receives `(arguments, host)` and returns a plain object or a Promise for one. Create per-source state in the factory closure, not in module globals. Use Promise syntax; Node, browser globals and async-function syntax are not part of this baseline.
+`spool-player/spool-provider-example` is a complete provider to start from.
 
-`host.http(url, {method, headers, body})` returns a Promise for `{status, body}`. The source's authorised HTTP(S) origins are selected by native code. Redirects are returned to the provider, not automatically followed. Cookies are neither loaded nor saved implicitly. HTTP error statuses remain inspectable; transport failure rejects. Parse and normalise response text in the worker. Never return backend response payloads indiscriminately.
-
-`host.delay(milliseconds)` supplies a worker-owned one-shot Promise timer for protocol polling/backoff. Delays are limited to 0–10,000 ms and 16 outstanding timers per operation. Timers are cancelled with their owning operation/source; they never become process-global recurring polling.
-
-Native limits: 8 MiB decoded HTTP responses; 1 MiB request bodies; four concurrent HTTP requests per operation; eight operations per source; 32 active operations and 64 queued submissions per runtime; 16 source objects per runtime. Operation deadline is 15 seconds, transport inactivity deadline 10 seconds, and uninterrupted JS execution budget 500 ms. The watchdog covers Promise continuations as well as direct calls. Exceeding execution budget disables the module; create a fresh runtime for explicit recovery.
-
-Results are plain owned native values, bounded to 50,000 values, nesting depth 20, arrays of 10,000 elements and 4 MiB of string data. Non-finite and unsafe numeric values are rejected. Represent large counters and exact timestamps as decimal strings. IDs are opaque strings. Source IDs are host authority, not provider-controlled credential selectors.
-
-Removing a source cancels its outstanding native requests and completes pending operations with an error. Other sources remain available. Shutdown also completes outstanding operations. Native callers receive `QCoro::Task<QVariantMap>` on their calling thread. There are no cross-thread `QJSValue` objects.
-
-This is a trusted/reviewed in-process execution profile, **not a sandbox**. Durable secret/storage services, module manager and UI-to-worker RPC are not yet public services. Do not declare that the full portable-provider plan is implemented by this runtime alone.
-
-## Contract runner
-
-Build this directory with CMake and the host Qt development environment:
+## Packages
 
 ```
-cmake -S sdk -B build/provider-sdk
-cmake --build build/provider-sdk
-build/provider-sdk/provider-contract-runner /path/to/provider/tests/contract.mjs
-QV4_FORCE_INTERPRETER=1 build/provider-sdk/provider-contract-runner /path/to/provider/tests/contract.mjs
+manifest.json      format 2 (below)
+LICENSE, NOTICE
+logic/*.mjs        entry module exporting createSource(configuration, host)
+ui/*.qml           optional screens named in manifest.ui
+assets/            icon and anything else the screens show
 ```
 
-The test module exports `run()`, returning a Promise or throwing on failure. It runs in a real QJSEngine, not Node. The host's runtime tests additionally exercise actual asynchronous HTTP, thread ownership, source isolation, cancellation and runaway JS. Put a process timeout around external contract tests: this small test runner is not the production worker watchdog.
+```json
+{
+  "format": 2, "api": "0.2",
+  "id": "publisher.name", "name": "Shown name", "version": "1.2.3",
+  "summary": "One line, up to 120 characters", "publisher": "You", "homepage": "https://…",
+  "icon": "assets/icon.svg", "entry": "logic/provider.mjs",
+  "capabilities": ["search", "userState", "reporting", "segments", "streamQuality", "trickplay",
+                   "discovery", "groupPlayback", "remoteControl"],
+  "origins": ["https://api.example.org"],
+  "ui": { "login": "ui/Login.qml", "settings": "ui/Settings.qml", "picker": "ui/Picker.qml" },
+  "actions": [{ "id": "playlist", "label": "Add to playlist", "icon": "playlist_add", "types": ["Movie"] }]
+}
+```
 
-## Source packages
+- A provider with a `login` screen needs an account; one without is added straight away.
+- `origins` are reachable by every account; `*` allows any HTTP(S) origin. Anything else an account
+  reaches is what its login screen allowed with `provider.allowOrigin(url)`.
+- `actions` appear in the item menu for the listed types and run through `runItemAction`.
+- Packages are `.tar.zst` (ustar, zstd), at most 16 MiB, 512 files, 32 MiB expanded. Paths are
+  relative, without hidden parts, of the listed types; links and native binaries are refused.
 
-`tools/provider-package.py build PATH --output provider.zip` creates a deterministic source ZIP. `validate provider.zip` checks its manifest, required host features, known permissions, declared UI components/imports, paths, file types and size limits. Unknown offered and optional extensions are allowed; missing required extensions reject the package. Every QML component must be listed so it can be validated and warmed.
+```
+python3 sdk/spool-provider.py build path/to/provider           # dist/<id>-<version>.tar.zst
+python3 sdk/spool-provider.py validate dist/<id>-<version>.tar.zst
+python3 sdk/spool-provider.py feed dist/<id>-<version>.tar.zst --url https://…/<id>-<version>.tar.zst
+```
 
-Validation does not authenticate publisher identity. A release digest or provenance attestation is not a substitute for an authenticated catalogue with freshness, rotation and revocation. The application does not yet install or activate these ZIPs. Do not enable downloaded code in store builds on the strength of this tool.
+Building is reproducible. It needs Python 3.14, or the `zstd` command on older Pythons.
 
-## Bundled sources and development overrides
+## Running
 
-`providers/lock.json` pins the provider repository revision, source ZIP size and SHA-256. Normal CMake configuration validates the checked-in ZIP and embeds the exact source files under `qrc:/providers/<module-id>/`. It never downloads a mutable latest release. The bundled Jellyfin source contract is executed in both normal and interpreter-only Qt modes by ctest.
+Each provider module gets one worker thread and QJSEngine; `createSource` is called once per account
+with that account's configuration and a host that lives as long as the account. Keep account state in
+that closure. Operations are called as `operation(args, host)` and return a plain value or a Promise.
+Throw `new Error('snake_case_code')` to fail: the code reaches Spool (`http_401` asks the viewer to sign
+in again), anything else becomes `provider_error`. ES2020 modules and Promises only: no `async`/`await`,
+no Node or browser globals, and Qt's engine lacks some newer built-ins such as `Array.prototype.flatMap`.
 
-For unreleased provider development, configure `-DSPOOL_JELLYFIN_SOURCE_DIR=/absolute/path/to/spool-jellyfin`. This explicit local override uses the same source validation and resource construction path, without changing the committed pin or fetching/tagging a release. CMake watches provider logic, UI, resources and manifest changes. Clear the cache option to return to pinned bytes.
+| Limit | |
+| --- | --- |
+| Uninterrupted script | 500 ms; exceeding it turns the module off until restarted |
+| Operation | settles within 15 s; eight in flight per account |
+| HTTP | four at once per operation, 1 MiB bodies, 8 MiB responses, redirects returned not followed, no cookies |
+| Sockets | `host.socket` on the source host, four per account |
+| Timers | `host.delay`: 0–60 s on the source host, 0–10 s in an operation, 16 pending |
+| Results | 50,000 values, depth 20, arrays of 10,000, 4 MiB of text; ticks as decimal strings |
 
-Bundling this alpha source does not switch normal app operations away from the existing native Jellyfin implementation; application-level migration remains unfinished. Runtime ZIP installation still needs authenticated metadata and transactional activation/recovery.
+This is a reviewed, in-process profile, not a sandbox: install providers you trust.
 
-## Native source identity
+## Screens
 
-`ProviderRegistry` owns one runtime per registered portable module and maintains persistent source UUIDs in the existing durable database, separate from disposable caches. A host-created `(module ID, account ID, source key)` identifies the configured source across launches; changing a token, authorised origin or display label does not change that UUID. Account/source keys must be opaque identifiers, not credential-bearing URLs.
+A screen is mounted with a `provider` property (`ScreenContext` in `provider.d.ts`) and may
+`import QtQuick`, `QtQuick.Layouts`, `QtQuick.Controls`, `QtQml`, `QtQml.Models` and `Spool` (the
+app's theme, metrics, input keys and primitives). `request()` calls an operation of this account;
+`requestList()` streams `items` into the native `rows` model; `complete()` or `close()` settles the
+screen once. Map error codes to your own words.
 
-`restoreSources()` restores identity and enable/disable metadata only. `configureSource()` supplies current configuration/credentials and native-authorised origins explicitly; these are not copied into the public source index or its QML snapshot. `callSource()` retains the exact source generation across the coroutine boundary. Disabling/removing a source cancels its work without changing other accounts, and removing a source does not remove the account or its credentials. Interrupted modules become unavailable without resetting other modules.
+## Testing
 
-The application registers its bundled portable module and restores this index after the first frame. Automatic migration of legacy account configuration and normal application browsing/playback to these contexts is not complete. The `Sources` QML singleton currently exposes only the cached public metadata snapshot; it does not expose arbitrary cross-source worker calls to provider UI.
+```
+cmake -S sdk -B build/sdk && cmake --build build/sdk
+build/sdk/provider-contract-runner tests/contract.mjs
+QV4_FORCE_INTERPRETER=1 build/sdk/provider-contract-runner tests/contract.mjs
+```
 
-## Source-bound UI action bridge
+`tests/contract.mjs` exports `run()`, which returns a Promise or throws; the runner prints why a
+contract failed and gives up after 10 seconds.
 
-`ProviderUiContext` is a native-owned action object constructed with one source and the GUI QML engine. Pass it as an initial property when mounting a trusted provider component; do not hand the component the global registry. `request(operation, arguments)` returns a GUI-engine Promise whose worker result is bounded to 512 values/64 KiB before JS conversion.
+## Publishing
 
-Use `requestList(operation, arguments, append)` for bulk rows. The operation returns `{items: [...], ...smallPageMetadata}`; `items` moves into the context's native `rows` model, while the Promise resolves with just page metadata after insertion completes. The model exposes `record` and `title` roles, commits at most 32 rows per event-loop turn and retains at most 10,000 rows. Role reads do not invoke backend JS. Providers should use virtualised ListView/GridView delegates and plain text for untrusted labels.
+Attach the package and its `spool-provider.json` (the `feed` output) to each release. Spool can then
+install it from a link to the repository: GitHub resolves to
+`releases/latest/download/spool-provider.json`, GitLab to
+`-/releases/permalink/latest/downloads/spool-provider.json`, and any other site to
+`/spool-provider.json` at the address given. Installed providers are updated from the same place.
 
-`complete(result)` returns an action result with native `sourceId` authority; `close()` returns cancellation. Both settle once. Dismissing a component must call `close()`, and destroying the native context cancels outstanding work. Each context owns a separate native operation scope: closing a picker does not remove its source or cancel another picker on that source. Source removal/disable closes its open contexts.
-
-The `tests/providers/fixtures/Selection.qml` action exercises a 2,000-row virtualised list, async completion and dismissal. This bridge is not yet the full negotiated UI-host extension: shared routing, focus restoration, localisation/notification services and real Jellyfin component migration remain incomplete. Packages requiring `ui-host`, `native-list` or `Spool.Ui` continue to fail compatibility validation until that full public surface is provided.
-
-## Native typed listing path (integration in progress)
-
-`ScriptRuntime::callMediaPage()` and the generation-guarded
-`ProviderRegistry::callSourceMediaPage()` return `QCoro::Task<ProviderMediaPage>`.
-The operation still returns the existing normalized JS page shape
-`{items, cursor, total, exhausted}`. The worker validates/converts those fields
-**directly** into native-owned media items; it does not first create a generic
-`QVariantMap` tree and then convert all rows on the GUI thread. Small RPCs and
-custom UI actions retain `callSource()` and their existing bounded native maps.
-
-Each returned item carries the host-created source ID alongside `MovieItem`
-and its complete normalized external-ID map. Keep that envelope through
-routing/caching; do not discard it simply to fit an old single-source model.
-Ticks accept safe nonnegative JS integers or exact decimal strings within
-signed 64-bit range. Unknown totals stay optional and cursors stay opaque.
-The caller selects a row bound (100 by default, hard ceiling 1,000); this is an
-allocation/safety limit, not evidence that a 1,000-row page meets any latency
-budget. Source removal, operation-scope cancellation and watchdog behaviour
-are shared with ordinary calls.
-
-This decoder covers the current provider's **listing** schema. It is not a
-completed catalog adapter, details/variant/playback decoder, artwork credential
-bridge, account bootstrap, or native/JS application switch. Add those pieces
-and test against real Jellyfin before describing the portable client as wired.
-The existing native Jellyfin implementation remains the normal application
-path. These host-side types are experimental internals, not a new public SDK
-version or a reason to rebuild the portable provider ZIP.
+To be listed in the store, open a pull request on `spool-player/spool-providers` adding
+`providers/<id>.json` with that feed entry. CI downloads the package, checks its digest and validates
+it; once merged, the store site is rebuilt and the provider appears in Spool.
