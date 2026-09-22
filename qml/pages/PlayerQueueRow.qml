@@ -1,6 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
-import JellyfinWebOS
+import Spool
 import "../primitives"
 import "../theme"
 

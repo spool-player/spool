@@ -1,6 +1,6 @@
 pragma Singleton
 import QtQuick
-import JellyfinWebOS
+import Spool
 
 QtObject {
     readonly property color bg: "#0E0E0E"

@@ -1,8 +1,10 @@
 #include "LocalProvider.h"
 
+#include "../../common/AsyncTask.h"
 #include <QDir>
 #include <QDirIterator>
 #include <QFileInfo>
+#include <QFutureWatcher>
 #include <QSet>
 #include <QUrl>
 
@@ -98,21 +100,31 @@ private:
     LocalProvider *m_provider;
 };
 
-LocalProvider::LocalProvider(QString libraryRoot, QObject *parent)
+LocalProvider::LocalProvider(QString accountId, QString libraryRoot, QObject *parent)
     : Provider(parent)
+    , m_accountId(std::move(accountId))
     , m_root(QDir(std::move(libraryRoot)).absolutePath())
     , m_playback(new Playback(this))
 {
     m_libraryName = QDir(m_root).dirName();
     if (m_libraryName.isEmpty())
         m_libraryName = QStringLiteral("Local files");
+    // A large folder takes a while to walk; do it off the GUI thread and
+    // announce the library once it is known.
+    auto *watcher = new QFutureWatcher<std::vector<Record>>(this);
+    connect(watcher, &QFutureWatcher<std::vector<Record>>::finished, this, [this, watcher] {
+        setRecords(watcher->result());
+        watcher->deleteLater();
+        emit contentChanged({});
+    });
+    watcher->setFuture(Async::background([root = m_root] { return LocalProvider::scanFolder(root); }));
 }
 
 LocalProvider::~LocalProvider() = default;
 
 QString LocalProvider::id() const
 {
-    return QStringLiteral("local");
+    return m_accountId;
 }
 
 QString LocalProvider::displayName() const
@@ -130,21 +142,24 @@ PlaybackSource *LocalProvider::playback()
     return m_playback;
 }
 
-bool LocalProvider::restoreFromStorage(QVariantMap, std::vector<AccountProfile>)
-{
-    if (!m_scanned)
-        scan();
-    emit sessionStarted();
-    return true;
-}
-
 void LocalProvider::scan()
 {
-    m_scanned = true;
-    m_records.clear();
+    setRecords(scanFolder(m_root));
+}
+
+void LocalProvider::setRecords(std::vector<Record> records)
+{
+    m_records = std::move(records);
     m_index.clear();
-    const QDir root(m_root);
-    QDirIterator files(m_root, QDir::Files | QDir::Readable, QDirIterator::Subdirectories);
+    for (size_t index = 0; index < m_records.size(); ++index)
+        m_index.insert(m_records[index].item.id, index);
+}
+
+std::vector<LocalProvider::Record> LocalProvider::scanFolder(const QString& folder)
+{
+    std::vector<Record> records;
+    const QDir root(folder);
+    QDirIterator files(folder, QDir::Files | QDir::Readable, QDirIterator::Subdirectories);
     while (files.hasNext()) {
         const QFileInfo info(files.next());
         const QString suffix = info.suffix().toLower();
@@ -168,12 +183,11 @@ void LocalProvider::scan()
         source.protocol = QStringLiteral("File");
         source.size = info.size();
         item.mediaSources.push_back(source);
-        m_records.push_back(std::move(record));
+        records.push_back(std::move(record));
     }
-    std::sort(m_records.begin(), m_records.end(),
+    std::sort(records.begin(), records.end(),
         [](const Record& left, const Record& right) { return titleLess(left.item, right.item); });
-    for (size_t index = 0; index < m_records.size(); ++index)
-        m_index.insert(m_records[index].item.id, index);
+    return records;
 }
 
 QString LocalProvider::libraryScopeKey() const

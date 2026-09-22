@@ -5,8 +5,6 @@
 #include "../platform/MpvConfigPolicy.h"
 
 #include <QCoroTask>
-#include <QJsonArray>
-#include <QJsonObject>
 #include <QObject>
 #include <QStringList>
 #include <QVariantList>
@@ -15,7 +13,6 @@
 namespace JellyfinNative {
 
 class DatabaseManager;
-class ProviderCapabilities;
 class ArtworkService;
 class PlayerController;
 struct SettingSpec;
@@ -43,7 +40,6 @@ class SettingsController final : public QObject {
     Q_PROPERTY(QVariantMap values READ values NOTIFY settingsValuesChanged)
     Q_PROPERTY(
         bool playerControlTooltipsEnabled READ playerControlTooltipsEnabled NOTIFY playerControlTooltipsEnabledChanged)
-    Q_PROPERTY(bool castButtonEnabled READ castButtonEnabled NOTIFY remoteControlSettingsChanged)
     Q_PROPERTY(bool remoteControlTargetEnabled READ remoteControlTargetEnabled NOTIFY remoteControlSettingsChanged)
 
 public:
@@ -82,16 +78,11 @@ public:
     // The active provider's capabilities decide which rows exist (the
     // account rows need auth). Set before QML first reads the schema; the
     // schema is built once, on that first read.
-    void setProviderCapabilities(const ProviderCapabilities *capabilities);
     QVariantMap values() const;
     Q_INVOKABLE QVariant value(const QString& key) const;
     bool playerControlTooltipsEnabled() const
     {
         return m_playerControlTooltipSessions < 3;
-    }
-    bool castButtonEnabled() const
-    {
-        return m_castButtonEnabled;
     }
     bool remoteControlTargetEnabled() const
     {
@@ -102,14 +93,6 @@ public:
     void applyLocalValues(const QVariantMap& storedValues);
 
     QCoro::Task<void> loadLocalAsync();
-    // The half of settings a media source keeps for the account lives with
-    // that source. loadRemote() asks whoever is listening to fetch it, and
-    // the apply methods below take what comes back; this class never talks
-    // to a server itself.
-    Q_INVOKABLE void loadRemote();
-    void clearRemote();
-    void applyRemoteCultures(const QJsonArray& cultures);
-    void applyRemoteUserConfiguration(const QJsonObject& configuration);
     Q_INVOKABLE void setValue(const QString& key, const QVariant& value);
     Q_INVOKABLE void previewValue(const QString& key, const QVariant& value);
     Q_INVOKABLE void completePlayerControlTooltipSession();
@@ -134,10 +117,7 @@ signals:
     void playbackPreferencesChanged(
         qint64 manualMaxStreamingBitrate, bool unlimitedLocalNetwork, bool preferRemux, int maxStreamingHeight);
     void remoteControlTargetEnabledChanged(bool enabled);
-    void userConfigurationChanged(const QJsonObject& configuration);
     // Pulls from it.
-    void remoteLoadRequested();
-    void remoteCleared();
 
     void nightModeChanged();
     void audioDelayChanged();
@@ -160,21 +140,19 @@ private:
     void applyAudioDelayToPlayer();
     void loadCurrentAudioDelay();
     void applyLoadedAudioDelay(const QString& output, int delayMs);
-    void saveSubtitleUserConfiguration();
+    void loadSubtitleLanguages() const;
     void applySubtitlePreferencesToPlayer();
     void applyMpvConfigPolicy();
 
     DatabaseManager *m_database = nullptr;
     PlayerController *m_player = nullptr;
     ArtworkService *m_artwork = nullptr;
-    const ProviderCapabilities *m_capabilities = nullptr;
     mutable QVariantList m_schema;
     QString m_artworkFormat = QStringLiteral("auto");
     int m_artworkWebpQuality = 75;
     int m_artworkJpegQuality = 82;
     QVariantMap m_values;
     bool m_nightModeEnabled = false;
-    bool m_castButtonEnabled = true;
     bool m_remoteControlTargetEnabled = true;
     bool m_toneMappingVisualizationEnabled = false;
     int m_maxStreamingHeight = 0;
@@ -198,9 +176,8 @@ private:
     int m_uiScalePercent;
     int m_playerControlTooltipSessions = 0;
     SubtitlePreferences m_subtitlePreferences;
-    QStringList m_subtitleLanguageCodes { QString() };
-    QStringList m_subtitleLanguageLabels { QStringLiteral("Any language") };
-    QJsonObject m_userConfiguration;
+    mutable QStringList m_subtitleLanguageCodes { QString() };
+    mutable QStringList m_subtitleLanguageLabels { QStringLiteral("Any language") };
     QString m_redButtonAction = QStringLiteral("none");
     QString m_greenButtonAction = QStringLiteral("skipBackAndEnableSubs");
     QString m_yellowButtonAction = QStringLiteral("none");
