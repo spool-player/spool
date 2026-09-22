@@ -5,6 +5,7 @@
 #include "../provider/Catalog.h"
 #include "../provider/PlaybackSource.h"
 #include "../provider/SearchSource.h"
+#include "../provider/StreamQualityControl.h"
 #include "../provider/UserItemStateSink.h"
 
 #include <QCoroTask>
@@ -29,7 +30,8 @@ class JellyfinJsAdapter final : public QObject,
                                 public Catalog,
                                 public SearchSource,
                                 public UserItemStateSink,
-                                public ArtworkSource {
+                                public ArtworkSource,
+                                public StreamQualityControl {
     Q_OBJECT
 
 public:
@@ -87,6 +89,35 @@ public:
     // ArtworkSource
     QString imageUrl(const ImageRequest& request) const override;
 
+    StreamQualityControl *streamQuality()
+    {
+        return this;
+    }
+
+    // StreamQualityControl
+    qint64 bitrateOverride() const override
+    {
+        return m_bitrateOverride;
+    }
+    int heightOverride() const override
+    {
+        return m_heightOverride;
+    }
+    void setOverride(qint64 bitrate, int height) override
+    {
+        m_bitrateOverride = bitrate;
+        m_heightOverride = height;
+    }
+    QString autoDescription() const override
+    {
+        return QStringLiteral("Direct Play");
+    }
+    std::vector<Rung> ladder(qint64 sourceBitrate) const override
+    {
+        return StreamQualityControl::defaultLadder(sourceBitrate);
+    }
+    void setVideoCodecCapabilities(QStringList videoCodecs, bool restrictVideoCodecs);
+
     // Playback
     QCoro::Task<PlaybackSession> resolvePlayback(MovieItem item, bool forceTranscode);
     QCoro::Task<std::vector<MediaSegment>> fetchMediaSegments(QString itemId);
@@ -108,6 +139,10 @@ private:
     QString m_serverUrl;
     QString m_sessionToken;
     QString m_deviceId;
+    qint64 m_bitrateOverride = 0;
+    int m_heightOverride = 0;
+    QStringList m_videoCodecs;
+    bool m_restrictVideoCodecs = false;
 };
 
 } // namespace JellyfinNative

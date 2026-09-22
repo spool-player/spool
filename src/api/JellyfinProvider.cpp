@@ -32,18 +32,15 @@ namespace JellyfinNative {
 
 JellyfinProvider::JellyfinProvider(const JellyfinProviderContext& context, QObject *parent)
     : Provider(parent)
-    , m_backend(context.backend)
     , m_registry(context.registry)
     , m_deviceName(context.deviceName)
     , m_appVersion(context.appVersion)
     , m_database(context.database)
     , m_tlsTrust(context.tlsTrust)
 {
-    if (m_backend == Backend::JavaScript) {
-        if (!m_registry)
-            throw std::runtime_error("javascript_provider_unavailable");
-        m_jsAdapter = std::make_unique<JellyfinJsAdapter>(m_registry, this);
-    }
+    if (!m_registry)
+        throw std::runtime_error("javascript_provider_unavailable");
+    m_jsAdapter = std::make_unique<JellyfinJsAdapter>(m_registry, this);
 
     m_api = new JellyfinApiFacade(context.network, context.tlsTrust, this);
     m_api->setDeviceIdentity({}, context.deviceName, context.appVersion);
@@ -64,9 +61,11 @@ JellyfinProvider::JellyfinProvider(const JellyfinProviderContext& context, QObje
     });
 #endif
     configurePlatformPlaybackCapabilities(
-        [api = QPointer<JellyfinApiFacade>(m_api)](const QStringList& videoCodecs, bool restrictVideoCodecs) {
-            if (api)
-                api->setVideoCodecCapabilities(videoCodecs, restrictVideoCodecs);
+        [this](const QStringList& videoCodecs, bool restrictVideoCodecs) {
+            if (m_jsAdapter)
+                m_jsAdapter->setVideoCodecCapabilities(videoCodecs, restrictVideoCodecs);
+            if (m_api)
+                m_api->setVideoCodecCapabilities(videoCodecs, restrictVideoCodecs);
         },
         *this);
 
@@ -102,12 +101,9 @@ JellyfinProvider::JellyfinProvider(const JellyfinProviderContext& context, QObje
 
     // The session drives the parts that only make sense while signed in.
     connect(m_session, &SessionController::authenticatedChanged, this, [this](const AuthSession& auth) {
-        if (m_backend == Backend::JavaScript) {
-            Async::runScoped(
-                this, configureJsSourceAsync(auth), []() {},
-                [this](const std::exception_ptr& error) { emit errorOccurred(exceptionMessage(error)); });
-            return;
-        }
+        Async::runScoped(
+            this, configureJsSourceAsync(auth), []() {},
+            [this](const std::exception_ptr& error) { emit errorOccurred(exceptionMessage(error)); });
 
         if (m_artwork)
             m_artwork->setAuthorizationHeader(m_api->authorizationHeader());
@@ -117,24 +113,6 @@ JellyfinProvider::JellyfinProvider(const JellyfinProviderContext& context, QObje
         m_discovery->stop();
         setHasDefaultProfile(true);
         emit sessionStarted();
-
-        // The home route is the only launch-critical server work. Subtitle
-        // metadata and bandwidth probing are useful, but starting them beside
-        // the initial home requests competes for the TV's limited network and
-        // JSON-processing budget. Load them after the first interaction window;
-        // opening Settings sooner triggers the same idempotent load directly.
-        const QString sessionToken = m_api->session().accessToken;
-        QTimer::singleShot(5000, this, [this, sessionToken]() {
-            if (!m_session->authenticated() || m_api->session().accessToken != sessionToken)
-                return;
-            if (m_settings)
-                m_settings->loadRemote();
-            Async::runScoped(
-                this, m_api->refreshPlaybackNetworkState(), []() {},
-                [](const std::exception_ptr& error) {
-                    qWarning() << "playback bandwidth: route measurement failed" << exceptionMessage(error);
-                });
-        });
     });
     connect(m_session, &SessionController::profileActivationStarted, this, [this]() {
         m_quickConnect->cancel();
@@ -176,41 +154,38 @@ QString JellyfinProvider::displayName() const
 
 Provider::Capabilities JellyfinProvider::capabilities() const
 {
-    if (m_backend == Backend::JavaScript) {
-        return Auth | Discovery | Search | UserItemState | PlaybackReporting | Segments | QuickConnect;
-    }
     return Auth | Discovery | Search | UserItemState | PlaybackReporting | Segments | LibraryManagement | SyncPlay
         | RemoteControl | QuickConnect | PeerRelay | StreamQuality;
 }
 
 PlaybackSource *JellyfinProvider::playback()
 {
-    return m_backend == Backend::JavaScript ? m_jsAdapter->playback() : m_api;
+    return m_jsAdapter->playback();
 }
 
 Catalog *JellyfinProvider::catalog()
 {
-    return m_backend == Backend::JavaScript ? m_jsAdapter->catalog() : m_api;
+    return m_jsAdapter->catalog();
 }
 
 ArtworkSource *JellyfinProvider::artwork()
 {
-    return m_backend == Backend::JavaScript ? m_jsAdapter->artwork() : m_api;
+    return m_jsAdapter->artwork();
 }
 
 SearchSource *JellyfinProvider::search()
 {
-    return m_backend == Backend::JavaScript ? m_jsAdapter->search() : m_api;
+    return m_jsAdapter->search();
 }
 
 UserItemStateSink *JellyfinProvider::itemState()
 {
-    return m_backend == Backend::JavaScript ? m_jsAdapter->itemState() : m_api;
+    return m_jsAdapter->itemState();
 }
 
 StreamQualityControl *JellyfinProvider::streamQuality()
 {
-    return m_backend == Backend::JavaScript ? nullptr : m_api;
+    return m_jsAdapter.get();
 }
 
 GroupPlayback *JellyfinProvider::groupPlayback()
@@ -286,9 +261,7 @@ void JellyfinProvider::shutdown()
 
 bool JellyfinProvider::ready() const
 {
-    if (m_backend == Backend::JavaScript)
-        return m_session->authenticated() && m_jsAdapter && m_jsAdapter->signedIn();
-    return m_session->authenticated();
+    return m_session->authenticated() && m_jsAdapter && m_jsAdapter->signedIn();
 }
 
 QStringList JellyfinProvider::startupStorageKeys() const

@@ -28,15 +28,12 @@ class SyncPlayController;
 class TlsTrustController;
 
 struct JellyfinProviderContext {
-    enum class Backend { Native, JavaScript };
-
     QNetworkAccessManager *network = nullptr;
     TlsTrustController *tlsTrust = nullptr;
     DatabaseManager *database = nullptr;
     ProviderRegistry *registry = nullptr;
     QString deviceName;
     QString appVersion;
-    Backend backend = Backend::Native;
 };
 
 // Everything Jellyfin-specific, composed in one place: the API facade, LAN
@@ -118,15 +115,6 @@ public:
     {
         return m_settingsBridge;
     }
-    using Backend = JellyfinProviderContext::Backend;
-    Backend backend() const
-    {
-        return m_backend;
-    }
-    QString backendName() const
-    {
-        return m_backend == Backend::JavaScript ? QStringLiteral("js") : QStringLiteral("native");
-    }
 
 private:
     // Shows the servers seen last time and scans for more while nobody is
@@ -138,7 +126,6 @@ private:
     void leaveSessionServices();
     void setHasDefaultProfile(bool hasDefaultProfile);
 
-    Backend m_backend = Backend::Native;
     ProviderRegistry *m_registry = nullptr;
     std::unique_ptr<JellyfinJsAdapter> m_jsAdapter;
     QString m_deviceId;
