@@ -13,9 +13,25 @@ FocusScope {
     property bool overlay: false
     readonly property var provider: context ? Providers.modules.find(m => m.id === context.moduleId) : null
     readonly property Item screen: loader.item
+    property var loadedContext: null
     signal finished
 
     focus: true
+
+    // The route page is cached and its context arrives after construction,
+    // so a screen is (re)loaded whenever the context changes.
+    onContextChanged: load()
+    function load() {
+        if (context === loadedContext)
+            return
+        loadedContext = context || null
+        if (loadedContext)
+            loader.setSource(loadedContext.component, {
+                                 "provider": loadedContext
+                             })
+        else
+            loader.source = ""
+    }
 
     // Provider screens are ordinary QML forms. Where they route keys
     // themselves they get first say; otherwise Up and Down walk the focus
@@ -56,7 +72,7 @@ FocusScope {
     }
 
     Connections {
-        target: root.context
+        target: root.context || null
         function onFinished() {
             root.finished()
         }
@@ -122,12 +138,7 @@ FocusScope {
             anchors.topMargin: Metrics.scaled(12)
             focus: true
             asynchronous: true
-            Component.onCompleted: {
-                if (root.context)
-                    setSource(root.context.component, {
-                                  "provider": root.context
-                              })
-            }
+            Component.onCompleted: root.load()
             onLoaded: InputKeys.focus(item)
             onStatusChanged: if (status === Loader.Error && root.context) {
                                  App.toastMessage("This provider's screen could not be opened")
