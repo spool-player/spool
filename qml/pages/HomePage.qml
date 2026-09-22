@@ -10,7 +10,8 @@ FocusScope {
 
     property var shell
     property var uiTransitionToken: 0
-    readonly property bool contentReady: rows.firstRowReady
+    // With no account there is nothing to wait for: an empty home is ready.
+    readonly property bool contentReady: rows.firstRowReady || !Providers.hasAccounts
 
     focus: true
 
@@ -120,9 +121,9 @@ FocusScope {
         focus: true
 
         onEdgeUp: if (root.shell)
-        root.shell.focusNavBar()
+                      root.shell.focusNavBar()
         onActivated: (section, index, item) => root.activateAt(section, index, item)
         onFirstRowReadyChanged: if (firstRowReady)
-        InputLatency.mark(root.uiTransitionToken, "first_delegate")
+                                    InputLatency.mark(root.uiTransitionToken, "first_delegate")
     }
 }
