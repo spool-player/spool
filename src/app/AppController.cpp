@@ -1563,14 +1563,20 @@ QVariantList AppController::streamingQualityOptions() const
     });
 
     qint64 sourceBitrate = 0;
-    for (const MediaSourceInfo& source : m_activePlaybackItem.mediaSources)
+    int sourceHeight = 0;
+    for (const MediaSourceInfo& source : m_activePlaybackItem.mediaSources) {
         sourceBitrate = std::max<qint64>(sourceBitrate, source.bitRate);
+        for (const MediaStreamInfo& stream : source.streams) {
+            if (stream.type == QStringLiteral("Video") && stream.height > 0)
+                sourceHeight = std::max(sourceHeight, stream.height);
+        }
+    }
 
     std::vector<StreamQualityControl::Rung> rungs;
     if (m_quality)
-        rungs = m_quality->ladder(sourceBitrate);
+        rungs = m_quality->ladder(sourceBitrate, sourceHeight);
     if (rungs.empty())
-        rungs = StreamQualityControl::defaultLadder(sourceBitrate);
+        rungs = StreamQualityControl::defaultLadder(sourceBitrate, sourceHeight);
 
     for (const StreamQualityControl::Rung& rung : rungs) {
         options.push_back(QVariantMap {

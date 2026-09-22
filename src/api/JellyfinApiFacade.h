@@ -1,20 +1,15 @@
 #pragma once
 
 #include "../media/MediaTypes.h"
-#include "../provider/ArtworkSource.h"
-#include "../provider/Catalog.h"
-#include "../provider/PlaybackSource.h"
-#include "../provider/SearchSource.h"
-#include "../provider/StreamQualityControl.h"
-#include "../provider/UserItemStateSink.h"
 #include "HttpRequestPolicy.h"
 #include "JellyfinSession.h"
-#include "PlaybackBandwidthPolicy.h"
 
 #include <QCoroTask>
 
 #include <QDateTime>
+#include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonObject>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequestFactory>
@@ -24,21 +19,14 @@
 #include <QString>
 #include <QStringList>
 #include <QUrlQuery>
-#include <QVariantMap>
 
 #include <vector>
 
 namespace JellyfinNative {
 
 class TlsTrustController;
-// PlaybackSource is the QObject base; the others are plain interfaces the
-// source-agnostic controllers talk through.
-class JellyfinApiFacade final : public PlaybackSource,
-                                public Catalog,
-                                public SearchSource,
-                                public UserItemStateSink,
-                                public ArtworkSource,
-                                public StreamQualityControl {
+
+class JellyfinApiFacade final : public QObject {
     Q_OBJECT
 
 public:
@@ -51,67 +39,30 @@ public:
 
     void setDeviceIdentity(const QString& deviceId, const QString& deviceName, const QString& clientVersion);
     void setDeviceId(const QString& deviceId);
-    // Some platforms only learn their user-visible name asynchronously. The
-    // name rides the authorization header of every request, so the server
-    // picks a later one up on its own.
     void setDeviceName(const QString& deviceName);
     QString deviceId() const;
 
-    // Forwarded into the QNetworkRequestFactory common headers so every API
-    // call hints the server about our locale. Jellyfin uses this to localise
-    // server-returned strings (Continue Watching titles, etc.).
     void setAcceptLanguage(const QString& bcp47Tag);
 
     void setSession(const AuthSession& session);
     AuthSession session() const;
+    bool signedIn() const
+    {
+        return !m_session.accessToken.isEmpty();
+    }
+
     void setPlaybackPreferences(
         qint64 manualMaxStreamingBitrate, bool unlimitedLocalNetwork, bool preferRemux, int maxStreamingHeight = 0);
-    void setVideoCodecCapabilities(QStringList videoCodecs, bool restrictVideoCodecs);
     void setRemoteControlTargetEnabled(bool enabled);
     bool remoteControlTargetEnabled() const
     {
         return m_remoteControlTargetEnabled;
     }
-    int playbackParallelRequests() const override;
-    // PlaybackSource: the access token rides an X-Emby-Token header on
-    // every media request, and the server URL owns the TLS trust decision.
-    QByteArray mediaRequestHeaders() const override;
-    QUrl mediaOrigin() const override;
-    // Catalog, SearchSource, UserItemStateSink and PlaybackSource all ask
-    // this; one session answers for every one of them.
-    bool signedIn() const override;
-    QString libraryScopeKey() const override;
-    QString imageUrl(const ArtworkSource::ImageRequest& request) const override;
-    QCoro::Task<std::vector<MovieItem>> fetchSeriesEpisodes(QString seriesId) override;
-    QCoro::Task<void> refreshPlaybackNetworkState();
 
-    // Measuring pulls several megabytes from the server, so it must never run
-    // beside a stream. Playback that starts before a measurement lands keeps
-    // whatever ceiling is known, which is a remembered one where the route has
-    // been seen before and a conservative estimate otherwise.
-    void setPlaybackActive(bool active);
-    qint64 maxStreamingBitrate() const;
-    qint64 measuredStreamingBitrate() const;
-    PlaybackBandwidthPolicy::Source streamingBitrateSource() const;
-
-    // A ceiling chosen from the player overlay. It outranks every automatic
-    // input and the Settings limit, and it lasts only as long as this session:
-    // a quality picked because the train Wi-Fi is bad should not still be
-    // capping playback at home tomorrow. Zero restores automatic selection.
-    void setSessionBitrateOverride(qint64 bitrate);
-    qint64 sessionBitrateOverride() const;
-
-    // Resolution is settled separately from bitrate: a viewer sparing a slow
-    // decoder wants a smaller picture at the bitrate they already have, and a
-    // viewer on a metered connection wants fewer bits at the size they already
-    // have. The session override outranks the Settings ceiling and lasts only
-    // as long as this session; zero means no ceiling from that source.
-    void setSessionHeightOverride(int height);
-    int sessionHeightOverride() const;
-    int maxStreamingHeight() const;
     QString authorizationHeader(const QString& tokenOverride = {}) const;
     void cancelRequests();
 
+    // Authentication & User configuration
     QCoro::Task<AuthSession> authenticateByName(QString username, QString password);
     QCoro::Task<bool> quickConnectEnabled();
     QCoro::Task<QJsonObject> initiateQuickConnect();
@@ -122,21 +73,8 @@ public:
     QCoro::Task<void> updateUserConfiguration(QJsonObject configuration);
     QCoro::Task<QJsonObject> fetchCurrentUserPolicy();
     QCoro::Task<QJsonArray> fetchCultures();
-    QCoro::Task<std::vector<LibraryItem>> fetchLibraries() override;
-    QCoro::Task<PagedMovieItems> fetchBrowsePage(
-        BrowseDescriptor descriptor, int startIndex = 0, int limit = 72, QVariantMap queryOptions = {}) override;
-    QCoro::Task<QVariantMap> fetchLibraryFilterOptions(QString libraryId, QString collectionType = {}) override;
-    QCoro::Task<MovieItem> fetchItemDetails(QString itemId) override;
-    QCoro::Task<std::vector<MovieItem>> fetchItemsByIds(QStringList itemIds) override;
-    QCoro::Task<std::vector<MovieItem>> fetchSeasons(QString seriesId) override;
-    QCoro::Task<std::vector<MovieItem>> fetchEpisodes(QString seriesId, QString seasonId = {}) override;
-    QCoro::Task<std::vector<MovieItem>> fetchResumeItems(int limit = 24) override;
-    QCoro::Task<std::vector<MovieItem>> fetchNextUpEpisodes(int limit = 24) override;
-    QCoro::Task<std::vector<MovieItem>> fetchLatestItems(QString parentId = {}, int limit = 24) override;
-    QCoro::Task<std::vector<MovieItem>> searchItems(QString searchTerm, int limit = 80) override;
-    QCoro::Task<std::vector<MovieItem>> fetchSearchSuggestions(int limit = 20) override;
-    QCoro::Task<std::vector<MovieItem>> fetchSimilarItems(QString itemId, int limit = 24) override;
-    QCoro::Task<PersonCredits> fetchItemsByPerson(QString personId, int maximumItems = 4000) override;
+
+    // Library management
     QCoro::Task<std::vector<MovieItem>> fetchManagementTargets(QString itemType);
     QCoro::Task<QString> createPlaylist(QString name, QStringList itemIds = {});
     QCoro::Task<void> addPlaylistItems(QString playlistId, QStringList itemIds, int position = -1);
@@ -148,26 +86,13 @@ public:
     QCoro::Task<void> removeCollectionItems(QString collectionId, QStringList itemIds);
     QCoro::Task<void> renameItem(QString itemId, QString name);
     QCoro::Task<void> deleteItem(QString itemId);
-    QCoro::Task<void> setItemFavorite(QString itemId, bool favorite) override;
-    QCoro::Task<void> setItemPlayed(QString itemId, bool played) override;
-    QCoro::Task<void> setItemPlaybackPosition(QString itemId, qint64 positionTicks) override;
-    QCoro::Task<std::vector<MediaSegment>> fetchMediaSegments(QString itemId) override;
-    QCoro::Task<TrickplayInfo> fetchTrickplayInfo(QString itemId, QString mediaSourceId = {});
-    QString trickplayTileUrl(const QString& itemId, int width, int tileIndex) const override;
-    QCoro::Task<PlaybackSession> resolvePlayback(MovieItem movie, bool forceTranscode = false) override;
-    // StreamQualityControl: the session ceiling and the ladder under it.
-    qint64 bitrateOverride() const override
-    {
-        return sessionBitrateOverride();
-    }
-    int heightOverride() const override
-    {
-        return sessionHeightOverride();
-    }
-    void setOverride(qint64 bitrate, int height) override;
-    QString autoDescription() const override;
-    std::vector<StreamQualityControl::Rung> ladder(qint64 sourceBitrate) const override;
+    QCoro::Task<std::vector<MovieItem>> fetchItemsByIds(QStringList itemIds);
 
+    // Trickplay (used for remote control timeline)
+    QCoro::Task<TrickplayInfo> fetchTrickplayInfo(QString itemId, QString mediaSourceId = {});
+    QString trickplayTileUrl(const QString& itemId, int width, int tileIndex) const;
+
+    // Remote playback & target sessions
     QCoro::Task<QJsonArray> fetchControllableSessions();
     QCoro::Task<void> sendRemotePlay(QString sessionId, QStringList itemIds, QString playCommand,
         qint64 startPositionTicks = -1, int startIndex = -1, QString mediaSourceId = {}, int audioStreamIndex = -2,
@@ -175,7 +100,7 @@ public:
     QCoro::Task<void> sendRemotePlaystate(QString sessionId, QString command, qint64 seekPositionTicks = -1);
     QCoro::Task<void> sendRemoteGeneralCommand(QString sessionId, QString command, QJsonObject arguments = {});
 
-    // SyncPlay REST endpoints used alongside SyncPlayController's WebSocket.
+    // SyncPlay REST endpoints
     QCoro::Task<QJsonArray> fetchSyncPlayGroups();
     QCoro::Task<void> createSyncPlayGroup(QString name);
     QCoro::Task<void> joinSyncPlayGroup(QString groupId);
@@ -190,25 +115,18 @@ public:
     QCoro::Task<void> syncPlaySeek(qint64 positionTicks);
     QCoro::Task<void> syncPlayNextItem(QString playlistItemId);
     QCoro::Task<void> syncPlayPreviousItem(QString playlistItemId);
-    // Group queue authoring. The queue is server state inside a group, so these
-    // replace the local edits rather than accompanying them.
     QCoro::Task<void> syncPlayQueue(QStringList itemIds, bool queueNext);
     QCoro::Task<void> syncPlayMovePlaylistItem(QString playlistItemId, int newIndex);
     QCoro::Task<void> syncPlayRemoveFromPlaylist(QStringList playlistItemIds);
     QCoro::Task<void> syncPlaySetPlaylistItem(QString playlistItemId);
 
+    // Capabilities
     QCoro::Task<void> postCapabilities();
-    QCoro::Task<void> reportPlaybackStart(
-        PlaybackSession session, double playbackRate, int volume, bool muted) override;
-    QCoro::Task<void> reportPlaybackProgress(PlaybackSession session, qint64 positionTicks, bool paused,
-        double playbackRate, int volume, bool muted) override;
-    QCoro::Task<void> reportPlaybackStopped(
-        PlaybackSession session, qint64 positionTicks, bool failed, double playbackRate) override;
 
 signals:
     void authenticationExpired(const QString& message);
+    void credentialsChanged();
     void deviceProfileChanged();
-    void streamingBitrateChanged();
 
 private:
     enum class HttpMethod {
@@ -218,8 +136,6 @@ private:
     };
 
     QNetworkRequest createRequest(const QString& path, const QUrlQuery& query = {}) const;
-    QCoro::Task<qint64> measurePlaybackBitrate(int totalSampleBytes, int parallelRequests);
-    QCoro::Task<qint64> measurePlaybackRoundTripTime();
     QCoro::Task<QJsonDocument> requestJson(
         HttpMethod method, QString path, QUrlQuery query = {}, QJsonDocument body = {});
     QCoro::Task<void> requestNoContent(HttpMethod method, QString path, QJsonDocument body);
@@ -227,17 +143,10 @@ private:
         HttpMethod method, QString path, QUrlQuery query = {}, QJsonDocument body = {});
 
     QJsonObject buildDeviceProfile() const;
-    PlaybackSession buildPlaybackSession(const MovieItem& movie, const QJsonObject& playbackResponse) const;
     HttpOperation operationFor(HttpMethod method, const QString& path) const;
     bool shouldExpireSession(const QString& path) const;
     void preconnectToServer();
     void applyCommonHeaders();
-    void updateEffectiveStreamingBitrate();
-    void setPlaybackParallelRequests(int parallelRequests);
-    QString currentNetworkSignature() const;
-    void restoreRememberedMeasurement();
-    void rememberMeasurement();
-    void handleNetworkRouteChanged();
 
     QNetworkAccessManager *m_networkAccessManager = nullptr;
     QRestAccessManager m_rest;
@@ -250,26 +159,8 @@ private:
     QSet<QNetworkReply *> m_activeReplies;
     QString m_preconnectedAuthority;
     QString m_acceptLanguage;
-    qint64 m_maxStreamingBitrate = 20'000'000;
-    qint64 m_manualMaxStreamingBitrate = 0;
-    qint64 m_sessionBitrateOverride = 0;
     int m_maxStreamingHeight = 0;
-    int m_sessionHeightOverride = 0;
-    qint64 m_measuredStreamingBitrate = 0;
-    QString m_measuredNetworkSignature;
-    int m_playbackParallelRequests = 1;
-    quint64 m_playbackNetworkGeneration = 0;
-    bool m_playbackEndpointKnown = false;
-    bool m_inLocalNetwork = false;
-    PlaybackBandwidthPolicy::Source m_streamingBitrateSource = PlaybackBandwidthPolicy::Source::Estimate;
-    bool m_measurementRemembered = false;
-    bool m_playbackActive = false;
-    bool m_measurementDeferred = false;
-    bool m_unlimitedLocalNetwork = false;
-    QStringList m_videoCodecs;
-    bool m_restrictVideoCodecs = false;
     bool m_remoteControlTargetEnabled = true;
-    bool m_preferRemux = true;
     bool m_authExpirationReported = false;
     bool m_shuttingDown = false;
 };
