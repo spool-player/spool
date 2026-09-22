@@ -27,6 +27,9 @@ public:
     // of the JavaScript entry point on success, or an empty string on error.
     static QString install(
         const ProviderPackageContents& package, const QString& targetDirectory, QString *errorMessage = nullptr);
+
+    // Calculates standard IEEE 802.3 32-bit CRC.
+    static uint32_t calculateCrc32(const uint8_t *data, size_t length);
 };
 
 } // namespace JellyfinNative
