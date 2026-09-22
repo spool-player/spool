@@ -151,7 +151,11 @@
             doCheck = false;
             configureFlags =
               builtins.filter keepInheritedFlag old.configureFlags
-              ++ ffmpegConfigureFlags platform;
+              ++ ffmpegConfigureFlags platform
+              # Darwin ld64 emits invalid chained fixups for this FFmpeg build.
+              ++ nixpkgs.lib.optionals final.stdenv.hostPlatform.isDarwin [
+                "--extra-ldflags=-Wl,-no_fixup_chains"
+              ];
             postInstall = (old.postInstall or "") + ''
               mkdir -p "$bin/bin" "$data/share/ffmpeg" "$doc/share/doc/ffmpeg" "$man/share/man"
             '';

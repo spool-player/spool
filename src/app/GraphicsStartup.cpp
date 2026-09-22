@@ -60,6 +60,12 @@ QSGRendererInterface::GraphicsApi GraphicsStartup::configureBeforeApplication(bo
         qInfo("startup: SPOOL_RENDER_API asked for Vulkan, which this build has no support for");
 #endif
     }
+#if defined(Q_OS_MACOS)
+    if (graphicsApi == QSGRendererInterface::Vulkan) {
+        // QTBUG-149443: MoltenVK must present through a plain CAMetalLayer.
+        qputenv("QT_MTL_NO_TRANSACTION", QByteArrayLiteral("1"));
+    }
+#endif
     QQuickWindow::setGraphicsApi(graphicsApi);
     qInfo("startup: scene graph on %s",
         graphicsApi == QSGRendererInterface::Vulkan           ? "Vulkan"
