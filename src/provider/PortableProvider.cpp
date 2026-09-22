@@ -66,6 +66,19 @@ namespace {
         return segments;
     }
 
+    // Every operation but describe is optional: one a provider leaves out
+    // has nothing to list, which is not an error worth reporting.
+    template <typename T> QCoro::Task<T> orEmpty(QCoro::Task<T> task)
+    {
+        try {
+            co_return co_await std::move(task);
+        } catch (const std::exception& error) {
+            if (QByteArray(error.what()) != "unsupported_operation")
+                throw;
+        }
+        co_return T {};
+    }
+
     QString cursorFor(int startIndex)
     {
         return startIndex > 0 ? QString::number(startIndex) : QString();
@@ -161,7 +174,7 @@ public:
     QCoro::Task<std::vector<MediaSegment>> fetchMediaSegments(QString itemId) override
     {
         const QVariantMap result
-            = co_await m_owner->call(QStringLiteral("segments"), { { QStringLiteral("itemId"), itemId } });
+            = co_await orEmpty(m_owner->call(QStringLiteral("segments"), { { QStringLiteral("itemId"), itemId } }));
         co_return segmentsFrom(result.value(QStringLiteral("segments")).toList());
     }
 
@@ -242,7 +255,7 @@ QCoro::Task<std::vector<MovieItem>> PortableProvider::list(QString operation, QV
     limit = std::clamp(limit, 1, 100);
     arguments.insert(QStringLiteral("limit"), limit);
     ProviderMediaPage page
-        = co_await m_registry->callSourceMediaPage(m_accountId, std::move(operation), arguments, limit);
+        = co_await orEmpty(m_registry->callSourceMediaPage(m_accountId, std::move(operation), arguments, limit));
     co_return std::move(page.items);
 }
 
@@ -366,8 +379,8 @@ QCoro::Task<std::vector<LibraryItem>> PortableProvider::fetchLibraries()
 
 QCoro::Task<QVariantMap> PortableProvider::fetchLibraryFilterOptions(QString libraryId, QString collectionType)
 {
-    return call(QStringLiteral("filterOptions"),
-        { { QStringLiteral("parentId"), libraryId }, { QStringLiteral("collectionType"), collectionType } });
+    return orEmpty(call(QStringLiteral("filterOptions"),
+        { { QStringLiteral("parentId"), libraryId }, { QStringLiteral("collectionType"), collectionType } }));
 }
 
 QCoro::Task<std::vector<MovieItem>> PortableProvider::fetchItemsByIds(QStringList itemIds)

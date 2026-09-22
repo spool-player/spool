@@ -226,17 +226,24 @@ QVariantList ProviderStore::community() const
             listed.append(text(value.toMap(), "id"));
         }
     }
-    // Providers added by URL sit with the community ones, marked as such.
+    // Everything installed is listed, catalogue or not: added by link,
+    // installed while the store was reachable, or copied in by hand.
     if (m_registry) {
-        for (auto it = m_origins.cbegin(); it != m_origins.cend(); ++it) {
-            const ProviderModule *module = m_registry->module(it.key());
-            if (it->channel != QStringLiteral("url") || !module || listed.contains(it.key()))
+        QStringList shown = listed;
+        for (const QVariant& value : official())
+            shown.append(text(value.toMap(), "id"));
+        for (const QString& id : m_registry->moduleIds()) {
+            const ProviderModule *module = m_registry->module(id);
+            if (!module || shown.contains(id))
                 continue;
-            entries.append(QVariantMap { { QStringLiteral("id"), it.key() },
+            const Origin origin = m_origins.value(id);
+            entries.append(QVariantMap { { QStringLiteral("id"), id },
                 { QStringLiteral("name"), module->manifest.name },
                 { QStringLiteral("summary"), module->manifest.summary },
                 { QStringLiteral("version"), module->manifest.version }, { QStringLiteral("api"), QLatin1String(kApi) },
-                { QStringLiteral("publisher"), it->feed.host() }, { QStringLiteral("fromUrl"), true } });
+                { QStringLiteral("publisher"),
+                    origin.channel == QStringLiteral("url") ? origin.feed.host() : module->manifest.publisher },
+                { QStringLiteral("fromUrl"), origin.channel == QStringLiteral("url") } });
         }
     }
     return annotate(entries);
