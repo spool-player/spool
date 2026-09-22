@@ -228,8 +228,15 @@ JELLYFIN_TEST_MAIN("provider-registry")
     const ProviderAccount *bob = find(registry, QStringLiteral("Bob"));
     require(
         bob && !bob->enabled && find(registry, QStringLiteral("Alice"))->enabled, "which one is in use is restored");
-    waitUntil([&] { return registry.sourceRunning(alice) && registry.sourceRunning(carol); },
-        "enabled accounts start on restore");
+    // Started means described and handed to the app, not merely launched.
+    const auto started = [&](const QString& id) {
+        for (const QVariant& row : registry.accounts()) {
+            if (row.toMap().value(QStringLiteral("id")) == id)
+                return row.toMap().value(QStringLiteral("running")).toBool();
+        }
+        return false;
+    };
+    waitUntil([&] { return started(alice) && started(carol); }, "enabled accounts start on restore");
     require(QCoro::waitFor(registry.callSource(alice, QStringLiteral("configuration")))
                 .value(QStringLiteral("configuration"))
                 .toMap()
@@ -243,7 +250,8 @@ JELLYFIN_TEST_MAIN("provider-registry")
     QCoro::waitFor(registry.install(ProviderFixture::package(QStringLiteral("fixture.test"), QStringLiteral("1.1.0"))));
     require(registry.module(QStringLiteral("fixture.test"))->manifest.version == QStringLiteral("1.1.0"),
         "the newer version is loaded");
-    waitUntil([&] { return restarted == 2; }, "running accounts restart on the new version");
+    waitUntil([&] { return restarted >= 2 && started(alice) && started(carol); },
+        "running accounts restart on the new version");
 
     QCoro::waitFor(registry.uninstall(QStringLiteral("spool.jellyfin")));
     require(registry.module(QStringLiteral("spool.jellyfin")), "a bundled provider cannot be removed");
