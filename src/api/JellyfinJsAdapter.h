@@ -112,9 +112,9 @@ public:
     {
         return QStringLiteral("Direct Play");
     }
-    std::vector<Rung> ladder(qint64 sourceBitrate) const override
+    std::vector<Rung> ladder(qint64 sourceBitrate, int sourceHeight = 0) const override
     {
-        return StreamQualityControl::defaultLadder(sourceBitrate);
+        return StreamQualityControl::defaultLadder(sourceBitrate, sourceHeight);
     }
     void setVideoCodecCapabilities(QStringList videoCodecs, bool restrictVideoCodecs);
 

@@ -584,7 +584,7 @@ QCoro::Task<bool> ProviderRegistry::downloadAndInstallProvider(QString moduleId,
         while (redirectCount < maxRedirects) {
             QNetworkRequest request(currentUrl);
             request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
-            request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("Spool/0.8.0"));
+            request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("Spool/0.8.1"));
 
             QNetworkReply *reply = m_portable->network->get(request);
             connect(reply, &QNetworkReply::downloadProgress, this, [this](qint64 received, qint64 total) {

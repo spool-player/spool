@@ -293,8 +293,6 @@ set(SPOOL_SHELL_SOURCES
 # by them. This is the group a second backend would grow a sibling to.
 set(SPOOL_JELLYFIN_SOURCES
     src/api/HttpRequestPolicy.h
-    src/api/ItemsQuery.cpp
-    src/api/ItemsQuery.h
     src/api/JellyfinApiFacade.cpp
     src/api/JellyfinApiFacade.h
     src/api/JellyfinJsAdapter.cpp
@@ -304,8 +302,6 @@ set(SPOOL_JELLYFIN_SOURCES
     src/api/JellyfinProvider.cpp
     src/api/JellyfinProvider.h
     src/api/JellyfinSettingsBridge.h
-    src/api/PlaybackBandwidthPolicy.cpp
-    src/api/PlaybackBandwidthPolicy.h
     src/api/PlaybackNegotiation.cpp
     src/api/PlaybackNegotiation.h
     src/api/ProviderBenchmark.cpp
@@ -817,8 +813,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
 
     set(JELLYFIN_TESTS_api
         http-request-policy tests/api/HttpRequestPolicyTest.cpp
-        playback-bandwidth-policy tests/api/PlaybackBandwidthPolicyTest.cpp
-        items-query tests/api/ItemsQueryTest.cpp
+        stream-quality-control tests/api/StreamQualityControlTest.cpp
         playback-negotiation tests/api/PlaybackNegotiationTest.cpp
         jellyfin-api-facade-url tests/api/JellyfinApiFacadeUrlTest.cpp
         jellyfin-js-adapter tests/api/JellyfinJsAdapterTest.cpp

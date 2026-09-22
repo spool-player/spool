@@ -11,6 +11,8 @@ struct AuthSession {
     QString userName;
     QString accessToken;
     QString serverId;
+
+    friend bool operator==(const AuthSession&, const AuthSession&) = default;
 };
 
 } // namespace JellyfinNative

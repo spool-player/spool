@@ -64,8 +64,6 @@ JellyfinProvider::JellyfinProvider(const JellyfinProviderContext& context, QObje
         [this](const QStringList& videoCodecs, bool restrictVideoCodecs) {
             if (m_jsAdapter)
                 m_jsAdapter->setVideoCodecCapabilities(videoCodecs, restrictVideoCodecs);
-            if (m_api)
-                m_api->setVideoCodecCapabilities(videoCodecs, restrictVideoCodecs);
         },
         *this);
 
@@ -233,11 +231,6 @@ void JellyfinProvider::attach(const CoreServices& core)
         forward(&RemotePlayback::generalCommandReceived));
     if (SpoolLink *link = m_remoteControl->link())
         connect(link, &SpoolLink::messageReceived, m_remoteControl, &RemotePlayback::peerMessageReceived);
-
-    // Keep the bandwidth probe off the wire while a stream is running; it
-    // resumes on its own once the session ends.
-    connect(core.player, &PlayerController::sessionActiveChanged, this,
-        [this, player = core.player]() { m_api->setPlaybackActive(player->sessionActive()); });
 }
 
 void JellyfinProvider::registerQmlSingletons()

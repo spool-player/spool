@@ -30,9 +30,9 @@ public:
     // The line under "Auto": what the automatic ceiling currently is and
     // where it came from.
     virtual QString autoDescription() const = 0;
-    // The ceilings worth offering below a stream of this bitrate, coarsest
-    // first.
-    virtual std::vector<Rung> ladder(qint64 sourceBitrate) const = 0;
+    // The ceilings worth offering below a stream of this bitrate and height,
+    // coarsest first.
+    virtual std::vector<Rung> ladder(qint64 sourceBitrate, int sourceHeight = 0) const = 0;
 
     static QString formatBitrate(qint64 bitsPerSecond)
     {
@@ -55,7 +55,7 @@ public:
         return QString::number(height) + QLatin1Char('p');
     }
 
-    static std::vector<Rung> defaultLadder(qint64 sourceBitrate)
+    static std::vector<Rung> defaultLadder(qint64 sourceBitrate, int sourceHeight = 0)
     {
         static constexpr struct {
             qint64 bitrate;
@@ -80,6 +80,8 @@ public:
         options.reserve(std::size(kStandardRungs));
         for (const auto& rung : kStandardRungs) {
             if (sourceBitrate > 0 && rung.bitrate >= sourceBitrate)
+                continue;
+            if (sourceHeight > 0 && rung.height > sourceHeight)
                 continue;
             options.push_back({
                 describeResolution(rung.height) + QStringLiteral(" · ") + formatBitrate(rung.bitrate),

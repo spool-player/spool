@@ -1,7 +1,7 @@
 # Maintainer: Sacha Korban <sachakorban@gmail.com>
 
 pkgname=spool-bin
-pkgver=0.8.0
+pkgver=0.8.1
 pkgrel=1
 pkgdesc='Jellyfin client for desktop and TV, built on Qt Quick and mpv'
 arch=('x86_64')
