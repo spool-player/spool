@@ -240,6 +240,9 @@ JELLYFIN_TEST_MAIN("provider-store")
         waitUntil([&] { return !registry.module(QStringLiteral("fixture.other")); }, "a provider can be removed");
         waitUntil([&] { return listed(store.community(), QStringLiteral("fixture.linked"), "fromUrl"); },
             "providers added by link are remembered across launches");
+        QCoro::waitFor(registry.install(ProviderFixture::package(QStringLiteral("fixture.manual"))));
+        require(listed(store.community(), QStringLiteral("fixture.manual"), "installed"),
+            "an installed provider is listed even with no catalogue entry for it");
 
         store.checkForUpdates(QStringLiteral("ask"));
         waitUntil([&] { return store.updates().size() == 1; }, "a newer official release is offered");
