@@ -1,5 +1,4 @@
 #include "common/MetaJson.h"
-#include "discovery/DiscoveredServer.h"
 
 #include "TestMain.h"
 
@@ -12,7 +11,6 @@
 #include <initializer_list>
 #include <utility>
 
-using JellyfinNative::DiscoveredServer;
 using JellyfinNative::episodicPlaybackStartIndex;
 using JellyfinNative::ExternalUrlInfo;
 using JellyfinNative::formatMediaInfo;
@@ -49,13 +47,6 @@ QJsonObject jsonObject(std::initializer_list<std::pair<QString, QJsonValue>> ent
     for (const auto& entry : entries)
         object.insert(entry.first, entry.second);
     return object;
-}
-
-void requireDiscoveredServer(const DiscoveredServer& actual, const DiscoveredServer& expected, const char *message)
-{
-    require(actual.id == expected.id, message);
-    require(actual.name == expected.name, message);
-    require(actual.address == expected.address, message);
 }
 
 void requireLibraryItem(const LibraryItem& actual, const LibraryItem& expected, const char *message)
@@ -243,13 +234,6 @@ MediaSourceInfo mediaSource()
 
 void testDtoRoundTrips()
 {
-    DiscoveredServer server;
-    server.id = QStringLiteral("server-id");
-    server.name = QStringLiteral("Living Room Jellyfin");
-    server.address = QStringLiteral("https://jellyfin.example.test");
-    requireDiscoveredServer(metaFromJson<DiscoveredServer>(metaToJson(server)), server,
-        "DiscoveredServer did not survive MetaJson round trip");
-
     LibraryItem library;
     library.id = QStringLiteral("library-id");
     library.name = QStringLiteral("Movies");
