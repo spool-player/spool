@@ -1,6 +1,24 @@
-export function createSource(config) {
+export function createSource(config, sourceHost) {
     let calls = 0;
+    const item = function(id) { return {id: id, title: config.label + ' ' + id, type: 'Movie'}; };
+    const failing = function() { if (config.failing) throw new Error('offline'); };
     return {
+        describe: function() { return {artwork: 'https://img.invalid/{itemId}/{type}?w={width}'}; },
+        libraries: function() { failing(); return {items: [{id: 'lib', title: 'Shelf', collectionType: 'movies'}]}; },
+        latest: function(args) {
+            failing();
+            return {items: [item('new-1'), item('new-2'), item('new-3')].slice(0, args.limit), cursor: null,
+                exhausted: true};
+        },
+        details: function(args) { return {item: item(args.itemId)}; },
+        items: function(args) { failing(); return {items: args.ids.map(item), cursor: null, exhausted: true}; },
+        runItemAction: function(args) {
+            if (!args.name) return {pick: {kind: 'name'}};
+            return {changed: true, itemId: args.itemId, message: args.action + ':' + args.name};
+        },
+        announce: function(args) { sourceHost.emit('changed', {itemId: args.itemId}); return {}; },
+        configuration: function() { return {configuration: config}; },
+        expired: function() { throw new Error('http_401'); },
         bump: function() { return {calls: ++calls, label: config.label}; },
         candidates: function(args) {
             const rows = [];

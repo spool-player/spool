@@ -90,7 +90,7 @@ JELLYFIN_TEST_MAIN("script-runtime")
         }
     });
     const QString entry = QStringLiteral(TEST_SOURCE_DIR "/tests/providers/fixtures/provider.mjs");
-    auto runtime = std::make_unique<ScriptRuntime>(entry);
+    auto runtime = std::make_unique<ScriptRuntime>(entry, QVariantMap {});
     const auto add = [&](const QString& id) {
         return runtime->addSource(
             id, { { "origin", origin }, { "label", id }, { "token", id + "-token" } }, { QUrl(origin) });
@@ -128,6 +128,28 @@ JELLYFIN_TEST_MAIN("script-runtime")
     rejects(runtime->call("a", "cycle"), "cyclic results fail bounded conversion");
     rejects(runtime->call("a", "largeInteger"), "unsafe integer results rejected");
     rejects(runtime->call("a", "missing"), "missing feature reports unsupported operation");
+    const auto code = [&](const char *method) {
+        try {
+            QCoro::waitFor(runtime->call("a", method));
+        } catch (const std::exception& error) {
+            return QByteArray(error.what());
+        }
+        return QByteArray();
+    };
+    require(code("expired") == "http_401", "a snake_case error code crosses to native code as is");
+    require(code("throws") == "provider_error", "any other error text is replaced");
+
+    QStringList events;
+    QObject::connect(runtime.get(), &ScriptRuntime::event, &app,
+        [&events](const QString& source, const QString& type, const QVariantMap& payload) {
+            events.append(source + '/' + type + '/' + payload.value("itemId").toString());
+        });
+    QCoro::waitFor(runtime->call("b", "announce", { { "itemId", "x" } }));
+    QElapsedTimer eventWait;
+    eventWait.start();
+    while (events.isEmpty() && eventWait.elapsed() < 2000)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+    require(events == QStringList { "b/changed/x" }, "host.emit from a source arrives tagged with that source");
     auto pendingTimer = runtime->call("a", "delay", { { "milliseconds", 10000 } });
     cancelSlow = [&] { runtime->removeSource("a"); };
     auto pending = runtime->call("a", "raw", { { "path", "slow" } });
@@ -146,7 +168,7 @@ JELLYFIN_TEST_MAIN("script-runtime")
     rejects(std::move(shutdownPending), "shutdown settles retained operations");
 
     for (const QString method : { QStringLiteral("spin"), QStringLiteral("asyncSpin"), QStringLiteral("timerSpin") }) {
-        ScriptRuntime runaway(entry);
+        ScriptRuntime runaway(entry, QVariantMap {});
         QCoro::waitFor(runaway.addSource("a", {}, {}));
         QElapsedTimer elapsed;
         elapsed.start();

@@ -1,4 +1,5 @@
 #include "provider/ProviderPackage.h"
+#include "ProviderFixture.h"
 #include "TestMain.h"
 
 #include <QCoreApplication>
@@ -9,6 +10,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -20,124 +23,37 @@ void require(bool condition, const char *message)
     }
 }
 
-#pragma pack(push, 1)
-struct ZipEOCD {
-    uint32_t signature;
-    uint16_t diskNumber;
-    uint16_t cdStartDisk;
-    uint16_t numEntriesThisDisk;
-    uint16_t numEntries;
-    uint32_t cdSize;
-    uint32_t cdOffset;
-    uint16_t commentLen;
-};
+using ProviderFixture::Entries;
+using ProviderFixture::makeTar;
+using ProviderFixture::makeZstd;
 
-struct ZipCDHeader {
-    uint32_t signature;
-    uint16_t versionMadeBy;
-    uint16_t versionNeeded;
-    uint16_t flags;
-    uint16_t method;
-    uint16_t modTime;
-    uint16_t modDate;
-    uint32_t crc32;
-    uint32_t compressedSize;
-    uint32_t uncompressedSize;
-    uint16_t filenameLen;
-    uint16_t extraLen;
-    uint16_t commentLen;
-    uint16_t diskNumStart;
-    uint16_t internalAttr;
-    uint32_t externalAttr;
-    uint32_t localHeaderOffset;
-};
-
-struct ZipLocalHeader {
-    uint32_t signature;
-    uint16_t versionNeeded;
-    uint16_t flags;
-    uint16_t method;
-    uint16_t modTime;
-    uint16_t modDate;
-    uint32_t crc32;
-    uint32_t compressedSize;
-    uint32_t uncompressedSize;
-    uint16_t filenameLen;
-    uint16_t extraLen;
-};
-#pragma pack(pop)
-
-QByteArray makeStoredZip(const QMap<QString, QByteArray>& entries)
+QByteArray manifest(const char *id = "spool.test", const char *version = "1.0.0")
 {
-    QByteArray buffer;
-    struct EntryMeta {
-        QString name;
-        uint32_t offset;
-        uint32_t crc;
-        uint32_t size;
-    };
-    QList<EntryMeta> metas;
+    return QStringLiteral(R"({"format": 2, "api": "0.2", "id": "%1", "name": "Test", "version": "%2",
+        "entry": "logic/provider.mjs", "icon": "assets/icon.svg", "ui": {"login": "ui/Login.qml"},
+        "actions": [{"id": "rename", "label": "Rename"}, {"id": "", "label": "dropped"}]})")
+        .arg(QLatin1String(id), QLatin1String(version))
+        .toUtf8();
+}
 
-    for (auto it = entries.cbegin(); it != entries.cend(); ++it) {
-        const QString name = it.key();
-        const QByteArray data = it.value();
-        const uint32_t crc = JellyfinNative::ProviderPackage::calculateCrc32(
-            reinterpret_cast<const uint8_t *>(data.constData()), data.size());
-        const uint32_t offset = static_cast<uint32_t>(buffer.size());
+Entries validEntries(const char *version = "1.0.0")
+{
+    return { { "manifest.json", manifest("spool.test", version) }, { "logic/", {} },
+        { "logic/provider.mjs", "export function createSource() { return {}; }" },
+        { "ui/Login.qml", "import QtQuick\nItem {}\n" }, { "assets/icon.svg", "<svg/>" } };
+}
 
-        ZipLocalHeader local {};
-        local.signature = 0x04034b50;
-        local.versionNeeded = 20;
-        local.method = 0; // Stored
-        local.crc32 = crc;
-        local.compressedSize = static_cast<uint32_t>(data.size());
-        local.uncompressedSize = static_cast<uint32_t>(data.size());
-        local.filenameLen = static_cast<uint16_t>(name.toUtf8().size());
-        local.extraLen = 0;
-
-        buffer.append(reinterpret_cast<const char *>(&local), sizeof(local));
-        buffer.append(name.toUtf8());
-        buffer.append(data);
-
-        metas.append({ name, offset, crc, static_cast<uint32_t>(data.size()) });
+bool rejects(const QByteArray& archive, const char *expected)
+{
+    QString error;
+    const auto package = JellyfinNative::ProviderPackage::read(archive, &error);
+    if (package)
+        return false;
+    if (!error.contains(QLatin1String(expected))) {
+        std::cerr << "unexpected error: " << error.toStdString() << '\n';
+        return false;
     }
-
-    const uint32_t cdOffset = static_cast<uint32_t>(buffer.size());
-    for (const auto& meta : metas) {
-        ZipCDHeader cd {};
-        cd.signature = 0x02014b50;
-        cd.versionMadeBy = 20;
-        cd.versionNeeded = 20;
-        cd.flags = 0;
-        cd.method = 0;
-        cd.crc32 = meta.crc;
-        cd.compressedSize = meta.size;
-        cd.uncompressedSize = meta.size;
-        cd.filenameLen = static_cast<uint16_t>(meta.name.toUtf8().size());
-        cd.extraLen = 0;
-        cd.commentLen = 0;
-        cd.diskNumStart = 0;
-        cd.internalAttr = 0;
-        cd.externalAttr = 0;
-        cd.localHeaderOffset = meta.offset;
-
-        buffer.append(reinterpret_cast<const char *>(&cd), sizeof(cd));
-        buffer.append(meta.name.toUtf8());
-    }
-    const uint32_t cdSize = static_cast<uint32_t>(buffer.size() - cdOffset);
-
-    ZipEOCD eocd {};
-    eocd.signature = 0x06054b50;
-    eocd.diskNumber = 0;
-    eocd.cdStartDisk = 0;
-    eocd.numEntriesThisDisk = static_cast<uint16_t>(metas.size());
-    eocd.numEntries = static_cast<uint16_t>(metas.size());
-    eocd.cdSize = cdSize;
-    eocd.cdOffset = cdOffset;
-    eocd.commentLen = 0;
-
-    buffer.append(reinterpret_cast<const char *>(&eocd), sizeof(eocd));
-    return buffer;
+    return true;
 }
 
 } // namespace
@@ -147,108 +63,92 @@ JELLYFIN_TEST_MAIN("provider-package-unpack")
     QCoreApplication app(argc, argv);
     using namespace JellyfinNative;
 
-    // Test 1: Valid package validation and extraction
-    {
-        const QByteArray manifest = R"({
-            "format": 1,
-            "id": "spool.test",
-            "version": "1.0.0",
-            "api": "0.1",
-            "entry": "logic/provider.mjs"
-        })";
-        const QByteArray logic = "export function init() { return true; }";
+    QString error;
+    const auto package = ProviderPackage::read(makeZstd(makeTar(validEntries())), &error);
+    require(package.has_value(), "a valid package is read");
+    require(package->manifest.id == QStringLiteral("spool.test") && package->manifest.version == QStringLiteral("1.0.0")
+            && package->manifest.entry == QStringLiteral("logic/provider.mjs"),
+        "manifest identity and entry are read");
+    require(package->manifest.needsAccount(), "a login screen means the provider needs an account");
+    require(package->manifest.actions.size() == 1, "actions without an id are dropped");
+    require(package->files.size() == 4 && !package->files.contains(QStringLiteral("logic/")),
+        "files are read and directories are not files");
 
-        QMap<QString, QByteArray> entries;
-        entries.insert(QStringLiteral("manifest.json"), manifest);
-        entries.insert(QStringLiteral("logic/provider.mjs"), logic);
+    // Several raw blocks, as a zstd encoder emits for incompressible input.
+    Entries large = validEntries();
+    QByteArray noise(300 * 1024, '\0');
+    for (qsizetype i = 0; i < noise.size(); ++i)
+        noise[i] = char((i * 2654435761u) >> 13);
+    large.push_back({ "assets/noise.txt", noise });
+    const auto multiBlock = ProviderPackage::read(makeZstd(makeTar(large)));
+    require(multiBlock && multiBlock->files.value(QStringLiteral("assets/noise.txt")) == noise,
+        "multi-block frames decompress exactly");
 
-        const QByteArray zipData = makeStoredZip(entries);
-        QString errorMsg;
-        auto package = ProviderPackage::parseAndValidate(zipData, &errorMsg);
-        require(package.has_value(), "valid package parsed successfully");
-        require(package->id == QStringLiteral("spool.test"), "package ID extracted");
-        require(package->version == QStringLiteral("1.0.0"), "package version extracted");
-        require(package->entryPoint == QStringLiteral("logic/provider.mjs"), "entrypoint extracted");
-        require(package->files.size() == 2, "package files map populated");
-
-        QTemporaryDir tempDir;
-        require(tempDir.isValid(), "temporary directory created");
-        const QString installedPath = ProviderPackage::install(*package, tempDir.path(), &errorMsg);
-        require(!installedPath.isEmpty(), "package installed successfully");
-        require(QFile::exists(installedPath), "installed entrypoint file exists");
+    // The real bundled package: compressed blocks from the zstd CLI.
+    QFile bundled(QStringLiteral(TEST_SOURCE_DIR "/providers/bundled/spool.jellyfin-0.2.0.tar.zst"));
+    if (bundled.open(QIODevice::ReadOnly)) {
+        const auto jellyfin = ProviderPackage::read(bundled.readAll(), &error);
+        require(jellyfin && jellyfin->manifest.id == QStringLiteral("spool.jellyfin"),
+            "the bundled Jellyfin package decompresses and validates");
     }
 
-    // Test 2: Path traversal attack prevention
-    {
-        const QByteArray manifest = R"({
-            "format": 1,
-            "id": "spool.evil",
-            "version": "1.0.0",
-            "api": "0.1",
-            "entry": "logic/provider.mjs"
-        })";
-        QMap<QString, QByteArray> entries;
-        entries.insert(QStringLiteral("manifest.json"), manifest);
-        entries.insert(QStringLiteral("../../../evil.mjs"), "alert('evil')");
+    require(rejects(QByteArrayLiteral("PK\x03\x04not zstd"), "not a valid .tar.zst"), "zip archives are refused");
+    QByteArray truncated = makeZstd(makeTar(validEntries()));
+    truncated.chop(700);
+    require(rejects(truncated, "not a valid .tar.zst"), "truncated frames are refused");
 
-        const QByteArray zipData = makeStoredZip(entries);
-        QString errorMsg;
-        auto package = ProviderPackage::parseAndValidate(zipData, &errorMsg);
-        require(!package.has_value(), "path traversal package rejected");
-    }
+    const auto withEntry = [](QByteArray name, QByteArray data) {
+        Entries entries = validEntries();
+        entries.push_back({ std::move(name), std::move(data) });
+        return makeZstd(makeTar(entries));
+    };
+    require(rejects(withEntry("../evil.mjs", "x"), "Forbidden path"), "path traversal is refused");
+    require(rejects(withEntry("/etc/evil.mjs", "x"), "Forbidden path"), "absolute paths are refused");
+    require(rejects(withEntry("logic/.hidden.mjs", "x"), "Forbidden path"), "hidden files are refused");
+    require(rejects(withEntry("payload.exe", "x"), "Forbidden path"), "executable extensions are refused");
+    require(rejects(withEntry("logic/native.js",
+                        QByteArray("\x7f"
+                                   "ELF\x02\x01",
+                            6)),
+                "Native binaries"),
+        "native binaries are refused whatever their name");
+    require(rejects(withEntry("LOGIC/provider.mjs", "x"), "Duplicate path"), "case-folded duplicates are refused");
+    require(rejects(makeZstd(makeTar({ { "manifest.json", manifest() }, { "logic/link.mjs", {} } }, '2')),
+                "Links and special files"),
+        "symlinks are refused");
 
-    // Test 3: Disallowed executable extension rejection
-    {
-        const QByteArray manifest = R"({
-            "format": 1,
-            "id": "spool.binary",
-            "version": "1.0.0",
-            "api": "0.1",
-            "entry": "logic/provider.mjs"
-        })";
-        QMap<QString, QByteArray> entries;
-        entries.insert(QStringLiteral("manifest.json"), manifest);
-        entries.insert(QStringLiteral("payload.exe"), "fake executable");
+    Entries missingUi = validEntries();
+    missingUi.erase(missingUi.begin() + 3);
+    require(rejects(makeZstd(makeTar(missingUi)), "missing file: ui/Login.qml"), "every named file must exist");
+    require(rejects(makeZstd(makeTar({ { "logic/provider.mjs", "x" } })), "not a JSON object"),
+        "a package without a manifest is refused");
+    Entries oldFormat = validEntries();
+    oldFormat.front().second.replace("\"format\": 2", "\"format\": 1");
+    require(rejects(makeZstd(makeTar(oldFormat)), "different version of Spool"), "old manifest formats are refused");
+    Entries badId = validEntries();
+    badId.front().second = manifest("Not An Id");
+    require(rejects(makeZstd(makeTar(badId)), "invalid one"), "malformed ids are refused");
 
-        const QByteArray zipData = makeStoredZip(entries);
-        QString errorMsg;
-        auto package = ProviderPackage::parseAndValidate(zipData, &errorMsg);
-        require(!package.has_value(), "disallowed file extension rejected");
-    }
+    require(ProviderPackage::compareVersions(QStringLiteral("1.10.0"), QStringLiteral("1.9.9")) > 0,
+        "versions compare numerically");
+    require(ProviderPackage::compareVersions(QStringLiteral("1.0.0-beta"), QStringLiteral("1.0.0")) < 0,
+        "a pre-release sorts before its release");
+    require(ProviderPackage::compareVersions(QStringLiteral("1.0"), QStringLiteral("1.0.0")) == 0,
+        "missing components are zero");
 
-    // Test 4: Native binary payload rejection (ELF header)
-    {
-        const QByteArray manifest = R"({
-            "format": 1,
-            "id": "spool.native",
-            "version": "1.0.0",
-            "api": "0.1",
-            "entry": "logic/provider.mjs"
-        })";
-        QByteArray elfData;
-        elfData.append("\x7f\x45\x4c\x46", 4); // \x7fELF
-        elfData.append(32, '\0');
-
-        QMap<QString, QByteArray> entries;
-        entries.insert(QStringLiteral("manifest.json"), manifest);
-        entries.insert(QStringLiteral("logic/provider.mjs"), elfData);
-
-        const QByteArray zipData = makeStoredZip(entries);
-        QString errorMsg;
-        auto package = ProviderPackage::parseAndValidate(zipData, &errorMsg);
-        require(!package.has_value(), "ELF binary payload rejected");
-    }
-
-    // Test 5: Missing manifest rejection
-    {
-        QMap<QString, QByteArray> entries;
-        entries.insert(QStringLiteral("logic/provider.mjs"), "export function init() {}");
-
-        const QByteArray zipData = makeStoredZip(entries);
-        QString errorMsg;
-        auto package = ProviderPackage::parseAndValidate(zipData, &errorMsg);
-        require(!package.has_value(), "archive without manifest rejected");
-    }
+    QTemporaryDir root;
+    require(root.isValid(), "temporary directory created");
+    const auto installed = ProviderPackage::install(*package, root.path(), &error);
+    require(installed && QFile::exists(QDir(*installed).filePath(QStringLiteral("logic/provider.mjs"))),
+        "a package installs into its version directory");
+    const auto newer = ProviderPackage::read(makeZstd(makeTar(validEntries("1.1.0"))));
+    const auto upgraded = ProviderPackage::install(*newer, root.path(), &error);
+    require(upgraded && !QFile::exists(*installed), "installing a newer version removes the older one");
+    const QStringList leftovers
+        = QDir(root.filePath(QStringLiteral("spool.test"))).entryList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden);
+    require(leftovers == QStringList { QStringLiteral("1.1.0") }, "no staging directory is left behind");
+    require(ProviderPackage::installedVersions(root.path()).value(QStringLiteral("spool.test")) == *upgraded,
+        "the installed version is found again");
 
     std::cout << "provider package test ok\n";
     return 0;

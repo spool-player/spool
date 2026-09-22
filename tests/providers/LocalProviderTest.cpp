@@ -11,6 +11,8 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QElapsedTimer>
+#include <QEventLoop>
 #include <QUrl>
 
 #include <cstdlib>
@@ -47,21 +49,24 @@ JELLYFIN_TEST_MAIN("local-provider")
     using namespace JellyfinNative;
 
     const QString fixtures = QDir(QStringLiteral(TEST_SOURCE_DIR)).filePath(QStringLiteral("tests/media/fixtures"));
-    LocalProvider provider(fixtures);
-    require(provider.id() == QStringLiteral("local"), "the provider is named local");
+    LocalProvider provider(QStringLiteral("local-account"), fixtures);
+    bool scanned = false;
+    QObject::connect(&provider, &Provider::contentChanged, &app, [&scanned] { scanned = true; });
+    require(provider.id() == QStringLiteral("local-account"), "the provider is named after its account");
     require(provider.ready(), "a folder needs no sign-in");
     require(provider.capabilities() == (Provider::Search | Provider::UserItemState),
         "a folder searches and remembers item state, nothing more");
     require(
         provider.catalog() && provider.playback() && provider.artwork() && provider.search() && provider.itemState(),
         "the required and the claimed optional interfaces are served");
-    require(!provider.groupPlayback() && !provider.remotePlayback() && !provider.streamQuality(),
-        "unclaimed capabilities have no object");
+    require(!provider.streamQuality(), "unclaimed capabilities have no object");
 
-    int sessions = 0;
-    QObject::connect(&provider, &Provider::sessionStarted, &app, [&sessions] { ++sessions; });
-    require(provider.restoreFromStorage({}, {}), "restoring announces a default profile");
-    require(sessions == 1, "a source without sign-in announces its session when restored");
+    // The folder is walked off the GUI thread; the library is announced once known.
+    QElapsedTimer waited;
+    waited.start();
+    while (!scanned && waited.elapsed() < 5000)
+        QCoreApplication::processEvents(QEventLoop::WaitForMoreEvents, 50);
+    require(scanned, "the background scan announces the library");
 
     Catalog *catalog = provider.catalog();
     const auto libraries = QCoro::waitFor(catalog->fetchLibraries());
