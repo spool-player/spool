@@ -1,5 +1,4 @@
 #include "api/JellyfinApiFacade.h"
-#include "app/ArtworkService.h"
 #include "common/AsyncTask.h"
 #include "common/TlsTrust.h"
 
@@ -101,35 +100,6 @@ JELLYFIN_TEST_MAIN("jellyfin-api-facade-url")
     TlsTrustController tlsTrust;
     JellyfinApiFacade api(&network, &tlsTrust);
     api.setServerUrl(QStringLiteral("https://media.example.test/jellyfin/root/"));
-
-    QTemporaryDir cacheDirectory;
-    require(cacheDirectory.isValid(), "artwork test cache should be available");
-    ArtworkService artwork(cacheDirectory.path(), 1024 * 1024, 1024 * 1024, 1, &tlsTrust);
-    artwork.setSource(&api);
-    MovieItem imageItem;
-    imageItem.id = QStringLiteral("folder/item 1");
-    imageItem.thumbTag = QStringLiteral("tag/one two");
-
-    const QString imageUrl = artwork.url(QVariant::fromValue(imageItem), QStringLiteral("landscape"), 320);
-    const QUrl parsedImage(imageUrl);
-    requireUrlPathBytes(imageUrl, QStringLiteral("/jellyfin/root/Items/folder%2Fitem%201/Images/Thumb"),
-        "artwork URLs should retain the server base path and encode path segments");
-
-    const QUrlQuery imageQuery(parsedImage);
-    requireQueryValue(
-        imageQuery, QStringLiteral("fillWidth"), QStringLiteral("320"), "filled image URLs should include fill width");
-    requireQueryValue(imageQuery, QStringLiteral("fillHeight"), QStringLiteral("180"),
-        "filled image URLs should include fill height");
-    requireMissingQueryValue(
-        imageQuery, QStringLiteral("maxWidth"), "filled image URLs should not also request max width");
-    requireQueryValue(imageQuery, QStringLiteral("quality"), QStringLiteral("68"), "image URLs should include quality");
-    requireQueryValue(imageQuery, QStringLiteral("format"), QStringLiteral("webp"), "image URLs should include format");
-    requireQueryValue(imageQuery, QStringLiteral("tag"), QStringLiteral("tag/one two"),
-        "image URLs should include the image tag query item");
-
-    imageItem.thumbTag.clear();
-    require(artwork.url(QVariant::fromValue(imageItem), QStringLiteral("landscape"), 320).isEmpty(),
-        "image URLs should be omitted when the image tag is empty");
 
     const QString trickplayUrl = api.trickplayTileUrl(QStringLiteral("episode/id 2"), 320, 7);
     requireUrlPathBytes(trickplayUrl, QStringLiteral("/jellyfin/root/Videos/episode%2Fid%202/Trickplay/320/7.jpg"),

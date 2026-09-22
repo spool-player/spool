@@ -27,28 +27,20 @@ namespace {
 
     struct BenchResult {
         QString name;
-        std::vector<double> nativeTimes;
-        std::vector<double> jsTimes;
-        size_t nativeItems = 0;
-        size_t jsItems = 0;
+        std::vector<double> times;
+        size_t items = 0;
 
-        double nativeAvg() const
+        double avg() const
         {
-            return nativeTimes.empty()
-                ? 0.0
-                : std::accumulate(nativeTimes.begin(), nativeTimes.end(), 0.0) / nativeTimes.size();
+            return times.empty() ? 0.0 : std::accumulate(times.begin(), times.end(), 0.0) / times.size();
         }
-        double jsAvg() const
+        double min() const
         {
-            return jsTimes.empty() ? 0.0 : std::accumulate(jsTimes.begin(), jsTimes.end(), 0.0) / jsTimes.size();
+            return times.empty() ? 0.0 : *std::min_element(times.begin(), times.end());
         }
-        double deltaMs() const
+        double max() const
         {
-            return jsAvg() - nativeAvg();
-        }
-        double deltaFrames() const
-        {
-            return deltaMs() / 16.666667;
+            return times.empty() ? 0.0 : *std::max_element(times.begin(), times.end());
         }
     };
 
@@ -98,7 +90,7 @@ QCoro::Task<int> ProviderBenchmark::run(DatabaseManager *database, ProviderRegis
     const QString serverUrl = sessionCtrl->serverUrl();
     const AuthSession auth = nativeApi->session();
     std::cout << "\n================================================================================\n";
-    std::cout << " SPOOL PROVIDER PERFORMANCE BENCHMARK (NATIVE VS JAVASCRIPT)\n";
+    std::cout << " SPOOL JELLYFIN PROVIDER PERFORMANCE BENCHMARK\n";
     std::cout << " Server: " << serverUrl.toStdString() << " | User: " << auth.userName.toStdString() << '\n';
     std::cout << " Iterations: " << options.iterations << " | Library: " << options.libraryName.toStdString() << '\n';
     std::cout << "================================================================================\n\n";
@@ -112,7 +104,7 @@ QCoro::Task<int> ProviderBenchmark::run(DatabaseManager *database, ProviderRegis
     config.insert(QStringLiteral("deviceId"),
         nativeApi->deviceId().isEmpty() ? QStringLiteral("spool-benchmark") : nativeApi->deviceId());
     config.insert(QStringLiteral("deviceName"), QStringLiteral("Spool Benchmark"));
-    config.insert(QStringLiteral("clientVersion"), QStringLiteral("0.8.0"));
+    config.insert(QStringLiteral("clientVersion"), QStringLiteral("0.8.1"));
 
     QList<QUrl> origins { QUrl(serverUrl) };
     const QString sourceId = co_await registry->configureSource(
@@ -127,20 +119,14 @@ QCoro::Task<int> ProviderBenchmark::run(DatabaseManager *database, ProviderRegis
         res.name = QStringLiteral("fetchLibraries");
         std::cout << "Benchmarking " << res.name.toStdString() << "..." << std::flush;
         // Warmup
-        co_await nativeApi->fetchLibraries();
         co_await jsAdapter.fetchLibraries();
 
         for (int i = 0; i < options.iterations; ++i) {
             QElapsedTimer t;
             t.start();
-            auto nativeLibs = co_await nativeApi->fetchLibraries();
-            res.nativeTimes.push_back(t.nsecsElapsed() / 1000000.0);
-            res.nativeItems = nativeLibs.size();
-
-            t.restart();
             auto jsLibs = co_await jsAdapter.fetchLibraries();
-            res.jsTimes.push_back(t.nsecsElapsed() / 1000000.0);
-            res.jsItems = jsLibs.size();
+            res.times.push_back(t.nsecsElapsed() / 1000000.0);
+            res.items = jsLibs.size();
         }
         std::cout << " done.\n";
         results.push_back(std::move(res));
@@ -151,7 +137,7 @@ QCoro::Task<int> ProviderBenchmark::run(DatabaseManager *database, ProviderRegis
     // Find the target library descriptor
     BrowseDescriptor libDesc;
     try {
-        auto libs = co_await nativeApi->fetchLibraries();
+        auto libs = co_await jsAdapter.fetchLibraries();
         for (const auto& lib : libs) {
             if (lib.name.compare(options.libraryName, Qt::CaseInsensitive) == 0) {
                 libDesc.id = lib.id;
@@ -177,20 +163,14 @@ QCoro::Task<int> ProviderBenchmark::run(DatabaseManager *database, ProviderRegis
             BenchResult res;
             res.name = QStringLiteral("browsePage: ") + libDesc.name + QStringLiteral(" [0..100]");
             std::cout << "Benchmarking " << res.name.toStdString() << "..." << std::flush;
-            co_await nativeApi->fetchBrowsePage(libDesc, 0, 100);
             co_await jsAdapter.fetchBrowsePage(libDesc, 0, 100);
 
             for (int i = 0; i < options.iterations; ++i) {
                 QElapsedTimer t;
                 t.start();
-                auto page = co_await nativeApi->fetchBrowsePage(libDesc, 0, 100);
-                res.nativeTimes.push_back(t.nsecsElapsed() / 1000000.0);
-                res.nativeItems = page.items.size();
-
-                t.restart();
                 auto jsPage = co_await jsAdapter.fetchBrowsePage(libDesc, 0, 100);
-                res.jsTimes.push_back(t.nsecsElapsed() / 1000000.0);
-                res.jsItems = jsPage.items.size();
+                res.times.push_back(t.nsecsElapsed() / 1000000.0);
+                res.items = jsPage.items.size();
             }
             std::cout << " done.\n";
             results.push_back(std::move(res));
@@ -205,20 +185,14 @@ QCoro::Task<int> ProviderBenchmark::run(DatabaseManager *database, ProviderRegis
             BenchResult res;
             res.name = QStringLiteral("browsePage: ") + libDesc.name + QStringLiteral(" [100..200]");
             std::cout << "Benchmarking " << res.name.toStdString() << "..." << std::flush;
-            co_await nativeApi->fetchBrowsePage(libDesc, 100, 100);
             co_await jsAdapter.fetchBrowsePage(libDesc, 100, 100);
 
             for (int i = 0; i < options.iterations; ++i) {
                 QElapsedTimer t;
                 t.start();
-                auto page = co_await nativeApi->fetchBrowsePage(libDesc, 100, 100);
-                res.nativeTimes.push_back(t.nsecsElapsed() / 1000000.0);
-                res.nativeItems = page.items.size();
-
-                t.restart();
                 auto jsPage = co_await jsAdapter.fetchBrowsePage(libDesc, 100, 100);
-                res.jsTimes.push_back(t.nsecsElapsed() / 1000000.0);
-                res.jsItems = jsPage.items.size();
+                res.times.push_back(t.nsecsElapsed() / 1000000.0);
+                res.items = jsPage.items.size();
             }
             std::cout << " done.\n";
             results.push_back(std::move(res));
@@ -232,20 +206,14 @@ QCoro::Task<int> ProviderBenchmark::run(DatabaseManager *database, ProviderRegis
         BenchResult res;
         res.name = QStringLiteral("searchItems (\"") + options.searchQuery + QStringLiteral("\", 80)");
         std::cout << "Benchmarking " << res.name.toStdString() << "..." << std::flush;
-        co_await nativeApi->searchItems(options.searchQuery, 80);
         co_await jsAdapter.searchItems(options.searchQuery, 80);
 
         for (int i = 0; i < options.iterations; ++i) {
             QElapsedTimer t;
             t.start();
-            auto items = co_await nativeApi->searchItems(options.searchQuery, 80);
-            res.nativeTimes.push_back(t.nsecsElapsed() / 1000000.0);
-            res.nativeItems = items.size();
-
-            t.restart();
             auto jsItems = co_await jsAdapter.searchItems(options.searchQuery, 80);
-            res.jsTimes.push_back(t.nsecsElapsed() / 1000000.0);
-            res.jsItems = jsItems.size();
+            res.times.push_back(t.nsecsElapsed() / 1000000.0);
+            res.items = jsItems.size();
         }
         std::cout << " done.\n";
         results.push_back(std::move(res));
@@ -258,20 +226,14 @@ QCoro::Task<int> ProviderBenchmark::run(DatabaseManager *database, ProviderRegis
         BenchResult res;
         res.name = QStringLiteral("fetchNextUpEpisodes (24)");
         std::cout << "Benchmarking " << res.name.toStdString() << "..." << std::flush;
-        co_await nativeApi->fetchNextUpEpisodes(24);
         co_await jsAdapter.fetchNextUpEpisodes(24);
 
         for (int i = 0; i < options.iterations; ++i) {
             QElapsedTimer t;
             t.start();
-            auto items = co_await nativeApi->fetchNextUpEpisodes(24);
-            res.nativeTimes.push_back(t.nsecsElapsed() / 1000000.0);
-            res.nativeItems = items.size();
-
-            t.restart();
             auto jsItems = co_await jsAdapter.fetchNextUpEpisodes(24);
-            res.jsTimes.push_back(t.nsecsElapsed() / 1000000.0);
-            res.jsItems = jsItems.size();
+            res.times.push_back(t.nsecsElapsed() / 1000000.0);
+            res.items = jsItems.size();
         }
         std::cout << " done.\n";
         results.push_back(std::move(res));
@@ -284,20 +246,14 @@ QCoro::Task<int> ProviderBenchmark::run(DatabaseManager *database, ProviderRegis
         BenchResult res;
         res.name = QStringLiteral("fetchResumeItems (24)");
         std::cout << "Benchmarking " << res.name.toStdString() << "..." << std::flush;
-        co_await nativeApi->fetchResumeItems(24);
         co_await jsAdapter.fetchResumeItems(24);
 
         for (int i = 0; i < options.iterations; ++i) {
             QElapsedTimer t;
             t.start();
-            auto items = co_await nativeApi->fetchResumeItems(24);
-            res.nativeTimes.push_back(t.nsecsElapsed() / 1000000.0);
-            res.nativeItems = items.size();
-
-            t.restart();
             auto jsItems = co_await jsAdapter.fetchResumeItems(24);
-            res.jsTimes.push_back(t.nsecsElapsed() / 1000000.0);
-            res.jsItems = jsItems.size();
+            res.times.push_back(t.nsecsElapsed() / 1000000.0);
+            res.items = jsItems.size();
         }
         std::cout << " done.\n";
         results.push_back(std::move(res));
@@ -306,36 +262,24 @@ QCoro::Task<int> ProviderBenchmark::run(DatabaseManager *database, ProviderRegis
     }
 
     // Print summary table
-    std::cout << "\n---------------------------------------------------------------------------------------------------"
-                 "---------------\n";
-    printf("| %-36s | %-12s | %-12s | %-11s | %-15s | %-10s |\n", "Operation", "Native (ms)", "JS (ms)", "Delta (ms)",
-        "Delta (frames)", "Items (N/J)");
-    std::cout << "-----------------------------------------------------------------------------------------------------"
-                 "-------------\n";
+    std::cout << "\n---------------------------------------------------------------------------------------\n";
+    printf("| %-42s | %-10s | %-10s | %-10s | %-6s |\n", "Operation", "Avg (ms)", "Min (ms)", "Max (ms)", "Items");
+    std::cout << "---------------------------------------------------------------------------------------\n";
 
     QJsonArray jsonResults;
     for (const auto& r : results) {
-        const double delta = r.deltaMs();
-        const double frames = r.deltaFrames();
-        char itemsBuf[32];
-        snprintf(itemsBuf, sizeof(itemsBuf), "%zu / %zu", r.nativeItems, r.jsItems);
-        printf("| %-36s | %9.2f ms | %9.2f ms | %+8.2f ms | %+11.2f fr | %-10s |\n", qPrintable(r.name), r.nativeAvg(),
-            r.jsAvg(), delta, frames, itemsBuf);
+        printf("| %-42s | %7.2f ms | %7.2f ms | %7.2f ms | %-6zu |\n", qPrintable(r.name), r.avg(), r.min(), r.max(),
+            r.items);
 
         QJsonObject obj;
         obj.insert(QStringLiteral("operation"), r.name);
-        obj.insert(QStringLiteral("nativeAvgMs"), r.nativeAvg());
-        obj.insert(QStringLiteral("jsAvgMs"), r.jsAvg());
-        obj.insert(QStringLiteral("deltaMs"), delta);
-        obj.insert(QStringLiteral("deltaFrames"), frames);
-        obj.insert(QStringLiteral("nativeItems"), static_cast<qint64>(r.nativeItems));
-        obj.insert(QStringLiteral("jsItems"), static_cast<qint64>(r.jsItems));
+        obj.insert(QStringLiteral("avgMs"), r.avg());
+        obj.insert(QStringLiteral("minMs"), r.min());
+        obj.insert(QStringLiteral("maxMs"), r.max());
+        obj.insert(QStringLiteral("items"), static_cast<qint64>(r.items));
         jsonResults.append(obj);
     }
-    std::cout << "-----------------------------------------------------------------------------------------------------"
-                 "-------------\n";
-    std::cout << " Note: 1 frame = 16.67 ms at 60 Hz display refresh rate.\n";
-    std::cout << " Negative delta means JavaScript backend was FASTER than native.\n\n";
+    std::cout << "---------------------------------------------------------------------------------------\n\n";
 
     if (!options.outputPath.isEmpty()) {
         QJsonObject root;
