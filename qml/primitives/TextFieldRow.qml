@@ -119,6 +119,34 @@ T.Control {
         onTextEdited: row.textEdited(text)
         onAccepted: row.accepted()
 
+        // Qt's own caret is one pixel wide, which vanishes on a television
+        // and is easy to lose on a dense screen. It holds steady while typing
+        // and blinks once the text is left alone.
+        cursorDelegate: Rectangle {
+            id: caret
+            property bool lit: true
+            width: Math.max(2, Metrics.scaled(2))
+            color: Theme.accent
+            visible: field.activeFocus && field.selectionStart === field.selectionEnd && lit
+
+            Timer {
+                id: blink
+                interval: 530
+                repeat: true
+                running: field.activeFocus
+                onRunningChanged: caret.lit = true
+                onTriggered: caret.lit = !caret.lit
+            }
+
+            Connections {
+                target: field
+                function onCursorPositionChanged() {
+                    caret.lit = true
+                    blink.restart()
+                }
+            }
+        }
+
         // Templates carry the placeholder text but draw nothing for it, and a
         // hint is the difference between a labelled box and a guess.
         SecondaryText {
