@@ -38,13 +38,25 @@ namespace {
     }
 } // namespace
 
+std::optional<ProviderSources> providerSourcesFromName(QStringView name)
+{
+    if (name == QLatin1String("bundled"))
+        return ProviderSources::Bundled;
+    if (name == QLatin1String("curated"))
+        return ProviderSources::Curated;
+    if (name == QLatin1String("open"))
+        return ProviderSources::Open;
+    return std::nullopt;
+}
+
 ProviderStore::ProviderStore(ProviderRegistry *registry, DatabaseManager *database, QNetworkAccessManager *network,
-    QUrl catalogBase, QObject *parent)
+    QUrl catalogBase, ProviderSources sources, QObject *parent)
     : QObject(parent)
     , m_registry(registry)
     , m_database(database)
     , m_network(network)
     , m_catalogBase(std::move(catalogBase))
+    , m_sources(sources)
 {
     connect(registry, &ProviderRegistry::modulesChanged, this, &ProviderStore::catalogChanged);
     Async::runScoped(this, loadOrigins(), [] { }, [](const std::exception_ptr&) { }, "provider origins");
@@ -145,6 +157,8 @@ QCoro::Task<QVariantList> ProviderStore::fetchCatalog(QString name)
 
 void ProviderStore::refresh(bool includeCommunity)
 {
+    if (!storeAvailable())
+        return;
     const auto load = [this](QString name, bool official) {
         ++m_loading;
         emit catalogChanged();
@@ -313,6 +327,10 @@ void ProviderStore::uninstall(const QString& id)
 
 void ProviderStore::addFromUrl(const QString& input)
 {
+    if (!linksAllowed()) {
+        emit problem(QStringLiteral("This version of Spool only installs providers from its store"));
+        return;
+    }
     const QUrl feed = feedUrlFor(input);
     if (feed.isEmpty()) {
         emit problem(QStringLiteral("That doesn't look like a link"));
@@ -337,10 +355,28 @@ void ProviderStore::addFromUrl(const QString& input)
     Async::runScoped(this, add(this, feed), [] { }, [](const std::exception_ptr&) { }, "provider add");
 }
 
+bool ProviderStore::allows(const Origin& origin) const
+{
+    switch (m_sources) {
+    case ProviderSources::Bundled:
+        return false;
+    case ProviderSources::Curated:
+        return origin.channel != QStringLiteral("url");
+    case ProviderSources::Open:
+        return true;
+    }
+    return false;
+}
+
 QCoro::Task<void> ProviderStore::installEntry(QVariantMap entry, Origin origin)
 {
     const QString id = text(entry, "id");
     const QString name = text(entry, "name");
+    // Every download comes through here, so this is the one gate.
+    if (!allows(origin)) {
+        qWarning("providers: %s is not from a source this build installs from", qPrintable(id));
+        co_return;
+    }
     if (text(entry, "api") != QLatin1String(kApi)) {
         emit problem(QStringLiteral("%1 needs a different version of Spool").arg(name));
         co_return;
@@ -391,6 +427,8 @@ QCoro::Task<void> ProviderStore::installEntry(QVariantMap entry, Origin origin)
 
 void ProviderStore::checkForUpdates(const QString& policy)
 {
+    if (!storeAvailable())
+        return;
     Async::runScoped(this, checkAsync(policy), [] { }, [](const std::exception_ptr&) { }, "provider update check");
 }
 
@@ -418,6 +456,8 @@ QCoro::Task<void> ProviderStore::checkAsync(QString policy)
         const ProviderModule *module = m_registry->module(id);
         const Origin origin = m_origins.value(id, { QStringLiteral("official"), {} });
         QVariantMap latest;
+        if (!allows(origin))
+            continue;
         if (origin.channel == QStringLiteral("url")) {
             try {
                 latest = QJsonDocument::fromJson(co_await fetch(origin.feed, kCatalogLimit)).object().toVariantMap();

@@ -140,7 +140,9 @@ void ProviderRegistry::loadModules()
         if (auto manifest = ProviderManifest::parse(file.readAll()))
             registerPackage(std::move(*manifest), QUrl(QStringLiteral("qrc") + path + QLatin1Char('/')), true);
     }
-    const auto installed = ProviderPackage::installedVersions(m_installDirectory);
+    // A build with no install directory runs only what it bundles.
+    const auto installed = m_installDirectory.isEmpty() ? QMap<QString, QString> {}
+                                                        : ProviderPackage::installedVersions(m_installDirectory);
     for (auto it = installed.cbegin(); it != installed.cend(); ++it) {
         QFile file(it.value() + QStringLiteral("/manifest.json"));
         if (!file.open(QIODevice::ReadOnly))
@@ -373,6 +375,8 @@ void ProviderRegistry::persist(bool credentials)
 QCoro::Task<void> ProviderRegistry::install(ProviderPackageContents package)
 {
     const QString root = m_installDirectory;
+    if (root.isEmpty())
+        throw std::runtime_error("installs_disabled");
     // Disk writes stay off the GUI thread.
     QString error;
     const auto directory = co_await Async::background(

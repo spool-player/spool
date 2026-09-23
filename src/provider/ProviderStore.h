@@ -8,12 +8,28 @@
 #include <QVariantList>
 #include <QVariantMap>
 
+#include <optional>
+
 class QNetworkAccessManager;
 
 namespace JellyfinNative {
 
 class DatabaseManager;
 class ProviderRegistry;
+
+// Where a build may take provider code from, chosen at compile time with
+// SPOOL_PROVIDER_SOURCES (docs/providers.md). App store review decides what
+// downloaded code may add, so a build submitted to a store narrows this.
+enum class ProviderSources {
+    // Only the providers inside the app: no store and no downloads.
+    Bundled,
+    // The store's reviewed catalogues only; nothing by link.
+    Curated,
+    // The catalogues and any provider by link. Every release build.
+    Open,
+};
+
+std::optional<ProviderSources> providerSourcesFromName(QStringView name);
 
 // Where providers come from and how they stay current.
 //
@@ -32,12 +48,14 @@ class ProviderStore final : public QObject {
     Q_PROPERTY(QString error READ error NOTIFY catalogChanged)
     Q_PROPERTY(QVariantList updates READ updates NOTIFY updatesChanged)
     Q_PROPERTY(QVariantMap busy READ busy NOTIFY busyChanged)
+    Q_PROPERTY(bool storeAvailable READ storeAvailable CONSTANT)
+    Q_PROPERTY(bool linksAllowed READ linksAllowed CONSTANT)
 
 public:
     static constexpr auto kApi = "0.2";
 
     ProviderStore(ProviderRegistry *registry, DatabaseManager *database, QNetworkAccessManager *network,
-        QUrl catalogBase, QObject *parent = nullptr);
+        QUrl catalogBase, ProviderSources sources = ProviderSources::Open, QObject *parent = nullptr);
 
     QVariantList official() const;
     QVariantList community() const;
@@ -52,6 +70,14 @@ public:
     QVariantList updates() const
     {
         return m_updates;
+    }
+    bool storeAvailable() const
+    {
+        return m_sources != ProviderSources::Bundled;
+    }
+    bool linksAllowed() const
+    {
+        return m_sources == ProviderSources::Open;
     }
     // Provider id to what is happening to it: "downloading", "installing".
     QVariantMap busy() const
@@ -93,6 +119,7 @@ private:
     QCoro::Task<QByteArray> fetch(QUrl url, qint64 limit);
     QCoro::Task<QVariantList> fetchCatalog(QString name);
     QCoro::Task<void> installEntry(QVariantMap entry, Origin origin);
+    bool allows(const Origin& origin) const;
     QCoro::Task<void> checkAsync(QString policy);
     QVariantList annotate(const QVariantList& entries) const;
     QVariantMap entryFor(const QString& id) const;
@@ -103,6 +130,7 @@ private:
     QPointer<DatabaseManager> m_database;
     QNetworkAccessManager *m_network;
     QUrl m_catalogBase;
+    ProviderSources m_sources;
     QVariantList m_official;
     QVariantList m_community;
     QVariantList m_updates;

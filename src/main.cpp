@@ -648,8 +648,15 @@ int main(int argc, char **argv)
     JellyfinNative::TlsTrustController tlsTrust;
     // Accounts outlive the player and the app controller, which hold their
     // parts by pointer, so the registry and the hub come first.
+    // Chosen by SPOOL_PROVIDER_SOURCES at configure time, which rejects
+    // anything else; an unknown name would fall to the narrowest.
+    const JellyfinNative::ProviderSources providerSources
+        = JellyfinNative::providerSourcesFromName(QString::fromLatin1(SPOOL_PROVIDER_SOURCES))
+              .value_or(JellyfinNative::ProviderSources::Bundled);
+    logLine("providers: sources=%s", SPOOL_PROVIDER_SOURCES);
     JellyfinNative::ProviderRegistry providers(&database);
-    providers.setInstallDirectory(QDir(JellyfinNative::persistentDataRoot()).filePath(QStringLiteral("providers")));
+    if (providerSources != JellyfinNative::ProviderSources::Bundled)
+        providers.setInstallDirectory(QDir(JellyfinNative::persistentDataRoot()).filePath(QStringLiteral("providers")));
     providers.loadModules();
 #if !defined(JELLYFIN_NATIVE_WEBOS) && !defined(SPOOL_ANDROID)
     {
@@ -676,9 +683,14 @@ int main(int argc, char **argv)
         [&hub, &providerCapabilities] { providerCapabilities.setFlags(hub.capabilities()); });
     JellyfinNative::configurePlatformPlaybackCapabilities(
         [&hub](const QStringList& codecs, bool restrict) { hub.setVideoCodecs(codecs, restrict); }, hub);
+    // Only an open build may be pointed at another store; a curated one is
+    // curated by this one.
+    const QString officialStore = QStringLiteral("https://spool-player.github.io/spool-providers/");
     JellyfinNative::ProviderStore store(&providers, &database, networkAccessManager,
-        QUrl(optionValue(arguments, QStringLiteral("--provider-store"), "SPOOL_PROVIDER_STORE",
-            QStringLiteral("https://spool-player.github.io/spool-providers/"))));
+        QUrl(providerSources == JellyfinNative::ProviderSources::Open
+                ? optionValue(arguments, QStringLiteral("--provider-store"), "SPOOL_PROVIDER_STORE", officialStore)
+                : officialStore),
+        providerSources);
 
     const JellyfinNative::CpuTopology cpuTopology = JellyfinNative::detectCpuTopology();
     logLine("artwork: cpu logical=%d physical=%d smt=%s source=%s decodeThreads=%d", cpuTopology.logicalCpus,

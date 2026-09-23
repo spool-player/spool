@@ -75,6 +75,7 @@ public:
     ~ProviderRegistry() override;
 
     void setRuntimeEnvironment(QVariantMap device, ScriptRuntime::NetworkHooks hooks);
+    // Left unset, nothing is installed or loaded from disk.
     void setInstallDirectory(const QString& path);
     QString installDirectory() const
     {

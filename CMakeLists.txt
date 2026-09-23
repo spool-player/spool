@@ -29,6 +29,14 @@ option(JELLYFIN_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 set(SPOOL_MACOS_CREDENTIAL_SERVICE "com.sachk.spool.dev" CACHE STRING
     "macOS Keychain service used for persisted session tokens")
 option(JELLYFIN_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+# Where the app may take provider code from. Release builds are open; a build
+# submitted to Google Play or the App Store is curated (store catalogues only)
+# or bundled (no downloads). See docs/providers.md.
+set(SPOOL_PROVIDER_SOURCES "open" CACHE STRING "Provider sources: open, curated or bundled")
+set_property(CACHE SPOOL_PROVIDER_SOURCES PROPERTY STRINGS open curated bundled)
+if(NOT SPOOL_PROVIDER_SOURCES MATCHES "^(open|curated|bundled)$")
+    message(FATAL_ERROR "SPOOL_PROVIDER_SOURCES must be open, curated or bundled, not '${SPOOL_PROVIDER_SOURCES}'")
+endif()
 include(CTest)
 
 set(MPV_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/mpv" CACHE PATH "mpv source tree")
@@ -1075,6 +1083,7 @@ if(UNIX AND NOT APPLE AND NOT ANDROID)
 endif()
 target_compile_definitions(jellyfin-native PRIVATE
     JELLYFIN_VERSION="${PROJECT_VERSION}"
+    SPOOL_PROVIDER_SOURCES="${SPOOL_PROVIDER_SOURCES}"
     $<$<BOOL:${TOUCHSCREEN}>:TOUCHSCREEN>
 )
 

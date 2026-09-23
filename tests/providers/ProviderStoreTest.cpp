@@ -123,19 +123,21 @@ JELLYFIN_TEST_MAIN("provider-store")
     }
 
     QHash<QByteArray, QByteArray> routes;
+    QList<QByteArray> requested;
     int requests = 0;
     QTcpServer server;
     require(server.listen(QHostAddress::LocalHost), "fixture server listens");
     QObject::connect(&server, &QTcpServer::newConnection, &app, [&] {
         while (QTcpSocket *socket = server.nextPendingConnection()) {
             QObject::connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
-            QObject::connect(socket, &QTcpSocket::readyRead, socket, [socket, &routes, &requests] {
+            QObject::connect(socket, &QTcpSocket::readyRead, socket, [socket, &routes, &requested, &requests] {
                 const QByteArray request = socket->property("request").toByteArray() + socket->readAll();
                 socket->setProperty("request", request);
                 if (!request.contains("\r\n\r\n"))
                     return;
                 ++requests;
                 const QByteArray path = request.split(' ').value(1);
+                requested.append(path);
                 const bool found = routes.contains(path);
                 const QByteArray body = routes.value(path);
                 socket->write((found ? "HTTP/1.1 200 OK" : "HTTP/1.1 404 Not Found")
@@ -256,6 +258,75 @@ JELLYFIN_TEST_MAIN("provider-store")
         require(registry.module(QStringLiteral("fixture.test"))->manifest.version == QStringLiteral("1.1.0")
                 && store.updates().isEmpty(),
             "the new version replaces the old and the offer goes away");
+    }
+
+    // A curated build (Google Play, the App Store) installs from the store's
+    // catalogues and never follows a provider's own link.
+    const QByteArray linkedV2
+        = ProviderFixture::archive(ProviderFixture::package(QStringLiteral("fixture.linked"), QStringLiteral("1.1.0")));
+    routes.insert("/feed.test/linked2.tar.zst", linkedV2);
+    routes.insert("/feed.test/spool-provider.json",
+        QJsonDocument(QJsonObject::fromVariantMap(entryFor(linkedV2, QStringLiteral("fixture.linked"),
+                          QStringLiteral("1.1.0"), QStringLiteral("https://feed.test/linked2.tar.zst"))))
+            .toJson());
+    const auto checked = [&](ProviderStore& store) {
+        bool done = false;
+        const auto connection = QObject::connect(&store, &ProviderStore::updatesChanged, [&] { done = true; });
+        store.checkForUpdates(QStringLiteral("ask"));
+        waitUntil([&] { return done; }, "the update check finishes");
+        QObject::disconnect(connection);
+    };
+    {
+        ProviderStore store(
+            &registry, &database, &network, QUrl(QStringLiteral("https://store.test/")), ProviderSources::Curated);
+        require(store.storeAvailable() && !store.linksAllowed(), "a curated build has the store and no links");
+        problems.clear();
+        QObject::connect(&store, &ProviderStore::problem, [&](const QString& message) { problems.append(message); });
+        requested.clear();
+        store.addFromUrl(QStringLiteral("feed.test"));
+        require(problems.size() == 1
+                && problems.last().contains(QStringLiteral("only installs providers from its store"))
+                && requested.isEmpty(),
+            "adding by link is refused without a request");
+        checked(store);
+        require(!requested.contains("/feed.test/spool-provider.json") && store.updates().isEmpty(),
+            "a provider added by link is not updated from its link");
+        store.refresh(true);
+        waitUntil([&] { return !store.loading(); }, "the curated catalogue loads");
+        require(listed(store.official(), QStringLiteral("fixture.test"), "installed"), "and lists the store");
+    }
+    {
+        ProviderStore store(&registry, &database, &network, QUrl(QStringLiteral("https://store.test/")));
+        checked(store);
+        require(store.updates().size() == 1, "an open build does follow the link, so the check above meant something");
+    }
+
+    // A bundled build has no store and loads nothing from disk, even with
+    // providers installed there by an earlier build.
+    {
+        ProviderRegistry bundledRegistry(&database);
+        bundledRegistry.loadModules();
+        require(bundledRegistry.module(QStringLiteral("spool.jellyfin"))
+                && !bundledRegistry.module(QStringLiteral("fixture.test")),
+            "a bundled build runs only its own providers");
+        ProviderStore store(&bundledRegistry, &database, &network, QUrl(QStringLiteral("https://store.test/")),
+            ProviderSources::Bundled);
+        require(!store.storeAvailable() && !store.linksAllowed(), "a bundled build has no store");
+        requested.clear();
+        store.refresh(true);
+        store.checkForUpdates(QStringLiteral("auto"));
+        store.addFromUrl(QStringLiteral("feed.test"));
+        QCoreApplication::processEvents();
+        require(!store.loading() && requested.isEmpty(), "and asks the network for nothing");
+        require(listed(store.official(), QStringLiteral("spool.jellyfin"), "installed"),
+            "its bundled providers are still listed");
+        bool refused = false;
+        try {
+            QCoro::waitFor(bundledRegistry.install(ProviderFixture::package(QStringLiteral("fixture.manual"))));
+        } catch (const std::exception&) {
+            refused = true;
+        }
+        require(refused, "and its registry has nowhere to install to");
     }
     return 0;
 }
