@@ -114,7 +114,7 @@ FocusScope {
             readonly property int columns: Math.max(1, Math.min(root.count, Math.floor(parent.width / cellWidth)))
             Layout.preferredWidth: columns * cellWidth
             cellWidth: root.tileSize + Metrics.scaled(28)
-            cellHeight: root.tileSize + Metrics.scaled(96)
+            cellHeight: root.tileSize + Metrics.scaled(82)
             model: root.count
             interactive: contentHeight > height
             boundsBehavior: Flickable.StopAtBounds
@@ -136,7 +136,6 @@ FocusScope {
                     focused: cell.GridView.isCurrentItem && Metrics.keyboardFocusActive
                     addTile: !cell.account
                     username: cell.account ? cell.account.label : "Add"
-                    providerName: cell.account ? cell.account.providerName : ""
                     serverName: cell.account ? cell.account.detail : ""
                     needsSignIn: Boolean(cell.account && cell.account.needsSignIn)
                     opacity: !cell.account || cell.account.enabled ? 1 : 0.55
