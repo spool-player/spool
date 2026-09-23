@@ -21,18 +21,18 @@ done
 HEAPTRACK_UNWIND_FLAGS="-fasynchronous-unwind-tables -funwind-tables -fno-omit-frame-pointer -g" \
   "$ROOT/build-ipk.sh"
 
-[[ -x "$APP_DIR/bin/jellyfin-native" ]] || {
-  printf 'error: canonical webOS stage is missing: %s\n' "$APP_DIR/bin/jellyfin-native" >&2
+[[ -x "$APP_DIR/bin/spool" ]] || {
+  printf 'error: canonical webOS stage is missing: %s\n' "$APP_DIR/bin/spool" >&2
   exit 1
 }
-mv "$APP_DIR/bin/jellyfin-native" "$APP_DIR/bin/jellyfin-native.real"
-install -m 0755 "$ROOT/tools/webos/heaptrack-launch-shim.sh" "$APP_DIR/bin/jellyfin-native"
+mv "$APP_DIR/bin/spool" "$APP_DIR/bin/spool.real"
+install -m 0755 "$ROOT/tools/webos/heaptrack-launch-shim.sh" "$APP_DIR/bin/spool"
 mkdir -p "$APP_DIR/lib/heaptrack/libexec" "$PROFILE_OUTPUT"
 install -m 0755 "$PRELOAD" "$APP_DIR/lib/heaptrack/libheaptrack_preload.so"
 install -m 0755 "$HEAPTRACK_BIN" "$APP_DIR/bin/heaptrack"
 install -m 0755 "$HEAPTRACK_ENV" "$APP_DIR/lib/heaptrack/libexec/heaptrack_env"
 patchelf --force-rpath --set-rpath '$ORIGIN/..' "$APP_DIR/lib/heaptrack/libheaptrack_preload.so"
-cp -f "$INSTALL_DIR/bin/jellyfin-native" "$ROOT/build/jellyfin-native.unstripped"
+cp -f "$INSTALL_DIR/bin/spool" "$ROOT/build/spool.unstripped"
 "$SDK_ROOT/bin/arm-webos-linux-gnueabi-strip" --strip-unneeded \
   "$APP_DIR/lib/heaptrack/libheaptrack_preload.so" "$APP_DIR/bin/heaptrack" \
   "$APP_DIR/lib/heaptrack/libexec/heaptrack_env"

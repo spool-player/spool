@@ -11,7 +11,7 @@
 #include <QStringList>
 #include <QVariant>
 
-namespace JellyfinNative {
+namespace Spool {
 
 enum class MetaJsonKeyPolicy {
     CamelCase,
@@ -241,4 +241,4 @@ QList<T> metaListFromJson(const QJsonArray& array, MetaJsonKeyPolicy policy = Me
     return MetaJsonDetail::listFromJson<T>(array, policy);
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

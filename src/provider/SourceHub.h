@@ -17,7 +17,7 @@
 #include <optional>
 #include <vector>
 
-namespace JellyfinNative {
+namespace Spool {
 
 class ProviderRegistry;
 
@@ -198,4 +198,4 @@ private:
     quint64 m_searchSerial = 0;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

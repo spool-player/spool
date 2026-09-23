@@ -14,7 +14,7 @@
 #include "../protocol/wayland-text-client-protocol.h"
 #include "WebOSKeysymMap.h"
 
-namespace JellyfinNative {
+namespace Spool {
 
 // Preedit state accumulated between preedit_styling/cursor and the final
 // preedit_string event.
@@ -114,4 +114,4 @@ private:
     InputPanelState m_inputPanelState = InputPanelUnknownState;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

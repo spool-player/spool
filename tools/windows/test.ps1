@@ -1,7 +1,7 @@
 . (Join-Path $PSScriptRoot 'common.ps1')
 Initialize-WindowsBuildEnvironment
 $root = Get-RepositoryRoot
-$testPath = "$(Join-Path $env:JELLYFIN_MPV_ROOT 'bin');$(Join-Path $env:JELLYFIN_QT_ROOT 'bin');$env:PATH"
+$testPath = "$(Join-Path $env:SPOOL_MPV_ROOT 'bin');$(Join-Path $env:SPOOL_QT_ROOT 'bin');$env:PATH"
 
 cmake --build (Join-Path $root 'build\windows-release\app')
 if ($LASTEXITCODE -ne 0) { throw 'Building Windows tests failed.' }

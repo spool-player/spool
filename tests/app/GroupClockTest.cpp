@@ -5,7 +5,7 @@
 #include <cstdlib>
 #include <iostream>
 
-using namespace JellyfinNative;
+using namespace Spool;
 
 namespace {
 
@@ -19,7 +19,7 @@ void require(bool condition, const char *message)
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("group-clock")
+SPOOL_TEST_MAIN("group-clock")
 {
     GroupClock clock;
     clock.addMeasurement({ 1'000, 1'060, 1'061, 1'101 });

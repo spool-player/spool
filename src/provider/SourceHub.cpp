@@ -8,7 +8,7 @@
 
 #include <algorithm>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
     constexpr qsizetype kPrefix = 8;
@@ -888,4 +888,4 @@ QString SourceHub::imageUrl(const ImageRequest& request) const
     return provider->artwork()->imageUrl(local);
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

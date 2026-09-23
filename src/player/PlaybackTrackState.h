@@ -10,7 +10,7 @@
 
 #include <optional>
 
-namespace JellyfinNative {
+namespace Spool {
 
 class PlaybackTrackState final {
 public:
@@ -51,4 +51,4 @@ private:
     int m_currentChapter = -1;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

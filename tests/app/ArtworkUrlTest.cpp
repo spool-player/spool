@@ -12,7 +12,7 @@
 #include <iostream>
 #include <memory>
 
-using namespace JellyfinNative;
+using namespace Spool;
 
 namespace {
 
@@ -43,7 +43,7 @@ QString parameter(const QString& url, const QString& name)
     return QUrlQuery(QUrl(url).query()).queryItemValue(name);
 }
 
-JellyfinNative::Testing::RecordingArtworkSource g_source;
+Spool::Testing::RecordingArtworkSource g_source;
 
 std::unique_ptr<ArtworkService> service()
 {
@@ -146,7 +146,7 @@ void unknownFormatFallsBackToThePlatformDefault()
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("artwork-url")
+SPOOL_TEST_MAIN("artwork-url")
 {
     QCoreApplication app(argc, argv);
     defaultsReproduceTheShippedQualities();

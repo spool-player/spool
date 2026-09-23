@@ -6,7 +6,7 @@
 #include <QUrl>
 #include <QUrlQuery>
 
-namespace JellyfinNative::Testing {
+namespace Spool::Testing {
 
 // Renders each request as a query string so a test can read back what the
 // artwork service asked for; the URL shape a real source produces is that
@@ -34,4 +34,4 @@ public:
     }
 };
 
-} // namespace JellyfinNative::Testing
+} // namespace Spool::Testing

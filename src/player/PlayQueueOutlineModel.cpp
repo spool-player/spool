@@ -6,7 +6,7 @@
 
 #include <algorithm>
 
-namespace JellyfinNative {
+namespace Spool {
 namespace {
 
     QString episodeCodeOf(const MovieItem& item)
@@ -362,4 +362,4 @@ bool PlayQueueOutlineModel::expandAll()
     return true;
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

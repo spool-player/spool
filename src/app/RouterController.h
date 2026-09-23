@@ -4,7 +4,7 @@
 #include <QVariantList>
 #include <QVariantMap>
 
-namespace JellyfinNative {
+namespace Spool {
 
 class RouterController final : public QObject {
     Q_OBJECT
@@ -63,4 +63,4 @@ private:
     bool m_recoveryRequested = false;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

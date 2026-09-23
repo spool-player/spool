@@ -2,7 +2,7 @@
 
 #include "../common/AsyncTask.h"
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
 
@@ -160,4 +160,4 @@ void PlaybackReporter::sendProgress()
         "playback progress report");
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

@@ -12,7 +12,7 @@ extern "C" {
 #include <webos-helpers/libhelpers.h>
 }
 
-namespace JellyfinNative {
+namespace Spool {
 namespace {
 
     std::function<void(const QString&)> g_callback;
@@ -62,4 +62,4 @@ void requestWebOSDeviceName(std::function<void(const QString&)> callback)
     }
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

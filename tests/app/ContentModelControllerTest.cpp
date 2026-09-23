@@ -23,19 +23,19 @@
 #include <utility>
 #include <vector>
 
-using JellyfinNative::BrowseDescriptor;
-using JellyfinNative::BrowseKind;
-using JellyfinNative::Catalog;
-using JellyfinNative::ContentModelController;
-using JellyfinNative::HomeModelController;
-using JellyfinNative::LibraryItem;
-using JellyfinNative::LibraryPrefetchController;
-using JellyfinNative::MovieGridModel;
-using JellyfinNative::MovieItem;
-using JellyfinNative::PagedMovieItems;
-using JellyfinNative::PersonCredits;
-using JellyfinNative::SearchController;
-using JellyfinNative::SearchSource;
+using Spool::BrowseDescriptor;
+using Spool::BrowseKind;
+using Spool::Catalog;
+using Spool::ContentModelController;
+using Spool::HomeModelController;
+using Spool::LibraryItem;
+using Spool::LibraryPrefetchController;
+using Spool::MovieGridModel;
+using Spool::MovieItem;
+using Spool::PagedMovieItems;
+using Spool::PersonCredits;
+using Spool::SearchController;
+using Spool::SearchSource;
 
 namespace {
 
@@ -373,7 +373,7 @@ bool waitForBrowsePage(Catalog& catalog, const BrowseDescriptor& descriptor, con
     timeout.setSingleShot(true);
     QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
 
-    JellyfinNative::Async::runDetached(
+    Spool::Async::runDetached(
         catalog.fetchBrowsePage(descriptor, 0, 72, queryOptions),
         [&page, &finished, &loop](PagedMovieItems value) {
             page = std::move(value);
@@ -381,7 +381,7 @@ bool waitForBrowsePage(Catalog& catalog, const BrowseDescriptor& descriptor, con
             loop.quit();
         },
         [&error, &finished, &loop](const std::exception_ptr& exception) {
-            error = JellyfinNative::exceptionMessage(exception);
+            error = Spool::exceptionMessage(exception);
             finished = true;
             loop.quit();
         },
@@ -446,7 +446,7 @@ bool waitForPersonRows(ContentModelController& controller, int timeoutMs)
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("content-model-controller")
+SPOOL_TEST_MAIN("content-model-controller")
 {
     QCoreApplication app(argc, argv);
 
@@ -629,18 +629,18 @@ JELLYFIN_TEST_MAIN("content-model-controller")
             QJsonArray {
                 QJsonObject {
                     { QStringLiteral("order"), 0 },
-                    { QStringLiteral("library"), JellyfinNative::metaToJson(homeLibraries[0]) },
-                    { QStringLiteral("items"), QJsonArray { JellyfinNative::metaToJson(updatedShow) } },
+                    { QStringLiteral("library"), Spool::metaToJson(homeLibraries[0]) },
+                    { QStringLiteral("items"), QJsonArray { Spool::metaToJson(updatedShow) } },
                 },
                 QJsonObject {
                     { QStringLiteral("order"), 1 },
-                    { QStringLiteral("library"), JellyfinNative::metaToJson(homeLibraries[1]) },
-                    { QStringLiteral("items"), QJsonArray { JellyfinNative::metaToJson(singleShowItems->get(0)) } },
+                    { QStringLiteral("library"), Spool::metaToJson(homeLibraries[1]) },
+                    { QStringLiteral("items"), QJsonArray { Spool::metaToJson(singleShowItems->get(0)) } },
                 },
                 QJsonObject {
                     { QStringLiteral("order"), 2 },
-                    { QStringLiteral("library"), JellyfinNative::metaToJson(homeLibraries[2]) },
-                    { QStringLiteral("items"), QJsonArray { JellyfinNative::metaToJson(photoItems->get(0)) } },
+                    { QStringLiteral("library"), Spool::metaToJson(homeLibraries[2]) },
+                    { QStringLiteral("items"), QJsonArray { Spool::metaToJson(photoItems->get(0)) } },
                 },
             } },
     };

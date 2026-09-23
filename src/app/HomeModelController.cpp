@@ -17,7 +17,7 @@
 #include <algorithm>
 #include <utility>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
     constexpr int kHomePayloadSchemaVersion = 12;
@@ -536,4 +536,4 @@ QJsonObject HomeModelController::payloadFromSections(const std::vector<MovieItem
     };
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

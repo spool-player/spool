@@ -102,7 +102,7 @@ build_app() {
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_SYSTEM_PREFIX_PATH="$NDK_PREFIX_PATH" \
     -DBUILD_TESTING=OFF \
-    -DJELLYFIN_NATIVE_WEBOS=OFF \
+    -DSPOOL_WEBOS=OFF \
     -DANDROID_ABI="$ABI" \
     -DANDROID_PLATFORM=android-28 \
     -DANDROID_DEPS_PREFIX="$DEPS_PREFIX" \
@@ -111,7 +111,7 @@ build_app() {
   # QT_QML_IMPORT_SCANNER_EXTRA_ARGS. A cache miss leaves Qt's sources under
   # build/, so scanning the repository deploys imports from Qt's own tests.
   # Restrict its scan to application QML; generated resources remain in qrcFiles.
-  python3 - "$build/android-jellyfin-native-deployment-settings.json" "$ROOT/qml" <<'PY'
+  python3 - "$build/android-spool-deployment-settings.json" "$ROOT/qml" <<'PY'
 import json
 import pathlib
 import sys
@@ -121,9 +121,9 @@ settings = json.loads(path.read_text())
 settings["qml-root-path"] = [sys.argv[2]]
 path.write_text(json.dumps(settings, indent=2) + "\n")
 PY
-  cmake --build "$build" --target jellyfin-native_make_apk --parallel "$JOBS"
+  cmake --build "$build" --target spool_make_apk --parallel "$JOBS"
 
-  local apk="$build/android-build/jellyfin-native.apk"
+  local apk="$build/android-build/spool.apk"
   [[ -f "$apk" ]] || {
     echo "error: APK was not generated at $apk" >&2
     exit 1

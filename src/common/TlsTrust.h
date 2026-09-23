@@ -18,13 +18,13 @@
 #include <optional>
 
 #if !QT_CONFIG(ssl)
-#error "Spool for Jellyfin requires a Qt Network build with TLS support"
+#error "Spool requires a Qt Network build with TLS support"
 #endif
 
 class QNetworkAccessManager;
 class QWebSocket;
 
-namespace JellyfinNative {
+namespace Spool {
 
 // Writes everything the app trusts -- the platform store Qt resolves, plus any
 // certificate the viewer chose to remember -- to a PEM file and returns its
@@ -112,4 +112,4 @@ private:
     QQueue<Decision> m_queue;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

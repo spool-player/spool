@@ -7,7 +7,7 @@ extern "C" {
 #include <webos-helpers/libhelpers.h>
 }
 
-namespace JellyfinNative {
+namespace Spool {
 namespace {
 
     class WebOSScreenSaverBackend final : public ScreenSaverBackend {
@@ -62,4 +62,4 @@ std::unique_ptr<ScreenSaverBackend> createPlatformScreenSaverBackend()
     return std::make_unique<WebOSScreenSaverBackend>();
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

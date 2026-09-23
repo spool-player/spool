@@ -20,7 +20,7 @@
 
 #include <algorithm>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
     const QString kAccountsKey = QStringLiteral("providers/accounts/2");
@@ -786,4 +786,4 @@ void ProviderRegistry::removeAccount(const QString& accountId)
         [forget](const std::exception_ptr&) { forget(); }, "provider sign out");
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

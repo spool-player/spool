@@ -29,7 +29,7 @@ void require(bool condition, const char *message)
     }
 }
 
-bool hasTitle(const std::vector<JellyfinNative::MovieItem>& items, const QString& title)
+bool hasTitle(const std::vector<Spool::MovieItem>& items, const QString& title)
 {
     for (const auto& item : items) {
         if (item.title == title)
@@ -43,10 +43,10 @@ bool hasTitle(const std::vector<JellyfinNative::MovieItem>& items, const QString
 // The folder-of-files provider against the media fixtures: the one library,
 // its page, details, search, item state and a playable session, all from
 // nothing but a directory listing.
-JELLYFIN_TEST_MAIN("local-provider")
+SPOOL_TEST_MAIN("local-provider")
 {
     QCoreApplication app(argc, argv);
-    using namespace JellyfinNative;
+    using namespace Spool;
 
     const QString fixtures = QDir(QStringLiteral(TEST_SOURCE_DIR)).filePath(QStringLiteral("tests/media/fixtures"));
     LocalProvider provider(QStringLiteral("local-account"), fixtures);

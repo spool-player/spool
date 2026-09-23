@@ -2,7 +2,7 @@
 
 #include <QString>
 
-namespace JellyfinNative {
+namespace Spool {
 
 struct CpuTopology {
     int logicalCpus = 1;
@@ -14,4 +14,4 @@ struct CpuTopology {
 
 CpuTopology detectCpuTopology();
 
-} // namespace JellyfinNative
+} // namespace Spool

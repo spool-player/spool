@@ -4,7 +4,7 @@
 
 #include <cmath>
 
-namespace JellyfinNative {
+namespace Spool {
 
 void PlaybackPositionTracker::reset(double startSeconds)
 {
@@ -111,4 +111,4 @@ bool PlaybackPositionTracker::update(double seconds)
     return changed;
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

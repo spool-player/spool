@@ -14,18 +14,18 @@
 #include <iostream>
 #include <optional>
 
-using JellyfinNative::Detail::classifyInputEvent;
-using JellyfinNative::Detail::formatInputLatencyMiss;
-using JellyfinNative::Detail::formatUiLatency;
-using JellyfinNative::Detail::InputLatencyEventKind;
-using JellyfinNative::Detail::InputLatencyEventMetadata;
-using JellyfinNative::Detail::InputLatencyExpiredSamples;
-using JellyfinNative::Detail::InputLatencyRefreshSource;
-using JellyfinNative::Detail::InputLatencySample;
-using JellyfinNative::Detail::InputLatencyStage;
-using JellyfinNative::Detail::InputLatencyTimeline;
-using JellyfinNative::Detail::shouldWarnInputLatency;
-using JellyfinNative::Detail::UiLatencySample;
+using Spool::Detail::classifyInputEvent;
+using Spool::Detail::formatInputLatencyMiss;
+using Spool::Detail::formatUiLatency;
+using Spool::Detail::InputLatencyEventKind;
+using Spool::Detail::InputLatencyEventMetadata;
+using Spool::Detail::InputLatencyExpiredSamples;
+using Spool::Detail::InputLatencyRefreshSource;
+using Spool::Detail::InputLatencySample;
+using Spool::Detail::InputLatencyStage;
+using Spool::Detail::InputLatencyTimeline;
+using Spool::Detail::shouldWarnInputLatency;
+using Spool::Detail::UiLatencySample;
 
 namespace {
 
@@ -501,7 +501,7 @@ void testUiLatencyFormatter()
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("input-latency-monitor")
+SPOOL_TEST_MAIN("input-latency-monitor")
 {
     testDisabledCapture();
     testEventClassifier();

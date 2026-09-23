@@ -6,11 +6,11 @@
 #include <QFileInfo>
 #include <QString>
 
-namespace JellyfinNative::CredentialStore::FileBackend {
+namespace Spool::CredentialStore::FileBackend {
 
 inline QString root()
 {
-    return qEnvironmentVariable("JELLYFIN_CREDENTIAL_STORE_DIR");
+    return qEnvironmentVariable("SPOOL_CREDENTIAL_STORE_DIR");
 }
 
 inline bool enabled()
@@ -57,4 +57,4 @@ inline void clear()
     QDir(root()).removeRecursively();
 }
 
-} // namespace JellyfinNative::CredentialStore::FileBackend
+} // namespace Spool::CredentialStore::FileBackend

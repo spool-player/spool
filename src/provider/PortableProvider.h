@@ -7,7 +7,7 @@
 #include "SearchSource.h"
 #include "UserItemStateSink.h"
 
-namespace JellyfinNative {
+namespace Spool {
 
 class ProviderRegistry;
 
@@ -115,4 +115,4 @@ private:
     Playback *m_playback = nullptr;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

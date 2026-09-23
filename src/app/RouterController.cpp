@@ -6,7 +6,7 @@
 #include <QSet>
 #include <QSettings>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
 
@@ -285,4 +285,4 @@ bool RouterController::restoreSnapshot()
     return true;
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

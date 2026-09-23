@@ -11,7 +11,7 @@
 #include <algorithm>
 #include <stdexcept>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
 
@@ -614,4 +614,4 @@ qint64 normalizedResumeTicks(qint64 resumeTicks, qint64 runtimeTicks)
     return isMeaningfulResumePosition(resumeTicks, runtimeTicks) ? resumeTicks : 0;
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

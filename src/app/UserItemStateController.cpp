@@ -7,7 +7,7 @@
 #include "HomeModelController.h"
 #include "SearchController.h"
 
-namespace JellyfinNative {
+namespace Spool {
 
 UserItemStateController::UserItemStateController(UserItemStateSink *sink, BrowseSessionController *currentItems,
     HomeModelController *home, ContentModelController *content, SearchController *search, QObject *parent)
@@ -121,4 +121,4 @@ void UserItemStateController::clearProgress(const QString& itemId)
         [this](const std::exception_ptr& error) { emit errorOccurred(exceptionMessage(error)); });
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

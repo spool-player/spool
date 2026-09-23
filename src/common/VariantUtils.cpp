@@ -2,7 +2,7 @@
 
 #include <QMetaType>
 
-namespace JellyfinNative {
+namespace Spool {
 
 QStringList stringListFromVariant(const QVariant& value)
 {
@@ -36,4 +36,4 @@ QStringList stringListFromVariantMap(const QVariantMap& map, const QString& key)
     return stringListFromVariant(map.value(key));
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

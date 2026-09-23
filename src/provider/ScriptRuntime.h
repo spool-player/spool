@@ -13,7 +13,7 @@
 class QNetworkAccessManager;
 class QWebSocket;
 
-namespace JellyfinNative {
+namespace Spool {
 
 // One provider module on its own worker thread and QJSEngine (API 0.2). JS
 // values never leave the worker; results are converted to native values
@@ -53,4 +53,4 @@ private:
     std::unique_ptr<Private> d;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

@@ -7,7 +7,7 @@
 #include <cmath>
 #include <cstdlib>
 
-using JellyfinNative::PlaybackPositionTracker;
+using Spool::PlaybackPositionTracker;
 
 namespace {
 
@@ -26,7 +26,7 @@ bool near(double actual, double expected)
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("playback-position-tracker")
+SPOOL_TEST_MAIN("playback-position-tracker")
 {
     PlaybackPositionTracker tracker;
     tracker.reset();

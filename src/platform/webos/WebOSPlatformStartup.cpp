@@ -5,7 +5,7 @@
 #include <cstdlib>
 #include <unistd.h>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
     bool ensureWaylandEnvironment()
@@ -45,8 +45,8 @@ bool configurePlatformEnvironment(const QString&)
     setenv("QT_WAYLAND_SHELL_INTEGRATION", "wl-shell", 1);
     setenv("QT_QPA_FONTDIR", "/usr/share/fonts", 1);
     setenv("QT_NO_GLIB", "1", 1);
-    setenv("JELLYFIN_QT_NO_CURSOR_SURFACE", "1", 1);
-    if (qEnvironmentVariableIsSet("JELLYFIN_NATIVE_VERBOSE_QT")) {
+    setenv("SPOOL_QT_NO_CURSOR_SURFACE", "1", 1);
+    if (qEnvironmentVariableIsSet("SPOOL_VERBOSE_QT")) {
         setenv("QT_DEBUG_PLUGINS", "1", 1);
         setenv("QT_LOGGING_RULES", "qt.qml*=true;qt.qpa*=true;qt.scenegraph*=true;qt.quick*=true;qt.plugin*=true", 1);
     } else {
@@ -75,4 +75,4 @@ void configurePlatformWindow(NativeAppWindow& window)
     window.setPersistentSceneGraph(false);
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

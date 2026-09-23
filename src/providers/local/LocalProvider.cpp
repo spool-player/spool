@@ -11,7 +11,7 @@
 #include <algorithm>
 #include <stdexcept>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
 
@@ -380,4 +380,4 @@ PlaybackSession LocalProvider::playbackSession(const QString& itemId) const
     return session;
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

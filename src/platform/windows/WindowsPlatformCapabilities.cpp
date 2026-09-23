@@ -1,6 +1,6 @@
 #include "platform/PlatformCapabilities.h"
 
-namespace JellyfinNative {
+namespace Spool {
 
 const PlatformCapabilities& platformCapabilities()
 {
@@ -11,4 +11,4 @@ const PlatformCapabilities& platformCapabilities()
     return capabilities;
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

@@ -7,7 +7,7 @@ class QQuickImageResponse;
 
 #include <optional>
 
-namespace JellyfinNative {
+namespace Spool {
 
 class ApplicationHooks;
 class PlayerController;
@@ -36,4 +36,4 @@ private:
     QPointer<QQuickImageResponse> m_artworkResponse;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

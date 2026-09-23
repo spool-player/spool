@@ -5,7 +5,7 @@
 
 #include <vector>
 
-namespace JellyfinNative {
+namespace Spool {
 
 struct MpvOption;
 
@@ -161,4 +161,4 @@ public:
     static std::vector<MpvOption> targetOptions(const RenderTargetProfile& profile);
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

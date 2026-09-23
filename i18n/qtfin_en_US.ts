@@ -68,8 +68,8 @@
         <translation>Skip Recap</translation>
     </message>
     <message id="login.title">
-        <source>Spool for Jellyfin</source>
-        <translation>Spool for Jellyfin</translation>
+        <source>Spool</source>
+        <translation>Spool</translation>
     </message>
     <message id="login.subtitle">
         <source>Native Qt 6.11 client for LG webOS</source>

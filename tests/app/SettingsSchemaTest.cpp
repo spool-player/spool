@@ -13,7 +13,7 @@
 #include <cstdlib>
 #include <iostream>
 
-using namespace JellyfinNative;
+using namespace Spool;
 
 namespace {
 
@@ -170,7 +170,7 @@ void requiredPersistedKeysArePresentExactlyOnce()
 void audioOutputChoicesMatchPlatform()
 {
     const SettingSpec& audioOutput = requiredSpec(QStringLiteral("settings/audioOutputMode"));
-#ifdef JELLYFIN_NATIVE_WEBOS
+#ifdef SPOOL_WEBOS
     const QStringList expectedChoices { QStringLiteral("alsa"), QStringLiteral("starfish-pcm") };
     const QString expectedDefault = QStringLiteral("alsa");
     const QString unknownFallback = QStringLiteral("alsa");
@@ -206,7 +206,7 @@ void audioOutputChoicesMatchPlatform()
     }
     require(normalizedSettingValue(audioOutput, QStringLiteral("unexpected")).toString() == unknownFallback,
         QStringLiteral("unknown audio output did not use the platform default"));
-#ifndef JELLYFIN_NATIVE_WEBOS
+#ifndef SPOOL_WEBOS
     require(!expectedChoices.contains(QStringLiteral("starfish-pcm")),
         QStringLiteral("desktop audio choices must not expose Starfish"));
 #endif
@@ -567,7 +567,7 @@ void buttonChoicesAndLabelsExposePlayerActions()
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("settings-schema")
+SPOOL_TEST_MAIN("settings-schema")
 {
     QCoreApplication app(argc, argv);
     requiredPersistedKeysArePresentExactlyOnce();

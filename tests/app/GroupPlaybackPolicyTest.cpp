@@ -6,7 +6,7 @@
 #include <cstdlib>
 #include <iostream>
 
-using namespace JellyfinNative;
+using namespace Spool;
 
 namespace {
 
@@ -28,7 +28,7 @@ bool near(double value, double expected, double tolerance = 0.001)
 // The timing policy watching together runs on, whichever provider hosts the
 // group: when drift is corrected by rate or by seeking, and when a queue
 // handoff or a seek may unpause the group.
-JELLYFIN_TEST_MAIN("group-playback-policy")
+SPOOL_TEST_MAIN("group-playback-policy")
 {
     require(GroupDriftPolicy::evaluate(99.0).method == GroupCorrection::Method::None,
         "drift below the speed threshold must not be corrected");

@@ -1,4 +1,4 @@
-function(jellyfin_add_desktop_sources native_target core_target)
+function(spool_add_desktop_sources native_target core_target)
     target_sources(${core_target} PRIVATE
         src/platform/desktop/DesktopNativeAppWindow.cpp
         src/platform/desktop/DesktopMpvConfigPolicy.cpp

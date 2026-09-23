@@ -16,7 +16,7 @@
 #include <type_traits>
 #include <utility>
 
-namespace JellyfinNative::Async {
+namespace Spool::Async {
 
 // Runs `work` on `pool` (the global pool by default) and hands back a future
 // a coroutine can await, for disk and CPU work that must stay off the GUI
@@ -119,4 +119,4 @@ void runLatest(Context *context, QCoro::Task<T> task, const RequestGeneration& g
     }
 }
 
-} // namespace JellyfinNative::Async
+} // namespace Spool::Async

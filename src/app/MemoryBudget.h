@@ -3,7 +3,7 @@
 #include <QByteArray>
 #include <QtGlobal>
 
-namespace JellyfinNative {
+namespace Spool {
 
 struct MemoryBudget {
     qint64 memTotalBytes = 0;
@@ -16,4 +16,4 @@ struct MemoryBudget {
     static MemoryBudget detect();
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

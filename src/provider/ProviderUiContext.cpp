@@ -10,7 +10,7 @@
 #include <algorithm>
 #include <utility>
 
-namespace JellyfinNative {
+namespace Spool {
 namespace {
     bool smallResult(const QVariant& value, int& values, qsizetype& bytes)
     {
@@ -271,4 +271,4 @@ void ProviderUiContext::complete(const QVariantMap& result)
     finish(result, false);
     deleteLater();
 }
-} // namespace JellyfinNative
+} // namespace Spool

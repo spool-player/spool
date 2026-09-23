@@ -2,7 +2,7 @@
 
 #include "Provider.h"
 
-namespace JellyfinNative {
+namespace Spool {
 
 // What the enabled accounts can do between them, as the ProviderCapabilities
 // QML singleton. Shared QML binds each optional control to one of these.
@@ -72,4 +72,4 @@ private:
     Provider::Capabilities m_flags;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

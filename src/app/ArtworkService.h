@@ -25,7 +25,7 @@
 
 class QQuickImageResponse;
 
-namespace JellyfinNative {
+namespace Spool {
 
 class ArtworkByteCache final {
 public:
@@ -148,4 +148,4 @@ private:
     int m_nextRequestId = 1;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

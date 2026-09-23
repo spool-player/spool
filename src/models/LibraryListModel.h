@@ -6,7 +6,7 @@
 
 #include <vector>
 
-namespace JellyfinNative {
+namespace Spool {
 
 class LibraryListModel final : public QAbstractListModel {
     Q_OBJECT
@@ -42,4 +42,4 @@ private:
     std::vector<LibraryItem> m_libraries;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

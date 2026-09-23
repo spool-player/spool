@@ -22,17 +22,17 @@ void require(bool condition, const char *message)
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("router-controller")
+SPOOL_TEST_MAIN("router-controller")
 {
     QCoreApplication app(argc, argv);
-    QCoreApplication::setOrganizationName(QStringLiteral("jellyfin-native-tests"));
+    QCoreApplication::setOrganizationName(QStringLiteral("spool-tests"));
     QCoreApplication::setApplicationName(QStringLiteral("router-controller"));
     QTemporaryDir settingsDir;
     require(settingsDir.isValid(), "temporary settings directory");
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settingsDir.path());
     QSettings().clear();
-    JellyfinNative::RouterController router;
+    Spool::RouterController router;
 
     require(router.route() == QStringLiteral("login"), "initial route is login");
     router.reset(QStringLiteral("home"));
@@ -100,7 +100,7 @@ JELLYFIN_TEST_MAIN("router-controller")
     require(!router.canForward(), "reset invalidates forward history");
 
     {
-        JellyfinNative::RouterController activeSession;
+        Spool::RouterController activeSession;
         activeSession.beginSession(false);
         activeSession.reset(QStringLiteral("home"));
         activeSession.push(
@@ -111,7 +111,7 @@ JELLYFIN_TEST_MAIN("router-controller")
         activeSession.markCleanShutdown();
     }
 
-    JellyfinNative::RouterController recoveredSession;
+    Spool::RouterController recoveredSession;
     recoveredSession.beginSession(true);
     require(recoveredSession.recoveryPending(), "requested session recovery is pending");
     require(recoveredSession.route() == QStringLiteral("libraryGrid"), "recovered route");

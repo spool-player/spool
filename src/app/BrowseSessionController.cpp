@@ -8,7 +8,7 @@
 #include <QSettings>
 #include <algorithm>
 
-namespace JellyfinNative {
+namespace Spool {
 
 BrowseSessionController::BrowseSessionController(LibraryPrefetchController *prefetch, QObject *parent)
     : QObject(parent)
@@ -323,4 +323,4 @@ void BrowseSessionController::clearBrowseIdentity()
     m_descriptor = {};
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

@@ -6,7 +6,7 @@
 
 struct mpv_node;
 
-namespace JellyfinNative {
+namespace Spool {
 
 struct ParsedPlaybackTracks {
     QStringList subtitleLabels { QStringLiteral("Off") };
@@ -23,4 +23,4 @@ public:
     static QVariantList parseChapters(const mpv_node *node);
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

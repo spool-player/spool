@@ -6,7 +6,7 @@
 
 #include <optional>
 
-namespace JellyfinNative {
+namespace Spool {
 
 enum class UpdateChannel {
     Release,
@@ -32,4 +32,4 @@ struct UpdateManifestResult {
 UpdateManifestResult selectUpdate(
     const QByteArray& manifest, int currentVersionCode, bool allowPrerelease, const QString& assetKey);
 
-} // namespace JellyfinNative
+} // namespace Spool

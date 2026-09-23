@@ -18,7 +18,7 @@
 #include <functional>
 #include <iostream>
 
-using namespace JellyfinNative;
+using namespace Spool;
 
 namespace {
 
@@ -88,7 +88,7 @@ bool listed(const QVariantList& entries, const QString& id, const char *flag = n
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("provider-store")
+SPOOL_TEST_MAIN("provider-store")
 {
     QCoreApplication app(argc, argv);
 
@@ -152,7 +152,7 @@ JELLYFIN_TEST_MAIN("provider-store")
 
     QTemporaryDir directory;
     require(directory.isValid(), "temporary directory");
-    qputenv("JELLYFIN_CREDENTIAL_STORE_DIR", directory.filePath(QStringLiteral("credentials")).toUtf8());
+    qputenv("SPOOL_CREDENTIAL_STORE_DIR", directory.filePath(QStringLiteral("credentials")).toUtf8());
     DatabaseManager database;
     require(database.initialize(directory.filePath(QStringLiteral("cache.sqlite"))), "database opens");
     ProviderRegistry registry(&database);

@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a reproducible Spool for Jellyfin defect
+description: Report a reproducible Spool defect
 title: "[Bug]: "
 labels: [bug]
 body:

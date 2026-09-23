@@ -7,7 +7,7 @@
 #include <QTimer>
 #include <QtTypes>
 
-namespace JellyfinNative {
+namespace Spool {
 
 class PlaybackReporter final : public QObject {
     Q_OBJECT
@@ -48,4 +48,4 @@ private:
     quint64 m_generation = 0;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

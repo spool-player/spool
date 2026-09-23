@@ -9,7 +9,7 @@
 #include <QTimer>
 
 #include <vector>
-namespace JellyfinNative {
+namespace Spool {
 
 class LibraryPrefetchController;
 
@@ -17,12 +17,12 @@ class SearchController final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString query READ query NOTIFY queryChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
-    Q_PROPERTY(JellyfinNative::MovieGridModel *movieResults READ movieResults CONSTANT)
-    Q_PROPERTY(JellyfinNative::MovieGridModel *seriesResults READ seriesResults CONSTANT)
-    Q_PROPERTY(JellyfinNative::MovieGridModel *episodeResults READ episodeResults CONSTANT)
-    Q_PROPERTY(JellyfinNative::MovieGridModel *otherResults READ otherResults CONSTANT)
+    Q_PROPERTY(Spool::MovieGridModel *movieResults READ movieResults CONSTANT)
+    Q_PROPERTY(Spool::MovieGridModel *seriesResults READ seriesResults CONSTANT)
+    Q_PROPERTY(Spool::MovieGridModel *episodeResults READ episodeResults CONSTANT)
+    Q_PROPERTY(Spool::MovieGridModel *otherResults READ otherResults CONSTANT)
     Q_PROPERTY(int resultCount READ resultCount NOTIFY resultsChanged)
-    Q_PROPERTY(JellyfinNative::MovieGridModel *suggestions READ suggestions CONSTANT)
+    Q_PROPERTY(Spool::MovieGridModel *suggestions READ suggestions CONSTANT)
     Q_PROPERTY(bool suggestionsBusy READ suggestionsBusy NOTIFY suggestionsChanged)
 
 public:
@@ -106,4 +106,4 @@ private:
     QTimer m_debounceTimer;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

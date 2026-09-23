@@ -304,7 +304,7 @@ set_appdir_rpaths() {
 # UTF-8, which glibc does itself.
 bundle_glibc() {
   local interp glibc_lib lib elf
-  interp="$("$PATCHELF_BIN" --print-interpreter "$APPDIR/usr/bin/jellyfin-native")"
+  interp="$("$PATCHELF_BIN" --print-interpreter "$APPDIR/usr/bin/spool")"
   glibc_lib="$(dirname "$interp")"
   GLIBC_VERSION="$("$interp" --version | sed -n '1s/.* version \([0-9]*\.[0-9]*\).*/\1/p')"
   if [[ -z "$GLIBC_VERSION" ]]; then
@@ -344,7 +344,7 @@ audit_and_sweep_appdir_elfs() {
   local elf rel status kind
   local -a audit_args=(
     elf "$APPDIR"
-    --root usr/bin/jellyfin-native
+    --root usr/bin/spool
     --allow-system libGLESv2.so.2
     --allow-system libgbm.so.1
     --allow-system libglapi.so.0
@@ -384,8 +384,8 @@ audit_and_sweep_appdir_elfs() {
   python3 "$APP_ROOT/tools/package-audit.py" "${audit_args[@]}"
 }
 
-if [[ ! -x "$APP_INSTALL/bin/jellyfin-native" ]]; then
-  echo "error: installed build output not found at $APP_INSTALL/bin/jellyfin-native" >&2
+if [[ ! -x "$APP_INSTALL/bin/spool" ]]; then
+  echo "error: installed build output not found at $APP_INSTALL/bin/spool" >&2
   exit 1
 fi
 
@@ -394,7 +394,7 @@ if [[ -d "$APPDIR" ]]; then
   chmod -R u+w "$APPDIR" 2>/dev/null || true
 fi
 rm -rf "$APPDIR"
-mkdir -p "$APPDIR/usr" "$APPDIR/usr/share/jellyfin-native/notices"
+mkdir -p "$APPDIR/usr" "$APPDIR/usr/share/spool/notices"
 cp -a "$APP_INSTALL/." "$APPDIR/usr/"
 if command -v secret-tool >/dev/null 2>&1; then
   mkdir -p "$APPDIR/usr/libexec"
@@ -414,7 +414,7 @@ cp -f "$APP_ROOT/app/notices/OPEN_SOURCE_NOTICES.txt" "$APP_ROOT/LICENSE" \
   "$APP_ROOT/qml/fonts/AtkinsonHyperlegible-LICENSE.txt" \
   "$APP_ROOT/qml/fonts/IBMPlexSans-LICENSE.txt" "$APP_ROOT/qml/fonts/PTRootUI-LICENSE.txt" \
   "$APP_ROOT/qml/fonts/MaterialIcons-LICENSE.txt" \
-  "$APPDIR/usr/share/jellyfin-native/notices/"
+  "$APPDIR/usr/share/spool/notices/"
 ln -s "usr/share/icons/hicolor/256x256/apps/com.sachk.spool.png" "$APPDIR/com.sachk.spool.png"
 ln -s "usr/share/applications/com.sachk.spool.desktop" "$APPDIR/com.sachk.spool.desktop"
 cat > "$APPDIR/AppRun" <<'APPRUN'
@@ -431,7 +431,7 @@ if [[ -z "${__EGL_VENDOR_LIBRARY_DIRS:-}" && -d /run/opengl-driver/share/glvnd/e
   export __EGL_VENDOR_LIBRARY_DIRS=/run/opengl-driver/share/glvnd/egl_vendor.d
 fi
 if [[ -z "${__EGL_VENDOR_LIBRARY_FILENAMES:-}" && -z "${__EGL_VENDOR_LIBRARY_DIRS:-}" && -d /run/opengl-driver/lib ]]; then
-  egl_vendor_dir="${XDG_RUNTIME_DIR:-/tmp}/jellyfin-native-egl-vendors"
+  egl_vendor_dir="${XDG_RUNTIME_DIR:-/tmp}/spool-egl-vendors"
   mkdir -p "$egl_vendor_dir"
   rm -f "$egl_vendor_dir"/*.json
   for egl_vendor in /run/opengl-driver/lib/libEGL_*.so*; do
@@ -475,7 +475,7 @@ host_glibc="$(getconf GNU_LIBC_VERSION 2>/dev/null)"
 host_glibc="${host_glibc#glibc }"
 if [[ -n "$host_glibc" && -x /lib64/ld-linux-x86-64.so.2 && ( ! -e /etc/NIXOS || -n "${NIX_LD:-}" ) \
   && "$(printf '%s\n' "$bundled_glibc" "$host_glibc" | sort -V | head -n1)" == "$bundled_glibc" ]]; then
-  exec "$HERE/usr/bin/jellyfin-native" "$@"
+  exec "$HERE/usr/bin/spool" "$@"
 fi
 # Nix's loader knows no host library directories and reads no ld.so.cache, so
 # name them: GPU drivers and what they link come from the host.
@@ -502,7 +502,7 @@ export SPOOL_ELF_LIBRARY_PATH="$HERE/usr/lib/glibc:$LD_LIBRARY_PATH$host_dirs"
 if [[ -z "${LOCALE_ARCHIVE:-}" && -f /usr/lib/locale/locale-archive ]]; then
   export LOCALE_ARCHIVE=/usr/lib/locale/locale-archive
 fi
-exec "$SPOOL_ELF_LOADER" --library-path "$SPOOL_ELF_LIBRARY_PATH" "$HERE/usr/bin/jellyfin-native" "$@"
+exec "$SPOOL_ELF_LOADER" --library-path "$SPOOL_ELF_LIBRARY_PATH" "$HERE/usr/bin/spool" "$@"
 APPRUN
 chmod +x "$APPDIR/AppRun"
 
@@ -548,12 +548,12 @@ while IFS= read -r dep; do
   esac
   append_library_path "$(dirname "$dep")"
   is_bundleable_elf_dep "$dep" || continue
-done < <(ldd "$APPDIR/usr/bin/jellyfin-native" "$APPDIR"/usr/lib/libmpv.so* 2>/dev/null | awk '/=> \// { print $3 } /^\// { print $1 }' | sort -u)
+done < <(ldd "$APPDIR/usr/bin/spool" "$APPDIR"/usr/lib/libmpv.so* 2>/dev/null | awk '/=> \// { print $3 } /^\// { print $1 }' | sort -u)
 
 export EXTRA_PLATFORM_PLUGINS="${EXTRA_PLATFORM_PLUGINS:-libqwayland.so}"
 export QML_SOURCES_PATHS="${QML_SOURCES_PATHS:-$APP_ROOT/qml}"
 export APPIMAGE_EXTRACT_AND_RUN="${APPIMAGE_EXTRACT_AND_RUN:-1}"
-export OUTPUT="${OUTPUT:-Spool-for-Jellyfin-${APP_VERSION}-x86_64.AppImage}"
+export OUTPUT="${OUTPUT:-Spool-${APP_VERSION}-x86_64.AppImage}"
 
 copy_elf_deps libQt6WebSockets.so.6
 set_appdir_rpaths

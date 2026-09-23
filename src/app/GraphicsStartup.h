@@ -6,7 +6,7 @@
 
 #include <memory>
 
-namespace JellyfinNative {
+namespace Spool {
 
 class NativeAppWindow;
 class WaylandHdrSurface;
@@ -34,9 +34,9 @@ private:
     NativeAppWindow& m_window;
     // Accessed only by direct scene-graph callbacks on the render thread.
     bool m_outputSnapshotPending = true;
-#if defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID) && !defined(JELLYFIN_NATIVE_WEBOS)
+#if defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID) && !defined(SPOOL_WEBOS)
     std::unique_ptr<WaylandHdrSurface> m_waylandHdrSurface;
 #endif
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

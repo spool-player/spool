@@ -19,7 +19,7 @@
 #include <optional>
 #include <vector>
 
-namespace JellyfinNative {
+namespace Spool {
 namespace {
 
     using Microsoft::WRL::ComPtr;
@@ -181,4 +181,4 @@ DisplayOutputCapabilities windowsD3D11DisplayOutput(QRhiSwapChain *swapchain)
     return display;
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

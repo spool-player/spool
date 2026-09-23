@@ -4,7 +4,7 @@
 
 #import <AppKit/AppKit.h>
 
-namespace JellyfinNative {
+namespace Spool {
 void NativeAppWindow::setTitlebarVisible(bool visible)
 {
     if (QGuiApplication::platformName() != QStringLiteral("cocoa"))
@@ -14,4 +14,4 @@ void NativeAppWindow::setTitlebarVisible(bool visible)
     for (NSWindowButton button : { NSWindowCloseButton, NSWindowMiniaturizeButton, NSWindowZoomButton })
         [window standardWindowButton:button].hidden = !visible;
 }
-} // namespace JellyfinNative
+} // namespace Spool

@@ -10,8 +10,8 @@ extern "C" {
 
 #include <cstdlib>
 
-using JellyfinNative::ParsedPlaybackTracks;
-using JellyfinNative::PlaybackTrackParser;
+using Spool::ParsedPlaybackTracks;
+using Spool::PlaybackTrackParser;
 
 namespace {
 
@@ -65,7 +65,7 @@ void require(bool condition, const char *message)
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("playback-track-parser")
+SPOOL_TEST_MAIN("playback-track-parser")
 {
     char *subtitleKeys[] = {
         const_cast<char *>("type"),

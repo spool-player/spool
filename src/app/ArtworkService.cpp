@@ -25,7 +25,7 @@
 #include <cmath>
 #include <utility>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
 
@@ -49,7 +49,7 @@ namespace {
         return sourceSize.scaled(requestedSize, Qt::KeepAspectRatioByExpanding);
     }
 
-#if defined(JELLYFIN_ARTWORK_ASPECT_DIAGNOSTICS)
+#if defined(SPOOL_ARTWORK_ASPECT_DIAGNOSTICS)
     bool shouldLogAspectDiagnostic(const QSize& source, const QSize& requested, const QSize& decoded)
     {
         if (!source.isValid() || !requested.isValid() || !decoded.isValid() || source.width() <= 0
@@ -83,7 +83,7 @@ namespace {
         reader.setAutoTransform(false);
         const QSize scaledSize = decodeSizeForRequest(reader.size(), requestedSize);
         if (scaledSize.isValid()) {
-#if defined(JELLYFIN_ARTWORK_ASPECT_DIAGNOSTICS)
+#if defined(SPOOL_ARTWORK_ASPECT_DIAGNOSTICS)
             if (shouldLogAspectDiagnostic(reader.size(), requestedSize, scaledSize)) {
                 qWarning() << "artwork: aspect-preserving decode"
                            << "source=" << reader.size() << "requested=" << requestedSize << "decode=" << scaledSize;
@@ -901,4 +901,4 @@ QQuickImageResponse *ArtworkImageProvider::requestImageResponse(const QString& i
                      : new ArtworkImageResponse(nullptr, {}, requestedSize);
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

@@ -10,7 +10,7 @@
 #include <algorithm>
 #include <utility>
 
-namespace JellyfinNative {
+namespace Spool {
 
 ContentModelController::ContentModelController(Catalog *catalog, LibraryPrefetchController *prefetch, QObject *parent)
     : QObject(parent)
@@ -418,4 +418,4 @@ void ContentModelController::finishDetailRowLoad(RequestGeneration::Token genera
     }
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

@@ -18,7 +18,7 @@
 #include <utility>
 #include <vector>
 
-namespace JellyfinNative {
+namespace Spool {
 
 class DatabaseWorker;
 
@@ -74,4 +74,4 @@ private:
     QFuture<bool> m_initializationFuture;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

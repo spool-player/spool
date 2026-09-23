@@ -7,9 +7,9 @@
 
 #include <cmath>
 
-using JellyfinNative::MediaSegment;
-using JellyfinNative::PlaybackSession;
-using JellyfinNative::PlaybackTimeline;
+using Spool::MediaSegment;
+using Spool::PlaybackSession;
+using Spool::PlaybackTimeline;
 
 namespace {
 
@@ -71,7 +71,7 @@ void testTrickplay()
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("playback-timeline")
+SPOOL_TEST_MAIN("playback-timeline")
 {
     QCoreApplication application(argc, argv);
     testSegments();

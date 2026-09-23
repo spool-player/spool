@@ -15,7 +15,7 @@
 #include <functional>
 #include <iostream>
 
-using namespace JellyfinNative;
+using namespace Spool;
 
 namespace {
 
@@ -42,12 +42,12 @@ void waitUntil(const std::function<bool()>& condition, const char *message)
 
 // Two folders and two JS accounts behind one hub: IDs scoped per account,
 // merged rows interleaved, and an account that fails left out, not fatal.
-JELLYFIN_TEST_MAIN("source-hub")
+SPOOL_TEST_MAIN("source-hub")
 {
     QCoreApplication app(argc, argv);
     QTemporaryDir directory;
     require(directory.isValid(), "temporary directory");
-    qputenv("JELLYFIN_CREDENTIAL_STORE_DIR", directory.filePath(QStringLiteral("credentials")).toUtf8());
+    qputenv("SPOOL_CREDENTIAL_STORE_DIR", directory.filePath(QStringLiteral("credentials")).toUtf8());
     DatabaseManager database;
     require(database.initialize(directory.filePath(QStringLiteral("cache.sqlite"))), "database opens");
     const QString installs = directory.filePath(QStringLiteral("providers"));

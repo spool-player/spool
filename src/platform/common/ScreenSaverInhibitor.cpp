@@ -4,7 +4,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
-namespace JellyfinNative {
+namespace Spool {
 
 ScreenSaverInhibitor::ScreenSaverInhibitor()
     : ScreenSaverInhibitor(createPlatformScreenSaverBackend())
@@ -52,4 +52,4 @@ QByteArray webOsScreenSaverResponsePayload(const QByteArray& requestPayload)
     return QJsonDocument(response).toJson(QJsonDocument::Compact);
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

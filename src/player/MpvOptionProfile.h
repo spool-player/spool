@@ -9,7 +9,7 @@
 
 #include <vector>
 
-namespace JellyfinNative {
+namespace Spool {
 
 struct MpvOption {
     QByteArray name;
@@ -67,4 +67,4 @@ public:
         const SubtitlePreferences& preferences, bool subtitlesEnabled, bool hdrPlayback = false);
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

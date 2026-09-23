@@ -12,17 +12,17 @@
 #include <memory>
 #include <vector>
 
-namespace JellyfinNative {
+namespace Spool {
 
 class LibraryPrefetchController;
 
 class ContentModelController final : public QObject {
     Q_OBJECT
-    Q_PROPERTY(JellyfinNative::MovieItem detailItem READ detailItem NOTIFY detailItemChanged)
-    Q_PROPERTY(JellyfinNative::MovieGridModel *detailSeasons READ detailSeasons CONSTANT)
-    Q_PROPERTY(JellyfinNative::MovieGridModel *detailSeasonOptions READ detailSeasonOptions CONSTANT)
-    Q_PROPERTY(JellyfinNative::MovieGridModel *detailSimilarItems READ detailSimilarItems CONSTANT)
-    Q_PROPERTY(JellyfinNative::MovieGridModel *linkedItems READ linkedItems CONSTANT)
+    Q_PROPERTY(Spool::MovieItem detailItem READ detailItem NOTIFY detailItemChanged)
+    Q_PROPERTY(Spool::MovieGridModel *detailSeasons READ detailSeasons CONSTANT)
+    Q_PROPERTY(Spool::MovieGridModel *detailSeasonOptions READ detailSeasonOptions CONSTANT)
+    Q_PROPERTY(Spool::MovieGridModel *detailSimilarItems READ detailSimilarItems CONSTANT)
+    Q_PROPERTY(Spool::MovieGridModel *linkedItems READ linkedItems CONSTANT)
     Q_PROPERTY(QVariantList personItemRows READ personItemRows NOTIFY personItemsChanged)
     Q_PROPERTY(bool detailRowsBusy READ detailRowsBusy NOTIFY detailRowsChanged)
     Q_PROPERTY(bool personItemsBusy READ personItemsBusy NOTIFY personItemsChanged)
@@ -109,4 +109,4 @@ private:
     RequestGeneration m_personItemsGeneration;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace JellyfinNative {
+namespace Spool {
 
 struct GroupClockSample {
     std::int64_t localRequestSentMs = 0;
@@ -36,4 +36,4 @@ private:
     bool m_ready = false;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

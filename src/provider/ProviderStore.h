@@ -12,7 +12,7 @@
 
 class QNetworkAccessManager;
 
-namespace JellyfinNative {
+namespace Spool {
 
 class DatabaseManager;
 class ProviderRegistry;
@@ -141,4 +141,4 @@ private:
     bool m_originsLoaded = false;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

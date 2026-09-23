@@ -15,7 +15,7 @@
 #include <cstdlib>
 #include <iostream>
 
-using namespace JellyfinNative;
+using namespace Spool;
 
 namespace {
 
@@ -29,13 +29,13 @@ void require(bool condition, const char *message)
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("database-manager")
+SPOOL_TEST_MAIN("database-manager")
 {
     QCoreApplication app(argc, argv);
     QTemporaryDir directory;
     require(directory.isValid(), "temporary directory should be available");
     const QString credentialPath = directory.filePath(QStringLiteral("credentials"));
-    qputenv("JELLYFIN_CREDENTIAL_STORE_DIR", credentialPath.toUtf8());
+    qputenv("SPOOL_CREDENTIAL_STORE_DIR", credentialPath.toUtf8());
     const QString databasePath = directory.filePath(QStringLiteral("cache.sqlite"));
     const QString statePath = directory.filePath(QStringLiteral("state.sqlite"));
 

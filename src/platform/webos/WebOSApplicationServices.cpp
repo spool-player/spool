@@ -22,7 +22,7 @@ extern "C" {
 #include <webos-helpers/libhelpers.h>
 }
 
-namespace JellyfinNative {
+namespace Spool {
 
 struct PlatformApplicationServices::PlatformData {
     PlatformData(QGuiApplication& guiApplication, NativeAppWindow& nativeWindow, ApplicationHooks& applicationHooks,
@@ -253,4 +253,4 @@ void PlatformApplicationServices::start()
         "{\"subscribe\":true}", &PlatformData::soundOutput);
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

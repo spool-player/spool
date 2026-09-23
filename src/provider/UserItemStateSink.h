@@ -4,7 +4,7 @@
 
 #include <QString>
 
-namespace JellyfinNative {
+namespace Spool {
 
 // Where per-user item state is written back: played, favourite and resume
 // position. Plain abstract class, see Catalog. A source that keeps no such
@@ -19,4 +19,4 @@ public:
     virtual QCoro::Task<void> setItemPlaybackPosition(QString itemId, qint64 positionTicks) = 0;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

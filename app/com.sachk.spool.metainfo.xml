@@ -3,14 +3,14 @@
   <id>com.sachk.spool</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MPL-2.0</project_license>
-  <name>Spool for Jellyfin</name>
-  <summary>Fast Jellyfin client for TVs and desktop</summary>
+  <name>Spool</name>
+  <summary>Fast media player for TVs and desktop</summary>
   <description>
-    <p>Browse and play media from a Jellyfin server with a native mpv playback pipeline.</p>
+    <p>Browse and play media from Jellyfin, Emby, Plex and more with a native mpv playback pipeline.</p>
   </description>
   <launchable type="desktop-id">com.sachk.spool.desktop</launchable>
   <provides>
-    <binary>jellyfin-native</binary>
+    <binary>spool</binary>
   </provides>
   <categories>
     <category>AudioVideo</category>

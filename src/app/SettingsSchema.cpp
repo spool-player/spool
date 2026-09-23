@@ -9,7 +9,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace JellyfinNative {
+namespace Spool {
 namespace {
 
     // Enhanced puts every frame through libplacebo, which is where the
@@ -540,7 +540,7 @@ const QVector<SettingSpec>& settingSpecs()
         // Only platforms with an in-app installer expose this preference.
         toggleSpec("updates/automatic", "Updates", "Automatic updates", "Check for new versions", true,
             SettingTarget::AutomaticUpdates)
-#if defined(JELLYFIN_NATIVE_WEBOS)
+#if defined(SPOOL_WEBOS)
             .onWebOS(),
 #else
             .onAndroid(),
@@ -568,7 +568,7 @@ const QVector<SettingSpec>& settingSpecs()
         pageSpec("action/clearLatencyStatistics", "Diagnostics", "Clear latency samples", "", SettingType::Action)
             .expert(),
 
-        pageSpec("about/version", "About", "Spool for Jellyfin", "", SettingType::ReadOnly),
+        pageSpec("about/version", "About", "Spool", "", SettingType::ReadOnly),
         pageSpec("about/locale", "About", "Active language", "", SettingType::ReadOnly),
         pageSpec("action/openSourceNotices", "About", "Open-source notices",
             "Licences and source for the bundled software", SettingType::Action),
@@ -677,4 +677,4 @@ QVariantList settingSchemaModel()
     return model;
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

@@ -8,11 +8,11 @@
 +    // remote. Any client-side set_cursor — including BlankCursor, which
 +    // sends set_cursor(NULL) and tells the compositor to hide its own
 +    // cursor — displaces or hides the LG pointer. When the app exports
-+    // JELLYFIN_QT_NO_CURSOR_SURFACE=1 we skip the entire updateCursor
++    // SPOOL_QT_NO_CURSOR_SURFACE=1 we skip the entire updateCursor
 +    // path, mirroring what xbmc's CSeatWebOS::SetCursor no-op achieves
 +    // with a custom QPA.
 +    static const bool noCursorSurface =
-+        qEnvironmentVariableIntValue("JELLYFIN_QT_NO_CURSOR_SURFACE") != 0;
++        qEnvironmentVariableIntValue("SPOOL_QT_NO_CURSOR_SURFACE") != 0;
 +    if (noCursorSurface)
 +        return;
 +

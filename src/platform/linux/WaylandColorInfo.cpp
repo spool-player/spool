@@ -14,7 +14,7 @@
 
 #include "protocol/color-management-v1-client-protocol.h"
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
 
@@ -305,4 +305,4 @@ bool WaylandHdrSurface::setEnabled(bool enabled)
     return m_surface != nullptr;
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

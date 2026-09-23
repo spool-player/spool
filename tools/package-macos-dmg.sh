@@ -26,7 +26,7 @@ if [[ -z "$APP_ARCH" ]]; then
   echo "error: could not determine the architecture of $APP_BINARY" >&2
   exit 1
 fi
-DMG_PATH="$ARTIFACT_DIR/Spool-for-Jellyfin-${APP_VERSION}-macOS-${APP_ARCH}.dmg"
+DMG_PATH="$ARTIFACT_DIR/Spool-${APP_VERSION}-macOS-${APP_ARCH}.dmg"
 
 mkdir -p "$ARTIFACT_DIR"
 rm -f "$DMG_PATH"
@@ -36,7 +36,7 @@ command -v create-dmg >/dev/null 2>&1 || {
   exit 1
 }
 create_dmg_args=(
-  --volname "Spool for Jellyfin"
+  --volname "Spool"
   --window-pos 200 120
   --window-size 640 420
   --icon-size 96

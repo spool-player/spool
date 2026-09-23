@@ -16,7 +16,7 @@
 #include <functional>
 #include <vector>
 
-namespace JellyfinNative {
+namespace Spool {
 
 class DatabaseManager;
 class PortableProvider;
@@ -148,7 +148,7 @@ signals:
     void modulesChanged();
     void accountsChanged();
     void restoredChanged();
-    void sourceStarted(JellyfinNative::Provider *provider);
+    void sourceStarted(Spool::Provider *provider);
     void sourceStopped(const QString& accountId);
     void accountAdded(const QString& accountId);
     void problem(const QString& message);
@@ -192,4 +192,4 @@ private:
     QThreadPool m_credentialPool;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

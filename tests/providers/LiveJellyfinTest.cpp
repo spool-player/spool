@@ -21,7 +21,7 @@
 #include <functional>
 #include <iostream>
 
-using namespace JellyfinNative;
+using namespace Spool;
 
 namespace {
 
@@ -64,7 +64,7 @@ QByteArray admin(QNetworkAccessManager& network, const QByteArray& method, const
 // The bundled Jellyfin provider against a real server, end to end through the
 // registry and hub. Opt-in: set SPOOL_LIVE_JELLYFIN to a server that has user
 // SPOOL_LIVE_USER / SPOOL_LIVE_PASSWORD and a movies library.
-JELLYFIN_TEST_MAIN("live-jellyfin")
+SPOOL_TEST_MAIN("live-jellyfin")
 {
     QCoreApplication app(argc, argv);
     const QString server = qEnvironmentVariable("SPOOL_LIVE_JELLYFIN");
@@ -76,7 +76,7 @@ JELLYFIN_TEST_MAIN("live-jellyfin")
     const QString password = qEnvironmentVariable("SPOOL_LIVE_PASSWORD");
 
     QTemporaryDir directory;
-    qputenv("JELLYFIN_CREDENTIAL_STORE_DIR", directory.filePath(QStringLiteral("credentials")).toUtf8());
+    qputenv("SPOOL_CREDENTIAL_STORE_DIR", directory.filePath(QStringLiteral("credentials")).toUtf8());
     DatabaseManager database;
     require(database.initialize(directory.filePath(QStringLiteral("cache.sqlite"))), "database opens");
     ProviderRegistry registry(&database);

@@ -1,6 +1,6 @@
 #include "PlaybackTrackState.h"
 
-namespace JellyfinNative {
+namespace Spool {
 
 QStringList PlaybackTrackState::subtitleTracks() const
 {
@@ -150,4 +150,4 @@ void PlaybackTrackState::applyAudioSelection(int index)
     m_selectedAudioIndex = index;
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

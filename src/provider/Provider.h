@@ -5,7 +5,7 @@
 #include <QString>
 #include <QVariantMap>
 
-namespace JellyfinNative {
+namespace Spool {
 
 class ArtworkSource;
 class Catalog;
@@ -85,4 +85,4 @@ signals:
 
 Q_DECLARE_OPERATORS_FOR_FLAGS(Provider::Capabilities)
 
-} // namespace JellyfinNative
+} // namespace Spool

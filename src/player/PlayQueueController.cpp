@@ -7,7 +7,7 @@
 #include <algorithm>
 #include <numeric>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
 
@@ -630,4 +630,4 @@ void PlayQueueController::emitQueueStateChanged(int previousCurrentIndex)
         emit currentIndexChanged();
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

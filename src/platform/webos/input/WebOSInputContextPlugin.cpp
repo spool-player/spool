@@ -18,7 +18,7 @@ QPlatformInputContext *WebOSPlatformInputContextPlugin::create(const QString& sy
 {
     Q_UNUSED(paramList);
     if (system.compare(QStringLiteral("webosim"), Qt::CaseInsensitive) == 0)
-        return new JellyfinNative::WebOSInputContext;
+        return new Spool::WebOSInputContext;
     return nullptr;
 }
 

@@ -10,7 +10,7 @@
 
 #include <vector>
 
-namespace JellyfinNative {
+namespace Spool {
 
 // The browse and lookup half of a media source: what the content, home and
 // prefetch controllers ask for today, and nothing more. It is a plain
@@ -48,4 +48,4 @@ public:
     virtual QCoro::Task<std::vector<MovieItem>> fetchItemsByIds(QStringList itemIds) = 0;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

@@ -39,7 +39,7 @@ extern "C" {
 #include <cstring>
 #include <utility>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
 
@@ -54,7 +54,7 @@ namespace {
         return level.constData();
     }
 
-    constexpr auto kMpvLogFileName = "spool-jellyfin-mpv.log";
+    constexpr auto kMpvLogFileName = "spool-mpv.log";
 
     constexpr uint64_t kTimePosRefreshReply = 0x6a666e7074730001ULL;
     constexpr auto kNightModeFilter
@@ -94,7 +94,7 @@ namespace {
 
     QByteArray mpvLogPath()
     {
-        const QByteArray logDir = qgetenv("JELLYFIN_NATIVE_LOG_DIR");
+        const QByteArray logDir = qgetenv("SPOOL_LOG_DIR");
         if (logDir.isEmpty()) {
             const QString fallback = startupCacheRoot({});
             return QFile::encodeName(QDir(fallback).filePath(QString::fromLatin1(kMpvLogFileName)));
@@ -448,7 +448,7 @@ bool PlayerController::configureAndInitializeMpv(mpv_handle *handle, bool needsV
     if (usesUserMpvConfig() && !applyMpvRuntimeOptions(MpvOptionApplyMode::Initial, handle))
         return false;
     int initializeResult;
-#if !defined(JELLYFIN_NATIVE_WEBOS) && !defined(Q_OS_ANDROID)
+#if !defined(SPOOL_WEBOS) && !defined(Q_OS_ANDROID)
     // Command-line precedence is applied by mpv after its own config parser,
     // before scripts or force-window can create a native player window.
     char embeddingOptions[][40] = {
@@ -1560,10 +1560,10 @@ void PlayerController::selectSubtitleStreamIndex(int streamIndex)
 {
     const int uiIndex = streamIndex < 0 ? 0 : uiTrackIndexForStream(QStringLiteral("Subtitle"), streamIndex, 1);
     if (uiIndex < 0) {
-        qWarning() << "player: Jellyfin subtitle stream index not found" << streamIndex;
+        qWarning() << "player: source subtitle stream index not found" << streamIndex;
         return;
     }
-    qInfo() << "player: selecting Jellyfin subtitle stream" << streamIndex << "uiIndex" << uiIndex;
+    qInfo() << "player: selecting source subtitle stream" << streamIndex << "uiIndex" << uiIndex;
     selectSubtitle(uiIndex);
 }
 
@@ -1586,10 +1586,10 @@ void PlayerController::selectAudioStreamIndex(int streamIndex)
 {
     const int uiIndex = uiTrackIndexForStream(QStringLiteral("Audio"), streamIndex, 0);
     if (uiIndex < 0) {
-        qWarning() << "player: Jellyfin audio stream index not found" << streamIndex;
+        qWarning() << "player: source audio stream index not found" << streamIndex;
         return;
     }
-    qInfo() << "player: selecting Jellyfin audio stream" << streamIndex << "uiIndex" << uiIndex;
+    qInfo() << "player: selecting source audio stream" << streamIndex << "uiIndex" << uiIndex;
     selectAudio(uiIndex);
 }
 
@@ -2619,4 +2619,4 @@ QVariantMap PlayerController::trickplayForSeconds(double seconds) const
     return result;
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

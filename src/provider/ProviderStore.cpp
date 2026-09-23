@@ -15,7 +15,7 @@
 #include <QNetworkReply>
 #include <QRegularExpression>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
     const QString kOriginsKey = QStringLiteral("providers/origins/1");
@@ -493,4 +493,4 @@ void ProviderStore::saveOrigins()
     m_database->saveSetting(kOriginsKey, QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact)));
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

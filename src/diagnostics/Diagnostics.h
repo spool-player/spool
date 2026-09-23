@@ -6,7 +6,7 @@
 
 #include <memory>
 
-namespace JellyfinNative::Diagnostics {
+namespace Spool::Diagnostics {
 
 void initialize(const QString& appId, const QString& rootPath);
 void shutdown();
@@ -62,4 +62,4 @@ private:
     bool m_finished = false;
 };
 
-} // namespace JellyfinNative::Diagnostics
+} // namespace Spool::Diagnostics

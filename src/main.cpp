@@ -33,7 +33,7 @@
 #include "provider/ProviderStore.h"
 #include "provider/SourceHub.h"
 #include "providers/local/LocalProvider.h"
-#if defined(SPOOL_ANDROID) || defined(JELLYFIN_NATIVE_WEBOS)
+#if defined(SPOOL_ANDROID) || defined(SPOOL_WEBOS)
 #include "platform/UpdateController.h"
 #endif
 #if defined(SPOOL_ANDROID)
@@ -54,8 +54,10 @@
 #include <QJsonObject>
 #include <QList>
 #include <QLoggingCategory>
+#include <QSettings>
+#include <QStandardPaths>
 
-#if defined(JELLYFIN_NATIVE_WEBOS)
+#if defined(SPOOL_WEBOS)
 #include "platform/webos/WebOSDeviceName.h"
 #endif
 #include <QMessageLogContext>
@@ -146,7 +148,7 @@ private:
 };
 
 constexpr auto kAppId = "com.sachk.spool";
-constexpr auto kAppVersion = JELLYFIN_VERSION;
+constexpr auto kAppVersion = SPOOL_VERSION;
 
 FILE *g_logFile = nullptr;
 QByteArray g_logPath;
@@ -178,14 +180,14 @@ void writeStandardError(const QByteArray& line)
 
 FILE *openRotatedLogFile(const QByteArray& path)
 {
-    JellyfinNative::rotateLogFile(path.constData());
+    Spool::rotateLogFile(path.constData());
     return fopen(path.constData(), "w");
 }
 
 FILE *openAppLogFile(const QString& appRootPath)
 {
-    const QByteArray fileName = QFile::encodeName(JellyfinNative::appLogFileName());
-    for (const QString& directory : JellyfinNative::appLogDirectories(appRootPath)) {
+    const QByteArray fileName = QFile::encodeName(Spool::appLogFileName());
+    for (const QString& directory : Spool::appLogDirectories(appRootPath)) {
         if (directory.isEmpty())
             continue;
         QDir().mkpath(directory);
@@ -195,11 +197,49 @@ FILE *openAppLogFile(const QString& appRootPath)
         if (FILE *file = openRotatedLogFile(path)) {
             QFile::setPermissions(QString::fromLocal8Bit(path), QFileDevice::ReadOwner | QFileDevice::WriteOwner);
             g_logPath = path;
-            qputenv("JELLYFIN_NATIVE_LOG_DIR", encodedDirectory);
+            qputenv("SPOOL_LOG_DIR", encodedDirectory);
             return file;
         }
     }
     return nullptr;
+}
+
+// Through 0.8 the app was "Spool for Jellyfin" from "spool-jellyfin". Its data,
+// cache and settings follow it to the new name once, so the rename signs
+// nobody out. Android keys storage to the package and has nothing to move.
+// Graphics startup reads the settings store, so this runs before it.
+void setIdentity()
+{
+#ifdef Q_OS_ANDROID
+    QCoreApplication::setOrganizationName(QStringLiteral("spool"));
+    QCoreApplication::setApplicationName(QStringLiteral("Spool"));
+#else
+    const QStandardPaths::StandardLocation locations[] = { QStandardPaths::AppDataLocation,
+        QStandardPaths::AppLocalDataLocation, QStandardPaths::CacheLocation, QStandardPaths::AppConfigLocation };
+    QCoreApplication::setOrganizationName(QStringLiteral("spool-jellyfin"));
+    QCoreApplication::setApplicationName(QStringLiteral("Spool for Jellyfin"));
+    QStringList previous;
+    for (const auto location : locations)
+        previous.append(QStandardPaths::writableLocation(location));
+    const QSettings previousSettings;
+    const QStringList keys = previousSettings.allKeys();
+    QCoreApplication::setOrganizationName(QStringLiteral("spool"));
+    QCoreApplication::setApplicationName(QStringLiteral("Spool"));
+    for (size_t index = 0; index < std::size(locations); ++index) {
+        const QString current = QStandardPaths::writableLocation(locations[index]);
+        const QString old = previous.at(qsizetype(index));
+        if (old != current && QFileInfo::exists(old) && !QFileInfo::exists(current)) {
+            QDir().mkpath(QFileInfo(current).absolutePath());
+            if (QDir().rename(old, current))
+                QDir().rmdir(QFileInfo(old).absolutePath());
+        }
+    }
+    QSettings settings;
+    if (settings.allKeys().isEmpty()) {
+        for (const QString& key : keys)
+            settings.setValue(key, previousSettings.value(key));
+    }
+#endif
 }
 
 void configurePersistentStartupCaches(const QString& cacheRoot)
@@ -254,7 +294,7 @@ void logLine(const char *fmt, ...)
 
 void qtMessageHandler(QtMsgType type, const QMessageLogContext& context, const QString& message)
 {
-    if (type == QtWarningMsg && !qEnvironmentVariableIsSet("JELLYFIN_NATIVE_VERBOSE_QT")) {
+    if (type == QtWarningMsg && !qEnvironmentVariableIsSet("SPOOL_VERBOSE_QT")) {
         const QString category = context.category ? QString::fromLatin1(context.category) : QString();
         if (message.startsWith(QStringLiteral("Detected locale \"C\""))
             || (category == QStringLiteral("qt.qpa.wayland")
@@ -281,7 +321,7 @@ void qtMessageHandler(QtMsgType type, const QMessageLogContext& context, const Q
         break;
     }
 
-    const QByteArray local = JellyfinNative::sanitizedLogMessage(message).toLocal8Bit();
+    const QByteArray local = Spool::sanitizedLogMessage(message).toLocal8Bit();
     if (context.category && context.category[0])
         logLine("[qt:%s] %s: %s", level, context.category, local.constData());
     else
@@ -297,7 +337,7 @@ void logQmlWarnings(const QList<QQmlError>& warnings)
         logLine("[qml] %s", qPrintable(warning.toString()));
 }
 
-#if !defined(JELLYFIN_NATIVE_WEBOS) && !defined(SPOOL_ANDROID)
+#if !defined(SPOOL_WEBOS) && !defined(SPOOL_ANDROID)
 QIcon applicationIcon(bool playerSelected)
 {
     const QString variant = playerSelected ? QStringLiteral("spool-film") : QStringLiteral("spool");
@@ -314,7 +354,7 @@ bool registerBundledFonts(const QString& appRootPath)
         "PTRootUI-Variable.ttf",
         "MaterialIcons-Regular.ttf",
     };
-    const QDir fontsDirectory(JellyfinNative::bundledFontsPath(appRootPath));
+    const QDir fontsDirectory(Spool::bundledFontsPath(appRootPath));
     for (const char *fileName : fontFiles) {
         const QString path = fontsDirectory.filePath(QString::fromLatin1(fileName));
         if (!QFileInfo::exists(path)) {
@@ -341,7 +381,7 @@ double splashCoreWidthDp()
     // this has to make the same choice the resource system just made or Qt's
     // first frame lands on different pixels than the frame it replaces.
     return static_cast<double>(
-        JellyfinNative::platformCapabilities().isTV ? SPOOL_SPLASH_CORE_WIDTH_DP_TV : SPOOL_SPLASH_CORE_WIDTH_DP_PHONE);
+        Spool::platformCapabilities().isTV ? SPOOL_SPLASH_CORE_WIDTH_DP_TV : SPOOL_SPLASH_CORE_WIDTH_DP_PHONE);
 #else
     return 0.0;
 #endif
@@ -351,7 +391,7 @@ double splashCoreWidthDp()
 // everywhere else it is in the binary.
 QUrl splashImageUrl(const QString& appRootPath)
 {
-#if defined(JELLYFIN_NATIVE_WEBOS)
+#if defined(SPOOL_WEBOS)
     return QUrl::fromLocalFile(QDir(appRootPath).filePath(QStringLiteral("splash-core.png")));
 #else
     Q_UNUSED(appRootPath);
@@ -413,20 +453,20 @@ int main(int argc, char **argv)
 #ifdef Q_OS_UNIX
     umask(S_IRWXG | S_IRWXO);
 #endif
-    const JellyfinNative::ProcessStartupTiming processStartupTiming = JellyfinNative::captureProcessStartupTiming();
+    const Spool::ProcessStartupTiming processStartupTiming = Spool::captureProcessStartupTiming();
     g_startupTimer.start();
     QElapsedTimer& startupTimer = g_startupTimer;
     bool launchTest = false;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-v") == 0) {
-            printf("Spool for Jellyfin %s\n", kAppVersion);
+            printf("Spool %s\n", kAppVersion);
             return 0;
         }
         if (strcmp(argv[i], "--launch-test") == 0)
             launchTest = true;
     }
 
-    const QString appRootPath = JellyfinNative::resolveAppRoot(argv[0]);
+    const QString appRootPath = Spool::resolveAppRoot(argv[0]);
     if (appRootPath.isEmpty())
         return 1;
 
@@ -452,12 +492,12 @@ int main(int argc, char **argv)
         qputenv("LC_CTYPE", QByteArrayLiteral("en_US.UTF-8"));
     }
 
-    if (!JellyfinNative::configurePlatformEnvironment(appRootPath))
+    if (!Spool::configurePlatformEnvironment(appRootPath))
         return 1;
     if (!qgetenv("QSG_RENDER_LOOP").isEmpty())
         logLine("QSG_RENDER_LOOP=%s", qgetenv("QSG_RENDER_LOOP").constData());
 
-    const QString cachePath = JellyfinNative::startupCacheRoot(appRootPath);
+    const QString cachePath = Spool::startupCacheRoot(appRootPath);
     configurePersistentStartupCaches(cachePath);
 
     logLine("app root: %s", qPrintable(appRootPath));
@@ -472,18 +512,17 @@ int main(int argc, char **argv)
 
     // Graphics startup reads the persisted backend before QGuiApplication.
     // Establish the settings-store identity first; these setters are static.
-    QCoreApplication::setOrganizationName(QStringLiteral("spool-jellyfin"));
-    QCoreApplication::setApplicationName(QStringLiteral("Spool for Jellyfin"));
+    setIdentity();
     QCoreApplication::setApplicationVersion(QString::fromLatin1(kAppVersion));
 
-    const auto graphicsApi = JellyfinNative::GraphicsStartup::configureBeforeApplication(launchTest);
+    const auto graphicsApi = Spool::GraphicsStartup::configureBeforeApplication(launchTest);
 
     logLine("startup: constructing QGuiApplication");
     QGuiApplication app(argc, argv);
     // The name, version and organisation are set above, before the settings
     // store is read.
-    app.setApplicationDisplayName(QStringLiteral("Spool for Jellyfin"));
-    JellyfinNative::TerminationSignalHandler terminationSignals(app);
+    app.setApplicationDisplayName(QStringLiteral("Spool"));
+    Spool::TerminationSignalHandler terminationSignals(app);
     logLine("startup: QGuiApplication constructed");
 
     QString autoplayItemId;
@@ -499,13 +538,13 @@ int main(int argc, char **argv)
         autoplayItemId = QString::fromLocal8Bit(qgetenv("SPOOL_PLAY_ITEM"));
     }
 
-    const QByteArray hdrRequest = JellyfinNative::GraphicsStartup::prepareBeforeWindow(graphicsApi, launchTest);
+    const QByteArray hdrRequest = Spool::GraphicsStartup::prepareBeforeWindow(graphicsApi, launchTest);
 
     // Native-window and scene-graph setup stay on the GUI thread. Put a surface
     // on screen now so later startup work can overlap its first frame.
-    JellyfinNative::InputLatencyMonitor inputLatencyMonitor;
-    JellyfinNative::NativeAppWindow window(QString::fromLatin1(kAppId));
-    JellyfinNative::GraphicsStartup::attachToWindow(window, hdrRequest);
+    Spool::InputLatencyMonitor inputLatencyMonitor;
+    Spool::NativeAppWindow window(QString::fromLatin1(kAppId));
+    Spool::GraphicsStartup::attachToWindow(window, hdrRequest);
     window.rootContext()->setContextProperty(QStringLiteral("startupNativeWindow"), &window);
     // The launch screen. Everything that draws it -- the frame put up before
     // the shell exists, the shell's own overlay, the slow-start page -- reads
@@ -518,7 +557,7 @@ int main(int argc, char **argv)
         QStringLiteral("startupSplashCoreWidthFraction"), static_cast<double>(SPOOL_SPLASH_CORE_WIDTH_FRACTION));
     window.rootContext()->setContextProperty(QStringLiteral("startupSplashCoreWidthDp"), splashCoreWidthDp());
     window.rootContext()->setContextProperty(QStringLiteral("startupSplashPixelsPerDp"), splashPixelsPerDp());
-    JellyfinNative::configurePlatformWindow(window);
+    Spool::configurePlatformWindow(window);
     inputLatencyMonitor.attachWindow(&window);
     window.setInputLatencyMonitor(&inputLatencyMonitor);
     const auto directSingleShot = static_cast<Qt::ConnectionType>(Qt::DirectConnection | Qt::SingleShotConnection);
@@ -556,19 +595,19 @@ int main(int argc, char **argv)
 
     if (!registerBundledFonts(appRootPath))
         return 1;
-#if !defined(JELLYFIN_NATIVE_WEBOS) && !defined(SPOOL_ANDROID)
+#if !defined(SPOOL_WEBOS) && !defined(SPOOL_ANDROID)
     const QIcon defaultApplicationIcon = applicationIcon(false);
     const QIcon playerApplicationIcon = applicationIcon(true);
     app.setWindowIcon(defaultApplicationIcon);
     app.setDesktopFileName(QStringLiteral("com.sachk.spool"));
 #endif
-    const auto& capabilities = JellyfinNative::platformCapabilities();
+    const auto& capabilities = Spool::platformCapabilities();
 
-    const QString diagnosticsRoot = qEnvironmentVariableIsSet("JELLYFIN_DIAGNOSTICS_DIR")
-        ? QString::fromLocal8Bit(qgetenv("JELLYFIN_DIAGNOSTICS_DIR"))
+    const QString diagnosticsRoot = qEnvironmentVariableIsSet("SPOOL_DIAGNOSTICS_DIR")
+        ? QString::fromLocal8Bit(qgetenv("SPOOL_DIAGNOSTICS_DIR"))
         : QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/diagnostics");
-    JellyfinNative::Diagnostics::initialize(QString::fromLatin1(kAppId), diagnosticsRoot);
-    JellyfinNative::Diagnostics::EventLoopWatchdog eventLoopWatchdog(&app);
+    Spool::Diagnostics::initialize(QString::fromLatin1(kAppId), diagnosticsRoot);
+    Spool::Diagnostics::EventLoopWatchdog eventLoopWatchdog(&app);
 
     const QStringList arguments = app.arguments();
     for (int i = 1; i < arguments.size(); ++i) {
@@ -591,21 +630,21 @@ int main(int argc, char **argv)
     }
     if (arguments.contains(QStringLiteral("--diagnose-and-exit"))
         || arguments.contains(QStringLiteral("--dump-diagnostics"))) {
-        JellyfinNative::Diagnostics::dumpDiagnostics(QStringLiteral("command-line"));
-        JellyfinNative::Diagnostics::shutdown();
+        Spool::Diagnostics::dumpDiagnostics(QStringLiteral("command-line"));
+        Spool::Diagnostics::shutdown();
         return 0;
     }
-    if (qEnvironmentVariableIntValue("JELLYFIN_DIAGNOSTICS_BLOCK_GUI_MS") > 0) {
-        const int blockMs = qEnvironmentVariableIntValue("JELLYFIN_DIAGNOSTICS_BLOCK_GUI_MS");
+    if (qEnvironmentVariableIntValue("SPOOL_DIAGNOSTICS_BLOCK_GUI_MS") > 0) {
+        const int blockMs = qEnvironmentVariableIntValue("SPOOL_DIAGNOSTICS_BLOCK_GUI_MS");
         QTimer::singleShot(1000, &app, [blockMs]() {
-            JellyfinNative::Diagnostics::logEvent(QStringLiteral("simulation"), QStringLiteral("block_gui_begin"),
+            Spool::Diagnostics::logEvent(QStringLiteral("simulation"), QStringLiteral("block_gui_begin"),
                 { { QStringLiteral("durationMs"), blockMs } });
             QThread::msleep(static_cast<unsigned long>(blockMs));
-            JellyfinNative::Diagnostics::logEvent(QStringLiteral("simulation"), QStringLiteral("block_gui_end"));
+            Spool::Diagnostics::logEvent(QStringLiteral("simulation"), QStringLiteral("block_gui_end"));
         });
     }
 
-    const JellyfinNative::MemoryBudget memoryBudget = JellyfinNative::MemoryBudget::detect();
+    const Spool::MemoryBudget memoryBudget = Spool::MemoryBudget::detect();
     window.setSystemMemoryBytes(memoryBudget.memTotalBytes);
     logLine("memory budget: memTotal=%lld networkDisk=%lld qmlImageDisk=%lld artworkBytes=%d demuxer=%s/%s",
         static_cast<long long>(memoryBudget.memTotalBytes), static_cast<long long>(memoryBudget.networkDiskCacheBytes),
@@ -620,47 +659,45 @@ int main(int argc, char **argv)
     diskCache->setMaximumCacheSize(memoryBudget.networkDiskCacheBytes);
     networkAccessManager->setCache(diskCache);
     QObject *platformUpdateController = nullptr;
-#if defined(SPOOL_ANDROID) || defined(JELLYFIN_NATIVE_WEBOS)
+#if defined(SPOOL_ANDROID) || defined(SPOOL_WEBOS)
     // QML binds before the shell exists. Android waits for its settings;
     // the webOS experiment starts its unconditional check in the event loop.
-    auto updateController = std::make_unique<JellyfinNative::UpdateController>(networkAccessManager, cachePath);
+    auto updateController = std::make_unique<Spool::UpdateController>(networkAccessManager, cachePath);
     platformUpdateController = updateController.get();
 #endif
 
-    JellyfinNative::DatabaseManager database;
-    QObject::connect(
-        &database, &JellyfinNative::DatabaseManager::initializationFailed, &app, [&app](const QString& message) {
-            logLine("database initialization failed: %s", qPrintable(message));
-            app.exit(1);
-        });
-    JellyfinNative::SystemPerformanceMonitor systemPerformanceMonitor;
-    systemPerformanceMonitor.setAudioDecodeCpuTimeProvider(
-        [] { return JellyfinNative::platformAudioDecodeCpuTimeNs(); });
+    Spool::DatabaseManager database;
+    QObject::connect(&database, &Spool::DatabaseManager::initializationFailed, &app, [&app](const QString& message) {
+        logLine("database initialization failed: %s", qPrintable(message));
+        app.exit(1);
+    });
+    Spool::SystemPerformanceMonitor systemPerformanceMonitor;
+    systemPerformanceMonitor.setAudioDecodeCpuTimeProvider([] { return Spool::platformAudioDecodeCpuTimeNs(); });
     // Start the SQLite worker before constructing the controllers. Device
     // identity and session reads are awaited after the first frame.
     {
-        JellyfinNative::Diagnostics::Phase phase(QStringLiteral("startup"), QStringLiteral("database_initialize"));
-        const QString databasePath = JellyfinNative::persistentDataRoot() + QStringLiteral("/cache.sqlite");
+        Spool::Diagnostics::Phase phase(QStringLiteral("startup"), QStringLiteral("database_initialize"));
+        const QString databasePath = Spool::persistentDataRoot() + QStringLiteral("/cache.sqlite");
         if (!database.initialize(databasePath))
             return 1;
     }
 
-    JellyfinNative::TlsTrustController tlsTrust;
+    Spool::TlsTrustController tlsTrust;
     // Accounts outlive the player and the app controller, which hold their
     // parts by pointer, so the registry and the hub come first.
     // Chosen by SPOOL_PROVIDER_SOURCES at configure time, which rejects
     // anything else; an unknown name would fall to the narrowest.
-    const JellyfinNative::ProviderSources providerSources
-        = JellyfinNative::providerSourcesFromName(QString::fromLatin1(SPOOL_PROVIDER_SOURCES))
-              .value_or(JellyfinNative::ProviderSources::Bundled);
+    const Spool::ProviderSources providerSources
+        = Spool::providerSourcesFromName(QString::fromLatin1(SPOOL_PROVIDER_SOURCES))
+              .value_or(Spool::ProviderSources::Bundled);
     logLine("providers: sources=%s", SPOOL_PROVIDER_SOURCES);
-    JellyfinNative::ProviderRegistry providers(&database);
-    if (providerSources != JellyfinNative::ProviderSources::Bundled)
-        providers.setInstallDirectory(QDir(JellyfinNative::persistentDataRoot()).filePath(QStringLiteral("providers")));
+    Spool::ProviderRegistry providers(&database);
+    if (providerSources != Spool::ProviderSources::Bundled)
+        providers.setInstallDirectory(QDir(Spool::persistentDataRoot()).filePath(QStringLiteral("providers")));
     providers.loadModules();
-#if !defined(JELLYFIN_NATIVE_WEBOS) && !defined(SPOOL_ANDROID)
+#if !defined(SPOOL_WEBOS) && !defined(SPOOL_ANDROID)
     {
-        JellyfinNative::ProviderManifest folder;
+        Spool::ProviderManifest folder;
         folder.id = QStringLiteral("spool.local");
         folder.name = QStringLiteral("This computer");
         folder.summary = QStringLiteral("Videos and music in a folder");
@@ -670,81 +707,77 @@ int main(int argc, char **argv)
         const QString root = optionValue(arguments, QStringLiteral("--library-root"), "SPOOL_LOCAL_LIBRARY",
             QStandardPaths::writableLocation(QStandardPaths::MoviesLocation));
         providers.addNativeModule(folder,
-            [root](const QString& accountId, const QVariantMap& configuration,
-                QObject *parent) -> JellyfinNative::Provider * {
-                return new JellyfinNative::LocalProvider(
+            [root](const QString& accountId, const QVariantMap& configuration, QObject *parent) -> Spool::Provider * {
+                return new Spool::LocalProvider(
                     accountId, configuration.value(QStringLiteral("folder"), root).toString(), parent);
             });
     }
 #endif
-    JellyfinNative::SourceHub hub(&providers);
-    JellyfinNative::ProviderCapabilities providerCapabilities;
-    QObject::connect(&hub, &JellyfinNative::Provider::capabilitiesChanged, &providerCapabilities,
+    Spool::SourceHub hub(&providers);
+    Spool::ProviderCapabilities providerCapabilities;
+    QObject::connect(&hub, &Spool::Provider::capabilitiesChanged, &providerCapabilities,
         [&hub, &providerCapabilities] { providerCapabilities.setFlags(hub.capabilities()); });
-    JellyfinNative::configurePlatformPlaybackCapabilities(
+    Spool::configurePlatformPlaybackCapabilities(
         [&hub](const QStringList& codecs, bool restrict) { hub.setVideoCodecs(codecs, restrict); }, hub);
     // Only an open build may be pointed at another store; a curated one is
     // curated by this one.
     const QString officialStore = QStringLiteral("https://spool-player.github.io/spool-providers/");
-    JellyfinNative::ProviderStore store(&providers, &database, networkAccessManager,
-        QUrl(providerSources == JellyfinNative::ProviderSources::Open
+    Spool::ProviderStore store(&providers, &database, networkAccessManager,
+        QUrl(providerSources == Spool::ProviderSources::Open
                 ? optionValue(arguments, QStringLiteral("--provider-store"), "SPOOL_PROVIDER_STORE", officialStore)
                 : officialStore),
         providerSources);
 
-    const JellyfinNative::CpuTopology cpuTopology = JellyfinNative::detectCpuTopology();
+    const Spool::CpuTopology cpuTopology = Spool::detectCpuTopology();
     logLine("artwork: cpu logical=%d physical=%d smt=%s source=%s decodeThreads=%d", cpuTopology.logicalCpus,
         cpuTopology.physicalCores, cpuTopology.smtDetected ? "true" : "false", qPrintable(cpuTopology.source),
         cpuTopology.artworkDecodeThreads);
-    auto artworkService = std::make_unique<JellyfinNative::ArtworkService>(
-        qmlImageCachePath + QStringLiteral("/artwork"), memoryBudget.qmlImageDiskCacheBytes,
-        memoryBudget.artworkByteCacheBytes, cpuTopology.artworkDecodeThreads, &tlsTrust);
+    auto artworkService = std::make_unique<Spool::ArtworkService>(qmlImageCachePath + QStringLiteral("/artwork"),
+        memoryBudget.qmlImageDiskCacheBytes, memoryBudget.artworkByteCacheBytes, cpuTopology.artworkDecodeThreads,
+        &tlsTrust);
     artworkService->setUiWidth(window.width());
     artworkService->setSource(hub.artwork());
 
-    auto player = std::make_unique<JellyfinNative::PlayerController>(
-        &window, hub.playback(), &tlsTrust, JellyfinNative::bundledFontsPath(appRootPath));
+    auto player = std::make_unique<Spool::PlayerController>(
+        &window, hub.playback(), &tlsTrust, Spool::bundledFontsPath(appRootPath));
     player->setDemuxerBudget(memoryBudget.mpvDemuxerMaxBytes, memoryBudget.mpvDemuxerMaxBackBytes);
-    JellyfinNative::ScreenSaverInhibitor screenSaverInhibitor;
+    Spool::ScreenSaverInhibitor screenSaverInhibitor;
     const auto updateScreenSaver = [&screenSaverInhibitor, player = player.get()] {
-        screenSaverInhibitor.setInhibited(JellyfinNative::screenSaverShouldBeInhibited(
-            player && player->sessionActive(), player && player->paused()));
+        screenSaverInhibitor.setInhibited(
+            Spool::screenSaverShouldBeInhibited(player && player->sessionActive(), player && player->paused()));
     };
-    QObject::connect(player.get(), &JellyfinNative::PlayerController::playbackStateChanged, &app, updateScreenSaver);
-    QObject::connect(player.get(), &JellyfinNative::PlayerController::sessionActiveChanged, &app, updateScreenSaver);
-#if !defined(JELLYFIN_NATIVE_WEBOS) && !defined(SPOOL_ANDROID)
+    QObject::connect(player.get(), &Spool::PlayerController::playbackStateChanged, &app, updateScreenSaver);
+    QObject::connect(player.get(), &Spool::PlayerController::sessionActiveChanged, &app, updateScreenSaver);
+#if !defined(SPOOL_WEBOS) && !defined(SPOOL_ANDROID)
     const auto updateApplicationIcon
         = [&app, &window, player = player.get(), &defaultApplicationIcon, &playerApplicationIcon] {
               const QIcon& icon = player->sessionActive() ? playerApplicationIcon : defaultApplicationIcon;
               app.setWindowIcon(icon);
               window.setIcon(icon);
           };
-    QObject::connect(
-        player.get(), &JellyfinNative::PlayerController::sessionActiveChanged, &app, updateApplicationIcon);
+    QObject::connect(player.get(), &Spool::PlayerController::sessionActiveChanged, &app, updateApplicationIcon);
     updateApplicationIcon();
 #endif
-    auto controller
-        = std::make_unique<JellyfinNative::AppController>(&database, &hub, artworkService.get(), player.get());
-    QObject::connect(controller->settings(), &JellyfinNative::SettingsController::playbackPreferencesChanged, &hub,
-        &JellyfinNative::SourceHub::setPlaybackPreferences);
-    QObject::connect(&providers, &JellyfinNative::ProviderRegistry::problem, controller.get(),
-        &JellyfinNative::AppController::toastMessage);
-    QObject::connect(&store, &JellyfinNative::ProviderStore::problem, controller.get(),
-        &JellyfinNative::AppController::toastMessage);
-#if defined(SPOOL_ANDROID) || defined(JELLYFIN_NATIVE_WEBOS)
+    auto controller = std::make_unique<Spool::AppController>(&database, &hub, artworkService.get(), player.get());
+    QObject::connect(controller->settings(), &Spool::SettingsController::playbackPreferencesChanged, &hub,
+        &Spool::SourceHub::setPlaybackPreferences);
+    QObject::connect(
+        &providers, &Spool::ProviderRegistry::problem, controller.get(), &Spool::AppController::toastMessage);
+    QObject::connect(&store, &Spool::ProviderStore::problem, controller.get(), &Spool::AppController::toastMessage);
+#if defined(SPOOL_ANDROID) || defined(SPOOL_WEBOS)
     // Settings own the update preference; platform installers own installation.
-    QObject::connect(controller->settings(), &JellyfinNative::SettingsController::automaticUpdatesChanged,
+    QObject::connect(controller->settings(), &Spool::SettingsController::automaticUpdatesChanged,
         updateController.get(),
         [updater = updateController.get()](bool enabled) { updater->setAutomaticUpdatesEnabled(enabled); });
 #endif
-    QObject::connect(controller.get(), &JellyfinNative::AppController::clearLogsRequested, &app, [appRootPath]() {
+    QObject::connect(controller.get(), &Spool::AppController::clearLogsRequested, &app, [appRootPath]() {
         const std::lock_guard lock(g_logMutex);
         if (g_logFile) {
             fclose(g_logFile);
             g_logFile = nullptr;
         }
-        const QByteArray fileName = QFile::encodeName(JellyfinNative::appLogFileName());
-        for (const QString& directory : JellyfinNative::appLogDirectories(appRootPath)) {
+        const QByteArray fileName = QFile::encodeName(Spool::appLogFileName());
+        for (const QString& directory : Spool::appLogDirectories(appRootPath)) {
             if (directory.isEmpty())
                 continue;
             const QString path = QDir(directory).filePath(QString::fromUtf8(fileName));
@@ -758,7 +791,7 @@ int main(int argc, char **argv)
     // Tear down here so the mpv render-context handoff completes immediately;
     // aboutToQuit is too late because the window no longer produces frames.
     QObject::connect(
-        &window, &JellyfinNative::NativeAppWindow::closeRequested, controller.get(),
+        &window, &Spool::NativeAppWindow::closeRequested, controller.get(),
         [controller = controller.get()]() {
             logLine("window close requested: stopping controllers");
             controller->shutdown();
@@ -775,23 +808,23 @@ int main(int argc, char **argv)
     //      against null pointers and emit a flood of "Cannot read property
     //      'X' of null" warnings during the unwind.
     QObject::connect(&app, &QCoreApplication::aboutToQuit, &app, [controller = controller.get(), &window]() {
-        JellyfinNative::Diagnostics::setInstanceState(QStringLiteral("shutting_down"));
-        JellyfinNative::Diagnostics::Phase shutdownPhase(QStringLiteral("shutdown"), QStringLiteral("aboutToQuit"));
+        Spool::Diagnostics::setInstanceState(QStringLiteral("shutting_down"));
+        Spool::Diagnostics::Phase shutdownPhase(QStringLiteral("shutdown"), QStringLiteral("aboutToQuit"));
         logLine("aboutToQuit: stopping controllers");
-        if (qEnvironmentVariableIntValue("JELLYFIN_DIAGNOSTICS_SHUTDOWN_HANG_MS") > 0) {
-            const int hangMs = qEnvironmentVariableIntValue("JELLYFIN_DIAGNOSTICS_SHUTDOWN_HANG_MS");
-            JellyfinNative::Diagnostics::logEvent(QStringLiteral("simulation"), QStringLiteral("shutdown_hang_begin"),
+        if (qEnvironmentVariableIntValue("SPOOL_DIAGNOSTICS_SHUTDOWN_HANG_MS") > 0) {
+            const int hangMs = qEnvironmentVariableIntValue("SPOOL_DIAGNOSTICS_SHUTDOWN_HANG_MS");
+            Spool::Diagnostics::logEvent(QStringLiteral("simulation"), QStringLiteral("shutdown_hang_begin"),
                 { { QStringLiteral("durationMs"), hangMs } });
             QThread::msleep(static_cast<unsigned long>(hangMs));
-            JellyfinNative::Diagnostics::logEvent(QStringLiteral("simulation"), QStringLiteral("shutdown_hang_end"));
+            Spool::Diagnostics::logEvent(QStringLiteral("simulation"), QStringLiteral("shutdown_hang_end"));
         }
         {
-            JellyfinNative::Diagnostics::Phase phase(QStringLiteral("shutdown"), QStringLiteral("controller_shutdown"));
+            Spool::Diagnostics::Phase phase(QStringLiteral("shutdown"), QStringLiteral("controller_shutdown"));
             controller->shutdown();
         }
         logLine("aboutToQuit: clearing QML source");
         {
-            JellyfinNative::Diagnostics::Phase phase(QStringLiteral("shutdown"), QStringLiteral("clear_qml_source"));
+            Spool::Diagnostics::Phase phase(QStringLiteral("shutdown"), QStringLiteral("clear_qml_source"));
             window.setSource(QUrl());
         }
         logLine("aboutToQuit: QML source cleared");
@@ -801,40 +834,38 @@ int main(int argc, char **argv)
     window.engine()->setIncubationController(new BoostedIncubationController(window.engine()));
     // Provider screens (sign-in, settings, pickers) are compiled one at a time
     // after the first frame, so opening one never waits on the QML compiler.
-    auto *providerQmlCache = new JellyfinNative::ProviderQmlCache(window.engine());
+    auto *providerQmlCache = new Spool::ProviderQmlCache(window.engine());
     const auto warmProviderComponents = [providerQmlCache, &providers] {
         QList<QUrl> sources;
         for (const QString& id : providers.moduleIds()) {
-            const JellyfinNative::ProviderModule *module = providers.module(id);
+            const Spool::ProviderModule *module = providers.module(id);
             for (const QString& file : module->manifest.ui)
                 sources.append(module->file(file));
         }
         providerQmlCache->addSources(sources);
     };
     warmProviderComponents();
-    QObject::connect(
-        &providers, &JellyfinNative::ProviderRegistry::modulesChanged, providerQmlCache, warmProviderComponents);
-    QObject::connect(providerQmlCache, &JellyfinNative::ProviderQmlCache::finished, &app,
+    QObject::connect(&providers, &Spool::ProviderRegistry::modulesChanged, providerQmlCache, warmProviderComponents);
+    QObject::connect(providerQmlCache, &Spool::ProviderQmlCache::finished, &app,
         [providerQmlCache] { logLine("provider QML: warmed %d components", providerQmlCache->retainedCount()); });
     QObject::connect(
         &window, &QQuickWindow::frameSwapped, providerQmlCache, [providerQmlCache] { providerQmlCache->start(); },
         Qt::SingleShotConnection);
-    QObject::connect(controller.get(), &JellyfinNative::AppController::aggressiveMemoryPressure, providerQmlCache,
-        &JellyfinNative::ProviderQmlCache::clear);
-    window.engine()->addImageProvider(
-        QStringLiteral("artwork"), new JellyfinNative::ArtworkImageProvider(artworkService.get()));
+    QObject::connect(controller.get(), &Spool::AppController::aggressiveMemoryPressure, providerQmlCache,
+        &Spool::ProviderQmlCache::clear);
+    window.engine()->addImageProvider(QStringLiteral("artwork"), new Spool::ArtworkImageProvider(artworkService.get()));
     window.engine()->addImageProvider(QStringLiteral("mpv-overlay"), window.createOverlayImageProvider());
-#if !defined(JELLYFIN_NATIVE_WEBOS) && !defined(SPOOL_ANDROID)
+#if !defined(SPOOL_WEBOS) && !defined(SPOOL_ANDROID)
     window.engine()->addImportPath(appRootPath + QStringLiteral("/qt-qml"));
 #endif
     QObject::connect(window.engine(), &QQmlEngine::warnings, &logQmlWarnings);
     QObject::connect(&window, &QQuickView::statusChanged,
         [](QQuickView::Status status) { logLine("view status changed: %d", static_cast<int>(status)); });
-    auto localization = std::make_unique<JellyfinNative::LocalizationManager>();
+    auto localization = std::make_unique<Spool::LocalizationManager>();
     localization->attachToEngine(window.engine());
     // Providers start once the device identity they present is known: in
     // parallel, off the GUI thread, after the first frame is on its way.
-    QObject::connect(controller.get(), &JellyfinNative::AppController::deviceIdentityReady, &providers,
+    QObject::connect(controller.get(), &Spool::AppController::deviceIdentityReady, &providers,
         [&providers, &store, &capabilities, &tlsTrust, loc = localization.get(), settings = controller->settings()](
             const QString& deviceId) {
             providers.setRuntimeEnvironment(
@@ -849,7 +880,7 @@ int main(int argc, char **argv)
                     [&tlsTrust](QWebSocket *socket, QUrl url) {
                         tlsTrust.attachWebSocket(socket, [url] { return url; }, QStringLiteral("Provider"));
                     } });
-            JellyfinNative::Async::runScoped(
+            Spool::Async::runScoped(
                 &providers, providers.restore(), [] { }, [](const std::exception_ptr&) { }, "provider restore");
             // Checked once the launch has settled, so it never competes with
             // the first page for the network.
@@ -857,8 +888,8 @@ int main(int argc, char **argv)
                 store.checkForUpdates(settings->value(QStringLiteral("providers/updates")).toString());
             });
         });
-    auto router = std::make_unique<JellyfinNative::RouterController>(QStringLiteral("home"));
-    JellyfinNative::ApplicationHooks applicationHooks;
+    auto router = std::make_unique<Spool::RouterController>(QStringLiteral("home"));
+    Spool::ApplicationHooks applicationHooks;
     applicationHooks.player = player.get();
     applicationHooks.settings = controller->settings();
     applicationHooks.playQueue = controller->playQueue();
@@ -870,15 +901,15 @@ int main(int argc, char **argv)
     applicationHooks.stopPlayback = [controller = controller.get()] { controller->stopPlayback(); };
     applicationHooks.playNext = [controller = controller.get()] { controller->playQueueNext(); };
     applicationHooks.playPrevious = [controller = controller.get()] { controller->playQueuePrevious(); };
-    QObject::connect(controller.get(), &JellyfinNative::AppController::playbackTransitionChanged, &applicationHooks,
-        &JellyfinNative::ApplicationHooks::playbackTransitionChanged);
-    QObject::connect(controller.get(), &JellyfinNative::AppController::aggressiveMemoryPressure, &applicationHooks,
-        &JellyfinNative::ApplicationHooks::aggressiveMemoryPressure);
-    QObject::connect(controller.get(), &JellyfinNative::AppController::diagnosticsReportSaved, &applicationHooks,
-        &JellyfinNative::ApplicationHooks::diagnosticsReportSaved);
-    QObject::connect(&applicationHooks, &JellyfinNative::ApplicationHooks::toastRequested, controller.get(),
-        &JellyfinNative::AppController::toastMessage);
-    JellyfinNative::PlatformApplicationServices platformServices(app, window, applicationHooks, *router);
+    QObject::connect(controller.get(), &Spool::AppController::playbackTransitionChanged, &applicationHooks,
+        &Spool::ApplicationHooks::playbackTransitionChanged);
+    QObject::connect(controller.get(), &Spool::AppController::aggressiveMemoryPressure, &applicationHooks,
+        &Spool::ApplicationHooks::aggressiveMemoryPressure);
+    QObject::connect(controller.get(), &Spool::AppController::diagnosticsReportSaved, &applicationHooks,
+        &Spool::ApplicationHooks::diagnosticsReportSaved);
+    QObject::connect(&applicationHooks, &Spool::ApplicationHooks::toastRequested, controller.get(),
+        &Spool::AppController::toastMessage);
+    Spool::PlatformApplicationServices platformServices(app, window, applicationHooks, *router);
     platformServices.start();
     QQmlPropertyMap *platformInfo = QQmlPropertyMap::create(&app);
     platformInfo->insert(QStringLiteral("isTV"), capabilities.isTV);
@@ -931,7 +962,7 @@ int main(int argc, char **argv)
     qmlRegisterSingletonInstance("Spool", 1, 0, "SystemPerformance", &systemPerformanceMonitor);
     qmlRegisterSingletonInstance("Spool", 1, 0, "I18n", localization.get());
     qmlRegisterSingletonInstance("Spool", 1, 0, "Platform", platformInfo);
-    qmlRegisterType<JellyfinNative::MpvVideoItem>("Spool", 1, 0, "MpvVideoItem");
+    qmlRegisterType<Spool::MpvVideoItem>("Spool", 1, 0, "MpvVideoItem");
     // Start asynchronous device, settings, account, and discovery reads before
     // QML construction. A sole saved account is resolved before routing begins.
     controller->initialize();
@@ -940,7 +971,7 @@ int main(int argc, char **argv)
         &app, &QCoreApplication::aboutToQuit, router.get(), [router = router.get()] { router->markCleanShutdown(); });
 
     {
-        JellyfinNative::Diagnostics::Phase phase(QStringLiteral("startup"), QStringLiteral("load_qml"));
+        Spool::Diagnostics::Phase phase(QStringLiteral("startup"), QStringLiteral("load_qml"));
         // Load through the module registry so AOT QML units are used and
         // constrained devices do not retain compiler buffers.
         window.loadFromModule("Spool", "Main");
@@ -994,7 +1025,7 @@ int main(int argc, char **argv)
     // as it always does and is then walked through a set of route switches
     // with what each one cost written out, so page-switch cost is a number in
     // CI rather than an impression.
-    JellyfinNative::RenderBenchmarkHooks benchmarkHooks;
+    Spool::RenderBenchmarkHooks benchmarkHooks;
     benchmarkHooks.providerId = QStringList(providers.moduleIds()).join(QLatin1Char(','));
     benchmarkHooks.providerRuntime = QStringLiteral("js");
     benchmarkHooks.libraries = controller->libraries();
@@ -1009,7 +1040,7 @@ int main(int argc, char **argv)
     };
     benchmarkHooks.forceColdCaches
         = [controller = controller.get()] { controller->onMemoryPressure(QStringLiteral("critical")); };
-    if (auto *benchmark = JellyfinNative::RenderBenchmark::createIfRequested(
+    if (auto *benchmark = Spool::RenderBenchmark::createIfRequested(
             std::move(benchmarkHooks), router.get(), &inputLatencyMonitor, &window, &app)) {
         // The shell picks its first route once accounts are restored; a walk
         // that starts before then races that choice.
@@ -1020,9 +1051,8 @@ int main(int argc, char **argv)
             *started = true;
             benchmark->start();
         };
-        QObject::connect(controller.get(), &JellyfinNative::AppController::initializedChanged, benchmark, begin);
-        QObject::connect(
-            &providers, &JellyfinNative::ProviderRegistry::restoredChanged, benchmark, begin, Qt::QueuedConnection);
+        QObject::connect(controller.get(), &Spool::AppController::initializedChanged, benchmark, begin);
+        QObject::connect(&providers, &Spool::ProviderRegistry::restoredChanged, benchmark, begin, Qt::QueuedConnection);
         begin();
     }
 
@@ -1063,12 +1093,12 @@ int main(int argc, char **argv)
                             logLine("launch test: invalid shell geometry content=%.1fx%.1f nav=%.1f@%.1f "
                                     "route=%.1fx%.1f@%.1f",
                                 contentWidth, contentHeight, navHeight, navY, routeWidth, routeHeight, routeY);
-                            JellyfinNative::Diagnostics::setInstanceState(QStringLiteral("launch_test_invalid_shell"));
+                            Spool::Diagnostics::setInstanceState(QStringLiteral("launch_test_invalid_shell"));
                             app.exit(1);
                             return;
                         }
                         logLine("launch test: application UI rendered");
-                        JellyfinNative::Diagnostics::setInstanceState(QStringLiteral("launch_test_rendered"));
+                        Spool::Diagnostics::setInstanceState(QStringLiteral("launch_test_rendered"));
                         app.exit(0);
                     },
                     Qt::QueuedConnection);
@@ -1081,7 +1111,7 @@ int main(int argc, char **argv)
         window.requestUpdate();
     }
     if (!autoplayItemId.isEmpty()) {
-        QObject::connect(controller.get(), &JellyfinNative::AppController::initializedChanged, controller.get(),
+        QObject::connect(controller.get(), &Spool::AppController::initializedChanged, controller.get(),
             [autoplayItemId, c = controller.get()]() {
                 if (c->initialized()) {
                     logLine("startup: autoplay requested for item %s", qPrintable(autoplayItemId));
@@ -1094,14 +1124,14 @@ int main(int argc, char **argv)
 
     QTimer::singleShot(0, &window, [&startupTimer]() {
         logLine("startup: first event-loop turn at %lld ms", static_cast<long long>(startupTimer.elapsed()));
-        JellyfinNative::Diagnostics::setInstanceState(QStringLiteral("running"));
+        Spool::Diagnostics::setInstanceState(QStringLiteral("running"));
     });
 
     logLine("startup: entering event loop at %lld ms", static_cast<long long>(startupTimer.elapsed()));
     const int exitCode = app.exec();
     logLine("app.exec returned: %d", exitCode);
-    JellyfinNative::Diagnostics::setInstanceState(
+    Spool::Diagnostics::setInstanceState(
         QStringLiteral("app_exec_returned"), { { QStringLiteral("exitCode"), exitCode } });
-    JellyfinNative::Diagnostics::shutdown();
+    Spool::Diagnostics::shutdown();
     return exitCode;
 }

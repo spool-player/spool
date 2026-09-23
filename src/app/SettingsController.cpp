@@ -15,7 +15,7 @@
 
 #include <iterator>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
 
@@ -895,4 +895,4 @@ void SettingsController::applySubtitlePreferencesToPlayer()
         m_player->setSubtitlePreferences(m_subtitlePreferences);
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

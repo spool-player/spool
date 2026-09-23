@@ -21,7 +21,7 @@
 
 #include <algorithm>
 
-namespace JellyfinNative {
+namespace Spool {
 namespace {
     constexpr SettingChoice kAndroidAudioChoices[] = { { "auto", "Automatic" } };
 
@@ -330,9 +330,9 @@ namespace CredentialStore {
     namespace {
         void ensureCredentialRoot()
         {
-            if (qEnvironmentVariableIsEmpty("JELLYFIN_CREDENTIAL_STORE_DIR")) {
+            if (qEnvironmentVariableIsEmpty("SPOOL_CREDENTIAL_STORE_DIR")) {
                 const QString root = QDir(persistentDataRoot()).filePath(QStringLiteral("credentials"));
-                qputenv("JELLYFIN_CREDENTIAL_STORE_DIR", root.toUtf8());
+                qputenv("SPOOL_CREDENTIAL_STORE_DIR", root.toUtf8());
             }
         }
     }
@@ -359,4 +359,4 @@ namespace CredentialStore {
     }
 } // namespace CredentialStore
 
-} // namespace JellyfinNative
+} // namespace Spool

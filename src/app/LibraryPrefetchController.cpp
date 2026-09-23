@@ -10,7 +10,7 @@
 #include <algorithm>
 #include <utility>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
 
@@ -170,4 +170,4 @@ void LibraryPrefetchController::startNext()
         });
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

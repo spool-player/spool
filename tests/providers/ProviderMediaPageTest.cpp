@@ -30,10 +30,10 @@ template <typename T> void rejects(QCoro::Task<T> task, const char *message)
 }
 }
 
-JELLYFIN_TEST_MAIN("provider-media-page")
+SPOOL_TEST_MAIN("provider-media-page")
 {
     QCoreApplication app(argc, argv);
-    using namespace JellyfinNative;
+    using namespace Spool;
     QJSEngine engine;
     const auto read = [&](const QString& expression, int limit = 100) {
         const QJSValue value = engine.evaluate(expression);

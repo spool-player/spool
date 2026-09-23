@@ -10,7 +10,7 @@
 class QQmlComponent;
 class QQmlEngine;
 
-namespace JellyfinNative {
+namespace Spool {
 
 // Retains compiled components, not instances: warming must not run provider
 // bindings, Component.onCompleted handlers, timers or authentication flows.
@@ -43,4 +43,4 @@ private:
     bool m_stopped = false;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

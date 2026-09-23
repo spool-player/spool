@@ -6,7 +6,7 @@
 #include <QStringList>
 #include <QVariant>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
 
@@ -153,4 +153,4 @@ QString libraryCacheKey(const LibraryItem& library, const QVariantMap& query)
     return signature.isEmpty() ? baseKey : QStringLiteral("%1?%2").arg(baseKey, signature);
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

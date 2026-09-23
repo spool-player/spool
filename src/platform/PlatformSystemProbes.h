@@ -4,7 +4,7 @@
 #include <QString>
 #include <QtGlobal>
 
-namespace JellyfinNative {
+namespace Spool {
 
 struct PlatformCpuProbe {
     int physicalCores = 0;
@@ -30,4 +30,4 @@ qint64 effectiveLinuxMemoryBytes(
     const QByteArray& meminfo, const QByteArray& cgroupV2Limit, const QByteArray& cgroupV1Limit);
 QString platformProcessMemoryDiagnostics();
 
-} // namespace JellyfinNative
+} // namespace Spool

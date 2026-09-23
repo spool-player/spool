@@ -7,7 +7,7 @@
 
 #include <cstdlib>
 
-using JellyfinNative::StreamQualityControl;
+using Spool::StreamQualityControl;
 
 namespace {
 
@@ -21,7 +21,7 @@ void require(bool condition, const char *message)
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("stream-quality-control")
+SPOOL_TEST_MAIN("stream-quality-control")
 {
     // Format bitrate
     require(StreamQualityControl::formatBitrate(40'000'000) == QStringLiteral("40 Mbps"),

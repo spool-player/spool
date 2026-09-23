@@ -11,7 +11,7 @@
 #include <QVariantList>
 #include <QVariantMap>
 
-namespace JellyfinNative {
+namespace Spool {
 
 class PlayQueueController;
 class PlayerController;
@@ -274,4 +274,4 @@ private:
     QString m_syncMethod = QStringLiteral("None");
 };
 
-} // namespace JellyfinNative
+} // namespace Spool
