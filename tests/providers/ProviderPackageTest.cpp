@@ -85,7 +85,7 @@ SPOOL_TEST_MAIN("provider-package-unpack")
         "multi-block frames decompress exactly");
 
     // The real bundled package: compressed blocks from the zstd CLI.
-    QFile bundled(QStringLiteral(TEST_SOURCE_DIR "/providers/bundled/spool.jellyfin-0.2.0.tar.zst"));
+    QFile bundled(QStringLiteral(TEST_SOURCE_DIR "/providers/bundled/spool.jellyfin-0.2.1.tar.zst"));
     if (bundled.open(QIODevice::ReadOnly)) {
         const auto jellyfin = ProviderPackage::read(bundled.readAll(), &error);
         require(jellyfin && jellyfin->manifest.id == QStringLiteral("spool.jellyfin"),
