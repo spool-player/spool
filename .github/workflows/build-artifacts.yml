@@ -395,7 +395,7 @@ jobs:
             exit 1
           fi
           elf_args=(elf "$extracted" --root usr/bin/jellyfin-native)
-          test ! -f "$extracted/usr/bin/secret-tool" || elf_args+=(--root usr/bin/secret-tool)
+          test ! -f "$extracted/usr/libexec/secret-tool" || elf_args+=(--root usr/libexec/secret-tool)
           while IFS= read -r elf; do elf_args+=(--root "${elf#"$extracted/"}"); done \
             < <(find "$extracted/usr/lib" -type f -name 'libmpv.so.*' | sort)
           for root in usr/plugins usr/qml; do
@@ -403,8 +403,8 @@ jobs:
               elf_args+=(--root "${elf#"$extracted/"}")
             done < <(find "$extracted/$root" -type f -name '*.so*' | sort)
           done
-          for soname in ld-linux-x86-64.so.2 libc.so.6 libdl.so.2 libm.so.6 libmvec.so.1 \
-            libpthread.so.0 libresolv.so.2 librt.so.1 libutil.so.1 libGLESv2.so.2 libgbm.so.1 libglapi.so.0
+          # glibc is bundled; only these come from the host.
+          for soname in libGLESv2.so.2 libgbm.so.1 libglapi.so.0
           do
             elf_args+=(--allow-system "$soname")
           done

@@ -9,6 +9,10 @@ namespace JellyfinNative {
 QString resolveAppRoot(const char *argv0)
 {
     QString executable = QFileInfo(QStringLiteral("/proc/self/exe")).symLinkTarget();
+    // The AppImage may start the app through its bundled glibc's loader, which
+    // /proc/self/exe then names; argv[0] is still the app.
+    if (QFileInfo(executable).fileName().startsWith(QLatin1String("ld-linux")))
+        executable.clear();
     if (executable.isEmpty() && argv0)
         executable = QFileInfo(QString::fromLocal8Bit(argv0)).canonicalFilePath();
     if (executable.isEmpty())
