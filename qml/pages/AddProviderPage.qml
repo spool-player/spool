@@ -8,6 +8,7 @@ import "../primitives"
 // Choosing where media comes from: official providers first, then the
 // community's, then any provider by link. Installing and signing in are one
 // step from here, and the same page updates or removes what is installed.
+// A curated build has no link row, and a bundled one only its own providers.
 FocusScope {
     id: root
 
@@ -24,16 +25,19 @@ FocusScope {
                   }
               ]
         out.push(...Store.official)
+        if (!Store.storeAvailable)
+            return out
         out.push({
                      "kind": "header",
                      "title": "Community",
                      "loading": Store.loading
                  })
         out.push(...Store.community)
-        out.push({
-                     "kind": "link",
-                     "id": "link"
-                 })
+        if (Store.linksAllowed)
+            out.push({
+                         "kind": "link",
+                         "id": "link"
+                     })
         return out
     }
 

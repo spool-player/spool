@@ -45,10 +45,22 @@ client become Jellyfin accounts.
 Every download is installed only when its SHA-256 matches the entry. Installing a newer version
 restarts that module's accounts in place.
 
-Downloaded code is interpreted JS and QML in the app's process, not a sandbox. That is fine for
-direct downloads, Linux and webOS developer builds; a Play Store or App Store build must keep
-downloading off (bundled providers only) unless the store's review has accepted the interpreter
-surface. There is no build switch for that yet.
+Downloaded code is interpreted JS and QML in the app's process, not a sandbox. No store forbids
+the interpreter itself (Qt runs QML without a JIT on iOS), but store review decides what downloaded
+code may add. `-DSPOOL_PROVIDER_SOURCES=` chooses what a build accepts:
+
+| Value | Store catalogues | By link | Installed from disk | For |
+| --- | --- | --- | --- | --- |
+| `open` (default) | yes | yes | yes | Every release build: GitHub, AUR, webOS, direct APKs |
+| `curated` | yes | no | yes | Google Play and App Store submissions |
+| `bundled` | no | no | no | A first store submission, or a store that rejects `curated` |
+
+A curated build also ignores `--provider-store`/`SPOOL_PROVIDER_STORE` and never follows the feed
+of a provider an earlier open build added by link. Google Play allows interpreted code loaded at
+run time as long as it can't be used to break Play policy; Apple allows JavaScript plug-ins under
+guideline 4.7 when the app answers for every one of them (an index, reporting, age limits, and
+no native APIs exposed to them without Apple's permission). Curation through the store's pull
+requests is what makes that answerable.
 
 ## Testing
 
