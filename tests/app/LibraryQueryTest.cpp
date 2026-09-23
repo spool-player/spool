@@ -10,7 +10,6 @@
 using Spool::activeLibraryFilterCount;
 using Spool::defaultLibraryQuery;
 using Spool::libraryCacheKey;
-using Spool::libraryContentLabel;
 using Spool::LibraryItem;
 using Spool::libraryQueryStringList;
 using Spool::supportsLatestLibraryRow;
@@ -41,11 +40,6 @@ SPOOL_TEST_MAIN("library-query")
     const LibraryItem movies = library(QStringLiteral("movies-id"), QStringLiteral("Films"), QStringLiteral("movies"));
     const LibraryItem series = library(QStringLiteral("series-id"), QStringLiteral("Shows"), QStringLiteral("tvshows"));
     const LibraryItem photos = library(QStringLiteral("photos-id"), QStringLiteral("Photos"), QStringLiteral("photos"));
-
-    require(libraryContentLabel(movies) == QStringLiteral("Movies"), "movie library label was not normalized");
-    require(libraryContentLabel(series) == QStringLiteral("TV Shows"), "series library label was not normalized");
-    require(
-        libraryContentLabel(photos) == QStringLiteral("Photos"), "unknown library label did not use the display name");
 
     require(libraryCacheKey(movies) == QStringLiteral("movies-id"), "movie library cache key changed");
     require(libraryCacheKey(series) == QStringLiteral("series/series-id"), "series library cache key changed");

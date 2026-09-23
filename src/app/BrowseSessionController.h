@@ -23,7 +23,6 @@ class BrowseSessionController final : public QObject {
     Q_PROPERTY(QString libraryId READ libraryId NOTIFY changed)
     Q_PROPERTY(QString libraryCollectionType READ libraryCollectionType NOTIFY changed)
     Q_PROPERTY(QString title READ title NOTIFY changed)
-    Q_PROPERTY(QString contentLabel READ contentLabel NOTIFY changed)
     Q_PROPERTY(QString viewKind READ viewKind NOTIFY changed)
     Q_PROPERTY(QVariantMap query READ query NOTIFY changed)
     Q_PROPERTY(QVariantMap filterOptions READ filterOptions NOTIFY changed)
@@ -72,10 +71,6 @@ public:
     {
         return m_title;
     }
-    QString contentLabel() const
-    {
-        return m_contentLabel;
-    }
     QString viewKind() const
     {
         return m_viewKind;
@@ -120,7 +115,7 @@ public:
     void updateFavorite(const QString& itemId, bool favorite);
     void updatePlayed(const QString& itemId, bool played);
 
-    void enterLibrary(const LibraryItem& library, const QString& contentLabel, const QVariantMap& defaultQuery);
+    void enterLibrary(const LibraryItem& library, const QVariantMap& defaultQuery);
     bool enterItem(const MovieItem& item);
     void enterNamedCollection(const QString& viewKind, const QString& name, const QString& collectionType = {});
     Q_INVOKABLE void setSort(const QString& sortBy, const QString& sortOrder);
@@ -153,7 +148,6 @@ private:
     QString m_libraryId;
     QString m_libraryCollectionType;
     QString m_title;
-    QString m_contentLabel = QStringLiteral("Movies");
     QString m_viewKind;
     QString m_seriesId;
     QString m_seasonId;

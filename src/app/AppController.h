@@ -118,10 +118,6 @@ public:
     // drag that never passed a guard. A reorder gesture previews locally on
     // every step — waiting on a round trip per step would make a held D-pad key
     // unusable — and publishes once, on drop.
-    Q_INVOKABLE bool queueEditable() const;
-    Q_INVOKABLE bool previewQueueMove(int from, int to);
-    Q_INVOKABLE void commitQueueMove(int from, int to);
-    // The same pair for a folded run dragged as one block.
     Q_INVOKABLE bool previewQueueMoveRange(int from, int count, int to);
     Q_INVOKABLE void commitQueueMoveRange(int from, int count, int to);
     Q_INVOKABLE void removeQueueItem(int index);

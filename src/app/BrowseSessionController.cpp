@@ -161,13 +161,11 @@ void BrowseSessionController::updatePlayed(const QString& itemId, bool played)
     m_items.updatePlayed(itemId, played);
 }
 
-void BrowseSessionController::enterLibrary(
-    const LibraryItem& library, const QString& contentLabel, const QVariantMap& defaultQuery)
+void BrowseSessionController::enterLibrary(const LibraryItem& library, const QVariantMap& defaultQuery)
 {
     m_libraryId = library.id;
     m_libraryCollectionType = library.collectionType;
     m_title = library.name;
-    m_contentLabel = contentLabel;
     m_viewKind = QStringLiteral("library");
     m_seriesId.clear();
     m_seasonId.clear();
@@ -182,24 +180,19 @@ bool BrowseSessionController::enterItem(const MovieItem& item)
 {
     BrowseDescriptor descriptor;
     QString viewKind;
-    QString contentLabel;
     if (item.itemType == QStringLiteral("Playlist")) {
         descriptor = BrowseDescriptor::playlist(item.id, item.title);
         viewKind = QStringLiteral("playlist");
-        contentLabel = QStringLiteral("Items");
     } else if (item.itemType == QStringLiteral("BoxSet")) {
         descriptor = BrowseDescriptor::boxSet(item.id, item.title);
         viewKind = QStringLiteral("boxset");
-        contentLabel = QStringLiteral("Titles");
     } else if (item.itemType == QStringLiteral("Folder") || item.itemType == QStringLiteral("PhotoAlbum")
         || item.itemType == QStringLiteral("MusicAlbum")) {
         descriptor = BrowseDescriptor::folderChildren(item.id, item.title);
         viewKind = QStringLiteral("folder");
-        contentLabel = QStringLiteral("Items");
     } else if (item.itemType == QStringLiteral("MusicArtist")) {
         descriptor = BrowseDescriptor::artistAlbums(item.id, item.title);
         viewKind = QStringLiteral("artist");
-        contentLabel = QStringLiteral("Albums");
     } else {
         return false;
     }
@@ -207,7 +200,6 @@ bool BrowseSessionController::enterItem(const MovieItem& item)
     m_descriptor = std::move(descriptor);
     m_viewKind = std::move(viewKind);
     m_title = item.title;
-    m_contentLabel = std::move(contentLabel);
     m_query.clear();
     m_filterOptions.clear();
     emit changed();
@@ -227,7 +219,6 @@ void BrowseSessionController::enterNamedCollection(
     m_libraryCollectionType = collectionType;
     m_viewKind = viewKind;
     m_title = name;
-    m_contentLabel = collectionType == QStringLiteral("music") ? QStringLiteral("Music") : QStringLiteral("Titles");
     m_query.clear();
     m_filterOptions.clear();
     emit changed();
