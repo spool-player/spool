@@ -506,7 +506,6 @@ qt_add_qml_module(spool
         qml/primitives/AppText.qml
         qml/primitives/AtomicViewReveal.qml
         qml/primitives/BusySpinner.qml
-        qml/primitives/ChoiceStrip.qml
         qml/primitives/ConfirmationDialog.qml
         qml/primitives/EmptyPlaceholder.qml
         qml/primitives/FastWheelHandler.qml

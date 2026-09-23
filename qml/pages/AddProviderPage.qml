@@ -17,28 +17,40 @@ FocusScope {
     property bool linkEditing: false
     property var menuEntry: null
 
+    // Section headers only once there is more than one section. Community
+    // entries carry their summary; an official one's name says it all.
     readonly property var rows: {
-        const out = [
-                  {
-                      "kind": "header",
-                      "title": "Official"
-                  }
-              ]
-        out.push(...Store.official)
-        if (!Store.storeAvailable)
-            return out
-        out.push({
-                     "kind": "header",
-                     "title": "Community",
-                     "loading": Store.loading
-                 })
-        out.push(...Store.community)
-        if (Store.linksAllowed)
+        const community = Store.storeAvailable && (Store.community.length > 0 || Store.loading)
+        const out = community ? [
+                                    {
+                                        "kind": "header",
+                                        "title": "Official"
+                                    }
+                                ] : []
+        out.push(...Store.official.map(entry => Object.assign({}, entry, {
+                                                                  "summary": ""
+                                                              })))
+        if (community) {
+            out.push({
+                         "kind": "header",
+                         "title": "Community",
+                         "loading": Store.loading
+                     })
+            out.push(...Store.community)
+        }
+        if (Store.storeAvailable && Store.linksAllowed)
             out.push({
                          "kind": "link",
                          "id": "link"
                      })
         return out
+    }
+
+    // Headers come and go as the store loads; stay on the same entry.
+    property string currentId: ""
+    onRowsChanged: {
+        const index = rows.findIndex(row => row.kind !== "header" && row.id === currentId)
+        list.currentIndex = index >= 0 ? index : step(-1, 1)
     }
 
     function step(from, delta) {
@@ -51,7 +63,7 @@ FocusScope {
     focus: true
     Component.onCompleted: {
         Store.refresh(true)
-        list.currentIndex = 1
+        list.currentIndex = step(-1, 1)
         InputKeys.focus(list)
     }
 
@@ -239,7 +251,7 @@ FocusScope {
 
             AppText {
                 anchors.verticalCenter: parent.verticalCenter
-                text: Providers.hasAccounts ? "Add a provider" : "Welcome to Spool"
+                text: "Add a provider"
                 font.pixelSize: Metrics.titleSizePx
                 font.weight: Font.DemiBold
             }
@@ -255,6 +267,8 @@ FocusScope {
             clip: true
             model: root.rows
             currentIndex: 0
+            onCurrentIndexChanged: root.currentId = root.rows[currentIndex] ? String(root.rows[currentIndex].id || "") :
+                                                                              ""
             focus: true
             keyNavigationEnabled: false
             boundsBehavior: Flickable.StopAtBounds
@@ -312,7 +326,7 @@ FocusScope {
 
                     width: list.width
                     height: isLink && root.linkEditing ? linkForm.implicitHeight + Metrics.scaled(24) : Math.max(
-                                                             Metrics.touchTargetPx, Metrics.scaled(76))
+                                                             Metrics.touchTargetPx, Metrics.scaled(64))
                     radius: Theme.radiusLarge
                     color: current ? Theme.focusedFill : hover.hovered ? Theme.bgHover : Theme.bgRaised
                     border.width: current ? Theme.focusBorderWidth : Theme.hoverBorderWidth
@@ -367,9 +381,7 @@ FocusScope {
 
                             SecondaryText {
                                 Layout.fillWidth: true
-                                text: row.isLink ? "GitHub, GitLab or a spool-provider.json" : row.state
-                                                   === "incompatible" ? "Needs a newer Spool" : (row.modelData.summary
-                                                                                                 || "")
+                                text: row.state === "incompatible" ? "Needs a newer Spool" : row.modelData.summary || ""
                                 visible: text.length > 0
                                 color: Theme.textMuted
                                 font.pixelSize: Metrics.metaSizePx
