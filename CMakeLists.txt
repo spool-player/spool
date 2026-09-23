@@ -967,11 +967,14 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
             "${CMAKE_CURRENT_SOURCE_DIR}/tools/ffmpeg-capabilities.py"
             "${CMAKE_CURRENT_SOURCE_DIR}/tools/manifests/ffmpeg-capabilities.json"
     )
-    add_test(NAME package-audit
-        COMMAND "${Python3_EXECUTABLE}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/PackageAuditTest.py"
-            "${CMAKE_CURRENT_SOURCE_DIR}/tools/package-audit.py"
-    )
+    # Builds ELF fixtures with cc; the AppImage is the only package it audits.
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_test(NAME package-audit
+            COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/PackageAuditTest.py"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tools/package-audit.py"
+        )
+    endif()
     add_test(NAME module-seam
         COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-module-seam.sh"
     )
