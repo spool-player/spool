@@ -31,9 +31,9 @@
 
 The app knows no media backend. Every source is a provider package (JS logic
 and QML screens) run by `src/provider/`; `docs/providers.md` describes the
-pieces and `sdk/` is the provider contract (API 0.2). Jellyfin lives in
-spool-player/spool-jellyfin and is bundled from the pin in
-`providers/lock.json`.
+pieces and `sdk/` is the provider contract (API 0.2). Jellyfin, Emby and Plex live in
+spool-player/spool-jellyfin, spool-emby and spool-plex and are bundled from
+the pins in `providers/lock.json`.
 
 - Core is everything under `src/` except `src/providers/` (native providers;
   only `LocalProvider` today) and `src/main.cpp`, the composition root. Core
