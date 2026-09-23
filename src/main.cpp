@@ -849,8 +849,17 @@ int main(int argc, char **argv)
     JellyfinNative::ApplicationHooks applicationHooks;
     applicationHooks.player = player.get();
     applicationHooks.settings = controller->settings();
+    applicationHooks.playQueue = controller->playQueue();
+    applicationHooks.artwork = controller->artwork();
     applicationHooks.memoryPressure
         = [controller = controller.get()](const QString& level) { controller->onMemoryPressure(level); };
+    applicationHooks.playbackTransition
+        = [controller = controller.get()] { return controller->property("playbackTransition").toBool(); };
+    applicationHooks.stopPlayback = [controller = controller.get()] { controller->stopPlayback(); };
+    applicationHooks.playNext = [controller = controller.get()] { controller->playQueueNext(); };
+    applicationHooks.playPrevious = [controller = controller.get()] { controller->playQueuePrevious(); };
+    QObject::connect(controller.get(), &JellyfinNative::AppController::playbackTransitionChanged, &applicationHooks,
+        &JellyfinNative::ApplicationHooks::playbackTransitionChanged);
     QObject::connect(controller.get(), &JellyfinNative::AppController::aggressiveMemoryPressure, &applicationHooks,
         &JellyfinNative::ApplicationHooks::aggressiveMemoryPressure);
     QObject::connect(controller.get(), &JellyfinNative::AppController::diagnosticsReportSaved, &applicationHooks,
