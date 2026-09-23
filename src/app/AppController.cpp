@@ -388,11 +388,11 @@ void AppController::playOrOpen(const MovieItem& item, bool fromStart)
 }
 void AppController::playItemId(const QString& itemId, bool fromStart)
 {
-    if (itemId.isEmpty() || !m_api)
+    if (itemId.isEmpty() || !m_catalog)
         return;
     setBusy(true, QStringLiteral("Loading item for playback…"));
     Async::runScoped(
-        this, m_api->fetchItemDetails(itemId),
+        this, m_catalog->fetchItemDetails(itemId),
         [this, fromStart](const MovieItem& item) {
             setBusy(false);
             if (!item.id.isEmpty())
