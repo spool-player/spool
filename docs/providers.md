@@ -12,7 +12,7 @@ the pieces fit; `sdk/README.md` and `sdk/provider.d.ts` are the provider author'
 | `ProviderRegistry` | Every module (bundled at `qrc:/providers/<id>/`, installed under the data directory; newest wins) and every account. Starts enabled accounts, owns setup drafts, screens (`ProviderUiContext`) and `pick()` |
 | `ScriptRuntime` / `ScriptBridge` | One worker thread and QJSEngine per module; `createSource(configuration, host)` per account; host HTTP, sockets, timers, discovery, events. Only snake_case error codes cross back |
 | `PortableProvider` | One running account as a `Provider`: catalogue, search, item state, playback and artwork from its operations and URL templates |
-| `SourceHub` | The single `Provider` the app sees. Scopes IDs as `<8 hex of account>:<id>`, fans list requests out to every account in parallel and interleaves them, routes everything else to the owning account |
+| `SourceHub` | The single `Provider` the app sees. Scopes IDs as `<8 hex of account>:<id>`, fans list requests out to every account in parallel and interleaves them, routes everything else to the owning account. Search is planned per server (below) and shown as each answer lands |
 | `ProviderStore` | `official.json` and `index.json` from spool-player/spool-providers (Pages), install by link, update checks and the `providers/updates` policy |
 | `app/GroupPlaybackController` | Watching together over whichever account the group is on: clock, drift, buffering, queue handoff. Providers translate their protocol into `group` events |
 
@@ -27,6 +27,13 @@ database (`providers/accounts/2`); configuration, which holds tokens, lives in t
 store and is read off the GUI thread. Accounts in the same group (users of one server) are
 alternatives: using one sets the others aside. Accounts in different groups are shown together.
 
+Search reaches past that. Once the search page opens, set-aside accounts on a server that is in use
+start too, without joining browsing, home rows or the library cache key. Each search then goes, per
+server, through the fewest accounts whose libraries cover everything any of its users can see: one who
+sees more stands in for one who sees less, and of two who see the same the one in use searches. Results
+dedupe per server by item ID (the account in use wins), rank by how closely the title matches and then
+by each server's own order, and a new query cancels the last one's operations.
+
 A provider's login screen completes with the account; the registry keeps the origins the viewer
 allowed during setup, never ones the provider claims. `http_401` from any operation marks the account
 as needing sign-in again. On first launch after upgrading, sign-ins saved by the old native Jellyfin
@@ -34,7 +41,8 @@ client become Jellyfin accounts.
 
 ## Where providers come from
 
-- **Bundled**: `providers/lock.json` pins each package by SHA-256; CMake checks and unpacks it into
+- **Bundled**: `providers/lock.json` pins each package by SHA-256 (Jellyfin, Emby and Plex, from
+  spool-player/spool-jellyfin, spool-emby and spool-plex); CMake checks and unpacks it into
   a resource at configure time. `-DSPOOL_PROVIDER_OVERRIDES=id=/path/to/checkout` bundles a working
   tree instead. Pin the published release asset, so the app ships exactly what the store serves.
 - **Store**: spool-player/spool-providers lists reviewed releases; first-party ids (`spool.*`) follow
