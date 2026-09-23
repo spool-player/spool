@@ -111,7 +111,7 @@ public:
     QCoro::Task<QVariantMap> callSource(
         QString sourceId, QString operation, QVariantMap arguments = {}, QString scope = {});
     QCoro::Task<ProviderMediaPage> callSourceMediaPage(
-        QString sourceId, QString operation, QVariantMap arguments = {}, int maximumItems = 100);
+        QString sourceId, QString operation, QVariantMap arguments = {}, int maximumItems = 100, QString scope = {});
     QCoro::Task<MovieItem> callSourceItem(QString sourceId, QString operation, QVariantMap arguments = {});
     void cancelSourceScope(const QString& sourceId, const QString& scope);
     bool sourceRunning(const QString& sourceId) const;
@@ -130,6 +130,10 @@ public:
     QCoro::Task<QVariantMap> pick(QString accountId, QVariantMap arguments);
     Q_INVOKABLE QUrl componentUrl(const QString& moduleId, const QString& role) const;
     Q_INVOKABLE void useAccount(const QString& accountId);
+    // Starts the accounts set aside for another user of the same server, so
+    // search can reach libraries the account in use cannot. They stay out of
+    // browsing; SourceHub decides which of them a search needs.
+    void startSetAside();
     Q_INVOKABLE void setAccountEnabled(const QString& accountId, bool enabled);
     Q_INVOKABLE void removeAccount(const QString& accountId);
 

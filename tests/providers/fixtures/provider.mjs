@@ -4,7 +4,22 @@ export function createSource(config, sourceHost) {
     const failing = function() { if (config.failing) throw new Error('offline'); };
     return {
         describe: function() { return {artwork: 'https://img.invalid/{itemId}/{type}?w={width}'}; },
-        libraries: function() { failing(); return {items: [{id: 'lib', title: 'Shelf', collectionType: 'movies'}]}; },
+        libraries: function() {
+            failing();
+            return {items: (config.libraries || ['lib']).map(function(id) {
+                return {id: id, title: id === 'lib' ? 'Shelf' : id, collectionType: 'movies'};
+            })};
+        },
+        // One film per library the account sees, and one exact title on request.
+        search: function(args) {
+            failing();
+            const rows = (config.libraries || ['lib']).map(function(id) {
+                return {id: id + '-1', title: 'Film in ' + id, type: 'Movie'};
+            });
+            if (config.exact)
+                rows.push({id: 'exact', title: 'The Film', type: 'Movie'});
+            return {items: rows, cursor: null, exhausted: true};
+        },
         latest: function(args) {
             failing();
             return {items: [item('new-1'), item('new-2'), item('new-3')].slice(0, args.limit), cursor: null,

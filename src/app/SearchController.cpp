@@ -4,7 +4,9 @@
 #include "LibraryPrefetchController.h"
 
 #include <QDebug>
+#include <QPointer>
 
+#include <memory>
 #include <utility>
 
 namespace JellyfinNative {
@@ -58,14 +60,26 @@ void SearchController::submit()
     const RequestGeneration::Token generation = m_searchGeneration.next();
     setBusy(true);
 
+    // Results show as each source answers; busy lasts until the last one.
+    auto answered = std::make_shared<bool>(false);
+    QPointer<SearchController> guard(this);
+    auto update = [this, guard, generation, answered](std::vector<MovieItem> items) {
+        if (!guard || !m_searchGeneration.isCurrent(generation))
+            return;
+        *answered = true;
+        if (m_prefetch)
+            m_prefetch->prefetchPosters(items);
+        setResults(std::move(items));
+        emit resultsChanged();
+    };
     Async::runLatest(
-        this, m_api->searchItems(m_query), m_searchGeneration, generation,
-        [this](std::vector<MovieItem> items) {
-            if (m_prefetch)
-                m_prefetch->prefetchPosters(items);
-            setResults(std::move(items));
+        this, m_api->searchProgressively(m_query, 80, std::move(update)), m_searchGeneration, generation,
+        [this, answered] {
+            if (!*answered) {
+                clearResults();
+                emit resultsChanged();
+            }
             setBusy(false);
-            emit resultsChanged();
         },
         [this](const std::exception_ptr& error) {
             clearResults();
@@ -101,7 +115,10 @@ void SearchController::clear()
 
 void SearchController::loadSuggestions()
 {
-    if (!authenticated() || m_suggestionsLoaded || m_suggestionsBusy)
+    if (!authenticated())
+        return;
+    m_api->prepareSearch();
+    if (m_suggestionsLoaded || m_suggestionsBusy)
         return;
 
     const RequestGeneration::Token generation = m_suggestionsGeneration.next();

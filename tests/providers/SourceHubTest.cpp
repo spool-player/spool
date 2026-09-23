@@ -163,5 +163,74 @@ JELLYFIN_TEST_MAIN("source-hub")
     for (const LibraryItem& library : remaining)
         require(!library.name.contains(QStringLiteral(" · ")), "a name no longer shared is shown plain");
     require(hub.accountOf(hub.scoped(a, QStringLiteral("x"))) == a, "the others keep their scope");
+
+    // Several users of one server: search goes through as few of them as
+    // reach every library, and never shows the same item twice.
+    const auto user = [&](const char *key, const char *server, QStringList libraries, bool exact = false) {
+        const QString id = registry.finishSetup({},
+            { { QStringLiteral("module"), QStringLiteral("fixture.test") },
+                { QStringLiteral("account"), QLatin1String(key) }, { QStringLiteral("group"), QLatin1String(server) },
+                { QStringLiteral("label"), QLatin1String(key) },
+                { QStringLiteral("configuration"),
+                    QVariantMap { { QStringLiteral("label"), QLatin1String(key) },
+                        { QStringLiteral("libraries"), libraries }, { QStringLiteral("exact"), exact } } } });
+        registry.useAccount(id);
+        return id;
+    };
+    // The account used last on each server is the one in use.
+    const QString wide = user("wide", "s1", { QStringLiteral("m"), QStringLiteral("anime") });
+    const QString same = user("same", "s1", { QStringLiteral("m") });
+    const QString narrow = user("narrow", "s1", { QStringLiteral("m") });
+    const QString twin = user("twin", "s2", { QStringLiteral("m") });
+    const QString used = user("used", "s2", { QStringLiteral("m") });
+    const QString other = user("other", "s3", { QStringLiteral("m"), QStringLiteral("anime") });
+    const QString mine = user("mine", "s3", { QStringLiteral("m"), QStringLiteral("k") }, true);
+    waitUntil([&] { return hub.source(narrow) && hub.source(used) && hub.source(mine); }, "the users in use start");
+    const size_t browsed = hub.sources().size();
+    const QString scopeKey = hub.libraryScopeKey();
+    hub.prepareSearch();
+    waitUntil([&] { return hub.source(wide) && hub.source(same) && hub.source(twin) && hub.source(other); },
+        "users set aside start for search");
+    require(hub.sources().size() == browsed && hub.libraryScopeKey() == scopeKey,
+        "and stay out of browsing and the library caches");
+
+    QStringList planned;
+    for (const SourceHub::SearchTarget& target : QCoro::waitFor(hub.searchPlan()))
+        planned.append(target.accountId);
+    require(planned.contains(wide) && !planned.contains(narrow) && !planned.contains(same),
+        "a user who sees more stands in for those who see less");
+    require(planned.contains(used) && !planned.contains(twin), "of two who see the same, the one in use searches");
+    require(planned.indexOf(mine) >= 0 && planned.indexOf(mine) < planned.indexOf(other),
+        "overlapping users both search, the one in use first");
+
+    int updates = 0;
+    std::vector<MovieItem> found;
+    QCoro::waitFor(hub.searchProgressively(QStringLiteral("film"), 80, [&](std::vector<MovieItem> items) {
+        ++updates;
+        found = std::move(items);
+    }));
+    require(updates >= 2, "results arrive as each account answers");
+    QStringList s3;
+    for (const MovieItem& item : found) {
+        if (hub.accountOf(item.id) == mine || hub.accountOf(item.id) == other)
+            s3.append(SourceHub::rawId(item.id));
+    }
+    s3.sort();
+    require(s3
+            == QStringList(
+                { QStringLiteral("anime-1"), QStringLiteral("exact"), QStringLiteral("k-1"), QStringLiteral("m-1") }),
+        "an item two users of a server can both see is listed once");
+    require(!found.empty() && found.front().title == QStringLiteral("The Film"), "the exact title ranks first");
+    const MovieItem shared = *std::find_if(found.begin(), found.end(), [&](const MovieItem& item) {
+        return SourceHub::rawId(item.id) == QStringLiteral("m-1") && hub.accountOf(item.id) != wide
+            && hub.accountOf(item.id) != used;
+    });
+    require(hub.accountOf(shared.id) == mine, "and it comes from the user in use");
+
+    registry.useAccount(wide);
+    waitUntil([&] { return !hub.source(narrow); }, "choosing another user sets the last one aside");
+    const auto browsing = hub.sources();
+    require(std::find(browsing.begin(), browsing.end(), hub.source(wide)) != browsing.end(),
+        "an account running for search is promoted when chosen");
     return 0;
 }

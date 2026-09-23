@@ -103,7 +103,7 @@ public:
 
 private:
     class Playback;
-    QCoro::Task<std::vector<MovieItem>> list(QString operation, QVariantMap arguments, int limit);
+    QCoro::Task<std::vector<MovieItem>> list(QString operation, QVariantMap arguments, int limit, QString scope = {});
 
     ProviderRegistry *m_registry;
     QString m_accountId;
