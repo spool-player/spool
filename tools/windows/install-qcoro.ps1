@@ -16,8 +16,8 @@ param(
 . (Join-Path $PSScriptRoot 'common.ps1')
 
 $manifest = (Get-ToolchainManifest).qcoro
-$qtRoot = if ($env:JELLYFIN_QT_ROOT) { $env:JELLYFIN_QT_ROOT } else { Get-DefaultQtRoot }
-$qcoroRoot = if ($env:JELLYFIN_QCORO_ROOT) { $env:JELLYFIN_QCORO_ROOT } else { Get-DefaultQCoroRoot }
+$qtRoot = if ($env:SPOOL_QT_ROOT) { $env:SPOOL_QT_ROOT } else { Get-DefaultQtRoot }
+$qcoroRoot = if ($env:SPOOL_QCORO_ROOT) { $env:SPOOL_QCORO_ROOT } else { Get-DefaultQCoroRoot }
 
 if ((Test-Path -LiteralPath (Join-Path $qcoroRoot 'include')) -and -not $Force) {
     Write-Host "QCoro $($manifest.version) is already installed at $qcoroRoot"

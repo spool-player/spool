@@ -13,7 +13,7 @@
 #include <optional>
 #include <vector>
 
-namespace JellyfinNative {
+namespace Spool {
 
 class ArtworkPrefetcher;
 
@@ -56,4 +56,4 @@ private:
     int m_imagePrefetchAheadItems = 16;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

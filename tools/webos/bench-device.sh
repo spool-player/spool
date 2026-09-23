@@ -101,7 +101,7 @@ restore() {
   # gets noticed by the person who owns the room.
   luna "luna://com.webos.applicationManager/launch" "{\"id\":\"${SPOOL_TV_RETURN_APP:-com.webos.app.hdmi1}\"}" || true
   tv "cd '$APP_DIR/bin' \
-      && if [ -f jellyfin-native.real ]; then mv -f jellyfin-native.real jellyfin-native; fi \
+      && if [ -f spool.real ]; then mv -f spool.real spool; fi \
       && cd '$APP_DIR' \
       && true \
       && chown -R 5486:5000 .config .cache .local 2>/dev/null || true" >/dev/null 2>&1 || true
@@ -125,9 +125,9 @@ echo "==> preparing $label on $HOST"
 luna "luna://com.webos.applicationManager/closeByAppId" "{\"id\":\"$APP_ID\"}" || true
 tv "cd '$APP_DIR/bin' \
     && rm -f '$remote_out' \
-    && { [ -f jellyfin-native.real ] || mv jellyfin-native jellyfin-native.real; } \
-    && printf '%s\n' '#!/bin/sh' $(printf "'%s' " "${env_lines[@]}") 'exec \"\$(dirname \"\$0\")/jellyfin-native.real\" \"\$@\"' > jellyfin-native \
-    && chmod 755 jellyfin-native"
+    && { [ -f spool.real ] || mv spool spool.real; } \
+    && printf '%s\n' '#!/bin/sh' $(printf "'%s' " "${env_lines[@]}") 'exec \"\$(dirname \"\$0\")/spool.real\" \"\$@\"' > spool \
+    && chmod 755 spool"
 
 echo "==> launching through the application manager"
 luna "luna://com.webos.applicationManager/launch" "{\"id\":\"$APP_ID\"}"

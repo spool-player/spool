@@ -4,7 +4,7 @@
 #include <QQmlEngine>
 #include <QThread>
 
-namespace JellyfinNative {
+namespace Spool {
 
 ProviderQmlCache::ProviderQmlCache(QQmlEngine *engine)
     : QObject(engine)
@@ -100,4 +100,4 @@ int ProviderQmlCache::retainedCount() const
     return m_retained.size();
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

@@ -7,7 +7,7 @@ extern "C" {
 
 #include <utility>
 
-namespace JellyfinNative {
+namespace Spool {
 
 MpvLifecycle::~MpvLifecycle()
 {
@@ -126,4 +126,4 @@ void MpvLifecycle::runEventLoop(
     }
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

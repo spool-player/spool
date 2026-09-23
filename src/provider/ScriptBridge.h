@@ -24,7 +24,7 @@ class QNetworkAccessManager;
 class QNetworkReply;
 class QWebSocket;
 
-namespace JellyfinNative {
+namespace Spool {
 
 // Interrupts JS that runs longer than 500 ms without returning to the event
 // loop. Qt permits setInterrupted() from another thread.
@@ -146,4 +146,4 @@ private:
     int m_nextSocket = 1;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

@@ -13,7 +13,7 @@
 #include <optional>
 #include <stdexcept>
 
-namespace JellyfinNative {
+namespace Spool {
 namespace {
     template <typename T> void fail(const std::shared_ptr<QPromise<T>>& promise, const char *code)
     {
@@ -397,4 +397,4 @@ void ScriptRuntime::removeSource(const QString& sourceId)
         d->worker, [worker = d->worker, sourceId] { worker->remove(sourceId); }, Qt::QueuedConnection);
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

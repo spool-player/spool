@@ -1,4 +1,4 @@
-# Spool for Jellyfin
+# Spool
 
 - libmpv: We've forked this and made it compatible in the directory above. keep libmpv behind a thin PlayerController / PlaybackController facade and do not let Jellyfin/network/UI code know about mpv internals.
 - Qt6.11
@@ -176,7 +176,7 @@ not require ADB or broad storage permissions.
 
 # Name
 
-## Fast Jellyfin client for LG TVs and desktop
+## Fast media player for LG TVs and desktop
 
 // Download link box
 

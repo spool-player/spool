@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Spool for Jellyfin is prerelease software. Security fixes are provided only for the latest published `v0.x` prerelease and the current `master` branch. Older prereleases are unsupported.
+Spool is prerelease software. Security fixes are provided only for the latest published `v0.x` prerelease and the current `master` branch. Older prereleases are unsupported.
 
 ## Reporting a vulnerability
 

@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
 
@@ -85,4 +85,4 @@ void GroupClock::selectBestMeasurement()
     m_ready = true;
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

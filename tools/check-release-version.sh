@@ -13,8 +13,8 @@ actual="$(tr -d '[:space:]' <"$root/VERSION")"
   exit 1
 }
 
-grep -Fq 'project(JellyfinNativeWebOS VERSION "${JELLYFIN_VERSION}"' "$root/CMakeLists.txt"
-grep -Fq 'JELLYFIN_VERSION="${PROJECT_VERSION}"' "$root/CMakeLists.txt"
+grep -Fq 'project(SpoolWebOS VERSION "${SPOOL_VERSION}"' "$root/CMakeLists.txt"
+grep -Fq 'SPOOL_VERSION="${PROJECT_VERSION}"' "$root/CMakeLists.txt"
 grep -Fq '"version": "@VERSION@"' "$root/app/appinfo.json.in"
 grep -Fq "<release version=\"$expected\"" "$root/app/com.sachk.spool.metainfo.xml"
 grep -Fq 'VIProductVersion "${VERSION}.0"' "$root/tools/windows/installer.nsi"

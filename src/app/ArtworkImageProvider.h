@@ -4,7 +4,7 @@
 
 #include <QQuickImageProvider>
 
-namespace JellyfinNative {
+namespace Spool {
 
 class ArtworkImageProvider final : public QQuickAsyncImageProvider {
 public:
@@ -16,4 +16,4 @@ private:
     ArtworkService *m_service = nullptr;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

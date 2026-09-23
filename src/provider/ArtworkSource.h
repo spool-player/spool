@@ -2,7 +2,7 @@
 
 #include <QString>
 
-namespace JellyfinNative {
+namespace Spool {
 
 // Turns an image the model names (an item, an image slot and the tag the
 // source stamped on it) into a URL the artwork pipeline can fetch. Which
@@ -33,4 +33,4 @@ public:
     virtual QString imageUrl(const ImageRequest& request) const = 0;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

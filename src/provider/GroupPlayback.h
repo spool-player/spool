@@ -6,7 +6,7 @@
 #include <QString>
 #include <QStringList>
 
-namespace JellyfinNative {
+namespace Spool {
 
 // Watching together: while a group is joined, the queue and the transport
 // belong to the group, and the app hands every local action here instead of
@@ -46,4 +46,4 @@ signals:
     void queuePlaybackRequested(qint64 positionTicks);
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

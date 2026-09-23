@@ -6,7 +6,7 @@ struct wp_color_management_surface_v1;
 
 class QWindow;
 
-namespace JellyfinNative {
+namespace Spool {
 
 // What the compositor says the output can actually show.
 //
@@ -46,4 +46,4 @@ private:
     wp_color_management_surface_v1 *m_surface = nullptr;
     bool m_enabled = false;
 };
-} // namespace JellyfinNative
+} // namespace Spool

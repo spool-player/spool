@@ -9,7 +9,7 @@
 #include <QUrl>
 #include <QVariantMap>
 
-namespace JellyfinNative {
+namespace Spool {
 class ProviderRegistry;
 
 // Rows from a provider list, already native-owned. Role reads never enter a
@@ -46,7 +46,7 @@ class ProviderUiContext final : public QObject {
     Q_PROPERTY(QUrl component READ component CONSTANT)
     Q_PROPERTY(QVariantMap arguments READ arguments CONSTANT)
     Q_PROPERTY(bool closed READ closed NOTIFY closedChanged)
-    Q_PROPERTY(JellyfinNative::ProviderListModel *rows READ rows CONSTANT)
+    Q_PROPERTY(Spool::ProviderListModel *rows READ rows CONSTANT)
 
 public:
     ProviderUiContext(ProviderRegistry *registry, QString sourceId, QString moduleId, QString role, QUrl component);
@@ -125,4 +125,4 @@ private:
     quint64 m_listRequest = 0;
     QVariantMap m_listResult;
 };
-} // namespace JellyfinNative
+} // namespace Spool

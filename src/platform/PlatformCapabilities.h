@@ -2,7 +2,7 @@
 
 #include <QString>
 
-namespace JellyfinNative {
+namespace Spool {
 
 struct PlatformCapabilities {
     QString deviceName;
@@ -23,4 +23,4 @@ struct PlatformCapabilities {
 
 const PlatformCapabilities& platformCapabilities();
 
-} // namespace JellyfinNative
+} // namespace Spool

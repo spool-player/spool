@@ -14,15 +14,15 @@
 #include <memory>
 #include <vector>
 
-namespace JellyfinNative {
+namespace Spool {
 
 class DatabaseManager;
 class LibraryPrefetchController;
 
 class HomeModelController final : public QObject {
     Q_OBJECT
-    Q_PROPERTY(JellyfinNative::MovieGridModel *resumeItems READ resumeItems CONSTANT)
-    Q_PROPERTY(JellyfinNative::MovieGridModel *nextUpItems READ nextUpItems CONSTANT)
+    Q_PROPERTY(Spool::MovieGridModel *resumeItems READ resumeItems CONSTANT)
+    Q_PROPERTY(Spool::MovieGridModel *nextUpItems READ nextUpItems CONSTANT)
     Q_PROPERTY(QVariantList latestLibraryRows READ latestLibraryRows NOTIFY latestLibraryRowsChanged)
     Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
 
@@ -90,4 +90,4 @@ private:
     QStringList m_recentLibraryIds;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

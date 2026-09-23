@@ -3,7 +3,7 @@
 
 #include <QProcess>
 
-namespace JellyfinNative::CredentialStore {
+namespace Spool::CredentialStore {
 namespace {
 
     struct SecretResult {
@@ -31,8 +31,7 @@ namespace {
 
     QStringList attributes(const QString& profileId)
     {
-        return { QStringLiteral("application"), QStringLiteral("jellyfin-native"), QStringLiteral("profile"),
-            profileId };
+        return { QStringLiteral("application"), QStringLiteral("spool"), QStringLiteral("profile"), profileId };
     }
 
 } // namespace
@@ -54,7 +53,7 @@ bool save(const QString& profileId, const QString& accessToken)
     if (FileBackend::enabled())
         return FileBackend::save(profileId, accessToken);
     return runSecretTool(
-        QStringList { QStringLiteral("store"), QStringLiteral("--label=Spool for Jellyfin") } + attributes(profileId),
+        QStringList { QStringLiteral("store"), QStringLiteral("--label=Spool") } + attributes(profileId),
         accessToken.toUtf8())
         .success;
 }
@@ -76,7 +75,7 @@ void clear()
         FileBackend::clear();
         return;
     }
-    runSecretTool({ QStringLiteral("clear"), QStringLiteral("application"), QStringLiteral("jellyfin-native") });
+    runSecretTool({ QStringLiteral("clear"), QStringLiteral("application"), QStringLiteral("spool") });
 }
 
-} // namespace JellyfinNative::CredentialStore
+} // namespace Spool::CredentialStore

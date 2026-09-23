@@ -14,7 +14,7 @@
 #include <memory>
 #include <stdexcept>
 
-using namespace JellyfinNative;
+using namespace Spool;
 
 namespace {
 void require(bool condition, const char *message)
@@ -80,7 +80,7 @@ public:
 };
 }
 
-JELLYFIN_TEST_MAIN("search-controller")
+SPOOL_TEST_MAIN("search-controller")
 {
     QCoreApplication app(argc, argv);
     PendingSearch source;

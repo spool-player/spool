@@ -18,7 +18,7 @@
 // Native providers live here, one directory each. Every other provider is
 // JavaScript and QML loaded at run time.
 
-namespace JellyfinNative {
+namespace Spool {
 
 // A deliberately simple media source: every media file under one folder,
 // presented as a single library with no server behind it. It exists to
@@ -126,4 +126,4 @@ private:
     Playback *m_playback = nullptr;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

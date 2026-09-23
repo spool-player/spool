@@ -2,7 +2,7 @@
 
 #include <mpv/client.h>
 
-namespace JellyfinNative {
+namespace Spool {
 
 qint64 platformAudioDecodeCpuTimeNs()
 {
@@ -11,4 +11,4 @@ qint64 platformAudioDecodeCpuTimeNs()
 
 void configurePlatformPlaybackCapabilities(VideoCodecCapabilityApplier, QObject&) { }
 
-} // namespace JellyfinNative
+} // namespace Spool

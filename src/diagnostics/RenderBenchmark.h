@@ -14,7 +14,7 @@
 class QQuickWindow;
 class QQuickItem;
 
-namespace JellyfinNative {
+namespace Spool {
 class InputLatencyMonitor;
 class LibraryListModel;
 class RouterController;
@@ -141,4 +141,4 @@ private:
     QElapsedTimer m_stepTimer;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

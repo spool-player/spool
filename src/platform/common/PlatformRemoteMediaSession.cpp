@@ -10,7 +10,7 @@
 #include <QtCore/qnativeinterface.h>
 #endif
 
-namespace JellyfinNative {
+namespace Spool {
 namespace {
 
     class NullRemoteMediaSession final : public PlatformRemoteMediaSession {
@@ -131,12 +131,12 @@ void dispatchAndroidRemoteMediaControl(int action, qint64 value)
 }
 #endif
 
-} // namespace JellyfinNative
+} // namespace Spool
 
 #ifdef Q_OS_ANDROID
 extern "C" JNIEXPORT void JNICALL Java_com_sachk_spool_RemoteMediaSessionBridge_nativeControl(
     JNIEnv *, jclass, jint action, jlong value)
 {
-    JellyfinNative::dispatchAndroidRemoteMediaControl(static_cast<int>(action), static_cast<qint64>(value));
+    Spool::dispatchAndroidRemoteMediaControl(static_cast<int>(action), static_cast<qint64>(value));
 }
 #endif

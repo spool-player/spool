@@ -8,7 +8,7 @@
 
 class QGuiApplication;
 
-namespace JellyfinNative {
+namespace Spool {
 
 class ArtworkService;
 class NativeAppWindow;
@@ -63,4 +63,4 @@ private:
     std::unique_ptr<PlatformData> m_platform;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

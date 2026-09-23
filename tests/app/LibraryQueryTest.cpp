@@ -7,13 +7,13 @@
 #include <cstdlib>
 #include <utility>
 
-using JellyfinNative::activeLibraryFilterCount;
-using JellyfinNative::defaultLibraryQuery;
-using JellyfinNative::libraryCacheKey;
-using JellyfinNative::libraryContentLabel;
-using JellyfinNative::LibraryItem;
-using JellyfinNative::libraryQueryStringList;
-using JellyfinNative::supportsLatestLibraryRow;
+using Spool::activeLibraryFilterCount;
+using Spool::defaultLibraryQuery;
+using Spool::libraryCacheKey;
+using Spool::libraryContentLabel;
+using Spool::LibraryItem;
+using Spool::libraryQueryStringList;
+using Spool::supportsLatestLibraryRow;
 
 namespace {
 
@@ -36,7 +36,7 @@ LibraryItem library(QString id, QString name, QString collectionType)
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("library-query")
+SPOOL_TEST_MAIN("library-query")
 {
     const LibraryItem movies = library(QStringLiteral("movies-id"), QStringLiteral("Films"), QStringLiteral("movies"));
     const LibraryItem series = library(QStringLiteral("series-id"), QStringLiteral("Shows"), QStringLiteral("tvshows"));

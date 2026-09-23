@@ -5,7 +5,7 @@
 #include <QObject>
 #include <QString>
 
-namespace JellyfinNative {
+namespace Spool {
 
 class ContentModelController;
 class BrowseSessionController;
@@ -41,4 +41,4 @@ private:
     SearchController *m_search = nullptr;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

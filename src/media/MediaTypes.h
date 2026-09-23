@@ -13,7 +13,7 @@
 #include <exception>
 #include <vector>
 
-namespace JellyfinNative {
+namespace Spool {
 
 struct LibraryItem {
     Q_GADGET
@@ -154,7 +154,7 @@ struct MediaSourceInfo {
     Q_PROPERTY(qint64 size MEMBER size)
     Q_PROPERTY(int bitRate MEMBER bitRate)
     Q_PROPERTY(qint64 runtimeTicks MEMBER runtimeTicks)
-    Q_PROPERTY(QList<JellyfinNative::MediaStreamInfo> streams MEMBER streams)
+    Q_PROPERTY(QList<Spool::MediaStreamInfo> streams MEMBER streams)
 
 public:
     QString id;
@@ -233,9 +233,9 @@ struct MovieItem {
     Q_PROPERTY(QString premiereDate MEMBER premiereDate)
     Q_PROPERTY(QString endDate MEMBER endDate)
     Q_PROPERTY(QString status MEMBER status)
-    Q_PROPERTY(QList<JellyfinNative::PersonItem> people MEMBER people)
-    Q_PROPERTY(QList<JellyfinNative::MediaSourceInfo> mediaSources MEMBER mediaSources)
-    Q_PROPERTY(QList<JellyfinNative::ExternalUrlInfo> externalUrls MEMBER externalUrls)
+    Q_PROPERTY(QList<Spool::PersonItem> people MEMBER people)
+    Q_PROPERTY(QList<Spool::MediaSourceInfo> mediaSources MEMBER mediaSources)
+    Q_PROPERTY(QList<Spool::ExternalUrlInfo> externalUrls MEMBER externalUrls)
 
 public:
     QString id;
@@ -411,16 +411,16 @@ bool isMeaningfulResumePosition(qint64 resumeTicks, qint64 runtimeTicks);
 qint64 normalizedResumeTicks(qint64 resumeTicks, qint64 runtimeTicks);
 QVariantMap formatMediaInfo(const MovieItem& item, const QString& preferredAudioLanguage);
 
-} // namespace JellyfinNative
+} // namespace Spool
 
-Q_DECLARE_METATYPE(JellyfinNative::LibraryItem)
-Q_DECLARE_METATYPE(JellyfinNative::PersonItem)
-Q_DECLARE_METATYPE(JellyfinNative::MediaStreamInfo)
-Q_DECLARE_METATYPE(JellyfinNative::MediaSourceInfo)
-Q_DECLARE_METATYPE(JellyfinNative::ExternalUrlInfo)
-Q_DECLARE_METATYPE(JellyfinNative::MovieItem)
-Q_DECLARE_METATYPE(JellyfinNative::MediaSegment)
-Q_DECLARE_METATYPE(QList<JellyfinNative::PersonItem>)
-Q_DECLARE_METATYPE(QList<JellyfinNative::MediaStreamInfo>)
-Q_DECLARE_METATYPE(QList<JellyfinNative::MediaSourceInfo>)
-Q_DECLARE_METATYPE(QList<JellyfinNative::ExternalUrlInfo>)
+Q_DECLARE_METATYPE(Spool::LibraryItem)
+Q_DECLARE_METATYPE(Spool::PersonItem)
+Q_DECLARE_METATYPE(Spool::MediaStreamInfo)
+Q_DECLARE_METATYPE(Spool::MediaSourceInfo)
+Q_DECLARE_METATYPE(Spool::ExternalUrlInfo)
+Q_DECLARE_METATYPE(Spool::MovieItem)
+Q_DECLARE_METATYPE(Spool::MediaSegment)
+Q_DECLARE_METATYPE(QList<Spool::PersonItem>)
+Q_DECLARE_METATYPE(QList<Spool::MediaStreamInfo>)
+Q_DECLARE_METATYPE(QList<Spool::MediaSourceInfo>)
+Q_DECLARE_METATYPE(QList<Spool::ExternalUrlInfo>)

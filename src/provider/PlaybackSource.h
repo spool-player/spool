@@ -11,7 +11,7 @@
 
 #include <vector>
 
-namespace JellyfinNative {
+namespace Spool {
 
 // What the player needs from wherever media comes from. This is exactly the
 // surface src/player used from the Jellyfin facade and nothing more; a
@@ -64,4 +64,4 @@ signals:
     void playbackNetworkProfileChanged();
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

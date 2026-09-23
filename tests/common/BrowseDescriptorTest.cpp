@@ -6,8 +6,8 @@
 
 #include <cstdlib>
 
-using JellyfinNative::BrowseDescriptor;
-using JellyfinNative::BrowseKind;
+using Spool::BrowseDescriptor;
+using Spool::BrowseKind;
 
 namespace {
 
@@ -32,7 +32,7 @@ void requireDescriptor(const BrowseDescriptor& descriptor, BrowseKind kind, cons
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("browse-descriptor")
+SPOOL_TEST_MAIN("browse-descriptor")
 {
     const BrowseDescriptor library
         = BrowseDescriptor::library(QStringLiteral("library-1"), QStringLiteral("movies"), QStringLiteral("Movies"));

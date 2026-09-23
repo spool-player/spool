@@ -3,7 +3,7 @@
 pkgname=spool-bin
 pkgver=0.8.1
 pkgrel=1
-pkgdesc='Jellyfin client for desktop and TV, built on Qt Quick and mpv'
+pkgdesc='Fast media player for desktop and TV, built on Qt Quick and mpv'
 arch=('x86_64')
 url='https://github.com/spool-player/spool'
 license=('MPL-2.0')
@@ -16,7 +16,7 @@ provides=("spool=${pkgver}")
 conflicts=('spool')
 # Already stripped, and patchelf has set the RPATHs the bundle needs.
 options=('!strip' '!debug' '!lto')
-_bundle="Spool-for-Jellyfin-${pkgver}-linux-x86_64"
+_bundle="Spool-${pkgver}-linux-x86_64"
 source=("https://github.com/spool-player/spool/releases/download/v${pkgver}/${_bundle}.tar.zst")
 # Written by tools/update-aur-checksums.sh from SHA256SUMS.txt once the release
 # above is published; SKIP until then.
@@ -54,8 +54,8 @@ LAUNCHER
             "$pkgdir/usr/share/icons/hicolor/${size}x${size}/apps/com.sachk.spool.png"
     done
 
-    install -Dm644 "$_bundle/usr/share/jellyfin-native/notices/LICENSE" \
+    install -Dm644 "$_bundle/usr/share/spool/notices/LICENSE" \
         "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
-    install -Dm644 "$_bundle/usr/share/jellyfin-native/notices/OPEN_SOURCE_NOTICES.txt" \
+    install -Dm644 "$_bundle/usr/share/spool/notices/OPEN_SOURCE_NOTICES.txt" \
         "$pkgdir/usr/share/licenses/$pkgname/OPEN_SOURCE_NOTICES.txt"
 }

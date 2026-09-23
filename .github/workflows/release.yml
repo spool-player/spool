@@ -37,7 +37,7 @@ jobs:
       - name: Upload corresponding source
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
         with:
-          name: spool-for-jellyfin-corresponding-source
+          name: spool-corresponding-source
           path: release-source/*
           retention-days: 1
 
@@ -280,7 +280,7 @@ jobs:
           fi
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
             --pattern SHA256SUMS.txt --dir "$RUNNER_TEMP"
-          bundle="Spool-for-Jellyfin-$version-linux-x86_64.tar.zst"
+          bundle="Spool-$version-linux-x86_64.tar.zst"
           checksum="$(awk -v want="$bundle" \
             '{ sub(/^\*/, "", $2); if ($2 == want) print $1 }' \
             "$RUNNER_TEMP/SHA256SUMS.txt")"

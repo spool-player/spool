@@ -98,7 +98,7 @@ bool isRightWayUp(const QImage& image)
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("mpv-video-item")
+SPOOL_TEST_MAIN("mpv-video-item")
 {
     // The same end-to-end check is worth running against either backend, and
     // the Vulkan one is the whole reason the item moved to the RHI. OpenGL
@@ -127,7 +127,7 @@ JELLYFIN_TEST_MAIN("mpv-video-item")
     QQuickWindow window;
     window.setColor(Qt::black);
     window.resize(320, 180);
-    JellyfinNative::MpvVideoItem videoItem(window.contentItem());
+    Spool::MpvVideoItem videoItem(window.contentItem());
     videoItem.setSize(QSizeF(window.size()));
     window.show();
     app.processEvents();
@@ -187,7 +187,7 @@ JELLYFIN_TEST_MAIN("mpv-video-item")
         // Diagnostic, not an assertion: what the swapchain can present depends on
         // the driver, the compositor and whether the display is in HDR mode, none
         // of which a test can require.
-        const JellyfinNative::DisplayOutputCapabilities display = JellyfinNative::PlatformDisplayOutput::probe(&window);
+        const Spool::DisplayOutputCapabilities display = Spool::PlatformDisplayOutput::probe(&window);
         std::fprintf(stderr, "display: hdrAvailable=%d format=%d sdrWhite=%.0f min=%.4f max=%.0f\n",
             int(display.hdrAvailable), int(display.preferredFormat), double(display.sdrWhiteNits),
             double(display.minLuminanceNits), double(display.maxLuminanceNits));
@@ -208,11 +208,11 @@ namespace {
 int vulkanEntry(int argc, char **argv)
 {
     qputenv("SPOOL_TEST_RENDER_API", "vulkan");
-    return jellyfinTestBody(argc, argv);
+    return spoolTestBody(argc, argv);
 }
 
-// Registered by hand rather than with a second JELLYFIN_TEST_MAIN, which names
+// Registered by hand rather than with a second SPOOL_TEST_MAIN, which names
 // its body the same thing every time and so can only appear once per file.
-[[maybe_unused]] const bool vulkanRegistered = ::JellyfinTests::registerTest("mpv-video-item-vulkan", &vulkanEntry);
+[[maybe_unused]] const bool vulkanRegistered = ::SpoolTests::registerTest("mpv-video-item-vulkan", &vulkanEntry);
 
 } // namespace

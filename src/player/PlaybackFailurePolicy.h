@@ -3,7 +3,7 @@
 
 #include <QString>
 
-namespace JellyfinNative {
+namespace Spool {
 
 class PlaybackFailurePolicy final {
 public:
@@ -14,4 +14,4 @@ public:
         int audioStreamIndex, int subtitleStreamIndex);
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

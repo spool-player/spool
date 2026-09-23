@@ -5,7 +5,7 @@
 #include <cstdlib>
 #include <iostream>
 
-using namespace JellyfinNative;
+using namespace Spool;
 
 namespace {
 
@@ -29,7 +29,7 @@ MediaStreamInfo stream(int index, QString language, bool isDefault = false)
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("series-audio-selection")
+SPOOL_TEST_MAIN("series-audio-selection")
 {
     MediaStreamInfo video;
     video.index = 0;

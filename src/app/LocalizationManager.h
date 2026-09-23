@@ -6,7 +6,7 @@
 #include <QStringList>
 #include <QTranslator>
 
-namespace JellyfinNative {
+namespace Spool {
 
 // Owns the active Qt translator and exposes locale switching to QML. The
 // strategy follows the Qt-native approach: .qm files compiled from .ts files
@@ -52,4 +52,4 @@ private:
     bool m_useSystem = true;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

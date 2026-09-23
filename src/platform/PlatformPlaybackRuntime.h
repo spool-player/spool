@@ -7,7 +7,7 @@
 
 class QObject;
 
-namespace JellyfinNative {
+namespace Spool {
 
 qint64 platformAudioDecodeCpuTimeNs();
 
@@ -18,4 +18,4 @@ qint64 platformAudioDecodeCpuTimeNs();
 using VideoCodecCapabilityApplier = std::function<void(const QStringList& videoCodecs, bool restrictVideoCodecs)>;
 void configurePlatformPlaybackCapabilities(VideoCodecCapabilityApplier apply, QObject& callbackContext);
 
-} // namespace JellyfinNative
+} // namespace Spool

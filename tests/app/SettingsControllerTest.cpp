@@ -14,11 +14,11 @@
 #include <cstdlib>
 #include <iostream>
 
-using JellyfinNative::ArtworkService;
-using JellyfinNative::DatabaseManager;
-using JellyfinNative::MovieItem;
-using JellyfinNative::platformDefaultArtworkFormat;
-using JellyfinNative::SettingsController;
+using Spool::ArtworkService;
+using Spool::DatabaseManager;
+using Spool::MovieItem;
+using Spool::platformDefaultArtworkFormat;
+using Spool::SettingsController;
 
 namespace {
 
@@ -32,7 +32,7 @@ void require(bool condition, const char *message)
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("settings-controller")
+SPOOL_TEST_MAIN("settings-controller")
 {
     QCoreApplication app(argc, argv);
     QTemporaryDir directory;
@@ -42,7 +42,7 @@ JELLYFIN_TEST_MAIN("settings-controller")
     require(database.initialize(directory.filePath(QStringLiteral("settings.sqlite"))),
         "settings database did not initialize");
 
-    JellyfinNative::Testing::RecordingArtworkSource artworkSource;
+    Spool::Testing::RecordingArtworkSource artworkSource;
     ArtworkService artwork(QString(), 0, 1024, 1, nullptr);
     artwork.setSource(&artworkSource);
     MovieItem poster;

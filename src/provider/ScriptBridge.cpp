@@ -14,7 +14,7 @@
 #include <cmath>
 #include <stdexcept>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
     constexpr qsizetype kMaxResponseBytes = 8 * 1024 * 1024;
@@ -471,4 +471,4 @@ void ScriptSourceHost::socketClose(int id)
         socket->close();
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

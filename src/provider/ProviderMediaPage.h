@@ -9,7 +9,7 @@
 
 class QJSValue;
 
-namespace JellyfinNative {
+namespace Spool {
 
 // One page of a provider listing, decoded on the worker. IDs are the
 // provider's own; the hub scopes them to their source.
@@ -27,4 +27,4 @@ namespace Detail {
     MovieItem readProviderItem(const QJSValue& value);
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

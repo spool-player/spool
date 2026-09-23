@@ -2,7 +2,7 @@
 
 class QRhiSwapChain;
 
-namespace JellyfinNative {
+namespace Spool {
 
 struct DisplayOutputCapabilities;
 
@@ -10,4 +10,4 @@ struct DisplayOutputCapabilities;
 // space matching its actual buffer before reporting the embedding contract.
 DisplayOutputCapabilities windowsD3D11DisplayOutput(QRhiSwapChain *swapchain);
 
-} // namespace JellyfinNative
+} // namespace Spool

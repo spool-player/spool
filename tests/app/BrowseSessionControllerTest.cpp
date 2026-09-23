@@ -9,13 +9,13 @@
 #include <cstdlib>
 #include <utility>
 
-using JellyfinNative::BrowseKind;
-using JellyfinNative::BrowseSessionController;
-using JellyfinNative::LibraryItem;
-using JellyfinNative::MediaSourceInfo;
-using JellyfinNative::MediaStreamInfo;
-using JellyfinNative::MovieItem;
-using JellyfinNative::PagedMovieItems;
+using Spool::BrowseKind;
+using Spool::BrowseSessionController;
+using Spool::LibraryItem;
+using Spool::MediaSourceInfo;
+using Spool::MediaStreamInfo;
+using Spool::MovieItem;
+using Spool::PagedMovieItems;
 
 namespace {
 
@@ -47,7 +47,7 @@ MovieItem item(QString id, QString title, QString type)
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("browse-session-controller")
+SPOOL_TEST_MAIN("browse-session-controller")
 {
     QTemporaryDir settingsDir;
     require(settingsDir.isValid(), "temporary settings directory");

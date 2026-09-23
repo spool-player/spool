@@ -19,7 +19,7 @@ QString read(const QString& path)
 }
 }
 
-JELLYFIN_TEST_MAIN("route-transition-timing")
+SPOOL_TEST_MAIN("route-transition-timing")
 {
     QCoreApplication app(argc, argv);
     const QString route = read(QStringLiteral(TEST_SOURCE_DIR "/qml/shell/RouteStack.qml"));
@@ -30,9 +30,10 @@ JELLYFIN_TEST_MAIN("route-transition-timing")
         return 1;
     }
     QJSEngine engine;
-    const QString fixture = read(QStringLiteral(TEST_SOURCE_DIR "/tests/diagnostics/fixtures/route-transition-timing.js"));
-    const QJSValue result = engine.evaluate(fixture + '\n' + route.mid(begin, end - begin)
-        + QStringLiteral("\nrunRouteTransitionTests();"));
+    const QString fixture
+        = read(QStringLiteral(TEST_SOURCE_DIR "/tests/diagnostics/fixtures/route-transition-timing.js"));
+    const QJSValue result = engine.evaluate(
+        fixture + '\n' + route.mid(begin, end - begin) + QStringLiteral("\nrunRouteTransitionTests();"));
     if (result.isError() || result.toInt() != 5) {
         std::cerr << result.toString().toStdString() << '\n';
         return 1;

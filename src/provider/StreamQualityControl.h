@@ -7,7 +7,7 @@
 #include <iterator>
 #include <vector>
 
-namespace JellyfinNative {
+namespace Spool {
 
 // A source that can deliver a stream below its stored quality, so the player
 // can offer a ladder and remember a ceiling for the session. Plain abstract
@@ -93,4 +93,4 @@ public:
     }
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

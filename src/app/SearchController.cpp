@@ -9,7 +9,7 @@
 #include <memory>
 #include <utility>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
     constexpr int kSearchDebounceMs = 260;
@@ -238,4 +238,4 @@ void SearchController::setSuggestionsBusy(bool busy)
     emit suggestionsChanged();
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

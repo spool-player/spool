@@ -12,7 +12,7 @@
 #include <cmath>
 #include <limits>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
     constexpr int kGreedyTimeSyncIntervalMs = 1'000;
@@ -804,4 +804,4 @@ void GroupPlaybackController::requestTimeSync()
         "group clock");
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

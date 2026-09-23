@@ -34,10 +34,10 @@ void rejects(QCoro::Task<QVariantMap> task, const char *message)
 }
 }
 
-JELLYFIN_TEST_MAIN("script-runtime")
+SPOOL_TEST_MAIN("script-runtime")
 {
     QCoreApplication app(argc, argv);
-    using JellyfinNative::ScriptRuntime;
+    using Spool::ScriptRuntime;
     QTcpServer server;
     require(server.listen(QHostAddress::LocalHost), "fixture server listens");
     const QString origin = QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort());

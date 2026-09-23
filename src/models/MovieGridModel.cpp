@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <utility>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
 
@@ -242,4 +242,4 @@ bool MovieGridModel::removeUnresumable()
     return removed;
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

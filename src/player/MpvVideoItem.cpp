@@ -13,7 +13,7 @@
 #include <QTimer>
 #include <QtDebug>
 
-#if JELLYFIN_MPV_ITEM_RHI
+#if SPOOL_MPV_ITEM_RHI
 #include <QSGRendererInterface>
 #include <rhi/qrhi.h>
 #include <rhi/qrhi_platform.h>
@@ -24,13 +24,13 @@
 // of include paths can answer for a different Qt than the one supplying the
 // headers.
 #if __has_include(<QVulkanInstance>) && __has_include(<vulkan/vulkan.h>)
-#define JELLYFIN_MPV_ITEM_VULKAN 1
+#define SPOOL_MPV_ITEM_VULKAN 1
 #include <QVersionNumber>
 #include <QVulkanInstance>
 #include <vulkan/vulkan.h>
 #endif
 #if defined(Q_OS_WIN) && __has_include(<d3d11.h>)
-#define JELLYFIN_MPV_ITEM_D3D11 1
+#define SPOOL_MPV_ITEM_D3D11 1
 #include <d3d11.h>
 #endif
 #endif
@@ -42,15 +42,15 @@ extern "C" {
 #include <mpv/client.h>
 #include <mpv/render.h>
 #include <mpv/render_gl.h>
-#if defined(JELLYFIN_MPV_ITEM_VULKAN)
+#if defined(SPOOL_MPV_ITEM_VULKAN)
 #include <mpv/render_vk.h>
 #endif
-#if defined(JELLYFIN_MPV_ITEM_D3D11)
+#if defined(SPOOL_MPV_ITEM_D3D11)
 #include <mpv/render_d3d11.h>
 #endif
 }
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
 
@@ -234,7 +234,7 @@ namespace {
         bool m_firstVideoFrameSwapPending = false;
     };
 
-#if !JELLYFIN_MPV_ITEM_RHI
+#if !SPOOL_MPV_ITEM_RHI
 
     class MpvFboRenderer final : public QQuickFramebufferObject::Renderer {
     public:
@@ -325,7 +325,7 @@ namespace {
             // control_cb (null here) and returns VO_NOTIMPL immediately — stats
             // simply don't show GPU pass timings, and direct rendering / mpv
             // screenshots are disabled, neither of which we use.
-#ifdef JELLYFIN_NATIVE_WEBOS
+#ifdef SPOOL_WEBOS
             const QByteArray& requestedBackend = m_lifecycle.nextRenderBackend();
             const char *backends[]
                 = { requestedBackend.isEmpty() || requestedBackend == "auto" ? "gpu" : requestedBackend.constData() };
@@ -371,7 +371,7 @@ namespace {
         RenderLifecycle m_lifecycle;
     };
 
-#else // JELLYFIN_MPV_ITEM_RHI
+#else // SPOOL_MPV_ITEM_RHI
 
     class MpvRhiRenderer final : public QQuickRhiItemRenderer {
     public:
@@ -481,7 +481,7 @@ namespace {
             if (size.isEmpty())
                 return false;
 
-#if defined(JELLYFIN_MPV_ITEM_D3D11)
+#if defined(SPOOL_MPV_ITEM_D3D11)
             if (m_d3d11) {
                 const QRhiTexture::NativeTexture native = target->nativeTexture();
                 if (!native.object)
@@ -498,7 +498,7 @@ namespace {
                 return checkRenderResult(mpv_render_context_render(ctx, params));
             }
 #endif
-#if defined(JELLYFIN_MPV_ITEM_VULKAN)
+#if defined(SPOOL_MPV_ITEM_VULKAN)
             if (m_vulkan) {
                 const QRhiTexture::NativeTexture native = target->nativeTexture();
                 if (!native.object)
@@ -618,11 +618,11 @@ namespace {
             std::vector<mpv_render_param> params;
             mpv_opengl_init_params glInit {};
             glInit.get_proc_address = &getProcAddressGl;
-#if defined(JELLYFIN_MPV_ITEM_D3D11)
+#if defined(SPOOL_MPV_ITEM_D3D11)
             mpv_d3d11_init_params d3d11Init {};
             m_d3d11 = false;
 #endif
-#if defined(JELLYFIN_MPV_ITEM_VULKAN)
+#if defined(SPOOL_MPV_ITEM_VULKAN)
             mpv_vulkan_init_params vkInit {};
             m_vulkan = false;
 #endif
@@ -632,7 +632,7 @@ namespace {
                 return;
             }
 
-#if defined(JELLYFIN_MPV_ITEM_D3D11)
+#if defined(SPOOL_MPV_ITEM_D3D11)
             if (rhi->backend() == QRhi::D3D11) {
                 const auto *native = static_cast<const QRhiD3D11NativeHandles *>(rhi->nativeHandles());
                 if (!native || !native->dev) {
@@ -645,7 +645,7 @@ namespace {
                 params.push_back({ MPV_RENDER_PARAM_D3D11_INIT_PARAMS, &d3d11Init });
             }
 #endif
-#if defined(JELLYFIN_MPV_ITEM_VULKAN)
+#if defined(SPOOL_MPV_ITEM_VULKAN)
             if (params.empty() && rhi->backend() == QRhi::Vulkan) {
                 const auto *native = static_cast<const QRhiVulkanNativeHandles *>(rhi->nativeHandles());
                 if (!native || !native->inst || !native->physDev || !native->dev) {
@@ -743,7 +743,7 @@ namespace {
             m_lifecycle.publishContext(newCtx);
         }
 
-#if defined(JELLYFIN_MPV_ITEM_VULKAN)
+#if defined(SPOOL_MPV_ITEM_VULKAN)
         // libplacebo checks the features it requires against what the caller
         // says the device was created with -- not against the device. Passing
         // nothing is read as "nothing is enabled", and the import is refused
@@ -815,7 +815,7 @@ namespace {
         int m_targetFormat = -1;
         const char *graphicsApiName() const
         {
-#if defined(JELLYFIN_MPV_ITEM_D3D11)
+#if defined(SPOOL_MPV_ITEM_D3D11)
             if (m_d3d11)
                 return "Direct3D 11";
 #endif
@@ -824,7 +824,7 @@ namespace {
 
         bool m_vulkan = false;
         bool m_d3d11 = false;
-#if defined(JELLYFIN_MPV_ITEM_VULKAN)
+#if defined(SPOOL_MPV_ITEM_VULKAN)
         // Kept alive because libplacebo is handed a pointer into it.
         struct VulkanFeatures {
             VkPhysicalDeviceFeatures2 features;
@@ -838,15 +838,15 @@ namespace {
         GLuint m_glFboTexture = 0;
         QSize m_glFboSize;
     };
-#endif // JELLYFIN_MPV_ITEM_RHI
+#endif // SPOOL_MPV_ITEM_RHI
 } // namespace
 
 MpvVideoItem *MpvVideoItem::s_instance = nullptr;
 
 MpvVideoItem::MpvVideoItem(QQuickItem *parent)
-    : JELLYFIN_MPV_ITEM_BASE(parent)
+    : SPOOL_MPV_ITEM_BASE(parent)
 {
-#if JELLYFIN_MPV_ITEM_RHI
+#if SPOOL_MPV_ITEM_RHI
     // A floating-point target is what an HDR swapchain can be handed, and it
     // costs little when the swapchain is SDR: the extra precision is discarded
     // once at the end rather than at every step before it.
@@ -943,7 +943,7 @@ bool MpvVideoItem::releaseMpvHandle(int timeoutMs)
     return completed->load();
 }
 
-#if JELLYFIN_MPV_ITEM_RHI
+#if SPOOL_MPV_ITEM_RHI
 QQuickRhiItemRenderer *MpvVideoItem::createRenderer()
 {
     return new MpvRhiRenderer(this);
@@ -966,4 +966,4 @@ MpvVideoItem::HandleSnapshot MpvVideoItem::takePendingHandle()
     return snap;
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

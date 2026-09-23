@@ -15,9 +15,9 @@
 
 #include <climits>
 
-namespace JellyfinNative {
+namespace Spool {
 
-Q_STATIC_LOGGING_CATEGORY(lcOsk, "jellyfin.osk")
+Q_STATIC_LOGGING_CATEGORY(lcOsk, "spool.osk")
 
 const struct wl_registry_listener WebOSInputContext::registryListener = {
     WebOSInputContext::registryGlobalAdded,
@@ -658,4 +658,4 @@ void WebOSInputContext::cleanup()
     m_modelActivated = false;
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

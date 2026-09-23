@@ -10,7 +10,7 @@
 #include <QVariantList>
 #include <QVariantMap>
 
-namespace JellyfinNative {
+namespace Spool {
 
 class DatabaseManager;
 class ArtworkService;
@@ -184,4 +184,4 @@ private:
     QString m_blueButtonAction = QStringLiteral("none");
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

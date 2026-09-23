@@ -24,7 +24,7 @@
 
 #include <vector>
 
-namespace JellyfinNative {
+namespace Spool {
 
 class ArtworkService;
 class Catalog;
@@ -250,4 +250,4 @@ private:
     std::unique_ptr<QLockFile> m_instanceLock;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

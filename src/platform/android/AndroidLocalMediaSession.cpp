@@ -13,7 +13,7 @@
 #include <QQuickTextureFactory>
 #include <QtCore/qnativeinterface.h>
 
-namespace JellyfinNative {
+namespace Spool {
 namespace {
     // Only accessed on the Qt application thread, including JNI dispatch below.
     AndroidLocalMediaSession *localMediaSession = nullptr;
@@ -195,10 +195,10 @@ void dispatchAndroidLocalMediaControl(int action, qint64 value)
     }
 }
 
-} // namespace JellyfinNative
+} // namespace Spool
 
 extern "C" JNIEXPORT void JNICALL Java_com_sachk_spool_LocalMediaPlaybackService_nativeControl(
     JNIEnv *, jclass, jint action, jlong value)
 {
-    JellyfinNative::dispatchAndroidLocalMediaControl(static_cast<int>(action), static_cast<qint64>(value));
+    Spool::dispatchAndroidLocalMediaControl(static_cast<int>(action), static_cast<qint64>(value));
 }

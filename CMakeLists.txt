@@ -1,34 +1,34 @@
 cmake_minimum_required(VERSION 3.22)
 
-file(READ "${CMAKE_CURRENT_LIST_DIR}/VERSION" JELLYFIN_VERSION)
-string(STRIP "${JELLYFIN_VERSION}" JELLYFIN_VERSION)
-if(NOT JELLYFIN_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
+file(READ "${CMAKE_CURRENT_LIST_DIR}/VERSION" SPOOL_VERSION)
+string(STRIP "${SPOOL_VERSION}" SPOOL_VERSION)
+if(NOT SPOOL_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
     message(FATAL_ERROR "VERSION must contain a semantic version such as 0.2.1")
 endif()
 
-project(JellyfinNativeWebOS VERSION "${JELLYFIN_VERSION}" LANGUAGES C CXX)
+project(SpoolWebOS VERSION "${SPOOL_VERSION}" LANGUAGES C CXX)
 
 if(WIN32)
     add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()
 
-set(JELLYFIN_NATIVE_WEBOS_DEFAULT OFF)
+set(SPOOL_WEBOS_DEFAULT OFF)
 if(CMAKE_CROSSCOMPILING AND NOT ANDROID)
-    set(JELLYFIN_NATIVE_WEBOS_DEFAULT ON)
+    set(SPOOL_WEBOS_DEFAULT ON)
 endif()
-option(JELLYFIN_NATIVE_WEBOS "Build the webOS Starfish/native-surface client" ${JELLYFIN_NATIVE_WEBOS_DEFAULT})
+option(SPOOL_WEBOS "Build the webOS Starfish/native-surface client" ${SPOOL_WEBOS_DEFAULT})
 option(TOUCHSCREEN "Enable mobile touchscreen interactions (runtime-disabled on TVs)" ${ANDROID})
-option(JELLYFIN_NATIVE_DEV_BUILD "Favor faster local development builds over smallest release artifacts" OFF)
-option(JELLYFIN_DIAGNOSTICS "Build debug lifecycle/process/watchdog diagnostics" OFF)
-option(JELLYFIN_DIAGNOSTICS_STACKDUMP "Allow diagnostics to request gdb stack dumps" OFF)
-option(JELLYFIN_DIAGNOSTICS_ABORT_ON_HANG "Abort after watchdog hang diagnostics are written" OFF)
-option(JELLYFIN_ARTWORK_ASPECT_DIAGNOSTICS "Log artwork decode requests whose target aspect would stretch the source" OFF)
-option(JELLYFIN_IMAGE_SUBTITLE_DIAGNOSTICS
+option(SPOOL_DEV_BUILD "Favor faster local development builds over smallest release artifacts" OFF)
+option(SPOOL_DIAGNOSTICS "Build debug lifecycle/process/watchdog diagnostics" OFF)
+option(SPOOL_DIAGNOSTICS_STACKDUMP "Allow diagnostics to request gdb stack dumps" OFF)
+option(SPOOL_DIAGNOSTICS_ABORT_ON_HANG "Abort after watchdog hang diagnostics are written" OFF)
+option(SPOOL_ARTWORK_ASPECT_DIAGNOSTICS "Log artwork decode requests whose target aspect would stretch the source" OFF)
+option(SPOOL_IMAGE_SUBTITLE_DIAGNOSTICS
     "Log image subtitle crop, segmentation, geometry, and recoloring per subtitle event" OFF)
-option(JELLYFIN_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
+option(SPOOL_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 set(SPOOL_MACOS_CREDENTIAL_SERVICE "com.sachk.spool.dev" CACHE STRING
     "macOS Keychain service used for persisted session tokens")
-option(JELLYFIN_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+option(SPOOL_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 # Where the app may take provider code from. Release builds are open; a build
 # submitted to Google Play or the App Store is curated (store catalogues only)
 # or bundled (no downloads). See docs/providers.md.
@@ -43,7 +43,7 @@ set(MPV_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/mpv" CACHE PATH "mpv source tree
 set(MPV_ACTIVE_SOURCE_DIR "${MPV_SOURCE_DIR}")
 set(MPV_WEBOS_BUILD_DIR "${MPV_SOURCE_DIR}/build/webos-libmpv" CACHE PATH "webOS libmpv build directory")
 
-if(JELLYFIN_NATIVE_DEV_BUILD)
+if(SPOOL_DEV_BUILD)
     set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
     set(CMAKE_INTERPROCEDURAL_OPTIMIZATION OFF)
     find_program(CCACHE_PROGRAM ccache)
@@ -64,7 +64,7 @@ if(NOT WIN32)
     find_package(PkgConfig REQUIRED)
 endif()
 
-set(JELLYFIN_QT_COMPONENTS
+set(SPOOL_QT_COMPONENTS
     Core
     Gui
     Network
@@ -77,30 +77,30 @@ set(JELLYFIN_QT_COMPONENTS
     WebSockets
     Svg
 )
-if(JELLYFIN_NATIVE_WEBOS)
+if(SPOOL_WEBOS)
     set(OPENSSL_USE_STATIC_LIBS FALSE)
-    set(JELLYFIN_QT_MIN_VERSION 6.11)
-    list(APPEND JELLYFIN_QT_COMPONENTS
+    set(SPOOL_QT_MIN_VERSION 6.11)
+    list(APPEND SPOOL_QT_COMPONENTS
         GuiPrivate
         QuickLayouts
         WaylandClient
     )
 else()
-    set(JELLYFIN_QT_MIN_VERSION 6.11)
+    set(SPOOL_QT_MIN_VERSION 6.11)
     # rhi/qrhi.h is how the video item reaches the graphics device it shares
     # with libplacebo, and how the swapchain is asked what the display can show.
     if(NOT ANDROID)
-        list(APPEND JELLYFIN_QT_COMPONENTS GuiPrivate)
+        list(APPEND SPOOL_QT_COMPONENTS GuiPrivate)
     endif()
     if(UNIX AND NOT APPLE AND NOT ANDROID)
-        list(APPEND JELLYFIN_QT_COMPONENTS DBus)
+        list(APPEND SPOOL_QT_COMPONENTS DBus)
     endif()
 endif()
-find_package(Qt6 ${JELLYFIN_QT_MIN_VERSION} REQUIRED COMPONENTS ${JELLYFIN_QT_COMPONENTS})
+find_package(Qt6 ${SPOOL_QT_MIN_VERSION} REQUIRED COMPONENTS ${SPOOL_QT_COMPONENTS})
 find_package(QCoro6 0.13 REQUIRED COMPONENTS Core Network)
 
 qt_standard_project_setup(
-    REQUIRES ${JELLYFIN_QT_MIN_VERSION}
+    REQUIRES ${SPOOL_QT_MIN_VERSION}
     I18N_TRANSLATED_LANGUAGES en_US en_GB en_AU
 )
 include(cmake/platform/Common.cmake)
@@ -110,7 +110,7 @@ include(cmake/platform/Common.cmake)
 # configuring is enough to get it, so no platform needs a second command.
 if(ANDROID)
     set(spool_splash_platform "android")
-elseif(JELLYFIN_NATIVE_WEBOS)
+elseif(SPOOL_WEBOS)
     set(spool_splash_platform "webos")
 else()
     set(spool_splash_platform "desktop")
@@ -138,7 +138,7 @@ endif()
 message(STATUS "${spool_splash_output}")
 
 
-jellyfin_resolve_platform_dependencies()
+spool_resolve_platform_dependencies()
 
 # Core never includes src/providers/ (native providers); every media source
 # is reached through src/provider/. tools/check-module-seam.sh enforces it
@@ -304,16 +304,16 @@ set(SPOOL_LOCAL_SOURCES
     src/providers/local/LocalProvider.h
 )
 
-set(JELLYFIN_CORE_SOURCES
+set(SPOOL_CORE_SOURCES
     ${SPOOL_PLATFORM_SOURCES}
     ${SPOOL_PLAYER_SOURCES}
     ${SPOOL_SHELL_SOURCES}
     ${SPOOL_LOCAL_SOURCES}
 )
 
-add_library(jellyfin-core STATIC ${JELLYFIN_CORE_SOURCES})
+add_library(spool-core STATIC ${SPOOL_CORE_SOURCES})
 
-qt_add_executable(jellyfin-native
+qt_add_executable(spool
     src/main.cpp
     src/app/GraphicsStartup.cpp
     src/app/GraphicsStartup.h
@@ -321,14 +321,14 @@ qt_add_executable(jellyfin-native
 
 find_package(Python3 3.11 REQUIRED COMPONENTS Interpreter)
 include(cmake/ProviderBundle.cmake)
-spool_bundle_providers(jellyfin-native)
+spool_bundle_providers(spool)
 
-set(JELLYFIN_NATIVE_TARGETS jellyfin-core jellyfin-native)
-jellyfin_configure_platform_targets(jellyfin-native jellyfin-core)
-foreach(target IN LISTS JELLYFIN_NATIVE_TARGETS)
+set(SPOOL_TARGETS spool-core spool)
+spool_configure_platform_targets(spool spool-core)
+foreach(target IN LISTS SPOOL_TARGETS)
     if(MSVC)
         target_compile_options(${target} PRIVATE /W4)
-        if(JELLYFIN_WARNINGS_AS_ERRORS)
+        if(SPOOL_WARNINGS_AS_ERRORS)
             target_compile_options(${target} PRIVATE /WX)
         endif()
         target_link_options(${target} PRIVATE
@@ -337,35 +337,35 @@ foreach(target IN LISTS JELLYFIN_NATIVE_TARGETS)
         )
     elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
-        if(JELLYFIN_WARNINGS_AS_ERRORS)
+        if(SPOOL_WARNINGS_AS_ERRORS)
             target_compile_options(${target} PRIVATE -Werror)
         endif()
-        if(JELLYFIN_SANITIZERS)
+        if(SPOOL_SANITIZERS)
             target_compile_options(${target} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
             target_link_options(${target} PRIVATE -fsanitize=address,undefined)
         endif()
     endif()
 endforeach()
 
-if(JELLYFIN_SANITIZERS AND MSVC)
-    message(FATAL_ERROR "JELLYFIN_SANITIZERS requires GCC or Clang")
+if(SPOOL_SANITIZERS AND MSVC)
+    message(FATAL_ERROR "SPOOL_SANITIZERS requires GCC or Clang")
 endif()
 
 
-if(NOT JELLYFIN_NATIVE_DEV_BUILD)
+if(NOT SPOOL_DEV_BUILD)
     include(CheckIPOSupported)
-    check_ipo_supported(RESULT JELLYFIN_IPO_SUPPORTED OUTPUT JELLYFIN_IPO_ERROR)
-    if(JELLYFIN_IPO_SUPPORTED)
-        foreach(target IN LISTS JELLYFIN_NATIVE_TARGETS)
+    check_ipo_supported(RESULT SPOOL_IPO_SUPPORTED OUTPUT SPOOL_IPO_ERROR)
+    if(SPOOL_IPO_SUPPORTED)
+        foreach(target IN LISTS SPOOL_TARGETS)
             set_property(TARGET ${target} PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
             set_property(TARGET ${target} PROPERTY INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL TRUE)
         endforeach()
     else()
-        message(STATUS "Interprocedural optimization unavailable: ${JELLYFIN_IPO_ERROR}")
+        message(STATUS "Interprocedural optimization unavailable: ${SPOOL_IPO_ERROR}")
     endif()
 
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-        foreach(target IN LISTS JELLYFIN_NATIVE_TARGETS)
+        foreach(target IN LISTS SPOOL_TARGETS)
             target_compile_options(${target} PRIVATE -ffunction-sections -fdata-sections)
             if(ANDROID)
                 target_compile_options(${target} PRIVATE -fPIC)
@@ -373,7 +373,7 @@ if(NOT JELLYFIN_NATIVE_DEV_BUILD)
             elseif(UNIX AND NOT APPLE)
                 if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm|ARM)")
                     target_compile_options(${target} PRIVATE -fPIC)
-                    if(target STREQUAL "jellyfin-native")
+                    if(target STREQUAL "spool")
                         target_link_options(${target} PRIVATE -fPIC)
                     endif()
                 else()
@@ -400,45 +400,45 @@ endif()
 # translation unit against the new base class while leaving the moc output
 # generated for the old one in place. That mismatch fails the build with
 # `use of undeclared identifier 'QQuickFramebufferObject'`.
-if(ANDROID OR JELLYFIN_NATIVE_WEBOS)
-    set(JELLYFIN_MPV_ITEM_RHI_ENABLED 0)
+if(ANDROID OR SPOOL_WEBOS)
+    set(SPOOL_MPV_ITEM_RHI_ENABLED 0)
 else()
-    set(JELLYFIN_MPV_ITEM_RHI_ENABLED 1)
+    set(SPOOL_MPV_ITEM_RHI_ENABLED 1)
 endif()
 file(CONFIGURE
     OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/MpvVideoItemBase.h"
     CONTENT "// Generated by CMake. Do not edit.
 #pragma once
 
-#define JELLYFIN_MPV_ITEM_RHI @JELLYFIN_MPV_ITEM_RHI_ENABLED@
+#define SPOOL_MPV_ITEM_RHI @SPOOL_MPV_ITEM_RHI_ENABLED@
 "
     @ONLY)
-foreach(target IN LISTS JELLYFIN_NATIVE_TARGETS)
+foreach(target IN LISTS SPOOL_TARGETS)
     target_include_directories(${target} PUBLIC "${CMAKE_CURRENT_BINARY_DIR}/generated")
 endforeach()
-if(JELLYFIN_DIAGNOSTICS)
-    foreach(target IN LISTS JELLYFIN_NATIVE_TARGETS)
-        target_compile_definitions(${target} PRIVATE JELLYFIN_DIAGNOSTICS=1)
+if(SPOOL_DIAGNOSTICS)
+    foreach(target IN LISTS SPOOL_TARGETS)
+        target_compile_definitions(${target} PRIVATE SPOOL_DIAGNOSTICS=1)
     endforeach()
 endif()
-if(JELLYFIN_DIAGNOSTICS_STACKDUMP)
-    foreach(target IN LISTS JELLYFIN_NATIVE_TARGETS)
-        target_compile_definitions(${target} PRIVATE JELLYFIN_DIAGNOSTICS_STACKDUMP=1)
+if(SPOOL_DIAGNOSTICS_STACKDUMP)
+    foreach(target IN LISTS SPOOL_TARGETS)
+        target_compile_definitions(${target} PRIVATE SPOOL_DIAGNOSTICS_STACKDUMP=1)
     endforeach()
 endif()
-if(JELLYFIN_DIAGNOSTICS_ABORT_ON_HANG)
-    foreach(target IN LISTS JELLYFIN_NATIVE_TARGETS)
-        target_compile_definitions(${target} PRIVATE JELLYFIN_DIAGNOSTICS_ABORT_ON_HANG=1)
+if(SPOOL_DIAGNOSTICS_ABORT_ON_HANG)
+    foreach(target IN LISTS SPOOL_TARGETS)
+        target_compile_definitions(${target} PRIVATE SPOOL_DIAGNOSTICS_ABORT_ON_HANG=1)
     endforeach()
 endif()
-if(JELLYFIN_ARTWORK_ASPECT_DIAGNOSTICS)
-    foreach(target IN LISTS JELLYFIN_NATIVE_TARGETS)
-        target_compile_definitions(${target} PRIVATE JELLYFIN_ARTWORK_ASPECT_DIAGNOSTICS=1)
+if(SPOOL_ARTWORK_ASPECT_DIAGNOSTICS)
+    foreach(target IN LISTS SPOOL_TARGETS)
+        target_compile_definitions(${target} PRIVATE SPOOL_ARTWORK_ASPECT_DIAGNOSTICS=1)
     endforeach()
 endif()
-if(JELLYFIN_IMAGE_SUBTITLE_DIAGNOSTICS)
-    foreach(target IN LISTS JELLYFIN_NATIVE_TARGETS)
-        target_compile_definitions(${target} PRIVATE JELLYFIN_IMAGE_SUBTITLE_DIAGNOSTICS=1)
+if(SPOOL_IMAGE_SUBTITLE_DIAGNOSTICS)
+    foreach(target IN LISTS SPOOL_TARGETS)
+        target_compile_definitions(${target} PRIVATE SPOOL_IMAGE_SUBTITLE_DIAGNOSTICS=1)
     endforeach()
 endif()
 
@@ -451,22 +451,22 @@ set_source_files_properties(
     PROPERTIES QT_QML_SINGLETON_TYPE TRUE
 )
 
-qt_add_translations(jellyfin-native
+qt_add_translations(spool
     TS_FILES
         i18n/qtfin_en_US.ts
         i18n/qtfin_en_GB.ts
     RESOURCE_PREFIX /i18n
 )
 
-set(JELLYFIN_QML_MODULE_OPTIONS)
+set(SPOOL_QML_MODULE_OPTIONS)
 if(QT6_IS_SHARED_LIBS_BUILD)
-    list(APPEND JELLYFIN_QML_MODULE_OPTIONS NO_IMPORT_SCAN)
+    list(APPEND SPOOL_QML_MODULE_OPTIONS NO_IMPORT_SCAN)
 else()
-    list(APPEND JELLYFIN_QML_MODULE_OPTIONS DISCARD_QML_CONTENTS)
+    list(APPEND SPOOL_QML_MODULE_OPTIONS DISCARD_QML_CONTENTS)
 endif()
 
-qt_add_qml_module(jellyfin-native
-    ${JELLYFIN_QML_MODULE_OPTIONS}
+qt_add_qml_module(spool
+    ${SPOOL_QML_MODULE_OPTIONS}
     URI Spool
     VERSION 1.0
     QML_FILES
@@ -571,20 +571,20 @@ qt_add_qml_module(jellyfin-native
 
 # Qt Quick consumes baked shader packages on every RHI backend. Keep the
 # resource independent of the QML module so the early startup frame can use it.
-qt_add_shaders(jellyfin-native "hdr_ui_shaders"
+qt_add_shaders(spool "hdr_ui_shaders"
     PREFIX "/shaders"
     BASE "${CMAKE_CURRENT_SOURCE_DIR}/qml/shell/shaders"
     FILES qml/shell/shaders/sdr-ui-to-scrgb.frag
 )
-if(NOT JELLYFIN_NATIVE_WEBOS)
-    qt_target_qml_sources(jellyfin-native
+if(NOT SPOOL_WEBOS)
+    qt_target_qml_sources(spool
         QML_FILES
             qml/pages/DesktopFolderDialog.qml
     )
 endif()
 
-if(JELLYFIN_NATIVE_WEBOS)
-    qt_add_resources(jellyfin-native "platform_branding"
+if(SPOOL_WEBOS)
+    qt_add_resources(spool "platform_branding"
         PREFIX "/branding"
         BASE "${CMAKE_CURRENT_SOURCE_DIR}/app/icons/png/spool"
         FILES app/icons/png/spool/64.png
@@ -593,7 +593,7 @@ endif()
 
 # The mark is part of the interface now, not only the desktop entry, so every
 # platform carries its SVG source and requires QtSvg to render it.
-qt_add_resources(jellyfin-native "application_icons"
+qt_add_resources(spool "application_icons"
     PREFIX "/icons"
     BASE "${CMAKE_CURRENT_SOURCE_DIR}/app/icons"
     FILES
@@ -613,17 +613,17 @@ if(ANDROID)
     # does. See splashCoreWidthDp() in main.cpp.
     string(JSON spool_splash_tv_dp GET "${spool_splash_manifest}" android tvCoreWidthDp)
     string(JSON spool_splash_phone_dp GET "${spool_splash_manifest}" android phoneCoreWidthDp)
-    target_compile_definitions(jellyfin-native PRIVATE
+    target_compile_definitions(spool PRIVATE
         SPOOL_SPLASH_CORE_WIDTH_DP_TV=${spool_splash_tv_dp}
         SPOOL_SPLASH_CORE_WIDTH_DP_PHONE=${spool_splash_phone_dp}
     )
 endif()
-target_compile_definitions(jellyfin-native PRIVATE
+target_compile_definitions(spool PRIVATE
     SPOOL_SPLASH_CORE_ASPECT=${spool_splash_core_width}.0/${spool_splash_core_height}.0
     SPOOL_SPLASH_CORE_WIDTH_FRACTION=${spool_splash_fraction}
 )
 
-qt_add_resources(jellyfin-native "startup_splash_qml"
+qt_add_resources(spool "startup_splash_qml"
     PREFIX "/startup"
     BASE "${CMAKE_CURRENT_SOURCE_DIR}/qml/shell"
     FILES
@@ -632,8 +632,8 @@ qt_add_resources(jellyfin-native "startup_splash_qml"
         qml/shell/HdrUiLayer.qml
 )
 # webOS reads its launch screen off disk, where appinfo.json already names it.
-if(NOT JELLYFIN_NATIVE_WEBOS)
-    qt_add_resources(jellyfin-native "startup_splash_image"
+if(NOT SPOOL_WEBOS)
+    qt_add_resources(spool "startup_splash_image"
         PREFIX "/startup"
         BASE "${SPOOL_SPLASH_DIR}"
         FILES "${SPOOL_SPLASH_DIR}/splash-core.png"
@@ -641,7 +641,7 @@ if(NOT JELLYFIN_NATIVE_WEBOS)
 endif()
 
 if(ANDROID)
-    qt_add_resources(jellyfin-native "android_fonts"
+    qt_add_resources(spool "android_fonts"
         PREFIX "/fonts"
         BASE "${CMAKE_CURRENT_SOURCE_DIR}/qml/fonts"
         FILES
@@ -654,26 +654,26 @@ if(ANDROID)
 endif()
 
 
-add_custom_target(jellyfin-native_qmllint_strict
+add_custom_target(spool_qmllint_strict
     COMMAND Qt6::qmllint
         --unqualified disable
         --missing-property disable
         --property-override warning
-        "@${CMAKE_CURRENT_BINARY_DIR}/.rcc/qmllint/jellyfin-native.rsp"
+        "@${CMAKE_CURRENT_BINARY_DIR}/.rcc/qmllint/spool.rsp"
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     COMMENT "Linting QML property overrides"
     VERBATIM
 )
-add_dependencies(jellyfin-native_qmllint_strict all_qmltyperegistrations)
+add_dependencies(spool_qmllint_strict all_qmltyperegistrations)
 
-set_target_properties(jellyfin-native PROPERTIES
+set_target_properties(spool PROPERTIES
     QT_QMLCACHEGEN_DIRECT_CALLS ON
 )
 
 # qmlimportscanner also scans the target's SOURCE_DIR recursively. This project
 # keeps build trees and vendored sources below the repository root, so exclude
 # them and let the generated QRC files provide the application's exact QML set.
-set_property(TARGET jellyfin-native APPEND PROPERTY
+set_property(TARGET spool APPEND PROPERTY
     QT_QML_IMPORT_SCANNER_EXTRA_ARGS
         -exclude build
         -exclude build-arm
@@ -684,33 +684,33 @@ set_property(TARGET jellyfin-native APPEND PROPERTY
         -exclude squashfs-root
         -exclude third_party
 )
-if(JELLYFIN_NATIVE_WEBOS)
-    set_property(TARGET jellyfin-native APPEND PROPERTY
+if(SPOOL_WEBOS)
+    set_property(TARGET spool APPEND PROPERTY
         QT_QML_IMPORT_SCANNER_EXTRA_ARGS
             -exclude qml/pages/DesktopFolderDialog.qml
     )
 endif()
 
 
-get_target_property(JELLYFIN_NATIVE_INCLUDE_DIRS jellyfin-native INCLUDE_DIRECTORIES)
-if(JELLYFIN_NATIVE_INCLUDE_DIRS)
-    list(REMOVE_ITEM JELLYFIN_NATIVE_INCLUDE_DIRS
+get_target_property(SPOOL_INCLUDE_DIRS spool INCLUDE_DIRECTORIES)
+if(SPOOL_INCLUDE_DIRS)
+    list(REMOVE_ITEM SPOOL_INCLUDE_DIRS
         "${CMAKE_CURRENT_SOURCE_DIR}"
         "${CMAKE_CURRENT_BINARY_DIR}"
     )
-    set_property(TARGET jellyfin-native PROPERTY
-        INCLUDE_DIRECTORIES "${JELLYFIN_NATIVE_INCLUDE_DIRS}"
+    set_property(TARGET spool PROPERTY
+        INCLUDE_DIRECTORIES "${SPOOL_INCLUDE_DIRS}"
     )
 endif()
 
-target_include_directories(jellyfin-core PUBLIC
+target_include_directories(spool-core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/player"
     "${MPV_ACTIVE_SOURCE_DIR}"
     "${MPV_ACTIVE_SOURCE_DIR}/include"
 )
 
-target_link_libraries(jellyfin-core PUBLIC
+target_link_libraries(spool-core PUBLIC
     QCoro::Core
     QCoro::Network
     Qt6::Core
@@ -723,11 +723,11 @@ target_link_libraries(jellyfin-core PUBLIC
     Qt6::WebSockets
 )
 if(NOT ANDROID)
-    target_link_libraries(jellyfin-core PUBLIC Qt6::GuiPrivate)
+    target_link_libraries(spool-core PUBLIC Qt6::GuiPrivate)
 endif()
 
-target_link_libraries(jellyfin-native PRIVATE
-    jellyfin-core
+target_link_libraries(spool PRIVATE
+    spool-core
     Qt6::Svg
 )
 
@@ -737,10 +737,10 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     # own ctest entry; tests/TestRunner.cpp dispatches on the selector passed
     # by add_test(). One executable per test used to cost more to build on
     # Windows than the application itself, because every one of them repeated a
-    # whole-program-optimized link against all of jellyfin-core.
-    set(JELLYFIN_TEST_GROUPS app cache common diagnostics platform player providers)
+    # whole-program-optimized link against all of spool-core.
+    set(SPOOL_TEST_GROUPS app cache common diagnostics platform player providers)
 
-    set(JELLYFIN_TESTS_app
+    set(SPOOL_TESTS_app
         browse-session-controller tests/app/BrowseSessionControllerTest.cpp
         settings-schema tests/app/SettingsSchemaTest.cpp
         settings-controller tests/app/SettingsControllerTest.cpp
@@ -753,32 +753,32 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         update-manifest tests/app/UpdateManifestTest.cpp
         artwork-url tests/app/ArtworkUrlTest.cpp
     )
-    set(JELLYFIN_TESTS_cache
+    set(SPOOL_TESTS_cache
         database-manager tests/cache/DatabaseManagerTest.cpp
     )
-    set(JELLYFIN_TESTS_common
+    set(SPOOL_TESTS_common
         request-generation tests/common/RequestGenerationTest.cpp
         diagnostic-redaction tests/common/DiagnosticRedactionTest.cpp
         tls-trust tests/common/TlsTrustTest.cpp
         browse-descriptor tests/common/BrowseDescriptorTest.cpp
         meta-json tests/common/MetaJsonTest.cpp
     )
-    set(JELLYFIN_TESTS_diagnostics
+    set(SPOOL_TESTS_diagnostics
         input-latency-monitor tests/diagnostics/InputLatencyMonitorTest.cpp
         route-transition-timing tests/diagnostics/RouteTransitionTimingTest.cpp
         system-performance-monitor tests/diagnostics/SystemPerformanceMonitorTest.cpp
     )
-    set(JELLYFIN_TESTS_platform
+    set(SPOOL_TESTS_platform
         screensaver-inhibitor tests/platform/ScreenSaverInhibitorTest.cpp
         native-window-input tests/platform/NativeAppWindowInputTest.cpp
         platform-paths tests/platform/PlatformPathsTest.cpp
     )
     if(APPLE)
-        list(APPEND JELLYFIN_TESTS_platform
+        list(APPEND SPOOL_TESTS_platform
             macos-titlebar tests/platform/MacOSTitlebarTest.mm
         )
     endif()
-    set(JELLYFIN_TESTS_providers
+    set(SPOOL_TESTS_providers
         local-provider tests/providers/LocalProviderTest.cpp
         script-runtime tests/providers/ScriptRuntimeTest.cpp
         provider-media-page tests/providers/ProviderMediaPageTest.cpp
@@ -791,7 +791,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         stream-quality-control tests/providers/StreamQualityControlTest.cpp
         live-jellyfin tests/providers/LiveJellyfinTest.cpp
     )
-    set(JELLYFIN_TESTS_player
+    set(SPOOL_TESTS_player
         playback-timeline tests/player/PlaybackTimelineTest.cpp
         playback-track-parser tests/player/PlaybackTrackParserTest.cpp
         playback-track-state tests/player/PlaybackTrackStateTest.cpp
@@ -807,47 +807,47 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     # Both of these assert nothing away from Linux: the memory policy parses
     # /proc and cgroup text, and the mpv item needs a real GL surface.
     if(UNIX AND NOT APPLE)
-        list(APPEND JELLYFIN_TESTS_platform
+        list(APPEND SPOOL_TESTS_platform
             linux-memory-policy tests/platform/LinuxMemoryPolicyTest.cpp
         )
-        list(APPEND JELLYFIN_TESTS_player
+        list(APPEND SPOOL_TESTS_player
             mpv-video-item tests/player/MpvVideoItemTest.cpp
         )
         # The same check over the Vulkan scene graph, which is the one an HDR
         # swapchain can be asked for. Its own entry rather than a loop inside
         # the test, so a machine with no Vulkan driver fails only this one.
-        list(APPEND JELLYFIN_TESTS_player
+        list(APPEND SPOOL_TESTS_player
             mpv-video-item-vulkan tests/player/MpvVideoItemTest.cpp
         )
     endif()
 
     # WebOSAudioSyncPolicy is a webOS platform source, so desktop builds of
-    # jellyfin-core do not carry it; the player group compiles it directly.
-    set(JELLYFIN_TEST_EXTRA_SOURCES_player src/platform/webos/WebOSAudioSyncPolicy.cpp)
+    # spool-core do not carry it; the player group compiles it directly.
+    set(SPOOL_TEST_EXTRA_SOURCES_player src/platform/webos/WebOSAudioSyncPolicy.cpp)
 
-    get_target_property(JELLYFIN_QT_CORE_LOCATION Qt6::Core IMPORTED_LOCATION_RELEASE)
-    if(NOT JELLYFIN_QT_CORE_LOCATION)
-        get_target_property(JELLYFIN_QT_CORE_LOCATION Qt6::Core IMPORTED_LOCATION)
+    get_target_property(SPOOL_QT_CORE_LOCATION Qt6::Core IMPORTED_LOCATION_RELEASE)
+    if(NOT SPOOL_QT_CORE_LOCATION)
+        get_target_property(SPOOL_QT_CORE_LOCATION Qt6::Core IMPORTED_LOCATION)
     endif()
-    set(JELLYFIN_TEST_ENV)
-    if(JELLYFIN_QT_CORE_LOCATION)
-        get_filename_component(JELLYFIN_QT_LIB_DIR "${JELLYFIN_QT_CORE_LOCATION}" DIRECTORY)
-        get_filename_component(JELLYFIN_QT_PREFIX "${JELLYFIN_QT_LIB_DIR}" DIRECTORY)
-        set(JELLYFIN_QT_PLUGIN_DIR "${JELLYFIN_QT_PREFIX}/lib/qt-6/plugins")
-        if(EXISTS "${JELLYFIN_QT_PLUGIN_DIR}")
-            list(APPEND JELLYFIN_TEST_ENV "QT_PLUGIN_PATH=${JELLYFIN_QT_PLUGIN_DIR}")
+    set(SPOOL_TEST_ENV)
+    if(SPOOL_QT_CORE_LOCATION)
+        get_filename_component(SPOOL_QT_LIB_DIR "${SPOOL_QT_CORE_LOCATION}" DIRECTORY)
+        get_filename_component(SPOOL_QT_PREFIX "${SPOOL_QT_LIB_DIR}" DIRECTORY)
+        set(SPOOL_QT_PLUGIN_DIR "${SPOOL_QT_PREFIX}/lib/qt-6/plugins")
+        if(EXISTS "${SPOOL_QT_PLUGIN_DIR}")
+            list(APPEND SPOOL_TEST_ENV "QT_PLUGIN_PATH=${SPOOL_QT_PLUGIN_DIR}")
         endif()
     endif()
-    foreach(test_group IN LISTS JELLYFIN_TEST_GROUPS)
+    foreach(test_group IN LISTS SPOOL_TEST_GROUPS)
         set(group_target "${test_group}-tests")
-        set(group_sources tests/TestRunner.cpp ${JELLYFIN_TEST_EXTRA_SOURCES_${test_group}})
+        set(group_sources tests/TestRunner.cpp ${SPOOL_TEST_EXTRA_SOURCES_${test_group}})
         set(group_names)
-        list(LENGTH JELLYFIN_TESTS_${test_group} group_entry_count)
+        list(LENGTH SPOOL_TESTS_${test_group} group_entry_count)
         math(EXPR group_entry_last "${group_entry_count} - 1")
         foreach(test_index RANGE 0 ${group_entry_last} 2)
             math(EXPR source_index "${test_index} + 1")
-            list(GET JELLYFIN_TESTS_${test_group} ${test_index} test_name)
-            list(GET JELLYFIN_TESTS_${test_group} ${source_index} test_source)
+            list(GET SPOOL_TESTS_${test_group} ${test_index} test_name)
+            list(GET SPOOL_TESTS_${test_group} ${source_index} test_source)
             list(APPEND group_sources "${test_source}")
             list(APPEND group_names "${test_name}")
         endforeach()
@@ -864,25 +864,25 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
             INTERPROCEDURAL_OPTIMIZATION OFF
             INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF
             INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL OFF)
-        target_link_libraries(${group_target} PRIVATE jellyfin-core)
+        target_link_libraries(${group_target} PRIVATE spool-core)
 
         foreach(test_name IN LISTS group_names)
             add_test(NAME ${test_name} COMMAND ${group_target} ${test_name})
-            if(JELLYFIN_TEST_ENV)
-                set_tests_properties(${test_name} PROPERTIES ENVIRONMENT "${JELLYFIN_TEST_ENV}")
+            if(SPOOL_TEST_ENV)
+                set_tests_properties(${test_name} PROPERTIES ENVIRONMENT "${SPOOL_TEST_ENV}")
             endif()
         endforeach()
     endforeach()
 
     # Test binaries share one QML disk cache across builds whose bundled
     # provider resources all carry the same reproducible timestamp.
-    foreach(test_name IN LISTS JELLYFIN_TESTS_providers)
+    foreach(test_name IN LISTS SPOOL_TESTS_providers)
         if(NOT test_name MATCHES "/")
             set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT "QML_DISABLE_DISK_CACHE=1")
         endif()
     endforeach()
     add_test(NAME provider-media-page-interpreter COMMAND providers-tests provider-media-page)
-    set_tests_properties(provider-media-page-interpreter PROPERTIES ENVIRONMENT "QV4_FORCE_INTERPRETER=1;${JELLYFIN_TEST_ENV}")
+    set_tests_properties(provider-media-page-interpreter PROPERTIES ENVIRONMENT "QV4_FORCE_INTERPRETER=1;${SPOOL_TEST_ENV}")
     target_sources(providers-tests PRIVATE ${SPOOL_PROVIDER_BUNDLE_SOURCES})
     add_test(NAME provider-sdk-tool
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/provider_package_test.py")
@@ -895,16 +895,16 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         COMMAND provider-contract-runner "${CMAKE_CURRENT_SOURCE_DIR}/tests/providers/fixtures/bundled-jellyfin.mjs")
     set_tests_properties(bundled-jellyfin bundled-jellyfin-interpreter PROPERTIES ENVIRONMENT "QML_DISABLE_DISK_CACHE=1")
     set_property(TEST bundled-jellyfin-interpreter APPEND PROPERTY ENVIRONMENT "QV4_FORCE_INTERPRETER=1")
-    if(JELLYFIN_NATIVE_WEBOS)
-        set(JELLYFIN_FFMPEG_AUDIT_PLATFORM webos)
+    if(SPOOL_WEBOS)
+        set(SPOOL_FFMPEG_AUDIT_PLATFORM webos)
     elseif(APPLE)
-        set(JELLYFIN_FFMPEG_AUDIT_PLATFORM macos)
+        set(SPOOL_FFMPEG_AUDIT_PLATFORM macos)
     elseif(WIN32)
-        set(JELLYFIN_FFMPEG_AUDIT_PLATFORM windows)
+        set(SPOOL_FFMPEG_AUDIT_PLATFORM windows)
     else()
-        set(JELLYFIN_FFMPEG_AUDIT_PLATFORM linux)
+        set(SPOOL_FFMPEG_AUDIT_PLATFORM linux)
     endif()
-    set(JELLYFIN_FFMPEG_CAPABILITY_HEADER
+    set(SPOOL_FFMPEG_CAPABILITY_HEADER
         "${CMAKE_CURRENT_BINARY_DIR}/generated/FfmpegCapabilities.h")
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/tools/ffmpeg-capabilities.py"
@@ -913,13 +913,13 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/tools/ffmpeg-capabilities.py"
             cpp-header
-            --platform "${JELLYFIN_FFMPEG_AUDIT_PLATFORM}"
-            --output "${JELLYFIN_FFMPEG_CAPABILITY_HEADER}"
-        RESULT_VARIABLE JELLYFIN_FFMPEG_HEADER_RESULT
-        ERROR_VARIABLE JELLYFIN_FFMPEG_HEADER_ERROR
+            --platform "${SPOOL_FFMPEG_AUDIT_PLATFORM}"
+            --output "${SPOOL_FFMPEG_CAPABILITY_HEADER}"
+        RESULT_VARIABLE SPOOL_FFMPEG_HEADER_RESULT
+        ERROR_VARIABLE SPOOL_FFMPEG_HEADER_ERROR
     )
-    if(NOT JELLYFIN_FFMPEG_HEADER_RESULT EQUAL 0)
-        message(FATAL_ERROR "FFmpeg capability header generation failed: ${JELLYFIN_FFMPEG_HEADER_ERROR}")
+    if(NOT SPOOL_FFMPEG_HEADER_RESULT EQUAL 0)
+        message(FATAL_ERROR "FFmpeg capability header generation failed: ${SPOOL_FFMPEG_HEADER_ERROR}")
     endif()
 
     if(NOT WIN32)
@@ -940,8 +940,8 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         # prefix is the documented way to make the lookup happen again; the
         # capability manifest is already a configure dependency, so this is what
         # makes the audit follow it.
-        get_cmake_property(JELLYFIN_CACHE_VARIABLES CACHE_VARIABLES)
-        foreach(cache_variable IN LISTS JELLYFIN_CACHE_VARIABLES)
+        get_cmake_property(SPOOL_CACHE_VARIABLES CACHE_VARIABLES)
+        foreach(cache_variable IN LISTS SPOOL_CACHE_VARIABLES)
             if(cache_variable MATCHES "^(pkgcfg_lib_FFMPEG_AUDIT_|__pkg_config_checked_FFMPEG_AUDIT|FFMPEG_AUDIT_)")
                 unset(${cache_variable} CACHE)
             endif()
@@ -993,7 +993,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
 
     find_program(QMLTESTRUNNER_EXECUTABLE NAMES qmltestrunner)
     if(QMLTESTRUNNER_EXECUTABLE)
-        set(JELLYFIN_QML_TESTS
+        set(SPOOL_QML_TESTS
             route-policy tests/qml/tst_RoutePolicy.qml
             key-router tests/qml/tst_KeyRouter.qml
             player-overlay-input tests/qml/tst_PlayerOverlayInput.qml
@@ -1021,85 +1021,85 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         # The subtitle panel test has never run on macOS; it was narrowed to
         # Windows alone while chasing that, which silently dropped Linux too.
         if(NOT APPLE)
-            list(APPEND JELLYFIN_QML_TESTS
+            list(APPEND SPOOL_QML_TESTS
                 subtitle-settings-panel tests/qml/tst_SubtitleSettingsPanel.qml
             )
         endif()
 
-        get_filename_component(JELLYFIN_QML_PREFIX "${Qt6Qml_DIR}/../../.." ABSOLUTE)
-        set(JELLYFIN_QML_IMPORT_DIR "${JELLYFIN_QML_PREFIX}/lib/qt-6/qml")
-        set(JELLYFIN_QML_TEST_ENV
+        get_filename_component(SPOOL_QML_PREFIX "${Qt6Qml_DIR}/../../.." ABSOLUTE)
+        set(SPOOL_QML_IMPORT_DIR "${SPOOL_QML_PREFIX}/lib/qt-6/qml")
+        set(SPOOL_QML_TEST_ENV
             "QT_QPA_PLATFORM=offscreen"
             "QT_QUICK_BACKEND=software"
-            "QML2_IMPORT_PATH=${JELLYFIN_QML_IMPORT_DIR}"
-            "QML_IMPORT_PATH=${JELLYFIN_QML_IMPORT_DIR}"
-            ${JELLYFIN_TEST_ENV}
+            "QML2_IMPORT_PATH=${SPOOL_QML_IMPORT_DIR}"
+            "QML_IMPORT_PATH=${SPOOL_QML_IMPORT_DIR}"
+            ${SPOOL_TEST_ENV}
         )
 
-        list(LENGTH JELLYFIN_QML_TESTS JELLYFIN_QML_TEST_COUNT)
-        math(EXPR JELLYFIN_QML_TEST_LAST "${JELLYFIN_QML_TEST_COUNT} - 1")
-        foreach(qml_index RANGE 0 ${JELLYFIN_QML_TEST_LAST} 2)
+        list(LENGTH SPOOL_QML_TESTS SPOOL_QML_TEST_COUNT)
+        math(EXPR SPOOL_QML_TEST_LAST "${SPOOL_QML_TEST_COUNT} - 1")
+        foreach(qml_index RANGE 0 ${SPOOL_QML_TEST_LAST} 2)
             math(EXPR qml_source_index "${qml_index} + 1")
-            list(GET JELLYFIN_QML_TESTS ${qml_index} qml_test_name)
-            list(GET JELLYFIN_QML_TESTS ${qml_source_index} qml_test_source)
+            list(GET SPOOL_QML_TESTS ${qml_index} qml_test_name)
+            list(GET SPOOL_QML_TESTS ${qml_source_index} qml_test_source)
             add_test(NAME ${qml_test_name}
                 COMMAND "${QMLTESTRUNNER_EXECUTABLE}"
                     -input "${CMAKE_CURRENT_SOURCE_DIR}/${qml_test_source}"
             )
-            set_tests_properties(${qml_test_name} PROPERTIES ENVIRONMENT "${JELLYFIN_QML_TEST_ENV}")
+            set_tests_properties(${qml_test_name} PROPERTIES ENVIRONMENT "${SPOOL_QML_TEST_ENV}")
         endforeach()
     endif()
 endif()
 
 # Static Qt: import plugins that the linker can't auto-discover. BUILD_SHARED_LIBS
 # controls this project's libraries, not whether the imported Qt build is static.
-get_target_property(JELLYFIN_QT_CORE_TARGET_TYPE Qt6::Core TYPE)
-if(JELLYFIN_QT_CORE_TARGET_TYPE STREQUAL "STATIC_LIBRARY")
-    jellyfin_import_static_platform_plugins(jellyfin-native)
+get_target_property(SPOOL_QT_CORE_TARGET_TYPE Qt6::Core TYPE)
+if(SPOOL_QT_CORE_TARGET_TYPE STREQUAL "STATIC_LIBRARY")
+    spool_import_static_platform_plugins(spool)
 
     # Let qmlimportscanner derive the static QML plugin link set from the
     # application's imports. New imports now fail when their plugin is absent.
-    qt_import_qml_plugins(jellyfin-native)
+    qt_import_qml_plugins(spool)
 
     # Add linker GC to strip unused code from static libs.
     # macOS ld64 doesn't accept --gc-sections (uses -dead_strip instead, on by
     # default at -O), so only apply this on non-Apple platforms.
     if(NOT APPLE)
-        target_link_options(jellyfin-native PRIVATE
+        target_link_options(spool PRIVATE
             "-Wl,--gc-sections"
         )
-        target_compile_options(jellyfin-native PRIVATE
+        target_compile_options(spool PRIVATE
             "-ffunction-sections"
             "-fdata-sections"
         )
     endif()
 endif()
 
-set_target_properties(jellyfin-native PROPERTIES
-    OUTPUT_NAME "jellyfin-native"
+set_target_properties(spool PROPERTIES
+    OUTPUT_NAME "spool"
 )
 if(APPLE)
-    set_property(TARGET jellyfin-native PROPERTY OUTPUT_NAME "Spool")
+    set_property(TARGET spool PROPERTY OUTPUT_NAME "Spool")
 endif()
 if(UNIX AND NOT APPLE AND NOT ANDROID)
-    set_property(TARGET jellyfin-native PROPERTY INSTALL_RPATH "$ORIGIN/../lib")
+    set_property(TARGET spool PROPERTY INSTALL_RPATH "$ORIGIN/../lib")
 endif()
-target_compile_definitions(jellyfin-native PRIVATE
-    JELLYFIN_VERSION="${PROJECT_VERSION}"
+target_compile_definitions(spool PRIVATE
+    SPOOL_VERSION="${PROJECT_VERSION}"
     SPOOL_PROVIDER_SOURCES="${SPOOL_PROVIDER_SOURCES}"
     $<$<BOOL:${TOUCHSCREEN}>:TOUCHSCREEN>
 )
 
-install(TARGETS jellyfin-native
+install(TARGETS spool
     LIBRARY DESTINATION lib
     BUNDLE DESTINATION .
     RUNTIME DESTINATION bin
 )
 
 if(NOT ANDROID)
-    set(JELLYFIN_FONT_INSTALL_DIRECTORY "fonts")
+    set(SPOOL_FONT_INSTALL_DIRECTORY "fonts")
     if(APPLE)
-        set(JELLYFIN_FONT_INSTALL_DIRECTORY "Spool.app/Contents/fonts")
+        set(SPOOL_FONT_INSTALL_DIRECTORY "Spool.app/Contents/fonts")
     endif()
     install(FILES
         qml/fonts/AtkinsonHyperlegible-Bold.otf
@@ -1107,11 +1107,11 @@ if(NOT ANDROID)
         qml/fonts/IBMPlexSans-Variable.ttf
         qml/fonts/PTRootUI-Variable.ttf
         qml/fonts/MaterialIcons-Regular.ttf
-        DESTINATION "${JELLYFIN_FONT_INSTALL_DIRECTORY}"
+        DESTINATION "${SPOOL_FONT_INSTALL_DIRECTORY}"
     )
 endif()
 
-if(UNIX AND NOT APPLE AND NOT ANDROID AND NOT JELLYFIN_NATIVE_WEBOS)
+if(UNIX AND NOT APPLE AND NOT ANDROID AND NOT SPOOL_WEBOS)
     install(FILES app/com.sachk.spool.desktop
         DESTINATION share/applications
     )

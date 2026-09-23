@@ -10,13 +10,13 @@
 
 #include <vector>
 
-namespace JellyfinNative {
+namespace Spool {
 
 class LibraryPrefetchController;
 
 class BrowseSessionController final : public QObject {
     Q_OBJECT
-    Q_PROPERTY(JellyfinNative::MovieGridModel *items READ items CONSTANT)
+    Q_PROPERTY(Spool::MovieGridModel *items READ items CONSTANT)
     Q_PROPERTY(bool loadingMore READ loadingMore NOTIFY pagingChanged)
     Q_PROPERTY(bool hasMore READ hasMore NOTIFY pagingChanged)
     Q_PROPERTY(int totalCount READ totalCount NOTIFY pagingChanged)
@@ -163,4 +163,4 @@ private:
     QVariantMap m_filterOptions;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

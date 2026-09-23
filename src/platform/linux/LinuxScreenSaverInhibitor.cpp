@@ -5,7 +5,7 @@
 #include <QDBusReply>
 #include <QDebug>
 
-namespace JellyfinNative {
+namespace Spool {
 namespace {
 
     class LinuxScreenSaverBackend final : public ScreenSaverBackend {
@@ -14,8 +14,8 @@ namespace {
         {
             QDBusInterface screenSaver(QStringLiteral("org.freedesktop.ScreenSaver"), QStringLiteral("/ScreenSaver"),
                 QStringLiteral("org.freedesktop.ScreenSaver"), QDBusConnection::sessionBus());
-            const QDBusReply<quint32> reply = screenSaver.call(QStringLiteral("Inhibit"),
-                QStringLiteral("Spool for Jellyfin"), QStringLiteral("Media playback is active"));
+            const QDBusReply<quint32> reply = screenSaver.call(
+                QStringLiteral("Inhibit"), QStringLiteral("Spool"), QStringLiteral("Media playback is active"));
             if (!reply.isValid()) {
                 qWarning() << "screensaver: freedesktop inhibit failed" << reply.error().message();
                 return false;
@@ -46,4 +46,4 @@ std::unique_ptr<ScreenSaverBackend> createPlatformScreenSaverBackend()
     return std::make_unique<LinuxScreenSaverBackend>();
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

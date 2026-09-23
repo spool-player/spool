@@ -6,7 +6,7 @@
 
 #include <memory>
 
-namespace JellyfinNative {
+namespace Spool {
 
 class WebOSAudioRoute final : public QObject {
     Q_OBJECT
@@ -25,4 +25,4 @@ private:
     std::unique_ptr<PlatformData> m_platform;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

@@ -26,7 +26,7 @@ if a patch stops applying.
   `QT_CONFIG(opengl)` guard so the non-OpenGL webOS Wayland build compiles.
 
 `qtbase-6.11-webos-no-cursor-set.patch`
-- Adds a `JELLYFIN_QT_NO_CURSOR_SURFACE=1` opt-out that skips client-side
+- Adds a `SPOOL_QT_NO_CURSOR_SURFACE=1` opt-out that skips client-side
   `set_cursor` in the Wayland QPA, so the app never displaces or hides the
   LSM-owned magic-remote pointer (mirrors xbmc's no-op `SetCursor`).
 

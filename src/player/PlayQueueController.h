@@ -11,7 +11,7 @@
 
 #include <vector>
 
-namespace JellyfinNative {
+namespace Spool {
 class PlaybackSource;
 
 class PlayQueueController final : public QAbstractListModel {
@@ -34,7 +34,7 @@ class PlayQueueController final : public QAbstractListModel {
     Q_PROPERTY(bool hasPlaylistItems READ hasPlaylistItems NOTIFY queueChanged)
     // The same queue with its automatically filled runs folded up, which is
     // what the panel lists. Owned here so there is one outline per queue.
-    Q_PROPERTY(JellyfinNative::PlayQueueOutlineModel *outline READ outline CONSTANT)
+    Q_PROPERTY(Spool::PlayQueueOutlineModel *outline READ outline CONSTANT)
 
 public:
     enum Roles {
@@ -168,4 +168,4 @@ private:
     bool m_shuffled = false;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

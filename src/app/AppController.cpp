@@ -38,7 +38,7 @@
 #include <malloc.h>
 #endif
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
 
@@ -1307,4 +1307,4 @@ void AppController::setPlaybackTransition(bool transition)
     });
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

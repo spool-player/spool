@@ -7,7 +7,7 @@
 
 #include <vector>
 
-namespace JellyfinNative {
+namespace Spool {
 class PlayQueueController;
 
 // The play queue with its automatically filled runs folded up.
@@ -110,4 +110,4 @@ private:
     mutable std::vector<Group> m_groups;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

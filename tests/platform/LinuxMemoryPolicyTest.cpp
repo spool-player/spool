@@ -8,7 +8,7 @@
 #include <iostream>
 #include <limits>
 
-using namespace JellyfinNative;
+using namespace Spool;
 
 namespace {
 void require(bool condition, const char *message)
@@ -20,7 +20,7 @@ void require(bool condition, const char *message)
 }
 }
 
-JELLYFIN_TEST_MAIN("linux-memory-policy")
+SPOOL_TEST_MAIN("linux-memory-policy")
 {
 #ifdef Q_OS_LINUX
     constexpr qint64 mib = 1024LL * 1024LL;

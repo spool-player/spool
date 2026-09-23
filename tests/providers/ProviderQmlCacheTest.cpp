@@ -35,7 +35,7 @@ void waitUntil(const std::function<bool()>& condition)
 }
 }
 
-JELLYFIN_TEST_MAIN("provider-qml-cache")
+SPOOL_TEST_MAIN("provider-qml-cache")
 {
     qputenv("QT_QPA_PLATFORM", "offscreen");
     QGuiApplication app(argc, argv);
@@ -53,12 +53,11 @@ JELLYFIN_TEST_MAIN("provider-qml-cache")
     QQmlEngine engine;
     QObject probe;
     engine.rootContext()->setContextProperty("probe", &probe);
-    JellyfinNative::ProviderQmlCache cache(&engine);
+    Spool::ProviderQmlCache cache(&engine);
     int failures = 0;
     bool finished = false;
-    QObject::connect(
-        &cache, &JellyfinNative::ProviderQmlCache::componentFailed, &app, [&](const QUrl&) { ++failures; });
-    QObject::connect(&cache, &JellyfinNative::ProviderQmlCache::finished, &app, [&] { finished = true; });
+    QObject::connect(&cache, &Spool::ProviderQmlCache::componentFailed, &app, [&](const QUrl&) { ++failures; });
+    QObject::connect(&cache, &Spool::ProviderQmlCache::finished, &app, [&] { finished = true; });
     cache.addSources({ a, b, broken, a });
     cache.start(30);
     require(cache.retainedCount() == 0, "warming waits for the launch delay");

@@ -6,7 +6,7 @@
 
 #include <vector>
 
-namespace JellyfinNative {
+namespace Spool {
 
 class MovieGridModel final : public QAbstractListModel {
     Q_OBJECT
@@ -46,4 +46,4 @@ private:
     std::vector<MovieItem> m_movies;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

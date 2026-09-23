@@ -34,7 +34,7 @@ function(find_webos_sysroot_library out_var library_name)
     set(${out_var} "${${out_var}}" PARENT_SCOPE)
 endfunction()
 
-function(jellyfin_resolve_webos_dependencies)
+function(spool_resolve_webos_dependencies)
     pkg_check_modules(GLIB REQUIRED IMPORTED_TARGET glib-2.0)
     set(WEBOS_NATIVE_LIB_DIR "${CMAKE_SYSROOT}/usr/local/webos-native/lib")
     set(WEBOS_SYSROOT_LIB_DIR "${CMAKE_SYSROOT}/usr/lib")
@@ -86,7 +86,7 @@ function(jellyfin_resolve_webos_dependencies)
     endforeach()
 endfunction()
 
-function(jellyfin_configure_webos_targets native_target core_target)
+function(spool_configure_webos_targets native_target core_target)
     target_sources(${core_target} PRIVATE
         src/platform/webos/WebOSAudioSyncPolicy.cpp
         src/platform/webos/WebOSCredentialStore.cpp
@@ -117,8 +117,8 @@ function(jellyfin_configure_webos_targets native_target core_target)
         src/platform/webos/WebOSScreenSaverInhibitor.cpp
         src/platform/common/UnixProcessIntegration.cpp
     )
-    foreach(target IN LISTS JELLYFIN_NATIVE_TARGETS)
-        target_compile_definitions(${target} PRIVATE JELLYFIN_NATIVE_WEBOS=1)
+    foreach(target IN LISTS SPOOL_TARGETS)
+        target_compile_definitions(${target} PRIVATE SPOOL_WEBOS=1)
     endforeach()
 
     message(STATUS "Using firmware-derived webOS input protocol tables; do not regenerate them from host Wayland XML")
@@ -162,7 +162,7 @@ function(jellyfin_configure_webos_targets native_target core_target)
     )
 endfunction()
 
-function(jellyfin_import_static_webos_plugins native_target)
+function(spool_import_static_webos_plugins native_target)
     find_webos_sysroot_library(XKBCOMMON_LIB xkbcommon)
     target_link_libraries(${native_target} PRIVATE ${XKBCOMMON_LIB})
     qt_import_plugins(${native_target}

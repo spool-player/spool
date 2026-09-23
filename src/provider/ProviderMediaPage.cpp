@@ -7,7 +7,7 @@
 #include <limits>
 #include <stdexcept>
 
-namespace JellyfinNative::Detail {
+namespace Spool::Detail {
 namespace {
     constexpr qsizetype kMaximumTextBytes = 4 * 1024 * 1024;
     constexpr double kMaximumSafeInteger = 9007199254740991.0;
@@ -303,4 +303,4 @@ MovieItem readProviderItem(const QJSValue& value)
     return Reader().item(value);
 }
 
-} // namespace JellyfinNative::Detail
+} // namespace Spool::Detail

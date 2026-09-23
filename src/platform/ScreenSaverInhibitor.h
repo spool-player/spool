@@ -4,7 +4,7 @@
 
 #include <memory>
 
-namespace JellyfinNative {
+namespace Spool {
 
 class ScreenSaverBackend {
 public:
@@ -35,4 +35,4 @@ private:
 bool screenSaverShouldBeInhibited(bool mediaSessionActive, bool paused, bool slideshowAdvancing = false);
 QByteArray webOsScreenSaverResponsePayload(const QByteArray& requestPayload);
 
-} // namespace JellyfinNative
+} // namespace Spool

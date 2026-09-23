@@ -10,7 +10,7 @@ $manifestPath = Join-Path $root 'tools\manifests\qt-windows-6.11.json'
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
 $qtRoot = Join-Path ([IO.Path]::GetFullPath($OutputDirectory)) "$($manifest.version)\$($manifest.architecture)"
 $downloads = if ($DownloadDirectory) { [IO.Path]::GetFullPath($DownloadDirectory) } elseif ($env:RUNNER_TEMP) {
-    Join-Path $env:RUNNER_TEMP 'jellyfin-qt-downloads'
+    Join-Path $env:RUNNER_TEMP 'spool-qt-downloads'
 } else {
     Join-Path $root 'build\windows-deps\qt-downloads'
 }

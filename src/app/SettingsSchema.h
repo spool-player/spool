@@ -4,7 +4,7 @@
 #include <QVariantList>
 #include <QVector>
 
-namespace JellyfinNative {
+namespace Spool {
 
 enum class SettingType {
     Action,
@@ -151,4 +151,4 @@ QVariant normalizedSettingValue(const SettingSpec& spec, const QVariant& value);
 QString serializedSettingValue(const SettingSpec& spec, const QVariant& value);
 QVariantList settingSchemaModel();
 
-} // namespace JellyfinNative
+} // namespace Spool

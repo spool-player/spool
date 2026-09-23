@@ -4,7 +4,7 @@
 #include <QFileInfo>
 #include <QUrl>
 
-namespace JellyfinNative {
+namespace Spool {
 
 MpvConfigPolicy validatedPlatformMpvConfigPolicy(const QString& mode, const QString& directory)
 {
@@ -33,4 +33,4 @@ MpvConfigPolicy validatedPlatformMpvConfigPolicy(const QString& mode, const QStr
     return { MpvConfigPolicy::Mode::Custom, canonical, true, {} };
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

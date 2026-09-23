@@ -67,7 +67,7 @@ inline QByteArray makeZstd(const QByteArray& content)
 
 // The JS fixture as a package: a login screen, the Selection picker and one
 // item action, so registry, hub and screen tests share one provider.
-inline JellyfinNative::ProviderPackageContents package(
+inline Spool::ProviderPackageContents package(
     const QString& id = QStringLiteral("fixture.test"), const QString& version = QStringLiteral("1.0.0"))
 {
     const auto read = [](const char *name) {
@@ -87,8 +87,8 @@ inline JellyfinNative::ProviderPackageContents package(
                 { QStringLiteral("label"), QStringLiteral("Tag") },
                 { QStringLiteral("types"), QJsonArray { QStringLiteral("Movie") } } } } } };
     const QByteArray json = QJsonDocument(manifest).toJson();
-    JellyfinNative::ProviderPackageContents contents;
-    contents.manifest = *JellyfinNative::ProviderManifest::parse(json);
+    Spool::ProviderPackageContents contents;
+    contents.manifest = *Spool::ProviderManifest::parse(json);
     contents.files
         = { { QStringLiteral("manifest.json"), json }, { QStringLiteral("logic/provider.mjs"), read("provider.mjs") },
               { QStringLiteral("ui/Selection.qml"), read("Selection.qml") },
@@ -97,7 +97,7 @@ inline JellyfinNative::ProviderPackageContents package(
 }
 
 // The package as the store serves it.
-inline QByteArray archive(const JellyfinNative::ProviderPackageContents& contents)
+inline QByteArray archive(const Spool::ProviderPackageContents& contents)
 {
     Entries entries;
     for (auto it = contents.files.cbegin(); it != contents.files.cend(); ++it)

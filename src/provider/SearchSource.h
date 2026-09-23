@@ -9,7 +9,7 @@
 #include <functional>
 #include <vector>
 
-namespace JellyfinNative {
+namespace Spool {
 
 // Text search over a media source. Plain abstract class for the same reason
 // as Catalog: the implementing facade is already a QObject through
@@ -33,4 +33,4 @@ public:
     virtual void prepareSearch() { }
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

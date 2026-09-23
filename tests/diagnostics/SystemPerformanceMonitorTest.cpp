@@ -23,10 +23,10 @@ void require(bool condition, const char *message)
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("system-performance-monitor")
+SPOOL_TEST_MAIN("system-performance-monitor")
 {
     QCoreApplication app(argc, argv);
-    JellyfinNative::SystemPerformanceMonitor monitor;
+    Spool::SystemPerformanceMonitor monitor;
     std::atomic<qint64> fakeAudioDecodeTimeNs { 0 };
     monitor.setAudioDecodeCpuTimeProvider(
         [&fakeAudioDecodeTimeNs] { return fakeAudioDecodeTimeNs.fetch_add(1'000'000) + 1'000'000; });

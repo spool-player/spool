@@ -5,9 +5,9 @@
 #include <QVariant>
 #include <QVariantMap>
 
-namespace JellyfinNative {
+namespace Spool {
 
 QStringList stringListFromVariant(const QVariant& value);
 QStringList stringListFromVariantMap(const QVariantMap& map, const QString& key);
 
-} // namespace JellyfinNative
+} // namespace Spool

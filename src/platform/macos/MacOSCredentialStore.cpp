@@ -6,7 +6,7 @@
 
 #include <Security/Security.h>
 
-namespace JellyfinNative::CredentialStore {
+namespace Spool::CredentialStore {
 namespace {
     constexpr char kService[] = SPOOL_MACOS_CREDENTIAL_SERVICE;
 }
@@ -82,4 +82,4 @@ void clear()
         { QStringLiteral("delete-generic-password"), QStringLiteral("-s"), QString::fromLatin1(kService) });
 }
 
-} // namespace JellyfinNative::CredentialStore
+} // namespace Spool::CredentialStore

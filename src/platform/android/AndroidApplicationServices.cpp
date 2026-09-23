@@ -7,7 +7,7 @@
 #include <QGuiApplication>
 #include <QJniObject>
 
-namespace JellyfinNative {
+namespace Spool {
 
 struct PlatformApplicationServices::PlatformData {
     explicit PlatformData(ApplicationHooks& applicationHooks)
@@ -61,4 +61,4 @@ void PlatformApplicationServices::start()
         });
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

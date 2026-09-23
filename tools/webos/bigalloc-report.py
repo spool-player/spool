@@ -19,7 +19,7 @@ ADDR2LINE = os.path.join(SDK, "bin/arm-webos-linux-gnueabi-addr2line")
 
 # Where to find local copies of the TV modules (best symbols first).
 SEARCH_DIRS = [
-    os.path.join(ROOT, "build"),                 # jellyfin-native.unstripped
+    os.path.join(ROOT, "build"),                 # spool.unstripped
     os.path.join(ROOT, "build/webos-mpv-build"), # libmpv (if present, unstripped)
     os.path.join(ROOT, "app/lib"),               # deployed libs (build-id match)
     os.path.join(os.path.dirname(ROOT), "build/third_party"),
@@ -28,8 +28,8 @@ SEARCH_DIRS = [
 
 def find_local(modpath):
     base = os.path.basename(modpath)
-    if base.startswith("jellyfin-native"):
-        cand = os.path.join(ROOT, "build/jellyfin-native.unstripped")
+    if base.startswith("spool"):
+        cand = os.path.join(ROOT, "build/spool.unstripped")
         if os.path.exists(cand):
             return cand
     # Match soname (libmpv.so.2) to the versioned file (libmpv.so.2.5.0).

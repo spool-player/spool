@@ -22,7 +22,7 @@
 #include <algorithm>
 #include <memory>
 
-namespace JellyfinNative {
+namespace Spool {
 
 class DatabaseWorker final : public QObject {
     Q_OBJECT
@@ -154,8 +154,7 @@ private:
 
     bool openState(const QString& path)
     {
-        if (!ensureConnection(m_database, QStringLiteral("jellyfin_native_state"), path)
-            || !prepareConnection(m_database))
+        if (!ensureConnection(m_database, QStringLiteral("spool_native_state"), path) || !prepareConnection(m_database))
             return false;
         secureDatabaseFiles(path);
         QSqlQuery query(m_database);
@@ -191,7 +190,7 @@ private:
 
     bool openCache(const QString& path)
     {
-        if (!ensureConnection(m_cacheDatabase, QStringLiteral("jellyfin_native_cache"), path)
+        if (!ensureConnection(m_cacheDatabase, QStringLiteral("spool_native_cache"), path)
             || !prepareConnection(m_cacheDatabase))
             return false;
         secureDatabaseFiles(path);
@@ -700,6 +699,6 @@ void DatabaseManager::evictCacheEntries(int maximumEntries)
     invokeOnWorkerAsync([this, maximumEntries]() { m_worker->evictCacheEntries(maximumEntries); });
 }
 
-} // namespace JellyfinNative
+} // namespace Spool
 
 #include "DatabaseManager.moc"

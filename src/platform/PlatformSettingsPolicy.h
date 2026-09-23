@@ -4,7 +4,7 @@
 #include <QStringList>
 #include <QtGlobal>
 
-namespace JellyfinNative {
+namespace Spool {
 
 struct SettingChoice;
 
@@ -46,4 +46,4 @@ QString platformAudioRouteDisplayName(const QString& output);
 QString platformAudioDelayStorageKey(const QString& output);
 int platformAutomaticAudioDelayMs(const QString& output, int displayLatencyMs, int outputLatencyMs);
 
-} // namespace JellyfinNative
+} // namespace Spool

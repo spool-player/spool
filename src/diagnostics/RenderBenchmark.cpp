@@ -10,14 +10,14 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QGuiApplication>
-#include <QSysInfo>
-#include <QSGRendererInterface>
 #include <QQuickItem>
 #include <QQuickWindow>
+#include <QSGRendererInterface>
+#include <QSysInfo>
 #include <QTimer>
 #include <QtGlobal>
 
@@ -26,7 +26,7 @@
 #include <algorithm>
 #include <chrono>
 
-namespace JellyfinNative {
+namespace Spool {
 namespace {
 
     // Routes that stand up without a library behind them, so the same script runs
@@ -111,9 +111,8 @@ RenderBenchmark::RenderBenchmark(RenderBenchmarkHooks hooks, RouterController *r
             return;
         const QString route = m_script.value(m_position);
         qWarning() << "render benchmark: route" << route << "never reported a frame";
-        m_failures.append(QVariantMap { { QStringLiteral("route"), route },
-            { QStringLiteral("pass"), m_pass }, { QStringLiteral("step"), m_position },
-            { QStringLiteral("reason"), QStringLiteral("route_timeout") } });
+        m_failures.append(QVariantMap { { QStringLiteral("route"), route }, { QStringLiteral("pass"), m_pass },
+            { QStringLiteral("step"), m_position }, { QStringLiteral("reason"), QStringLiteral("route_timeout") } });
         m_awaitingSample = false;
         m_pump->stop();
         QTimer::singleShot(0, this, [this] { step(); });
@@ -373,8 +372,6 @@ void RenderBenchmark::step()
     m_router->replace(route);
     if (m_window)
         m_window->requestUpdate();
-
-
 }
 
 void RenderBenchmark::recordSample()
@@ -388,8 +385,8 @@ void RenderBenchmark::recordSample()
     m_stepDeadline->stop();
     m_pump->stop();
     if (!metrics.isEmpty() && m_pass >= 0) {
-        metrics.insert(QStringLiteral("requestToSampleMs"),
-            static_cast<double>(m_stepTimer.nsecsElapsed()) / 1000000.0);
+        metrics.insert(
+            QStringLiteral("requestToSampleMs"), static_cast<double>(m_stepTimer.nsecsElapsed()) / 1000000.0);
         metrics.insert(QStringLiteral("pass"), m_pass);
         metrics.insert(QStringLiteral("step"), m_position);
         m_samples.append(metrics);
@@ -430,8 +427,8 @@ void RenderBenchmark::finish()
     report.insert(QStringLiteral("warmupPasses"), m_warmup);
     report.insert(QStringLiteral("settleMs"), m_settleMs);
     report.insert(QStringLiteral("stepTimeoutMs"), m_stepTimeoutMs);
-    report.insert(QStringLiteral("cacheMode"), m_forceCold ? QStringLiteral("memory-pressure-eviction")
-                                                        : QStringLiteral("resident-after-warmup"));
+    report.insert(QStringLiteral("cacheMode"),
+        m_forceCold ? QStringLiteral("memory-pressure-eviction") : QStringLiteral("resident-after-warmup"));
     report.insert(QStringLiteral("interpreterRequested"), qEnvironmentVariable("QV4_FORCE_INTERPRETER"));
     report.insert(QStringLiteral("complete"), m_failures.isEmpty());
     report.insert(QStringLiteral("failures"), QJsonArray::fromVariantList(m_failures));
@@ -479,7 +476,8 @@ void RenderBenchmark::finish()
             qWarning() << "render benchmark: could not write" << m_outputPath;
         }
     }
-    QCoreApplication::exit(!written || !m_failures.isEmpty() || (m_samples.isEmpty() && m_scrollSamples.isEmpty()) ? 1 : 0);
+    QCoreApplication::exit(
+        !written || !m_failures.isEmpty() || (m_samples.isEmpty() && m_scrollSamples.isEmpty()) ? 1 : 0);
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

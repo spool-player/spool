@@ -23,7 +23,7 @@
 
 struct mpv_handle;
 
-namespace JellyfinNative {
+namespace Spool {
 
 class NativeAppWindow;
 class PlaybackSource;
@@ -141,7 +141,7 @@ public:
     Q_INVOKABLE void skipActiveSegment();
     Q_INVOKABLE QVariantMap trickplayForSeconds(double seconds) const;
 
-    Q_INVOKABLE void play(const JellyfinNative::PlaybackSession& session, bool startPaused = false);
+    Q_INVOKABLE void play(const Spool::PlaybackSession& session, bool startPaused = false);
     void setMediaSegments(const QString& itemId, const std::vector<MediaSegment>& segments);
     Q_INVOKABLE void togglePause();
     Q_INVOKABLE bool forwardMpvKey(int key, int modifiers, const QString& text, bool pressed, bool repeat);
@@ -207,8 +207,8 @@ public:
     Q_INVOKABLE void setPlaybackSpeed(double speed);
     void setSyncPlaybackSpeed(double speed);
     void clearSyncPlaybackSpeed();
-    void setSubtitlePreferences(const JellyfinNative::SubtitlePreferences& preferences);
-    void previewSubtitlePreferences(const JellyfinNative::SubtitlePreferences& preferences);
+    void setSubtitlePreferences(const Spool::SubtitlePreferences& preferences);
+    void previewSubtitlePreferences(const Spool::SubtitlePreferences& preferences);
     void setDemuxerBudget(const QByteArray& maxBytes, const QByteArray& maxBackBytes);
     void setForwardCacheSizeMiB(int sizeMiB);
     void setMpvConfigPolicy(const MpvConfigPolicy& policy);
@@ -409,4 +409,4 @@ private:
     QStringList m_trickplaySheetUrls;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

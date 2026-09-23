@@ -16,9 +16,9 @@ class QNetworkReply;
 class QSaveFile;
 class QTemporaryDir;
 
-namespace JellyfinNative {
+namespace Spool {
 
-#if defined(JELLYFIN_NATIVE_WEBOS)
+#if defined(SPOOL_WEBOS)
 class WebOSUpdateInstaller;
 #endif
 
@@ -113,10 +113,10 @@ private:
     qint64 m_lastSpeedBytes = 0;
     qint64 m_lastSpeedMs = 0;
     bool m_packageReady = false;
-#if defined(JELLYFIN_NATIVE_WEBOS)
+#if defined(SPOOL_WEBOS)
     WebOSUpdateInstaller *m_installer = nullptr;
     std::unique_ptr<QTemporaryDir> m_packageDirectory;
 #endif
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

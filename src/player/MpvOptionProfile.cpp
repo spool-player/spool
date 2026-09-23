@@ -11,7 +11,7 @@
 #include <cmath>
 #include <iterator>
 
-namespace JellyfinNative {
+namespace Spool {
 
 QByteArray MpvOptionProfile::inputKey(int key, int modifiers, const QString& text)
 {
@@ -777,4 +777,4 @@ std::vector<MpvOption> MpvOptionProfile::subtitleOptions(
     };
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

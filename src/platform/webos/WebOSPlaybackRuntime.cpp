@@ -6,7 +6,7 @@
 #include <QMetaObject>
 #include <QPointer>
 
-namespace JellyfinNative {
+namespace Spool {
 namespace {
 
     const QStringList kSoftwareVideoCodecs { QStringLiteral("mpeg1video"), QStringLiteral("mpeg2video"),
@@ -48,4 +48,4 @@ void configurePlatformPlaybackCapabilities(VideoCodecCapabilityApplier apply, QO
     });
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

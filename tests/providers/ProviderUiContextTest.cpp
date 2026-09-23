@@ -37,14 +37,14 @@ void waitFor(const std::function<bool()>& condition)
 }
 }
 
-JELLYFIN_TEST_MAIN("provider-ui-context")
+SPOOL_TEST_MAIN("provider-ui-context")
 {
     qputenv("QT_QPA_PLATFORM", "offscreen");
     QGuiApplication app(argc, argv);
-    using namespace JellyfinNative;
+    using namespace Spool;
     QTemporaryDir directory;
     require(directory.isValid(), "isolated UI source database created");
-    qputenv("JELLYFIN_CREDENTIAL_STORE_DIR", directory.filePath("credentials").toUtf8());
+    qputenv("SPOOL_CREDENTIAL_STORE_DIR", directory.filePath("credentials").toUtf8());
     DatabaseManager database;
     require(database.initialize(directory.filePath("cache.sqlite")), "durable source index opens");
     const QString installs = directory.filePath("providers");

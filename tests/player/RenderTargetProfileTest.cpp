@@ -11,7 +11,7 @@
 #include <cstdlib>
 #include <iostream>
 
-using namespace JellyfinNative;
+using namespace Spool;
 
 namespace {
 
@@ -47,7 +47,7 @@ DisplayOutputCapabilities hdrDisplay(
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("render-target-profile")
+SPOOL_TEST_MAIN("render-target-profile")
 {
     QCoreApplication app(argc, argv);
     // The startup store is the application's own QSettings, named by these.

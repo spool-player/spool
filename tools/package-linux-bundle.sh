@@ -15,7 +15,7 @@ ensure_native_shell "$APP_ROOT" "$APP_ROOT/tools/package-linux-bundle.sh" "$@"
 APP_VERSION="$(read_project_version "$APP_ROOT")"
 APPDIR="${APPDIR:-$APP_ROOT/build/appimage/AppDir}"
 ARTIFACT_DIR="${ARTIFACT_DIR:-$APP_ROOT/dist}"
-BUNDLE="Spool-for-Jellyfin-${APP_VERSION}-linux-x86_64"
+BUNDLE="Spool-${APP_VERSION}-linux-x86_64"
 OUTPUT="$ARTIFACT_DIR/$BUNDLE.tar.zst"
 
 if [[ ! -x "$APPDIR/AppRun" ]]; then

@@ -14,7 +14,7 @@
 #include <QSet>
 #include <QUuid>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
     constexpr qsizetype kMaxArchiveBytes = 16 * 1024 * 1024;
@@ -292,4 +292,4 @@ namespace ProviderPackage {
     }
 
 } // namespace ProviderPackage
-} // namespace JellyfinNative
+} // namespace Spool

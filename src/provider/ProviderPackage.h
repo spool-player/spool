@@ -8,7 +8,7 @@
 
 #include <optional>
 
-namespace JellyfinNative {
+namespace Spool {
 
 // manifest.json, format 2. Everything the host needs to list, install and
 // mount a provider without running any of its code.
@@ -60,4 +60,4 @@ namespace ProviderPackage {
     int compareVersions(const QString& left, const QString& right);
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

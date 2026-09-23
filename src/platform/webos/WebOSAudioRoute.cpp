@@ -13,7 +13,7 @@ extern "C" {
 #include <alsa/asoundlib.h>
 }
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
     struct LatencySnapshot {
@@ -122,4 +122,4 @@ void WebOSAudioRoute::acceptServicePayload(const QByteArray& payload)
     ++m_platform->generation;
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

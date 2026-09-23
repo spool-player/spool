@@ -1,6 +1,6 @@
 #include "platform/PlatformApplicationServices.h"
 
-namespace JellyfinNative {
+namespace Spool {
 
 struct PlatformApplicationServices::PlatformData { };
 
@@ -14,4 +14,4 @@ PlatformApplicationServices::~PlatformApplicationServices() = default;
 
 void PlatformApplicationServices::start() { }
 
-} // namespace JellyfinNative
+} // namespace Spool

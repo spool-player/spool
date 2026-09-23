@@ -16,7 +16,7 @@ Unicode true
     !error "OUTPUT_FILE is required"
 !endif
 
-Name "Spool for Jellyfin Portable"
+Name "Spool Portable"
 OutFile "${OUTPUT_FILE}"
 Icon "${SOURCE_ROOT}\app\icons\spool.ico"
 RequestExecutionLevel user
@@ -27,11 +27,11 @@ SetCompressor /SOLID lzma
 InstallDir "$LocalAppData\spool-jellyfin\portable\${VERSION}-${PAYLOAD_ID}"
 
 VIProductVersion "${VERSION}.0"
-VIAddVersionKey /LANG=1033 "ProductName" "Spool for Jellyfin Portable"
-VIAddVersionKey /LANG=1033 "FileDescription" "Spool for Jellyfin portable launcher"
+VIAddVersionKey /LANG=1033 "ProductName" "Spool Portable"
+VIAddVersionKey /LANG=1033 "FileDescription" "Spool portable launcher"
 VIAddVersionKey /LANG=1033 "FileVersion" "${VERSION}"
 VIAddVersionKey /LANG=1033 "ProductVersion" "${VERSION}"
-VIAddVersionKey /LANG=1033 "LegalCopyright" "Spool for Jellyfin contributors"
+VIAddVersionKey /LANG=1033 "LegalCopyright" "Spool contributors"
 
 Section
     IfFileExists "$InstDir\.payload-complete" launch
@@ -45,13 +45,13 @@ Section
 
 launch:
     ClearErrors
-    Exec '"$InstDir\jellyfin-native.exe"'
+    Exec '"$InstDir\spool.exe"'
     IfErrors launch_failed
     Call PruneOldPayloads
     Goto done
 
 launch_failed:
-    MessageBox MB_ICONSTOP "Spool for Jellyfin could not be launched."
+    MessageBox MB_ICONSTOP "Spool could not be launched."
     SetErrorLevel 1
 
 done:

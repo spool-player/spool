@@ -3,7 +3,7 @@
 #include "app/SettingsSchema.h"
 #include "platform/webos/WebOSAudioSyncPolicy.h"
 
-namespace JellyfinNative {
+namespace Spool {
 namespace {
     constexpr SettingChoice kChoices[] = { { "alsa", "ALSA" }, { "starfish-pcm", "Starfish" } };
 }
@@ -76,4 +76,4 @@ int platformAutomaticAudioDelayMs(const QString& output, int displayLatencyMs, i
     return AudioSyncPolicy::automaticBaseDelayMs(output, displayLatencyMs, outputLatencyMs);
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

@@ -15,7 +15,7 @@
 // every mpv_*/starfish_* entry point the app uses and forwards through
 // dlsym'd pointers; the library is dlopen'd on a background thread after the
 // first frame, or on demand at the first mpv call, whichever comes first.
-namespace JellyfinNative::WebOSMpvRuntime {
+namespace Spool::WebOSMpvRuntime {
 
 // Start loading libmpv on a detached background thread. Idempotent; call
 // after the first frame has been presented.
@@ -42,4 +42,4 @@ bool ensureLoaded();
 // a load from the startup diagnostics timer.
 int64_t audioDecodeCpuTimeNs();
 
-} // namespace JellyfinNative::WebOSMpvRuntime
+} // namespace Spool::WebOSMpvRuntime

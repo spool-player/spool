@@ -14,7 +14,7 @@
 
 #include <mpv/client.h>
 
-namespace JellyfinNative {
+namespace Spool {
 namespace {
     constexpr const char *kBridge = "com/sachk/spool/VideoSurfaceBridge";
     // The Android UI thread regularly blocks on the Qt thread, so waiting on
@@ -244,4 +244,4 @@ void platformVideoSizeChanged(int width, int height)
         context.object<jobject>(), static_cast<jint>(width), static_cast<jint>(height));
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

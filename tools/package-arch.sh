@@ -18,7 +18,7 @@ arch_container_reexec "$APP_ROOT" tools/package-arch.sh "$@"
 source "$APP_ROOT/tools/lib/build-common.sh"
 APP_VERSION="$(read_project_version "$APP_ROOT")"
 PKGBUILD="$APP_ROOT/packaging/aur/PKGBUILD"
-BUNDLE="Spool-for-Jellyfin-${APP_VERSION}-linux-x86_64"
+BUNDLE="Spool-${APP_VERSION}-linux-x86_64"
 TARBALL="$ARTIFACT_DIR/$BUNDLE.tar.zst"
 
 [[ -f "$TARBALL" ]] || {

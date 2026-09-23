@@ -9,7 +9,7 @@
 #include <iostream>
 #include <vector>
 
-using namespace JellyfinNative;
+using namespace Spool;
 
 namespace {
 
@@ -75,7 +75,7 @@ int countAt(const PlayQueueOutlineModel& outline, int row)
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("play-queue-outline-model")
+SPOOL_TEST_MAIN("play-queue-outline-model")
 {
     QCoreApplication app(argc, argv);
 

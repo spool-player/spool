@@ -6,7 +6,7 @@
 
 #include <algorithm>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
     QString fill(QString pattern, std::initializer_list<std::pair<const char *, QString>> values)
@@ -437,4 +437,4 @@ QString PortableProvider::imageUrl(const ImageRequest& request) const
             { "quality", QString::number(request.quality) }, { "format", request.format } });
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

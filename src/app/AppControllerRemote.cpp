@@ -15,7 +15,7 @@
 #include <QKeyEvent>
 #include <QWindow>
 
-namespace JellyfinNative {
+namespace Spool {
 
 bool AppController::inGroup() const
 {
@@ -180,4 +180,4 @@ void AppController::playRemoteItems(const QString& accountId, const QVariantMap&
         "remote playback");
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

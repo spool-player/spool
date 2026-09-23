@@ -46,7 +46,7 @@ Entries validEntries(const char *version = "1.0.0")
 bool rejects(const QByteArray& archive, const char *expected)
 {
     QString error;
-    const auto package = JellyfinNative::ProviderPackage::read(archive, &error);
+    const auto package = Spool::ProviderPackage::read(archive, &error);
     if (package)
         return false;
     if (!error.contains(QLatin1String(expected))) {
@@ -58,10 +58,10 @@ bool rejects(const QByteArray& archive, const char *expected)
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("provider-package-unpack")
+SPOOL_TEST_MAIN("provider-package-unpack")
 {
     QCoreApplication app(argc, argv);
-    using namespace JellyfinNative;
+    using namespace Spool;
 
     QString error;
     const auto package = ProviderPackage::read(makeZstd(makeTar(validEntries())), &error);
