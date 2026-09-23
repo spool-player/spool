@@ -9,14 +9,14 @@ class QQuickImageResponse;
 
 namespace JellyfinNative {
 
-class AppController;
+class ApplicationHooks;
 class PlayerController;
 class PlayQueueController;
 
 // Android owns the system controls; mpv remains the sole playback engine.
 class AndroidLocalMediaSession final : public QObject {
 public:
-    explicit AndroidLocalMediaSession(AppController& controller);
+    explicit AndroidLocalMediaSession(ApplicationHooks& hooks);
     ~AndroidLocalMediaSession() override;
 
     void control(int action, qint64 value);
@@ -27,7 +27,7 @@ private:
     void setPaused(bool paused);
     void updateArtwork(const QString& url);
 
-    AppController& m_controller;
+    ApplicationHooks& m_hooks;
     PlayerController& m_player;
     PlayQueueController& m_queue;
     bool m_active = false;

@@ -10,7 +10,9 @@ class QGuiApplication;
 
 namespace JellyfinNative {
 
+class ArtworkService;
 class NativeAppWindow;
+class PlayQueueController;
 class PlayerController;
 class RouterController;
 class SettingsController;
@@ -26,10 +28,19 @@ public:
 
     PlayerController *player = nullptr;
     SettingsController *settings = nullptr;
+    PlayQueueController *playQueue = nullptr;
+    ArtworkService *artwork = nullptr;
     // A platform memory warning at the given level ("low" or "critical").
     std::function<void(const QString& level)> memoryPressure;
+    // Local playback, for the system media controls.
+    std::function<bool()> playbackTransition;
+    std::function<void()> stopPlayback;
+    std::function<void()> playNext;
+    std::function<void()> playPrevious;
 
 signals:
+    // The app is between one queue item and the next.
+    void playbackTransitionChanged();
     // The app has shed what it can; the window may drop its resources too.
     void aggressiveMemoryPressure();
     void diagnosticsReportSaved(const QString& path);

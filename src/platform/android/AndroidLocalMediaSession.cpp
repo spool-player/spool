@@ -1,7 +1,7 @@
 #include "AndroidLocalMediaSession.h"
 
-#include "app/AppController.h"
 #include "app/ArtworkService.h"
+#include "platform/PlatformApplicationServices.h"
 #include "player/PlayQueueController.h"
 #include "player/PlayerController.h"
 
@@ -20,13 +20,13 @@ namespace {
     constexpr auto serviceClass = "com/sachk/spool/LocalMediaPlaybackService";
 }
 
-AndroidLocalMediaSession::AndroidLocalMediaSession(AppController& controller)
-    : m_controller(controller)
-    , m_player(*controller.player())
-    , m_queue(*controller.playQueue())
+AndroidLocalMediaSession::AndroidLocalMediaSession(ApplicationHooks& hooks)
+    : m_hooks(hooks)
+    , m_player(*hooks.player)
+    , m_queue(*hooks.playQueue)
 {
     localMediaSession = this;
-    // End-of-file first clears PlayerController, then AppController negotiates the
+    // End-of-file first clears PlayerController, then the app negotiates the
     // successor. Observe the settled transition, not that intermediate empty player.
     connect(&m_player, &PlayerController::sessionActiveChanged, this, &AndroidLocalMediaSession::update,
         Qt::QueuedConnection);
@@ -38,7 +38,7 @@ AndroidLocalMediaSession::AndroidLocalMediaSession(AppController& controller)
         Qt::QueuedConnection);
     connect(
         &m_queue, &PlayQueueController::queueChanged, this, &AndroidLocalMediaSession::update, Qt::QueuedConnection);
-    connect(&controller, &AppController::playbackTransitionChanged, this, &AndroidLocalMediaSession::update,
+    connect(&hooks, &ApplicationHooks::playbackTransitionChanged, this, &AndroidLocalMediaSession::update,
         Qt::QueuedConnection);
     connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this, &AndroidLocalMediaSession::clear);
     update();
@@ -54,8 +54,7 @@ void AndroidLocalMediaSession::update()
 {
     const bool active = m_player.sessionActive();
     const MovieItem item = m_queue.currentItem();
-    const bool continuing
-        = m_active && m_controller.property("playbackTransition").toBool() && item.itemType == QStringLiteral("Audio");
+    const bool continuing = m_active && m_hooks.playbackTransition() && item.itemType == QStringLiteral("Audio");
     if ((!active && !continuing) || (active && m_player.mediaKind() != QStringLiteral("audio"))) {
         clear();
         return;
@@ -81,7 +80,7 @@ void AndroidLocalMediaSession::update()
         static_cast<jboolean>(active ? !m_player.paused() : !m_transitionPaused.value_or(false)),
         static_cast<jboolean>(!active || m_player.buffering()), static_cast<jdouble>(m_player.effectivePlaybackSpeed()),
         static_cast<jboolean>(m_queue.canGoNext()), static_cast<jboolean>(m_queue.canGoPrevious()));
-    if (auto *artwork = m_controller.artwork())
+    if (auto *artwork = m_hooks.artwork)
         updateArtwork(artwork->itemUrl(item, false, 512));
 }
 
@@ -100,8 +99,8 @@ void AndroidLocalMediaSession::updateArtwork(const QString& url)
     QJniObject::callStaticMethod<void>(serviceClass, "setArtwork", "([B)V", static_cast<jbyteArray>(nullptr));
     if (url.isEmpty())
         return;
-    auto *response = m_controller.artwork()->requestImageResponse(
-        QString::fromLatin1(QUrl::toPercentEncoding(url)), QSize(512, 512));
+    auto *response
+        = m_hooks.artwork->requestImageResponse(QString::fromLatin1(QUrl::toPercentEncoding(url)), QSize(512, 512));
     m_artworkResponse = response;
     connect(response, &QQuickImageResponse::finished, this, [this, response]() {
         response->deleteLater();
@@ -166,14 +165,14 @@ void AndroidLocalMediaSession::control(int action, qint64 value)
         setPaused(m_player.sessionActive() ? !m_player.paused() : !m_transitionPaused.value_or(false));
         break;
     case 3:
-        m_controller.stopPlayback();
+        m_hooks.stopPlayback();
         clear();
         break;
     case 4:
-        m_controller.playQueueNext();
+        m_hooks.playNext();
         break;
     case 5:
-        m_controller.playQueuePrevious();
+        m_hooks.playPrevious();
         break;
     case 6:
         m_player.seek(static_cast<double>(value) / 1000.0);
