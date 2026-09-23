@@ -278,11 +278,14 @@ QCoro::Task<PagedMovieItems> PortableProvider::fetchBrowsePage(
             args.insert(QStringLiteral("genre"), descriptor.name);
         if (descriptor.kind == BrowseKind::Studio)
             args.insert(QStringLiteral("studio"), descriptor.name);
-        for (const char *key : { "sortBy", "sortOrder", "filters" }) {
-            const QString name = QLatin1String(key);
-            if (queryOptions.contains(name))
-                args.insert(name, queryOptions.value(name));
+        // Sorting travels on its own; every other option is one of the
+        // viewer's filters (sdk/provider.d.ts BrowseFilters).
+        for (const char *key : { "sortBy", "sortOrder" }) {
+            if (const QString name = QLatin1String(key); queryOptions.contains(name))
+                args.insert(name, queryOptions.take(name));
         }
+        if (!queryOptions.isEmpty())
+            args.insert(QStringLiteral("filters"), queryOptions);
         break;
     case BrowseKind::FolderChildren:
     case BrowseKind::BoxSet:

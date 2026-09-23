@@ -80,6 +80,21 @@ export type Operation<A, R> = (args: A, host: OperationHost) => R | Promise<R>;
 export interface Page { items: Item[]; cursor: string | null; total?: number | null; exhausted: boolean }
 export interface PageArgs { cursor?: string; limit: number }
 
+export type SortBy = 'SortName' | 'Random' | 'CommunityRating' | 'CriticRating' | 'DateCreated' | 'DateLastContentAdded'
+    | 'OfficialRating' | 'PremiereDate' | 'PlayCount' | 'Runtime' | 'DatePlayed' | string;
+
+/** The viewer's library filters; each is present only while set. */
+export interface BrowseFilters {
+    filters?: ('IsPlayed' | 'IsUnplayed' | 'IsFavorite' | 'IsResumable')[];
+    genres?: string[]; years?: string[]; officialRatings?: string[]; tags?: string[]; studioIds?: string[];
+    seriesStatus?: string[]; videoTypes?: string[]; includeItemTypes?: string[];
+    isHd?: boolean; is4K?: boolean; is3D?: boolean; hasSubtitles?: boolean; hasTrailer?: boolean;
+    hasSpecialFeature?: boolean; hasThemeSong?: boolean; hasThemeVideo?: boolean; specialEpisode?: boolean;
+    isMissing?: boolean; isUnaired?: boolean;
+    /** Titles starting with this letter, or '#' for anything before A. */
+    alphabet?: string;
+}
+
 export interface Item {
     id: string;
     title: string;
@@ -142,7 +157,7 @@ export interface Source {
 
     libraries?: Operation<{}, { items: { id: string; title: string; collectionType?: string; posterTag?: string }[] }>;
     browse?: Operation<PageArgs & { parentId?: string; collectionType?: string; recursive?: boolean; genre?: string;
-        studio?: string; sortBy?: string; sortOrder?: 'Ascending' | 'Descending'; filters?: Record<string, Value> }, Page>;
+        studio?: string; sortBy?: SortBy; sortOrder?: 'Ascending' | 'Descending'; filters?: BrowseFilters }, Page>;
     items?: Operation<PageArgs & { ids: string[] }, Page>;
     search?: Operation<PageArgs & { query: string }, Page>;
     details?: Operation<{ itemId: string }, { item: Item }>;
