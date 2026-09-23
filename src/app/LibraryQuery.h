@@ -7,7 +7,6 @@
 
 namespace Spool {
 
-QString libraryContentLabel(const LibraryItem& library);
 bool supportsLatestLibraryRow(const LibraryItem& library);
 QVariantMap defaultLibraryQuery(const LibraryItem& library);
 QStringList libraryQueryStringList(const QVariantMap& query, const QString& key);

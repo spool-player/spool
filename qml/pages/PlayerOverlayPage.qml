@@ -270,11 +270,6 @@ FocusScope {
         return scrubbing || remoteScrubbing ? scrubSeconds : hasPlayer ? player.positionSeconds : 0
     }
 
-    function positionRatio() {
-        return hasPlayer && player.durationSeconds > 0 ? Math.max(0, Math.min(1, positionSeconds()
-                                                                              / player.durationSeconds)) : 0
-    }
-
     function isMenuOpen() {
         return menuKind.length > 0 || syncPlayMenuOpen
     }

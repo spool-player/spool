@@ -344,22 +344,4 @@ bool PlayQueueOutlineModel::toggleGroup(int row)
     return true;
 }
 
-bool PlayQueueOutlineModel::expandAll()
-{
-    ensureOutline();
-    if (m_groups.empty())
-        return false;
-    bool changed = false;
-    for (const Group& group : m_groups)
-        changed = !m_expanded.contains(group.key) || changed;
-    for (const Group& group : m_groups)
-        m_expanded.insert(group.key);
-    if (!changed)
-        return false;
-    markDirty();
-    invalidateRowsFilter();
-    emit outlineChanged();
-    return true;
-}
-
 } // namespace Spool

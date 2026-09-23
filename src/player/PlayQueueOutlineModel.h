@@ -68,7 +68,6 @@ public:
     // does not draw one.
     Q_INVOKABLE bool toggleGroup(int row);
     Q_INVOKABLE bool isGroup(int row) const;
-    Q_INVOKABLE bool expandAll();
     // The span a folded group stands for, as { first, count }, so a drag can
     // carry the whole block or step over it in one press.
     Q_INVOKABLE QVariantMap groupSpanAt(int row) const;

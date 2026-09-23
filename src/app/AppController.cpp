@@ -358,7 +358,7 @@ void AppController::openLibrary(int index)
     if (library.id.isEmpty())
         return;
     const QVariantMap defaultQuery = defaultLibraryQuery(library);
-    m_browse->enterLibrary(library, libraryContentLabel(library), defaultQuery);
+    m_browse->enterLibrary(library, defaultQuery);
     m_home->recordLibraryUse(library);
     loadLibraryFilterOptions(beginBrowse(m_browse->query() == defaultQuery), library);
 }
@@ -560,27 +560,9 @@ void AppController::playQueueItem(int index)
     playQueueCurrent(false);
 }
 
-bool AppController::queueEditable() const
-{
-    return true;
-}
-
-bool AppController::previewQueueMove(int from, int to)
-{
-    // Previewed locally even in a group. Waiting on a round trip per step would
-    // make a held D-pad key and a pointer drag both unusable; the group's own
-    // PlayQueue broadcast is what settles the order a moment later.
-    return m_playQueue->moveItem(from, to);
-}
-
-void AppController::commitQueueMove(int from, int to)
-{
-    if (from == to || !inGroup())
-        return;
-    // The preview already left the row at `to`, so that is the entry to publish.
-    m_group->requestMoveItem(queueEntryId(to), to);
-}
-
+// Previewed locally even in a group. Waiting on a round trip per step would
+// make a held D-pad key and a pointer drag both unusable; the group's own
+// PlayQueue broadcast is what settles the order a moment later.
 bool AppController::previewQueueMoveRange(int from, int count, int to)
 {
     return m_playQueue->moveRange(from, count, to);
