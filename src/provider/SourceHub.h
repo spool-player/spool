@@ -10,8 +10,11 @@
 
 #include <QHash>
 #include <QPointer>
+#include <QSet>
 #include <QTimer>
 
+#include <memory>
+#include <optional>
 #include <vector>
 
 namespace JellyfinNative {
@@ -26,6 +29,9 @@ class ProviderRegistry;
 // finds its way back to the account it came from. Lists that have no single
 // owner (libraries, home rows, search) are asked of every account in
 // parallel and merged; one slow or failing account never empties the rest.
+//
+// Accounts set aside for another user of the same server still run for
+// search (see searchPlan), but never show up in browsing.
 class SourceHub final : public Provider,
                         public Catalog,
                         public SearchSource,
@@ -75,6 +81,7 @@ public:
     QString accountOf(const QString& scopedId) const;
     static QString rawId(const QString& scopedId);
     Provider *source(const QString& accountId) const;
+    // The accounts being browsed; set-aside accounts kept for search are not.
     std::vector<Provider *> sources() const;
     // Calls an operation on the account behind a scoped or account ID.
     QCoro::Task<QVariantMap> call(QString accountId, QString operation, QVariantMap arguments = {});
@@ -105,9 +112,22 @@ public:
     QCoro::Task<QVariantMap> fetchLibraryFilterOptions(QString libraryId, QString collectionType = {}) override;
     QCoro::Task<std::vector<MovieItem>> fetchItemsByIds(QStringList itemIds) override;
 
-    // SearchSource: every searchable account at once.
+    // SearchSource: every server at once, through as few accounts as reach
+    // all of its libraries, ranked together as the answers arrive.
     QCoro::Task<std::vector<MovieItem>> searchItems(QString searchTerm, int limit = 80) override;
+    QCoro::Task<void> searchProgressively(QString searchTerm, int limit, SearchUpdate update) override;
     QCoro::Task<std::vector<MovieItem>> fetchSearchSuggestions(int limit = 20) override;
+    void prepareSearch() override;
+
+    struct SearchTarget {
+        QString accountId;
+        // Accounts on one server share item IDs; results dedupe within it.
+        QString server;
+    };
+    // Per server, the fewest accounts whose libraries cover everything any
+    // of its signed-in users can see: a user who sees more stands in for one
+    // who sees less, and of two who see the same the one in use searches.
+    QCoro::Task<std::vector<SearchTarget>> searchPlan();
 
     // UserItemStateSink
     QCoro::Task<void> setItemFavorite(QString itemId, bool favorite) override;
@@ -143,12 +163,19 @@ private:
     struct Entry {
         QString accountId;
         QPointer<Provider> provider;
+        bool browse = true;
     };
+    struct SearchRun;
 
     void addSource(Provider *provider);
     void removeSource(const QString& accountId);
     void refresh();
     void pushPlaybackContext();
+    void syncBrowse();
+    bool accountEnabled(const QString& accountId) const;
+    // The raw IDs of the libraries an account sees; empty when unknown.
+    QCoro::Task<std::optional<QSet<QString>>> accessOf(QString accountId);
+    QCoro::Task<void> searchOne(std::shared_ptr<SearchRun> run, size_t index, QString searchTerm);
     Provider *owner(const QString& scopedId) const;
     MovieItem scopedItem(MovieItem item, const QString& accountId) const;
     std::vector<MovieItem> scopedItems(std::vector<MovieItem> items, const QString& accountId) const;
@@ -167,6 +194,8 @@ private:
     bool m_restrictVideoCodecs = false;
     QVariantMap m_preferences;
     QString m_lastDetailsAccount;
+    QHash<QString, QSet<QString>> m_access;
+    quint64 m_searchSerial = 0;
 };
 
 } // namespace JellyfinNative

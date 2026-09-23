@@ -456,10 +456,10 @@ QCoro::Task<QVariantMap> ProviderRegistry::callSource(
 }
 
 QCoro::Task<ProviderMediaPage> ProviderRegistry::callSourceMediaPage(
-    QString sourceId, QString operation, QVariantMap arguments, int maximumItems)
+    QString sourceId, QString operation, QVariantMap arguments, int maximumItems, QString scope)
 {
     return guarded<ProviderMediaPage>(sourceId, [=](ScriptRuntime *runtime) {
-        return runtime->callMediaPage(sourceId, operation, arguments, {}, maximumItems);
+        return runtime->callMediaPage(sourceId, operation, arguments, scope, maximumItems);
     });
 }
 
@@ -739,6 +739,20 @@ void ProviderRegistry::useAccount(const QString& accountId)
     persist();
     emit accountsChanged();
     Async::runScoped(this, start(accountId), [] { }, [](const std::exception_ptr&) { }, "provider start");
+}
+
+void ProviderRegistry::startSetAside()
+{
+    for (const ProviderAccount& entry : m_accounts) {
+        if (entry.enabled || entry.group.isEmpty() || m_running.contains(entry.id) || m_expired.contains(entry.id))
+            continue;
+        const bool groupInUse = std::any_of(m_accounts.begin(), m_accounts.end(), [&](const ProviderAccount& other) {
+            return other.enabled && other.module == entry.module && other.group == entry.group;
+        });
+        const ProviderModule *owner = module(entry.module);
+        if (groupInUse && owner && (capabilitiesOf(owner->manifest) & Provider::Search))
+            Async::runScoped(this, start(entry.id), [] { }, [](const std::exception_ptr&) { }, "provider start");
+    }
 }
 
 void ProviderRegistry::setAccountEnabled(const QString& accountId, bool enabled)

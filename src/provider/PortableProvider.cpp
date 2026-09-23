@@ -250,12 +250,13 @@ QCoro::Task<QVariantMap> PortableProvider::call(QString operation, QVariantMap a
     return m_registry->callSource(m_accountId, std::move(operation), std::move(arguments));
 }
 
-QCoro::Task<std::vector<MovieItem>> PortableProvider::list(QString operation, QVariantMap arguments, int limit)
+QCoro::Task<std::vector<MovieItem>> PortableProvider::list(
+    QString operation, QVariantMap arguments, int limit, QString scope)
 {
     limit = std::clamp(limit, 1, 100);
     arguments.insert(QStringLiteral("limit"), limit);
-    ProviderMediaPage page
-        = co_await orEmpty(m_registry->callSourceMediaPage(m_accountId, std::move(operation), arguments, limit));
+    ProviderMediaPage page = co_await orEmpty(
+        m_registry->callSourceMediaPage(m_accountId, std::move(operation), arguments, limit, std::move(scope)));
     co_return std::move(page.items);
 }
 
@@ -392,7 +393,9 @@ QCoro::Task<std::vector<MovieItem>> PortableProvider::fetchItemsByIds(QStringLis
 
 QCoro::Task<std::vector<MovieItem>> PortableProvider::searchItems(QString searchTerm, int limit)
 {
-    return list(QStringLiteral("search"), { { QStringLiteral("query"), searchTerm } }, limit);
+    // One search per account in flight: SourceHub cancels this scope when
+    // the query moves on, so stale searches stop holding operation slots.
+    return list(QStringLiteral("search"), { { QStringLiteral("query"), searchTerm } }, limit, QStringLiteral("search"));
 }
 
 QCoro::Task<std::vector<MovieItem>> PortableProvider::fetchSearchSuggestions(int limit)
