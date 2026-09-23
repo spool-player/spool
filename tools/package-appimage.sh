@@ -67,6 +67,7 @@ copy_elf_deps() {
   local dep
   local copied=1
   local roots=("$APPDIR/usr/bin" "$APPDIR/usr/lib")
+  [[ -d "$APPDIR/usr/libexec" ]] && roots+=("$APPDIR/usr/libexec")
   [[ -d "$APPDIR/usr/plugins" ]] && roots+=("$APPDIR/usr/plugins")
   [[ -d "$APPDIR/usr/qml" ]] && roots+=("$APPDIR/usr/qml")
 
@@ -241,14 +242,28 @@ audit_ffmpeg_closure() {
 
 normalize_nix_store_needed() {
   local elf="$1"
-  local needed
+  local needed name
   while IFS= read -r needed; do
-    if is_bundleable_elf_dep "$needed" && [[ ! -e "$APPDIR/usr/lib/${needed##*/}" ]]; then
-      cp -L "$needed" "$APPDIR/usr/lib/"
-      chmod u+w "$APPDIR/usr/lib/${needed##*/}"
+    # Nix adds some libraries by their development name (Qt and FFmpeg need
+    # libvulkan.so). The loader looks a name up as a file, so ask for the
+    # SONAME everything else uses, or the process loads two copies.
+    if [[ "$needed" == *.so && -f "$APPDIR/usr/lib/$needed" ]]; then
+      name="$("$PATCHELF_BIN" --print-soname "$APPDIR/usr/lib/$needed" 2>/dev/null || true)"
+      if [[ -n "$name" && "$name" != "$needed" ]]; then
+        [[ -e "$APPDIR/usr/lib/$name" ]] || cp "$APPDIR/usr/lib/$needed" "$APPDIR/usr/lib/$name"
+        "$PATCHELF_BIN" --replace-needed "$needed" "$name" "$elf"
+      fi
+      continue
+    fi
+    [[ "$needed" == /* ]] || continue
+    name="$("$PATCHELF_BIN" --print-soname "$needed" 2>/dev/null || true)"
+    name="${name:-${needed##*/}}"
+    if is_bundleable_elf_dep "$needed" && [[ ! -e "$APPDIR/usr/lib/$name" ]]; then
+      cp -L "$needed" "$APPDIR/usr/lib/$name"
+      chmod u+w "$APPDIR/usr/lib/$name"
     fi
     [[ "$needed" == /nix/store/* ]] || continue
-    "$PATCHELF_BIN" --replace-needed "$needed" "${needed##*/}" "$elf"
+    "$PATCHELF_BIN" --replace-needed "$needed" "$name" "$elf"
   done < <("$PATCHELF_BIN" --print-needed "$elf")
 }
 
@@ -281,6 +296,38 @@ set_appdir_rpaths() {
   done < <(find "$APPDIR/usr" -type f)
 }
 
+# The app runs on the glibc it was built with: its loader and libraries go in
+# usr/lib/glibc, apart from usr/lib so programs the app starts never load them
+# through LD_LIBRARY_PATH. AppRun uses the host's glibc instead when that is at
+# least as new. The audit sweeps whichever of these nothing links. No gconv
+# modules: mpv is built without iconv, and everything else only converts
+# UTF-8, which glibc does itself.
+bundle_glibc() {
+  local interp glibc_lib lib elf
+  interp="$("$PATCHELF_BIN" --print-interpreter "$APPDIR/usr/bin/jellyfin-native")"
+  glibc_lib="$(dirname "$interp")"
+  GLIBC_VERSION="$("$interp" --version | sed -n '1s/.* version \([0-9]*\.[0-9]*\).*/\1/p')"
+  if [[ -z "$GLIBC_VERSION" ]]; then
+    echo "error: could not read the glibc version from $interp" >&2
+    exit 1
+  fi
+  mkdir -p "$APPDIR/usr/lib/glibc"
+  for lib in ld-linux-x86-64.so.2 libc.so.6 libm.so.6 libmvec.so.1 libdl.so.2 libpthread.so.0 \
+    librt.so.1 libresolv.so.2 libutil.so.1 libanl.so.1; do
+    [[ -f "$glibc_lib/$lib" ]] || continue
+    cp -L "$glibc_lib/$lib" "$APPDIR/usr/lib/glibc/"
+    chmod u+w "$APPDIR/usr/lib/glibc/$lib"
+  done
+  # Started through this loader, Qt looks for qt.conf beside it.
+  sed 's|^Prefix = \.\./$|Prefix = ../../|' "$APPDIR/usr/bin/qt.conf" >"$APPDIR/usr/lib/glibc/qt.conf"
+  # The host's loader path: AppRun runs these directly when the host glibc
+  # will do, and through usr/lib/glibc otherwise.
+  while IFS= read -r elf; do
+    file -b "$elf" | grep -q 'ELF.*interpreter' || continue
+    "$PATCHELF_BIN" --set-interpreter /lib64/ld-linux-x86-64.so.2 "$elf"
+  done < <(find "$APPDIR/usr/bin" "$APPDIR/usr/libexec" -type f 2>/dev/null)
+}
+
 strip_appdir_elfs() {
   local elf inode
   declare -A stripped_inodes=()
@@ -298,21 +345,12 @@ audit_and_sweep_appdir_elfs() {
   local -a audit_args=(
     elf "$APPDIR"
     --root usr/bin/jellyfin-native
-    --allow-system ld-linux-x86-64.so.2
-    --allow-system libc.so.6
-    --allow-system libdl.so.2
-    --allow-system libm.so.6
-    --allow-system libpthread.so.0
-    --allow-system libresolv.so.2
-    --allow-system librt.so.1
-    --allow-system libmvec.so.1
-    --allow-system libutil.so.1
     --allow-system libGLESv2.so.2
     --allow-system libgbm.so.1
     --allow-system libglapi.so.0
   )
-  if [[ -f "$APPDIR/usr/bin/secret-tool" ]]; then
-    audit_args+=(--root usr/bin/secret-tool)
+  if [[ -f "$APPDIR/usr/libexec/secret-tool" ]]; then
+    audit_args+=(--root usr/libexec/secret-tool)
   fi
   while IFS= read -r elf; do
     audit_args+=(--root "${elf#"$APPDIR/"}")
@@ -359,7 +397,18 @@ rm -rf "$APPDIR"
 mkdir -p "$APPDIR/usr" "$APPDIR/usr/share/jellyfin-native/notices"
 cp -a "$APP_INSTALL/." "$APPDIR/usr/"
 if command -v secret-tool >/dev/null 2>&1; then
-  cp -f "$(command -v secret-tool)" "$APPDIR/usr/bin/secret-tool"
+  mkdir -p "$APPDIR/usr/libexec"
+  cp -f "$(command -v secret-tool)" "$APPDIR/usr/libexec/secret-tool"
+  # The app finds it on PATH; this runs it the way AppRun runs the app.
+  cat >"$APPDIR/usr/bin/secret-tool" <<'WRAPPER'
+#!/bin/sh
+tool="$(dirname "$(readlink -f "$0")")/../libexec/secret-tool"
+if [ -n "${SPOOL_ELF_LOADER:-}" ]; then
+  exec "$SPOOL_ELF_LOADER" --library-path "$SPOOL_ELF_LIBRARY_PATH" "$tool" "$@"
+fi
+exec "$tool" "$@"
+WRAPPER
+  chmod +x "$APPDIR/usr/bin/secret-tool"
 fi
 cp -f "$APP_ROOT/app/notices/OPEN_SOURCE_NOTICES.txt" "$APP_ROOT/LICENSE" \
   "$APP_ROOT/qml/fonts/AtkinsonHyperlegible-LICENSE.txt" \
@@ -417,7 +466,43 @@ if [[ "${SPOOL_PORTABLE_BUNDLE:-0}" != 1 \
 else
   export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland;xcb}"
 fi
-exec "$HERE/usr/bin/jellyfin-native" "$@"
+
+# The bundle carries the glibc it was built with. A host glibc at least as new
+# runs everything instead, so host GPU drivers get the glibc they were built
+# for. NixOS's /lib64 loader is only real with nix-ld.
+bundled_glibc=@GLIBC_VERSION@
+host_glibc="$(getconf GNU_LIBC_VERSION 2>/dev/null)"
+host_glibc="${host_glibc#glibc }"
+if [[ -n "$host_glibc" && -x /lib64/ld-linux-x86-64.so.2 && ( ! -e /etc/NIXOS || -n "${NIX_LD:-}" ) \
+  && "$(printf '%s\n' "$bundled_glibc" "$host_glibc" | sort -V | head -n1)" == "$bundled_glibc" ]]; then
+  exec "$HERE/usr/bin/jellyfin-native" "$@"
+fi
+# Nix's loader knows no host library directories and reads no ld.so.cache, so
+# name them: GPU drivers and what they link come from the host.
+host_dirs=""
+conf_files=(/etc/ld.so.conf)
+while (( ${#conf_files[@]} )); do
+  conf="${conf_files[0]}"
+  conf_files=("${conf_files[@]:1}")
+  [[ -r "$conf" ]] || continue
+  while read -r line || [[ -n "$line" ]]; do
+    line="${line%%#*}"
+    if [[ "$line" == include\ * ]]; then
+      for included in ${line#include }; do conf_files+=("$included"); done
+    elif [[ -d "$line" ]]; then
+      host_dirs="$host_dirs:$line"
+    fi
+  done <"$conf"
+done
+for dir in /lib/x86_64-linux-gnu /usr/lib/x86_64-linux-gnu /lib64 /usr/lib64 /lib /usr/lib; do
+  [[ -d "$dir" ]] && host_dirs="$host_dirs:$dir"
+done
+export SPOOL_ELF_LOADER="$HERE/usr/lib/glibc/ld-linux-x86-64.so.2"
+export SPOOL_ELF_LIBRARY_PATH="$HERE/usr/lib/glibc:$LD_LIBRARY_PATH$host_dirs"
+if [[ -z "${LOCALE_ARCHIVE:-}" && -f /usr/lib/locale/locale-archive ]]; then
+  export LOCALE_ARCHIVE=/usr/lib/locale/locale-archive
+fi
+exec "$SPOOL_ELF_LOADER" --library-path "$SPOOL_ELF_LIBRARY_PATH" "$HERE/usr/bin/jellyfin-native" "$@"
 APPRUN
 chmod +x "$APPDIR/AppRun"
 
@@ -482,6 +567,8 @@ prune_appdir
 set_appdir_rpaths
 copy_elf_deps
 set_appdir_rpaths
+bundle_glibc
+sed -i "s/@GLIBC_VERSION@/$GLIBC_VERSION/" "$APPDIR/AppRun"
 chmod -R u+w "$APPDIR/usr"
 strip_appdir_elfs
 audit_and_sweep_appdir_elfs
