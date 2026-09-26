@@ -25,6 +25,7 @@ class ContentModelController final : public QObject {
     Q_PROPERTY(Spool::MovieGridModel *linkedItems READ linkedItems CONSTANT)
     Q_PROPERTY(QVariantList personItemRows READ personItemRows NOTIFY personItemsChanged)
     Q_PROPERTY(bool detailRowsBusy READ detailRowsBusy NOTIFY detailRowsChanged)
+    Q_PROPERTY(int detailContextInitialIndex READ detailContextInitialIndex NOTIFY detailRowsChanged)
     Q_PROPERTY(bool personItemsBusy READ personItemsBusy NOTIFY personItemsChanged)
 
 public:
@@ -50,6 +51,10 @@ public:
     bool detailRowsBusy() const
     {
         return m_detailRowsBusy;
+    }
+    int detailContextInitialIndex() const
+    {
+        return m_detailContextInitialIndex;
     }
     bool personItemsBusy() const
     {
@@ -102,6 +107,7 @@ private:
     MovieGridModel m_linkedItems;
     MovieItem m_detailItem;
     bool m_detailRowsBusy = false;
+    int m_detailContextInitialIndex = 0;
     RequestGeneration m_detailRowsGeneration;
     RequestGeneration m_detailItemGeneration;
     int m_detailRowsPending = 0;

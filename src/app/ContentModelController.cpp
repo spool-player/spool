@@ -46,6 +46,7 @@ void ContentModelController::loadDetailRows(
     const RequestGeneration::Token generation = m_detailRowsGeneration.next();
     m_detailRowsPending = 0;
     m_detailRowsBusy = false;
+    m_detailContextInitialIndex = 0;
     m_detailSeasons.clear();
     m_detailSeasonOptions.clear();
     m_detailSimilarItems.clear();
@@ -90,8 +91,23 @@ void ContentModelController::loadDetailRows(
     } else if (loadEpisodes) {
         Async::runLatest(
             this, m_api->fetchEpisodes(seriesId, seasonId), m_detailRowsGeneration, generation,
-            [this, generation, seriesId](const std::vector<MovieItem>& episodes) {
+            [this, generation, seriesId, itemId, itemType](const std::vector<MovieItem>& episodes) {
                 qInfo() << "detail rows: episodes loaded" << seriesId << episodes.size();
+                int initialIndex = episodicPlaybackStartIndex(episodes);
+                if (initialIndex < 0) {
+                    initialIndex = 0;
+                    for (int index = 0; index < static_cast<int>(episodes.size()); ++index) {
+                        if (episodes[static_cast<size_t>(index)].played)
+                            initialIndex = index;
+                    }
+                }
+                if (itemType == QStringLiteral("Episode")) {
+                    const auto current = std::find_if(episodes.cbegin(), episodes.cend(),
+                        [&itemId](const MovieItem& episode) { return episode.id == itemId; });
+                    if (current != episodes.cend())
+                        initialIndex = static_cast<int>(std::distance(episodes.cbegin(), current));
+                }
+                m_detailContextInitialIndex = initialIndex;
                 m_detailSeasons.setMovies(episodes);
                 m_prefetch->prefetchPosters(episodes);
                 emit detailRowsChanged();
@@ -397,6 +413,7 @@ void ContentModelController::reset()
     m_linkedItems.clear();
     m_detailItem = {};
     m_detailRowsBusy = false;
+    m_detailContextInitialIndex = 0;
     m_detailRowsPending = 0;
     m_personItemsBusy = false;
 

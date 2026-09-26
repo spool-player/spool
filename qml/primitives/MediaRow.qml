@@ -27,6 +27,8 @@ FocusScope {
     property bool focusVisible: true
     property bool keyboardFocusActive: Metrics.keyboardFocusActive
     property int pointerPressedIndex: -1
+    // Lets even the final card be positioned at the start of the viewport.
+    property bool allowTrailingSpace: false
     property int modelRevision: 0
     readonly property bool delegatesPresented: presentation.delegatesReady
 
@@ -125,6 +127,16 @@ FocusScope {
         if (!InputKeys.focusIndexWithoutScrolling(listView, index))
             return false
         currentIndex = index
+        return true
+    }
+
+    function positionIndexAtStart(index) {
+        if (count <= 0 || index < 0 || index >= count || listView.width <= 0)
+            return false
+        currentIndex = index
+        syncViewCurrentIndex()
+        listView.forceLayout()
+        listView.positionViewAtIndex(index, ListView.Beginning)
         return true
     }
 
@@ -315,7 +327,7 @@ FocusScope {
         spacing: root.cardGap
         cacheBuffer: root.atomicPopulate ? 0 : Math.round(root.cardWidth + root.cardGap)
         leftMargin: root.focusPadding
-        rightMargin: root.focusPadding
+        rightMargin: root.allowTrailingSpace ? Math.max(root.focusPadding, width - root.cardWidth) : root.focusPadding
         reuseItems: true
         model: root.model
         delegate: cardDelegate
@@ -340,7 +352,7 @@ FocusScope {
 
         Component.onCompleted: root.syncViewCurrentIndex()
         onCurrentIndexChanged: if (currentIndex >= 0)
-        positionViewAtIndex(currentIndex, ListView.Contain)
+                                   positionViewAtIndex(currentIndex, ListView.Contain)
 
         FastWheelHandler {
             id: wheelHandler
@@ -361,11 +373,11 @@ FocusScope {
                 root.beginPointerSelection(listView.indexAt(mouse.x + listView.contentX, mouse.y + listView.contentY))
             }
             onReleased: if (longPressed && root.shell)
-            root.shell.finishItemMenuOpeningGesture()
+                            root.shell.finishItemMenuOpeningGesture()
             onCanceled: {
                 root.pointerPressedIndex = -1
                 if (longPressed && root.shell)
-                root.shell.finishItemMenuOpeningGesture()
+                    root.shell.finishItemMenuOpeningGesture()
             }
             onClicked: mouse => {
                 const selectedIndex = root.commitPointerSelection()
@@ -381,9 +393,10 @@ FocusScope {
                     root.activateIndex(selectedIndex)
             }
             onPressAndHold: if (root.pointerPressedIndex >= 0 && root.shell) {
-                longPressed = true
-                root.openItemContext(root.pointerPressedIndex, listView.itemAtIndex(root.pointerPressedIndex), true)
-            }
+                                longPressed = true
+                                root.openItemContext(root.pointerPressedIndex, listView.itemAtIndex(
+                                                         root.pointerPressedIndex), true)
+                            }
         }
     }
 
