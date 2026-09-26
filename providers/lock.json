@@ -3,21 +3,21 @@
   "providers": [
     {
       "id": "spool.jellyfin",
-      "version": "0.2.2",
-      "archive": "bundled/spool.jellyfin-0.2.2.tar.zst",
-      "sha256": "3157d95cd743fdb7a3765aefcdc9bc15506977cd2dc3550c1bc27a9a8d6e9120"
+      "version": "0.2.3",
+      "archive": "bundled/spool.jellyfin-0.2.3.tar.zst",
+      "sha256": "b7e8849be2cc22c85b9ae655117cdc3571785dd8e74dd3d678ddb2ae2b2ac12d"
     },
     {
       "id": "spool.emby",
       "version": "0.1.0",
       "archive": "bundled/spool.emby-0.1.0.tar.zst",
-      "sha256": "41c985a8dda6fbab1f8fb458bdb1b6498c17a05a1bc6e827f5481936685a55e1"
+      "sha256": "8d9eab97273abd36cc3f54a86aaa8d7a0334c2014244a905e3918995dd8e1e12"
     },
     {
       "id": "spool.plex",
       "version": "0.1.0",
       "archive": "bundled/spool.plex-0.1.0.tar.zst",
-      "sha256": "996dd385f85196113ecb949e573d73351029feb482ca8a11f7c9102200e4b5ab"
+      "sha256": "3135c354faeddcdba640947885ad7eb572132676641bf9aba7ebf54efdef27c3"
     }
   ]
 }
