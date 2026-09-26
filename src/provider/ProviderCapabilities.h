@@ -16,6 +16,7 @@ class ProviderCapabilities final : public QObject {
     Q_PROPERTY(bool remoteControl READ remoteControl NOTIFY changed)
     Q_PROPERTY(bool streamQuality READ streamQuality NOTIFY changed)
     Q_PROPERTY(bool trickplay READ trickplay NOTIFY changed)
+    Q_PROPERTY(bool speedTest READ speedTest NOTIFY changed)
 
 public:
     using QObject::QObject;
@@ -63,6 +64,10 @@ public:
     bool trickplay() const
     {
         return m_flags.testFlag(Provider::Trickplay);
+    }
+    bool speedTest() const
+    {
+        return m_flags.testFlag(Provider::SpeedTest);
     }
 
 signals:

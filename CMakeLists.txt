@@ -281,6 +281,8 @@ set(SPOOL_SHELL_SOURCES
     src/provider/ScriptBridge.h
     src/provider/ScriptRuntime.cpp
     src/provider/ScriptRuntime.h
+    src/provider/SpeedTest.cpp
+    src/provider/SpeedTest.h
     src/provider/SearchSource.h
     src/provider/SourceHub.cpp
     src/provider/SourceHub.h
@@ -783,6 +785,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         provider-media-page tests/providers/ProviderMediaPageTest.cpp
         provider-registry tests/providers/ProviderRegistryTest.cpp
         source-hub tests/providers/SourceHubTest.cpp
+        source-hub-speed-test tests/providers/SourceHubSpeedTest.cpp
         provider-store tests/providers/ProviderStoreTest.cpp
         provider-ui-context tests/providers/ProviderUiContextTest.cpp
         provider-qml-cache tests/providers/ProviderQmlCacheTest.cpp

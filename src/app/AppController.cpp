@@ -115,6 +115,22 @@ AppController::AppController(
             if (type == QStringLiteral("remote"))
                 handleRemoteCommand(accountId, payload);
         });
+    connect(provider, &SourceHub::streamingQualityChanged, this, &AppController::streamingQualityChanged);
+    // Probes must not compete with playback or foreground catalogue requests.
+    const auto updateProbeActivity = [this] {
+        m_provider->setPlaybackActive(m_busy || m_playbackTransition || m_player->sessionActive()
+            || m_browse->loadingMore() || m_search->busy() || m_search->suggestionsBusy() || m_home->loading()
+            || m_content->detailRowsBusy() || m_content->personItemsBusy());
+    };
+    connect(this, &AppController::busyChanged, this, updateProbeActivity);
+    connect(this, &AppController::playbackTransitionChanged, this, updateProbeActivity);
+    connect(m_player, &PlayerController::sessionActiveChanged, this, updateProbeActivity);
+    connect(m_browse, &BrowseSessionController::pagingChanged, this, updateProbeActivity);
+    connect(m_search, &SearchController::busyChanged, this, updateProbeActivity);
+    connect(m_search, &SearchController::suggestionsChanged, this, updateProbeActivity);
+    connect(m_home, &HomeModelController::loadingChanged, this, updateProbeActivity);
+    connect(m_content, &ContentModelController::detailRowsChanged, this, updateProbeActivity);
+    connect(m_content, &ContentModelController::personItemsChanged, this, updateProbeActivity);
     connect(m_playQueue, &PlayQueueController::successorPlaybackReady, this, [this]() { playQueueCurrent(false); });
     connect(m_browse, &BrowseSessionController::reloadRequested, this, [this]() { beginBrowse(); });
     connect(m_browse, &BrowseSessionController::moreItemsRequested, this, &AppController::loadMoreCurrentItems);
@@ -192,8 +208,6 @@ AppController::AppController(
         if (m_player->fileLoaded())
             m_qualityFallbackBitrate = -1;
     });
-    // Keep the bandwidth probe off the wire while a stream is running; it
-    // resumes on its own once the session ends.
     connect(m_player, &PlayerController::visibleChanged, this, [this]() {
         if (m_player->visible())
             setPlaybackTransition(false);
@@ -1159,6 +1173,16 @@ void AppController::openNamedCollection(const QString& kind, const QString& valu
         return;
     m_browse->enterNamedCollection(kind, name, collectionType);
     beginBrowse();
+}
+
+QString AppController::connectionSpeedDescription() const
+{
+    return m_provider->speedTestDescription();
+}
+
+void AppController::refreshConnectionSpeed()
+{
+    m_provider->refreshSpeedTests();
 }
 
 QVariantList AppController::streamingQualityOptions() const

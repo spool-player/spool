@@ -183,7 +183,10 @@ public:
             connect(playback, &PlaybackSource::credentialsChanged, this, &PlaybackSource::credentialsChanged);
             connect(playback, &PlaybackSource::playbackNetworkProfileChanged, this,
                 &PlaybackSource::playbackNetworkProfileChanged);
+            emit playbackNetworkProfileChanged();
         }
+        m_hub->m_playbackAccount = account;
+        emit m_hub->streamingQualityChanged();
         item.id = rawId(item.id);
         item.seriesId = rawId(item.seriesId);
         item.seasonId = rawId(item.seasonId);
@@ -248,6 +251,9 @@ SourceHub::SourceHub(ProviderRegistry *registry, QObject *parent)
     , m_registry(registry)
     , m_playback(new Playback(this))
 {
+    m_speedTestTimer.setSingleShot(true);
+    m_speedTestTimer.setInterval(5000);
+    connect(&m_speedTestTimer, &QTimer::timeout, this, &SourceHub::startNextSpeedTest);
     // Accounts start in parallel at launch; the first home load waits for
     // the burst to settle rather than rebuilding once per account.
     m_settled.setSingleShot(true);
@@ -272,7 +278,10 @@ SourceHub::SourceHub(ProviderRegistry *registry, QObject *parent)
     });
 }
 
-SourceHub::~SourceHub() = default;
+SourceHub::~SourceHub()
+{
+    cancelSpeedTest();
+}
 
 QString SourceHub::displayName() const
 {
@@ -313,6 +322,10 @@ void SourceHub::addSource(Provider *provider)
 void SourceHub::removeSource(const QString& accountId)
 {
     const Entry entry = m_entries.take(prefixOf(accountId));
+    if (m_speedTestAccount == accountId)
+        cancelSpeedTest();
+    if (m_playbackAccount == accountId)
+        m_playbackAccount.clear();
     m_access.remove(accountId);
     if (entry.browse)
         refresh();
@@ -350,6 +363,11 @@ void SourceHub::refresh()
         emit capabilitiesChanged();
     }
     m_settled.start();
+    if (!m_speedTestAccount.isEmpty() && !accountEnabled(m_speedTestAccount))
+        cancelSpeedTest();
+    if (!m_playbackActive && m_speedTestAccount.isEmpty())
+        m_speedTestTimer.start(5000);
+    emit streamingQualityChanged();
 }
 
 QString SourceHub::scoped(const QString& accountId, const QString& rawId) const
@@ -462,6 +480,7 @@ void SourceHub::setPlaybackPreferences(
         { QStringLiteral("unlimitedLocalNetwork"), unlimitedLocalNetwork },
         { QStringLiteral("preferRemux"), preferRemux }, { QStringLiteral("preferredMaxHeight"), maxHeight } };
     pushPlaybackContext();
+    emit streamingQualityChanged();
 }
 
 void SourceHub::setOverride(qint64 bitrate, int height)
@@ -480,9 +499,134 @@ void SourceHub::pushPlaybackContext()
     context.insert(QStringLiteral("videoCodecs"), m_videoCodecs);
     context.insert(QStringLiteral("restrictVideoCodecs"), m_restrictVideoCodecs);
     for (const Entry& entry : std::as_const(m_entries)) {
-        if (auto *portable = qobject_cast<PortableProvider *>(entry.provider.data()))
+        if (auto *portable = qobject_cast<PortableProvider *>(entry.provider.data())) {
+            context.insert(QStringLiteral("measuredBitrate"), entry.measuredBitrate);
+            context.insert(QStringLiteral("parallelRequests"), entry.parallelRequests);
             portable->setPlaybackContext(context);
+        }
     }
+}
+
+void SourceHub::cancelSpeedTest()
+{
+    m_speedTestTimer.stop();
+    if (m_speedTestAccount.isEmpty())
+        return;
+    const QString account = std::exchange(m_speedTestAccount, {});
+    ++m_speedTestGeneration;
+    auto entry = m_entries.find(prefixOf(account));
+    if (entry != m_entries.end())
+        entry->speedState = Entry::SpeedState::Pending;
+    m_registry->cancelSourceScope(account, QStringLiteral("speed-test"));
+}
+
+void SourceHub::setPlaybackActive(bool active)
+{
+    if (m_playbackActive == active)
+        return;
+    m_playbackActive = active;
+    if (active)
+        cancelSpeedTest();
+    else
+        m_speedTestTimer.start(5000);
+    emit streamingQualityChanged();
+}
+
+void SourceHub::refreshSpeedTests()
+{
+    cancelSpeedTest();
+    for (Entry& entry : m_entries)
+        entry.speedState = Entry::SpeedState::Pending;
+    if (!m_playbackActive)
+        m_speedTestTimer.start(0);
+    emit streamingQualityChanged();
+}
+
+void SourceHub::startNextSpeedTest()
+{
+    if (m_playbackActive || !m_speedTestAccount.isEmpty())
+        return;
+    for (Provider *provider : sources()) {
+        if (!provider->capabilities().testFlag(Provider::SpeedTest))
+            continue;
+        const QString account = provider->id();
+        Entry& entry = m_entries[prefixOf(account)];
+        if (entry.speedState != Entry::SpeedState::Pending)
+            continue;
+        entry.speedState = Entry::SpeedState::Running;
+        m_speedTestAccount = account;
+        const quint64 generation = ++m_speedTestGeneration;
+        emit streamingQualityChanged();
+        const auto finish = [this, account, generation](const QVariantMap& result) {
+            if (generation != m_speedTestGeneration)
+                return;
+            m_speedTestAccount.clear();
+            auto entry = m_entries.find(prefixOf(account));
+            if (entry != m_entries.end()) {
+                const qint64 bitrate = result.value(QStringLiteral("bitrate")).toLongLong();
+                const int lanes = result.value(QStringLiteral("parallelRequests")).toInt();
+                const bool valid
+                    = bitrate >= 1'000'000 && bitrate <= 1'000'000'000 && (lanes == 1 || lanes == 2 || lanes == 4);
+                entry->speedState = valid ? Entry::SpeedState::Complete : Entry::SpeedState::Failed;
+                if (valid) {
+                    entry->measuredBitrate = bitrate;
+                    entry->parallelRequests = lanes;
+                    pushPlaybackContext();
+                }
+            }
+            emit streamingQualityChanged();
+            m_speedTestTimer.start(0);
+        };
+        Async::runScoped(
+            this, m_registry->callSource(account, QStringLiteral("speedTest"), {}, QStringLiteral("speed-test")),
+            finish, [finish](const std::exception_ptr&) { finish({}); }, "provider speed test");
+        return;
+    }
+}
+
+QString SourceHub::speedDescription(const Entry& entry) const
+{
+    QString detail;
+    if (entry.measuredBitrate > 0)
+        detail = QStringLiteral("Measured limit: %1 · %2 connection(s)")
+                     .arg(formatBitrate(entry.measuredBitrate))
+                     .arg(entry.parallelRequests);
+    if (entry.speedState == Entry::SpeedState::Running)
+        return detail.isEmpty() ? QStringLiteral("Measuring connection speed…")
+                                : detail + QStringLiteral(" · Measuring…");
+    if (entry.speedState == Entry::SpeedState::Pending && m_playbackActive)
+        return detail.isEmpty() ? QStringLiteral("Speed test deferred until playback stops") : detail;
+    if (entry.speedState == Entry::SpeedState::Pending)
+        return detail.isEmpty() ? QStringLiteral("Waiting to measure connection speed…") : detail;
+    if (entry.speedState == Entry::SpeedState::Failed)
+        return detail.isEmpty() ? QStringLiteral("Connection speed unavailable")
+                                : detail + QStringLiteral(" · Last test failed");
+    return detail;
+}
+
+QString SourceHub::speedTestDescription() const
+{
+    QStringList descriptions;
+    for (Provider *provider : sources()) {
+        if (provider->capabilities().testFlag(Provider::SpeedTest))
+            descriptions.append(provider->displayName() + QStringLiteral(": ")
+                + speedDescription(m_entries.value(prefixOf(provider->id()))));
+    }
+    return descriptions.join(QLatin1Char('\n'));
+}
+
+QString SourceHub::autoDescription() const
+{
+    const auto entry = m_entries.constFind(prefixOf(m_playbackAccount));
+    QStringList details;
+    const qint64 preferred = m_preferences.value(QStringLiteral("preferredMaxBitrate")).toLongLong();
+    if (preferred > 0)
+        details.append(QStringLiteral("Settings limit: %1").arg(formatBitrate(preferred)));
+    if (entry != m_entries.cend() && entry->provider && entry->provider->capabilities().testFlag(Provider::SpeedTest))
+        details.append(speedDescription(*entry));
+    if (details.isEmpty())
+        return QStringLiteral("Original quality");
+    return details.join(QStringLiteral(" · "));
 }
 
 MovieItem SourceHub::scopedItem(MovieItem item, const QString& accountId) const

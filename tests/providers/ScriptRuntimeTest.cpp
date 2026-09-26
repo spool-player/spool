@@ -3,11 +3,14 @@
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
+#include <QSet>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QThread>
 #include <QTimer>
+#include <QUrlQuery>
 
+#include <algorithm>
 #include <cstdlib>
 #include <functional>
 #include <iostream>
@@ -43,16 +46,82 @@ SPOOL_TEST_MAIN("script-runtime")
     const QString origin = QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort());
     QList<QByteArray> received;
     std::function<void()> cancelSlow;
+    QList<int> speedSizes;
+    QSet<QString> speedNonces;
+    QList<QTcpSocket *> failingRound;
+    int speedActive = 0;
+    int speedMaximum = 0;
     QObject::connect(&server, &QTcpServer::newConnection, &app, [&] {
         while (QTcpSocket *socket = server.nextPendingConnection()) {
             QObject::connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
-            QObject::connect(socket, &QTcpSocket::readyRead, socket, [socket, &received, &cancelSlow] {
+            QObject::connect(socket, &QTcpSocket::disconnected, &app, [socket, &speedActive] {
+                if (socket->property("speedActive").toBool())
+                    --speedActive;
+            });
+            QObject::connect(socket, &QTcpSocket::readyRead, socket, [&, socket] {
                 QByteArray request = socket->property("request").toByteArray() + socket->readAll();
                 socket->setProperty("request", request);
                 if (!request.contains("\r\n\r\n") || socket->property("answered").toBool())
                     return;
                 socket->setProperty("answered", true);
                 received.append(request);
+                const QUrl target(QString::fromLatin1(request.split(' ').value(1)));
+                if (target.path().startsWith(QStringLiteral("/speed"))) {
+                    const QUrlQuery query(target);
+                    const int bytes = query.queryItemValue(QStringLiteral("bytes")).toInt();
+                    require(bytes > 0 && bytes <= 4 * 1024 * 1024, "benchmark requests bounded samples");
+                    speedSizes.append(bytes);
+                    const QString nonce = query.queryItemValue(QStringLiteral("nonce"));
+                    require(!nonce.isEmpty() && !speedNonces.contains(nonce), "every benchmark sample bypasses caches");
+                    speedNonces.insert(nonce);
+                    require(!request.contains("Cookie:"), "benchmark does not load shared cookies");
+                    require(request.contains("Accept-Encoding: identity"), "benchmark requests uncompressed bytes");
+                    socket->setProperty("speedActive", true);
+                    speedMaximum = std::max(speedMaximum, ++speedActive);
+                    if (target.path() == QStringLiteral("/speed-slow")) {
+                        cancelSlow();
+                        return;
+                    }
+                    if (target.path() == QStringLiteral("/speed-peer-error") && bytes == 2 * 1024 * 1024) {
+                        failingRound.append(socket);
+                        if (failingRound.size() == 2) {
+                            failingRound.front()->write("HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n");
+                            failingRound.front()->disconnectFromHost();
+                        }
+                        return;
+                    }
+                    if (target.path() == QStringLiteral("/speed-error")) {
+                        socket->write("HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n");
+                        socket->disconnectFromHost();
+                        return;
+                    }
+                    if (target.path() == QStringLiteral("/speed-redirect")) {
+                        socket->write("HTTP/1.1 302 Found\r\nLocation: /private\r\nContent-Length: 0\r\n\r\n");
+                        socket->disconnectFromHost();
+                        return;
+                    }
+                    if (target.path() == QStringLiteral("/speed-truncated")) {
+                        socket->write("HTTP/1.1 200 OK\r\nContent-Length: " + QByteArray::number(bytes)
+                            + "\r\nConnection: close\r\n\r\nshort");
+                        socket->disconnectFromHost();
+                        return;
+                    }
+                    if (target.path() == QStringLiteral("/speed-oversized")) {
+                        socket->write("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n");
+                        socket->write(QByteArray(bytes + 1, 'x'));
+                        socket->disconnectFromHost();
+                        return;
+                    }
+                    // First-byte warmup exceeds 20 ms; larger samples take longer,
+                    // so simultaneous lanes have a real wall-clock benefit.
+                    QTimer::singleShot(40 + bytes / (32 * 1024), socket, [socket, bytes] {
+                        socket->write("HTTP/1.1 200 OK\r\nContent-Length: " + QByteArray::number(bytes)
+                            + "\r\nSet-Cookie: speed=private\r\nConnection: close\r\n\r\n");
+                        socket->write(QByteArray(bytes, 'x'));
+                        socket->disconnectFromHost();
+                    });
+                    return;
+                }
                 if (request.startsWith("GET /slow ")) {
                     cancelSlow();
                     return;
@@ -138,6 +207,75 @@ SPOOL_TEST_MAIN("script-runtime")
     };
     require(code("expired") == "http_401", "a snake_case error code crosses to native code as is");
     require(code("throws") == "provider_error", "any other error text is replaced");
+
+    const auto speedCode = [&](QVariantMap arguments) {
+        try {
+            QCoro::waitFor(runtime->call("a", "speedTest", std::move(arguments)));
+        } catch (const std::exception& error) {
+            return QByteArray(error.what());
+        }
+        return QByteArray();
+    };
+    const auto waitForSpeedAbort = [&] {
+        QElapsedTimer elapsed;
+        elapsed.start();
+        while (speedActive != 0 && elapsed.elapsed() < 2000)
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        require(speedActive == 0, "settled benchmark leaves no live peer requests");
+    };
+    require(!QCoro::waitFor(runtime->call("a", "speedHosts")).value("sourceCanMeasure").toBool(),
+        "persistent source host cannot start operation-scoped benchmarks");
+    int speedGuiTurns = 0;
+    QTimer speedResponsiveness;
+    QObject::connect(&speedResponsiveness, &QTimer::timeout, &app, [&] { ++speedGuiTurns; });
+    speedResponsiveness.start(10);
+    const auto measurement = QCoro::waitFor(runtime->call("a", "speedTest"));
+    speedResponsiveness.stop();
+    waitForSpeedAbort();
+    require(
+        measurement.value("bitrate").toLongLong() >= 1000000 && measurement.value("bitrate").toLongLong() <= 1000000000,
+        "successful benchmark returns a bounded usable streaming bitrate");
+    const int lanes = measurement.value("parallelRequests").toInt();
+    require(lanes == 1 || lanes == 2 || lanes == 4, "benchmark selects a supported lane count");
+    require(speedSizes == QList<int> { 524288, 4194304, 2097152, 2097152, 1048576, 1048576, 1048576, 1048576 },
+        "warmup and completed 1/2/4 lane rounds use the intended byte budgets");
+    require(speedMaximum == 4 && speedGuiTurns >= 5, "lane requests overlap without blocking GUI events");
+    require(received.back().contains("Authorization: a-token"), "benchmark passes source authentication headers");
+    const auto overlapping = QCoro::waitFor(runtime->call("a", "overlappingSpeedTests"));
+    require(overlapping.value("error") == "request_denied" && overlapping.value("bitrate").toLongLong() >= 1000000,
+        "overlapping benchmark cannot multiply the operation's request budget");
+    waitForSpeedAbort();
+    const qsizetype beforeDenied = received.size();
+    require(speedCode({ { "url", "http://127.0.0.1:1/private?bytes={bytes}&nonce={nonce}" } }) == "request_denied",
+        "benchmark denies ungranted origins");
+    require(speedCode({ { "url", "file:///tmp/sample?bytes={bytes}&nonce={nonce}" } }) == "request_denied",
+        "benchmark permits only HTTP(S)");
+    require(speedCode({ { "url", origin + "/speed?nonce={nonce}" } }) == "request_denied",
+        "benchmark requires a requested-byte placeholder");
+    require(speedCode({ { "url", origin + "/speed?bytes={bytes}" } }) == "request_denied",
+        "benchmark requires cache-busting nonces");
+    require(speedCode({ { "headers", QVariantMap { { "Host", "other.invalid" } } } }) == "header_denied",
+        "benchmark cannot override the validated authority");
+    require(speedCode({ { "headers", QVariantMap { { "X-Test", "bad\r\nInjected: yes" } } } }) == "header_denied",
+        "benchmark rejects header injection");
+    require(received.size() == beforeDenied, "invalid benchmarks send no network requests");
+    require(speedCode({ { "path", "speed-error" } }) == "http_401", "benchmark preserves authentication failures");
+    require(speedCode({ { "path", "speed-redirect" } }) == "http_302", "benchmark never follows a redirect");
+    require(!speedCode({ { "path", "speed-truncated" } }).isEmpty(), "incomplete samples cannot yield a bitrate");
+    require(speedCode({ { "path", "speed-oversized" } }) == "response_limit", "benchmark bounds streamed bytes");
+    require(speedCode({ { "path", "speed-peer-error" } }) == "http_401", "one failed lane rejects its whole round");
+    waitForSpeedAbort();
+    cancelSlow = [&] { runtime->cancelScope("a", "speed-cancel"); };
+    rejects(runtime->call("a", "speedTest", { { "path", "speed-slow" } }, "speed-cancel"),
+        "scope cancellation settles an active benchmark");
+    waitForSpeedAbort();
+    require(QCoro::waitFor(runtime->call("a", "state")).value("calls").toInt() == 1,
+        "benchmark cancellation leaves the source usable");
+    cancelSlow = [&] { runtime->removeSource("a"); };
+    rejects(
+        runtime->call("a", "speedTest", { { "path", "speed-slow" } }), "source removal cancels benchmark transport");
+    waitForSpeedAbort();
+    QCoro::waitFor(add("a"));
 
     QStringList events;
     QObject::connect(runtime.get(), &ScriptRuntime::event, &app,

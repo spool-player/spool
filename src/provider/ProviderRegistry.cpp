@@ -36,6 +36,7 @@ namespace {
             { QStringLiteral("remoteControl"), Provider::RemoteControl },
             { QStringLiteral("streamQuality"), Provider::StreamQuality },
             { QStringLiteral("trickplay"), Provider::Trickplay },
+            { QStringLiteral("speedTest"), Provider::SpeedTest },
         };
         return names;
     }

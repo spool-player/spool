@@ -30,7 +30,7 @@ assets/            icon and anything else the screens show
   "summary": "One line, up to 120 characters", "publisher": "You", "homepage": "https://…",
   "icon": "assets/icon.svg", "entry": "logic/provider.mjs",
   "capabilities": ["search", "userState", "reporting", "segments", "streamQuality", "trickplay",
-                   "discovery", "groupPlayback", "remoteControl"],
+                   "discovery", "groupPlayback", "remoteControl", "speedTest"],
   "origins": ["https://api.example.org"],
   "ui": { "login": "ui/Login.qml", "settings": "ui/Settings.qml", "picker": "ui/Picker.qml" },
   "actions": [{ "id": "playlist", "label": "Add to playlist", "icon": "playlist_add", "types": ["Movie"] }]
@@ -71,6 +71,39 @@ no Node or browser globals, and Qt's engine lacks some newer built-ins such as `
 | Results | 50,000 values, depth 20, arrays of 10,000, 4 MiB of text; ticks as decimal strings |
 
 This is a reviewed, in-process profile, not a sandbox: install providers you trust.
+
+## Connection speed
+
+Declare `speedTest` when the service offers a bounded download endpoint, then
+implement the operation using the native operation host:
+
+```js
+speedTest(args, host) {
+    return host.speedTest({
+        url: server + "/download-test?bytes={bytes}&nonce={nonce}",
+        headers: { Authorization: authorization() }
+    });
+}
+```
+
+Spool substitutes `{bytes}` and a unique `{nonce}` for each request. Return
+exactly that many uncompressed bytes with HTTP 200. The URL must stay on an
+allowed HTTP(S) origin; redirects, cookies, truncated and oversized samples
+are rejected. HTTP errors remain `http_NNN`, including `http_401`.
+
+The worker warms 512 KiB, measures one/two connections with 4 MiB totals, and
+tries four if warmup time-to-first-byte is at least 20 ms or two improve the
+rate by at least 10%. It chooses the fewest lanes within 85% of the fastest,
+returns that lane count's rate with 25% headroom, and clamps to 1–1000 Mbps.
+The result is `{bitrate, parallelRequests}`. Bodies never reach JS; the probe
+reserves the operation's HTTP slots and shares its 15-second deadline and
+cancellation. `speedTest` exists only on the operation host, not the source host.
+
+Spool schedules probes while idle and passes each account's result back in
+`PlaybackContext.measuredBitrate` (zero before measurement) and
+`parallelRequests` (two before measurement). Use the measured ceiling only
+when the viewer has not chosen a session or settings limit. Spool shows the
+result under Quality → Auto and in Streaming settings.
 
 ## Screens
 
