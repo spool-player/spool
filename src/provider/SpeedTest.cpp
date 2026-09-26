@@ -52,8 +52,13 @@ void SpeedTest::start(const QVariantMap& options)
     if (address.metaType().id() != QMetaType::QString)
         return finish(QStringLiteral("request_denied"));
     m_template = address.toString();
-    if (m_template.size() > 8192 || !m_template.contains(QStringLiteral("{bytes}"))
-        || !m_template.contains(QStringLiteral("{nonce}")))
+    const QVariant range = options.value(QStringLiteral("range"));
+    if (range.isValid() && range.metaType().id() != QMetaType::Bool)
+        return finish(QStringLiteral("request_denied"));
+    m_range = range.toBool();
+    if (m_template.size() > 8192
+        || (!m_range
+            && (!m_template.contains(QStringLiteral("{bytes}")) || !m_template.contains(QStringLiteral("{nonce}")))))
         return finish(QStringLiteral("request_denied"));
     m_nonce = QUuid::createUuid().toString(QUuid::Id128);
     QString probe = m_template;
@@ -97,12 +102,14 @@ void SpeedTest::start(const QVariantMap& options)
             || value.contains('\n') || value.contains('\0') || name.compare("host", Qt::CaseInsensitive) == 0
             || name.compare("content-length", Qt::CaseInsensitive) == 0
             || name.compare("transfer-encoding", Qt::CaseInsensitive) == 0
-            || name.compare("accept-encoding", Qt::CaseInsensitive) == 0)
+            || name.compare("accept-encoding", Qt::CaseInsensitive) == 0
+            || name.compare("range", Qt::CaseInsensitive) == 0)
             return finish(QStringLiteral("header_denied"));
         m_request.setRawHeader(name, value);
     }
     // Compression measures generated/compressed bytes rather than link bandwidth.
     m_request.setRawHeader("Accept-Encoding", "identity");
+    m_request.setRawHeader("Cache-Control", "no-cache, no-store");
     round(1, 512 * 1024);
 }
 
@@ -122,21 +129,48 @@ void SpeedTest::round(int lanes, qint64 totalBytes)
             || !m_access->allows(url))
             return finish(QStringLiteral("request_denied"));
         m_request.setUrl(url);
+        if (m_range) {
+            const qint64 offset = i * m_expected;
+            m_request.setRawHeader(
+                "Range", "bytes=" + QByteArray::number(offset) + '-' + QByteArray::number(offset + m_expected - 1));
+        }
         QNetworkReply *reply = m_access->network->get(m_request);
         reply->setReadBufferSize(m_buffer.size());
         m_lanes[i] = { reply, 0 };
-        connect(reply, &QNetworkReply::metaDataChanged, this, [this, reply] { checkResponse(reply); });
+        connect(reply, &QNetworkReply::metaDataChanged, this, [this, i] {
+            m_lanes[i].responseChecked = false;
+            checkResponse(i);
+        });
         connect(reply, &QIODevice::readyRead, this, [this, i] { drain(i); });
         connect(reply, &QNetworkReply::finished, this, [this, i] { finished(i); });
     }
 }
 
-bool SpeedTest::checkResponse(QNetworkReply *reply)
+bool SpeedTest::checkResponse(int index)
 {
+    Lane& lane = m_lanes[index];
+    if (m_done || !lane.reply)
+        return false;
+    if (lane.responseChecked)
+        return true;
+    QNetworkReply *reply = lane.reply;
     const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-    if (status != 0 && status != 200) {
+    if (status != 0 && status != (m_range ? 206 : 200)) {
         finish(QStringLiteral("http_%1").arg(status));
         return false;
+    }
+    if (m_range && status == 206) {
+        // Validate the server honored this exact range, not merely its length.
+        const QByteArray requested = reply->request().rawHeader("Range").mid(6);
+        const QByteArray contentRange = reply->rawHeader("Content-Range");
+        const QByteArray prefix = "bytes " + requested + '/';
+        bool validTotal = false;
+        const qint64 total = contentRange.mid(prefix.size()).toLongLong(&validTotal);
+        const qint64 end = requested.mid(requested.indexOf('-') + 1).toLongLong();
+        if (!contentRange.startsWith(prefix) || !validTotal || total <= end) {
+            finish(QStringLiteral("invalid_sample"));
+            return false;
+        }
     }
     const QByteArray encoding = reply->rawHeader("Content-Encoding");
     if ((!encoding.isEmpty() && encoding.compare("identity", Qt::CaseInsensitive) != 0)
@@ -144,13 +178,14 @@ bool SpeedTest::checkResponse(QNetworkReply *reply)
         finish(QStringLiteral("invalid_sample"));
         return false;
     }
+    lane.responseChecked = status != 0;
     return true;
 }
 
 bool SpeedTest::drain(int index)
 {
     Lane& lane = m_lanes[index];
-    if (m_done || !lane.reply || !checkResponse(lane.reply))
+    if (!checkResponse(index))
         return false;
     while (lane.reply->bytesAvailable() > 0) {
         const qint64 bytes = lane.reply->read(m_buffer.data(), m_buffer.size());
@@ -174,7 +209,7 @@ void SpeedTest::finished(int index)
     Lane& lane = m_lanes[index];
     QNetworkReply *reply = lane.reply;
     if (reply->error() != QNetworkReply::NoError
-        || reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() != 200)
+        || reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() != (m_range ? 206 : 200))
         return finish(QStringLiteral("network_error"));
     if (lane.received != m_expected)
         return finish(QStringLiteral("invalid_sample"));

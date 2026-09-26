@@ -23,9 +23,11 @@ export interface HttpOptions {
 /** Redirects are not followed: `status` is 3xx and `location` is set. */
 export interface HttpResponse { status: number; body: string; location?: string }
 
-/** Authenticated download endpoint. Spool substitutes a per-request byte count and cache-busting nonce. */
+/** Authenticated generated download endpoint, or a range-capable media resource. */
 export interface SpeedTestEndpoint {
-    url: string; // HTTP(S), with {bytes} and {nonce} placeholders.
+    url: string; // HTTP(S); generated endpoints require {bytes} and {nonce}.
+    /** Probe a media file of at least 4 MiB with native Range requests and strict HTTP 206 validation. */
+    range?: boolean;
     headers?: Record<string, string>;
 }
 /** Conservative playback ceiling (bits/s), not raw link capacity. */
@@ -76,7 +78,8 @@ export interface OperationHost extends SourceHost {
     /**
      * Measures on the native provider worker, discarding response bodies.
      * Same origin/TLS policy as http; no redirects or cookies. Cancelled with
-     * this operation. Endpoint must return exactly the requested number of bytes.
+     * this operation. Generated endpoints return exactly the requested bytes;
+     * range endpoints must honor the native Range header and Content-Range.
      * Warms 512 KiB, then compares 4 MiB totals over one, two and optionally
      * four connections. Result reserves 25% headroom and is bounded to 1–1000 Mbps.
      */

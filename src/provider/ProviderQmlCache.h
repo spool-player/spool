@@ -19,7 +19,9 @@ class ProviderQmlCache final : public QObject {
 
 public:
     explicit ProviderQmlCache(QQmlEngine *engine);
-    void addSources(const QList<QUrl>& sources);
+    // Selected, validated package roots, with trailing slashes. Enumeration is
+    // deferred until launch; removed/replaced versions leave the warmup cache.
+    void setPackages(const QList<QUrl>& roots);
     void start(int delayMs = 2500);
     void clear();
     int retainedCount() const;
@@ -29,17 +31,23 @@ signals:
     void componentReady(const QUrl& url);
     void componentFailed(const QUrl& url);
 
+protected:
+    bool event(QEvent *event) override;
+
 private:
     void advance();
     void settle();
 
     QQmlEngine *m_engine;
     QTimer m_timer;
+    QSet<QUrl> m_roots;
+    QQueue<QUrl> m_pendingPackages;
     QQueue<QUrl> m_pending;
     QSet<QUrl> m_known;
     QHash<QUrl, QQmlComponent *> m_retained;
     QQmlComponent *m_loading = nullptr;
     bool m_started = false;
+    bool m_advancePosted = false;
     bool m_stopped = false;
 };
 

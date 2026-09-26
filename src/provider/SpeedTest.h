@@ -28,10 +28,11 @@ private:
     struct Lane {
         QNetworkReply *reply = nullptr;
         qint64 received = 0;
+        bool responseChecked = false;
     };
     void round(int lanes, qint64 totalBytes);
     bool drain(int lane);
-    bool checkResponse(QNetworkReply *reply);
+    bool checkResponse(int lane);
     void finished(int lane);
     void finish(QString error = {}, qint64 bitrate = 0, int lanes = 1);
     void abort();
@@ -51,6 +52,7 @@ private:
     int m_remaining = 0;
     int m_round = -1;
     bool m_done = false;
+    bool m_range = false;
 };
 
 } // namespace Spool

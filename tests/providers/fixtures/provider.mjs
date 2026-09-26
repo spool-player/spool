@@ -58,6 +58,7 @@ export function createSource(config, sourceHost) {
         speedTest: function(args, host) {
             return host.speedTest({
                 url: args.url || config.origin + '/' + (args.path || 'speed') + '?bytes={bytes}&nonce={nonce}',
+                range: args.range || false,
                 headers: args.headers || {Authorization: config.token}
             });
         },
