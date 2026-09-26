@@ -70,6 +70,28 @@ guideline 4.7 when the app answers for every one of them (an index, reporting, a
 no native APIs exposed to them without Apple's permission). Curation through the store's pull
 requests is what makes that answerable.
 
+## Screens
+
+Every packaged `*.qml` file from the registry's selected packages (including installed overrides)
+is queued for compilation on the window's own `QQmlEngine`. Warmup starts 2.5 seconds after the
+first rendered frame, then schedules package enumeration and one asynchronous `QQmlComponent`
+load at a time through low-priority events, with 100 ms gaps. Normal-priority foreground events
+run before each queued job; Qt owns the asynchronous type-loader work. No engine or component
+is moved across threads.
+
+The cache retains compiled components, never instances: warming does not evaluate screen
+bindings, run `Component.onCompleted`, start timers or authenticate. This includes every declared
+UI role and nested helpers loaded dynamically, not just `manifest.ui` entries. Enumeration stays
+inside selected local/resource package roots without following symlinks; validated packages
+contain at most 512 files. Registry changes enqueue new packages and evict obsolete versions.
+Remote URLs are not warmed, and a malformed component does not stop the remaining queue.
+
+This is best-effort latency reduction, not a guarantee that opening a screen never compiles:
+viewers may open it before warmup, and URLs outside the selected packages may still be cold.
+Compilation completion still requires engine-thread work; low-priority scheduling
+does not impose a real-time frame budget on Qt's compiler. Aggressive memory pressure and
+shutdown cancel pending warmup and release retained components; pressure does not restart it.
+
 ## Connection speed
 
 Providers with a download-test endpoint declare `speedTest` and implement
@@ -78,6 +100,15 @@ contains `{bytes}` and `{nonce}` placeholders; endpoint paths and authentication
 stay inside the provider package. The native worker applies the account's
 origin allowlist and TLS trust policy, never follows redirects, and drains
 bounded buffers instead of decoding test data into JavaScript strings.
+
+Jellyfin and Emby supply their authenticated `/Playback/BitrateTest` endpoints.
+Plex instead selects an accessible media part of at least 4 MiB and requests
+`host.speedTest({url, headers, range: true})`; the native worker sends bounded
+byte ranges and requires HTTP 206 with an exact `Content-Range`. No stream is
+played or transcoded, and a missing eligible file leaves speed unavailable.
+Range mode also supports future fixed-origin file services without requiring
+an artificial download endpoint. It never falls back to downloading a whole
+file when a server ignores Range.
 
 `SourceHub` probes enabled accounts one at a time after five idle seconds.
 Starting playback or other foreground loading cancels an in-flight probe;
@@ -97,6 +128,15 @@ The player's Quality → Auto detail shows the active account's measured limit.
 Settings → Streaming → Connection speed shows each enabled account and offers
 “Measure again”; this remains deferred during playback. Providers without the
 capability do not acquire a speed-test control or a measured ceiling.
+
+Quality ceilings remain provider-neutral: explicit player bitrate, then
+server-proven unlimited LAN, then the settings preference, then measured
+throughput and a documented fallback. Height limits are independent. Providers
+translate those ceilings into server negotiation or variant selection; remux
+preferences never authorize serving an original above the ceiling. See
+[`sdk/README.md`](../sdk/README.md#quality-policy) for Plex's unit conversion and
+the source-selection policy for future Stremio-style providers. A catalogue
+host speed test cannot stand in for an unrelated CDN or torrent route.
 
 ## Testing
 

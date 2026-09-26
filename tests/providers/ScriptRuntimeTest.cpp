@@ -66,6 +66,33 @@ SPOOL_TEST_MAIN("script-runtime")
                 socket->setProperty("answered", true);
                 received.append(request);
                 const QUrl target(QString::fromLatin1(request.split(' ').value(1)));
+                if (target.path().startsWith(QStringLiteral("/range"))) {
+                    QByteArray range;
+                    for (const QByteArray& header : request.split('\n')) {
+                        if (header.toLower().startsWith("range: bytes="))
+                            range = header.mid(13).trimmed();
+                    }
+                    const QList<QByteArray> bounds = range.split('-');
+                    require(bounds.size() == 2, "media probe supplies a single byte range");
+                    const int start = bounds[0].toInt();
+                    const int end = bounds[1].toInt();
+                    require(start >= 0 && end >= start && end < 4 * 1024 * 1024,
+                        "media samples stay within the declared minimum resource size");
+                    require(request.contains("Authorization: a-token"), "media ranges use account authentication");
+                    const int bytes = end - start + 1;
+                    QByteArray responseRange = "bytes " + range + "/8388608";
+                    if (target.path() == QStringLiteral("/range-wrong"))
+                        responseRange = "bytes 1-" + QByteArray::number(bytes) + "/8388608";
+                    if (target.path() == QStringLiteral("/range-short-total"))
+                        responseRange = "bytes " + range + '/' + QByteArray::number(end);
+                    const QByteArray status
+                        = target.path() == QStringLiteral("/range-ignored") ? "200 OK" : "206 Partial Content";
+                    socket->write("HTTP/1.1 " + status + "\r\nContent-Range: " + responseRange
+                        + "\r\nContent-Length: " + QByteArray::number(bytes) + "\r\nConnection: close\r\n\r\n");
+                    socket->write(QByteArray(bytes, 'm'));
+                    socket->disconnectFromHost();
+                    return;
+                }
                 if (target.path().startsWith(QStringLiteral("/speed"))) {
                     const QUrlQuery query(target);
                     const int bytes = query.queryItemValue(QStringLiteral("bytes")).toInt();
@@ -245,6 +272,16 @@ SPOOL_TEST_MAIN("script-runtime")
     require(overlapping.value("error") == "request_denied" && overlapping.value("bitrate").toLongLong() >= 1000000,
         "overlapping benchmark cannot multiply the operation's request budget");
     waitForSpeedAbort();
+    const auto ranged
+        = QCoro::waitFor(runtime->call("a", "speedTest", { { "url", origin + "/range" }, { "range", true } }));
+    require(ranged.value("bitrate").toLongLong() >= 1000000,
+        "an authenticated media resource yields a native throughput ceiling without URL placeholders");
+    require(speedCode({ { "url", origin + "/range-ignored" }, { "range", true } }) == "http_200",
+        "a server ignoring Range cannot benchmark a full media download");
+    require(speedCode({ { "url", origin + "/range-wrong" }, { "range", true } }) == "invalid_sample",
+        "a same-size response from the wrong offset is not a valid sample");
+    require(speedCode({ { "url", origin + "/range-short-total" }, { "range", true } }) == "invalid_sample",
+        "Content-Range total must include every requested byte");
     const qsizetype beforeDenied = received.size();
     require(speedCode({ { "url", "http://127.0.0.1:1/private?bytes={bytes}&nonce={nonce}" } }) == "request_denied",
         "benchmark denies ungranted origins");
@@ -258,6 +295,8 @@ SPOOL_TEST_MAIN("script-runtime")
         "benchmark cannot override the validated authority");
     require(speedCode({ { "headers", QVariantMap { { "X-Test", "bad\r\nInjected: yes" } } } }) == "header_denied",
         "benchmark rejects header injection");
+    require(speedCode({ { "headers", QVariantMap { { "Range", "bytes=0-" } } } }) == "header_denied",
+        "providers cannot replace bounded probe ranges with an unbounded download");
     require(received.size() == beforeDenied, "invalid benchmarks send no network requests");
     require(speedCode({ { "path", "speed-error" } }) == "http_401", "benchmark preserves authentication failures");
     require(speedCode({ { "path", "speed-redirect" } }) == "http_302", "benchmark never follows a redirect");

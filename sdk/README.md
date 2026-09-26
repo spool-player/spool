@@ -91,6 +91,16 @@ exactly that many uncompressed bytes with HTTP 200. The URL must stay on an
 allowed HTTP(S) origin; redirects, cookies, truncated and oversized samples
 are rejected. HTTP errors remain `http_NNN`, including `http_401`.
 
+For servers without a generated test endpoint, pass
+`{url: mediaUrl, headers: authorizationHeaders, range: true}` for an accessible
+static media file at least 4 MiB long. Spool supplies bounded `Range` headers,
+requires HTTP 206 and an exact `Content-Range` with a valid total size, and
+rejects servers that ignore ranges. URL placeholders are optional in this mode.
+Each parallel round divides the first 4 MiB into disjoint ranges; cache-control
+requests bypass HTTP caches. The measurement includes media-server storage
+and transport overhead, without starting playback or a transcoding session.
+Providers cannot supply their own `Range` or compression headers.
+
 The worker warms 512 KiB, measures one/two connections with 4 MiB totals, and
 tries four if warmup time-to-first-byte is at least 20 ms or two improve the
 rate by at least 10%. It chooses the fewest lanes within 85% of the fastest,
@@ -104,6 +114,43 @@ Spool schedules probes while idle and passes each account's result back in
 `parallelRequests` (two before measurement). Use the measured ceiling only
 when the viewer has not chosen a session or settings limit. Spool shows the
 result under Quality → Auto and in Streaming settings.
+
+## Quality policy
+
+Quality limits are backend-neutral ceilings in bits/second and pixels, not
+transcoder presets. Providers translate them into their service's negotiation
+or source selection. Keep the same precedence across providers:
+
+1. A nonzero player `maxBitrate` overrides automatic bitrate selection.
+2. `unlimitedLocalNetwork` applies only when the media server positively
+   identifies this connection as local; a failed lookup never implies local.
+3. Otherwise use `preferredMaxBitrate`, then `measuredBitrate`, then a
+   provider-documented fallback. An explicit choice may exceed the measurement.
+4. Independently use `maxHeight`, then `preferredMaxHeight`; zero means no
+   height ceiling. A local-network bitrate exemption does not remove it.
+
+For Jellyfin and Emby, send these limits in PlaybackInfo and DeviceProfile;
+for Plex, translate bits/second to the server's kbit/second bandwidth setting
+and negotiate whether the selected media can direct play, remux or transcode.
+Never treat a remux preference as permission to exceed a quality ceiling.
+Preserve an explicitly selected edition rather than silently substituting one.
+
+A source-only service need not expose a transcoder. A future Stremio-style
+provider can use the same context to select among known stream variants and
+return `pick` for its provider-owned QML picker when a choice is needed.
+[Stremio's stream contract](https://github.com/Stremio/stremio-addon-sdk/blob/master/docs/api/responses/stream.md)
+offers descriptive names and optional `videoSize`, not a standardized numeric
+bitrate, height or transcoding API. Do not infer reliable constraints from a
+quality label alone; size and duration give average bitrate, not peak demand.
+Unknown variants should remain visibly unknown in the picker rather than
+being presented as satisfying a limit.
+
+Only measure an endpoint on the actual media route. A generic Internet speed
+test, an add-on catalogue host, or a local torrent gateway does not establish
+throughput from the stream's CDN or peers. If the service has no suitable
+bounded endpoint, omit `speedTest`; retain explicit quality/source choices
+instead of inventing a measurement. Per-account measurements are appropriate
+for a fixed media server, not interchangeable across arbitrary stream origins.
 
 ## Screens
 

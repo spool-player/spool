@@ -832,17 +832,16 @@ int main(int argc, char **argv)
 
     // Parented to the engine so it outlives every incubator and dies with it.
     window.engine()->setIncubationController(new BoostedIncubationController(window.engine()));
-    // Provider screens (sign-in, settings, pickers) are compiled one at a time
-    // after the first frame, so opening one never waits on the QML compiler.
+    // Warm all QML in selected provider packages after the first frame. Low-priority,
+    // asynchronous compilation retains code only, never live provider screens.
     auto *providerQmlCache = new Spool::ProviderQmlCache(window.engine());
     const auto warmProviderComponents = [providerQmlCache, &providers] {
-        QList<QUrl> sources;
+        QList<QUrl> roots;
         for (const QString& id : providers.moduleIds()) {
             const Spool::ProviderModule *module = providers.module(id);
-            for (const QString& file : module->manifest.ui)
-                sources.append(module->file(file));
+            roots.append(module->root);
         }
-        providerQmlCache->addSources(sources);
+        providerQmlCache->setPackages(roots);
     };
     warmProviderComponents();
     QObject::connect(&providers, &Spool::ProviderRegistry::modulesChanged, providerQmlCache, warmProviderComponents);
@@ -853,6 +852,7 @@ int main(int argc, char **argv)
         Qt::SingleShotConnection);
     QObject::connect(controller.get(), &Spool::AppController::aggressiveMemoryPressure, providerQmlCache,
         &Spool::ProviderQmlCache::clear);
+    QObject::connect(&app, &QCoreApplication::aboutToQuit, providerQmlCache, &Spool::ProviderQmlCache::clear);
     window.engine()->addImageProvider(QStringLiteral("artwork"), new Spool::ArtworkImageProvider(artworkService.get()));
     window.engine()->addImageProvider(QStringLiteral("mpv-overlay"), window.createOverlayImageProvider());
 #if !defined(SPOOL_WEBOS) && !defined(SPOOL_ANDROID)
