@@ -97,7 +97,7 @@ if (( DO_BUILD || DO_STAGE )); then
   for marker in "${QT_PATCH_MARKERS[@]}"; do
     if ! grep -rqal "$marker" "$QT6_PREFIX/lib" 2>/dev/null; then
       echo "error: Qt at $QT6_PREFIX is missing patch marker '$marker'." >&2
-      echo "       Rerun: bash $WEBOS_TOOLS_ROOT/build-qt6-611.sh" >&2
+      echo "       Rerun: ./build-ipk.sh" >&2
       exit 1
     fi
   done
