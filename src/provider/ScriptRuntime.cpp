@@ -94,6 +94,11 @@ namespace {
                     http: function(url, options) {
                         return promised(function(ok, no) { operation.http(String(url), options || {}, ok, no); });
                     },
+                    speedTest: function(options) {
+                        if (!options || typeof options.url !== 'string')
+                            return Promise.reject(new Error('request_denied'));
+                        return promised(function(ok, no) { operation.speedTest(options, ok, no); });
+                    },
                     delay: function(ms) {
                         if (!Number.isInteger(ms) || ms < 0 || ms > 10000)
                             return Promise.reject(new Error('timer_limit'));

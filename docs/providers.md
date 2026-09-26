@@ -70,6 +70,34 @@ guideline 4.7 when the app answers for every one of them (an index, reporting, a
 no native APIs exposed to them without Apple's permission). Curation through the store's pull
 requests is what makes that answerable.
 
+## Connection speed
+
+Providers with a download-test endpoint declare `speedTest` and implement
+`speedTest(args, host)` by calling `host.speedTest({url, headers})`. The URL
+contains `{bytes}` and `{nonce}` placeholders; endpoint paths and authentication
+stay inside the provider package. The native worker applies the account's
+origin allowlist and TLS trust policy, never follows redirects, and drains
+bounded buffers instead of decoding test data into JavaScript strings.
+
+`SourceHub` probes enabled accounts one at a time after five idle seconds.
+Starting playback or other foreground loading cancels an in-flight probe;
+pending probes resume when idle. Account removal/restart discards its result.
+Measurements are session-local. Failure leaves playback usable and keeps any
+earlier successful measurement for that running account.
+
+The benchmark warms 512 KiB and compares 4 MiB transfers over one and two
+connections, adding four when latency or dual-connection improvement warrants
+it. It chooses the fewest connections within 85% of the best rate, then reserves
+25% headroom on that connection count. The conservative ceiling and lane count
+reach `resolve` as `measuredBitrate` and `parallelRequests`; the native player
+uses the same lane count. Providers must let explicit quality choices override
+the measurement.
+
+The player's Quality → Auto detail shows the active account's measured limit.
+Settings → Streaming → Connection speed shows each enabled account and offers
+“Measure again”; this remains deferred during playback. Providers without the
+capability do not acquire a speed-test control or a measured ceiling.
+
 ## Testing
 
 - `providers-tests` (ctest `provider-*`, `source-hub`, `script-runtime`, `local-provider`): package

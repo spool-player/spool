@@ -68,6 +68,8 @@ struct ScriptAccess {
     bool allows(const QUrl& url) const;
 };
 
+class SpeedTest;
+
 // Native requests a JS caller owns: HTTP, timers and LAN discovery, all
 // cancelled together when the owner releases them.
 class ScriptRequests final : public QObject {
@@ -76,6 +78,7 @@ public:
     ScriptRequests(ScriptAccess *access, QObject *parent);
     ~ScriptRequests() override;
     void http(const QString& address, const QVariantMap& options, QJSValue resolve, QJSValue reject);
+    void speedTest(const QVariantMap& options, QJSValue resolve, QJSValue reject);
     void delay(int milliseconds, QJSValue resolve, QJSValue reject);
     void discover(int port, const QString& message, int timeoutMs, QJSValue resolve, QJSValue reject);
     void release();
@@ -88,6 +91,7 @@ private:
     ScriptAccess *m_access;
     QSet<QNetworkReply *> m_replies;
     QSet<QObject *> m_pending;
+    SpeedTest *m_speedTest = nullptr;
 };
 
 // One provider operation: settles exactly once, within 15 seconds.
@@ -104,6 +108,7 @@ public:
     Q_INVOKABLE void resolve(const QJSValue& result);
     Q_INVOKABLE void reject(const QJSValue& error);
     Q_INVOKABLE void http(const QString& url, const QVariantMap& options, QJSValue resolve, QJSValue reject);
+    Q_INVOKABLE void speedTest(const QVariantMap& options, QJSValue resolve, QJSValue reject);
     Q_INVOKABLE void delay(int milliseconds, QJSValue resolve, QJSValue reject);
     Q_INVOKABLE void discover(int port, const QString& message, int timeoutMs, QJSValue resolve, QJSValue reject);
 

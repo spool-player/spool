@@ -404,6 +404,7 @@ const QVector<SettingSpec>& settingSpecs()
             SettingTarget::MaxStreamingHeight),
         toggleSpec("playback/manualStreamingBitrate", "Streaming", "Set my own bitrate limit",
             "Otherwise the limit is measured for you", false, SettingTarget::ManualStreamingBitrate),
+        pageSpec("action/connectionSpeed", "Streaming", "Connection speed", "", SettingType::Action),
         sliderSpec("playback/maxStreamingBitrateMbps", "Streaming", "Bitrate limit",
             "Anything higher is transcoded by the server", "120", 5, 1000, 5, "Mbps",
             SettingTarget::MaxStreamingBitrate)

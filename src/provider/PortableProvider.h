@@ -96,10 +96,7 @@ public:
     // Group playback and anything else a provider exposes by name.
     QCoro::Task<QVariantMap> call(QString operation, QVariantMap arguments = {});
     // Quality ceiling and decodable codecs, merged into every resolve call.
-    void setPlaybackContext(QVariantMap context)
-    {
-        m_playbackContext = std::move(context);
-    }
+    void setPlaybackContext(QVariantMap context);
 
 private:
     class Playback;

@@ -48,6 +48,7 @@ class AppController final : public QObject {
     Q_PROPERTY(QString busyText MEMBER m_busyText NOTIFY busyChanged)
     Q_PROPERTY(QString errorText MEMBER m_errorText NOTIFY errorTextChanged)
     Q_PROPERTY(bool initialized READ initialized NOTIFY initializedChanged)
+    Q_PROPERTY(QString connectionSpeedDescription READ connectionSpeedDescription NOTIFY streamingQualityChanged)
 
 public:
     AppController(DatabaseManager *database, SourceHub *provider, ArtworkService *artwork, PlayerController *player,
@@ -142,6 +143,8 @@ public:
     // ceiling it was handed at negotiation time.
     Q_INVOKABLE QVariantList streamingQualityOptions() const;
     Q_INVOKABLE void selectStreamingQuality(qint64 bitrate, int height = 0);
+    QString connectionSpeedDescription() const;
+    Q_INVOKABLE void refreshConnectionSpeed();
 
 signals:
     void busyChanged();

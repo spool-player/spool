@@ -40,6 +40,8 @@ FocusScope {
     }
 
     function rowAvailable(row) {
+        if (row.key === "action/connectionSpeed" && !ProviderCapabilities.speedTest)
+            return false
         return SettingsNavigation.rowAvailable(row, Platform, Player.hdrPlayback, function (key) {
             return settingsValue({
                                      "key": key,
@@ -264,6 +266,8 @@ FocusScope {
     }
 
     function rowDescription(row) {
+        if (row.key === "action/connectionSpeed")
+            return App.connectionSpeedDescription
         if (row.key === "action/accounts") {
             const count = Providers.accounts.length
             return count === 1 ? "1 account" : count + " accounts"
@@ -297,6 +301,8 @@ FocusScope {
     }
 
     function rowValueText(row) {
+        if (row.key === "action/connectionSpeed")
+            return "Measure again"
         if (row.key === "action/accounts" || row.key === "action/providers")
             return "Manage"
         if (row.key === "action/openSourceNotices" || row.key === "action/exportDiagnostics" || row.key
@@ -447,6 +453,8 @@ FocusScope {
                 InputLatency.clearStatistics()
             else if (row.key === "action/clearLogs")
                 App.clearLogs()
+            else if (row.key === "action/connectionSpeed")
+                App.refreshConnectionSpeed()
             else if (row.key === "action/exportDiagnostics") {
                 diagnosticsExportPreview = App.diagnosticsPreview()
                 diagnosticsExportVisible = true
@@ -622,6 +630,12 @@ FocusScope {
 
         function onSettingChanged(key) {
             root.refreshSettingsFilter(false)
+        }
+    }
+    Connections {
+        target: ProviderCapabilities
+        function onChanged() {
+            root.refreshSettingsFilter(true)
         }
     }
     Connections {

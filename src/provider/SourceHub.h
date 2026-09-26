@@ -94,6 +94,10 @@ public:
     Q_INVOKABLE void runItemAction(const QString& actionId, const QString& itemId, const QString& itemType);
     // The viewer's standing streaming limits from settings.
     void setPlaybackPreferences(qint64 manualMaxBitrate, bool unlimitedLocalNetwork, bool preferRemux, int maxHeight);
+    // Idle-only probes are serialized so accounts do not benchmark each other.
+    void setPlaybackActive(bool active);
+    void refreshSpeedTests();
+    QString speedTestDescription() const;
 
     // Catalog
     bool signedIn() const override;
@@ -146,10 +150,7 @@ public:
         return m_height;
     }
     void setOverride(qint64 bitrate, int height) override;
-    QString autoDescription() const override
-    {
-        return QStringLiteral("Original quality");
-    }
+    QString autoDescription() const override;
     std::vector<Rung> ladder(qint64 sourceBitrate, int sourceHeight = 0) const override
     {
         return defaultLadder(sourceBitrate, sourceHeight);
@@ -157,6 +158,7 @@ public:
 
 signals:
     void accountEvent(const QString& accountId, const QString& type, const QVariantMap& payload);
+    void streamingQualityChanged();
 
 private:
     class Playback;
@@ -164,6 +166,10 @@ private:
         QString accountId;
         QPointer<Provider> provider;
         bool browse = true;
+        enum class SpeedState { Pending, Running, Complete, Failed };
+        SpeedState speedState = SpeedState::Pending;
+        qint64 measuredBitrate = 0;
+        int parallelRequests = 2;
     };
     struct SearchRun;
 
@@ -171,6 +177,9 @@ private:
     void removeSource(const QString& accountId);
     void refresh();
     void pushPlaybackContext();
+    void startNextSpeedTest();
+    void cancelSpeedTest();
+    QString speedDescription(const Entry& entry) const;
     void syncBrowse();
     bool accountEnabled(const QString& accountId) const;
     // The raw IDs of the libraries an account sees; empty when unknown.
@@ -193,6 +202,11 @@ private:
     QStringList m_videoCodecs;
     bool m_restrictVideoCodecs = false;
     QVariantMap m_preferences;
+    QTimer m_speedTestTimer;
+    QString m_speedTestAccount;
+    QString m_playbackAccount;
+    quint64 m_speedTestGeneration = 0;
+    bool m_playbackActive = false;
     QString m_lastDetailsAccount;
     QHash<QString, QSet<QString>> m_access;
     quint64 m_searchSerial = 0;

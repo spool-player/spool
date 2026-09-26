@@ -103,7 +103,7 @@ public:
     }
     int playbackParallelRequests() const override
     {
-        return 2;
+        return m_owner->m_playbackContext.value(QStringLiteral("parallelRequests"), 2).toInt();
     }
     bool signedIn() const override
     {
@@ -224,6 +224,14 @@ private:
     QUrl m_origin;
     QString m_variantId;
 };
+
+void PortableProvider::setPlaybackContext(QVariantMap context)
+{
+    const int previous = m_playback->playbackParallelRequests();
+    m_playbackContext = std::move(context);
+    if (previous != m_playback->playbackParallelRequests())
+        emit m_playback->playbackNetworkProfileChanged();
+}
 
 PortableProvider::PortableProvider(ProviderRegistry *registry, QString accountId, QString label,
     Capabilities capabilities, const QVariantMap& description, QObject *parent)

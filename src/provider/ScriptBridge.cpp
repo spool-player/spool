@@ -1,4 +1,5 @@
 #include "ScriptBridge.h"
+#include "SpeedTest.h"
 
 #include <QJSValueIterator>
 #include <QNetworkAccessManager>
@@ -169,6 +170,7 @@ ScriptRequests::~ScriptRequests()
 
 void ScriptRequests::release()
 {
+    m_speedTest = nullptr;
     for (QNetworkReply *reply : std::exchange(m_replies, {})) {
         disconnect(reply, nullptr, this, nullptr);
         reply->abort();
@@ -181,7 +183,7 @@ void ScriptRequests::http(const QString& address, const QVariantMap& options, QJ
 {
     QJSEngine *engine = m_access->engine;
     const QUrl url(address);
-    if (url.scheme().startsWith(QStringLiteral("ws")) || !m_access->allows(url)
+    if (url.scheme().startsWith(QStringLiteral("ws")) || !m_access->allows(url) || m_speedTest
         || m_replies.size() >= kMaxConcurrentRequests)
         return rejectWith(engine, reject, "request_denied");
     const QByteArray method = options.value(QStringLiteral("method"), QStringLiteral("GET")).toString().toLatin1();
@@ -240,6 +242,32 @@ void ScriptRequests::http(const QString& address, const QVariantMap& options, QJ
             response.setProperty(QStringLiteral("location"), QString::fromUtf8(location));
         resolve.call({ response });
     });
+}
+
+void ScriptRequests::speedTest(const QVariantMap& options, QJSValue resolve, QJSValue reject)
+{
+    if (m_speedTest || !m_replies.isEmpty() || m_pending.size() >= kMaxTimers)
+        return rejectWith(m_access->engine, reject, "request_denied");
+    auto *test = new SpeedTest(
+        m_access,
+        [this, resolve, reject](QString error, qint64 bitrate, int parallelRequests) mutable {
+            SpeedTest *test = std::exchange(m_speedTest, nullptr);
+            m_pending.remove(test);
+            test->deleteLater();
+            QJSEngine *engine = m_access->engine;
+            if (!error.isEmpty()) {
+                reject.call({ engine->toScriptValue(error) });
+                return;
+            }
+            QJSValue result = engine->newObject();
+            result.setProperty(QStringLiteral("bitrate"), static_cast<double>(bitrate));
+            result.setProperty(QStringLiteral("parallelRequests"), parallelRequests);
+            resolve.call({ result });
+        },
+        this);
+    m_speedTest = test;
+    m_pending.insert(test);
+    test->start(options);
 }
 
 void ScriptRequests::delay(int milliseconds, QJSValue resolve, QJSValue reject)
@@ -365,6 +393,12 @@ void ScriptOperation::http(const QString& url, const QVariantMap& options, QJSVa
 {
     if (!m_settled)
         m_requests.http(url, options, std::move(resolve), std::move(reject));
+}
+
+void ScriptOperation::speedTest(const QVariantMap& options, QJSValue resolve, QJSValue reject)
+{
+    if (!m_settled)
+        m_requests.speedTest(options, std::move(resolve), std::move(reject));
 }
 
 void ScriptOperation::delay(int milliseconds, QJSValue resolve, QJSValue reject)

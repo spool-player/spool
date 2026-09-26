@@ -30,7 +30,7 @@ MAX_FILES = 512
 EXTENSIONS = {".mjs", ".js", ".qml", ".json", ".png", ".jpg", ".svg", ".webp", ".ttf", ".otf", ".txt", ".md", ".map"}
 QML_IMPORTS = {"QtQuick", "QtQuick.Layouts", "QtQuick.Controls", "QtQml", "QtQml.Models", "Spool"}
 CAPABILITIES = {"search", "userState", "reporting", "segments", "streamQuality", "trickplay", "discovery",
-                "groupPlayback", "remoteControl"}
+                "groupPlayback", "remoteControl", "speedTest"}
 UI_ROLES = {"login", "settings", "picker"}
 ROOTS = ("manifest.json", "LICENSE", "NOTICE", "logic", "ui", "assets")
 NATIVE_MAGIC = (b"\x7fELF", b"MZ", b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\0asm")

@@ -40,6 +40,8 @@ public:
         StreamQuality = 1u << 6,
         // Scrubbing previews.
         Trickplay = 1u << 7,
+        // A provider-owned download endpoint for measuring the playback route.
+        SpeedTest = 1u << 8,
     };
     Q_DECLARE_FLAGS(Capabilities, Capability)
     Q_FLAG(Capabilities)

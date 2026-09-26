@@ -55,6 +55,22 @@ export function createSource(config, sourceHost) {
         raw: function(args, host) {
             return host.http(config.origin + '/' + args.path);
         },
+        speedTest: function(args, host) {
+            return host.speedTest({
+                url: args.url || config.origin + '/' + (args.path || 'speed') + '?bytes={bytes}&nonce={nonce}',
+                headers: args.headers || {Authorization: config.token}
+            });
+        },
+        speedHosts: function() { return {sourceCanMeasure: typeof sourceHost.speedTest === 'function'}; },
+        overlappingSpeedTests: function(args, host) {
+            const options = {url: config.origin + '/speed?bytes={bytes}&nonce={nonce}'};
+            const first = host.speedTest(options);
+            return host.speedTest(options).then(function() {
+                throw new Error('overlap_accepted');
+            }, function(error) {
+                return first.then(function(result) { return {error: String(error), bitrate: result.bitrate}; });
+            });
+        },
         delay: function(args, host) {
             return host.delay(args.milliseconds).then(function() { return {completed: true}; });
         },
