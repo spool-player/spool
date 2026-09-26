@@ -1,0 +1,52 @@
+name: Install Nix
+description: >-
+  nix-quick-install-action fed from a verified local archive. Upstream pipes
+  `curl` without `--fail` straight into zstd, so a single bad CDN response
+  fails the job with "unsupported format"; fetch and test the archive here,
+  with retries, and hand the action the local copy.
+inputs:
+  nix_conf:
+    description: Lines appended to nix.conf.
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Fetch Nix archive
+      id: fetch
+      shell: bash
+      env:
+        # Must match the nix-quick-install-action pin below and its default Nix.
+        RELEASE: v34
+        NIX_VERSION: 2.29.2
+      run: |
+        case "$RUNNER_ARCH" in
+          X64) arch=x86_64 ;;
+          ARM64) arch=aarch64 ;;
+          *) echo "::error::unsupported runner arch $RUNNER_ARCH"; exit 1 ;;
+        esac
+        case "$RUNNER_OS" in
+          Linux) os=linux ;;
+          macOS) os=darwin ;;
+          *) echo "::error::unsupported runner OS $RUNNER_OS"; exit 1 ;;
+        esac
+        dir="$RUNNER_TEMP/nix-archives"
+        name="nix-$NIX_VERSION-$arch-$os.tar.zstd"
+        url="https://github.com/nixbuild/nix-quick-install-action/releases/download/$RELEASE/$name"
+        mkdir -p "$dir"
+        for attempt in 1 2 3 4 5; do
+          if curl -fsSL --retry 3 --retry-all-errors -o "$dir/$name" "$url" && zstd -tq "$dir/$name"; then
+            echo "archives-url=file://$dir" >>"$GITHUB_OUTPUT"
+            echo "nix-version=$NIX_VERSION" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "::warning::Nix archive fetch attempt $attempt failed"
+          sleep $((attempt * 10))
+        done
+        echo "::error::could not fetch a valid $url"
+        exit 1
+    - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035 # v34
+      with:
+        nix_version: ${{ steps.fetch.outputs.nix-version }}
+        nix_archives_url: ${{ steps.fetch.outputs.archives-url }}
+        nix_conf: ${{ inputs.nix_conf }}

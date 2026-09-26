@@ -161,7 +161,7 @@ jobs:
           persist-credentials: false
           fetch-depth: 2
           submodules: recursive
-      - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035 # v34
+      - uses: ./.github/actions/install-nix
         with:
           nix_conf: |
             experimental-features = nix-command flakes
@@ -234,7 +234,7 @@ jobs:
           persist-credentials: false
           submodules: recursive
 
-      - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035 # v34
+      - uses: ./.github/actions/install-nix
         with:
           nix_conf: |
             experimental-features = nix-command flakes
@@ -458,7 +458,7 @@ jobs:
           persist-credentials: false
           submodules: recursive
 
-      - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035 # v34
+      - uses: ./.github/actions/install-nix
         with:
           nix_conf: |
             experimental-features = nix-command flakes
@@ -699,7 +699,7 @@ jobs:
           persist-credentials: false
           submodules: recursive
 
-      - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035 # v34
+      - uses: ./.github/actions/install-nix
         with:
           nix_conf: |
             experimental-features = nix-command flakes
@@ -881,7 +881,7 @@ jobs:
           persist-credentials: false
           submodules: recursive
 
-      - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035 # v34
+      - uses: ./.github/actions/install-nix
         with:
           nix_conf: |
             experimental-features = nix-command flakes
@@ -1068,7 +1068,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035 # v34
+      - uses: ./.github/actions/install-nix
         with:
           nix_conf: |
             experimental-features = nix-command flakes
