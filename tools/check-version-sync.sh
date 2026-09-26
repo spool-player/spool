@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # VERSION is the one place the release version is set: CMakeLists.txt reads it
-# into JELLYFIN_VERSION and every artifact is named from that. The AUR recipe
+# into SPOOL_VERSION and every artifact is named from that. The AUR recipe
 # cannot read it -- makepkg parses a literal pkgver, and .SRCINFO is generated
 # from the recipe rather than from the tree -- so the number is copied into
 # both, and a copy is something that drifts. It did: the recipe sat at 0.7.13
@@ -78,7 +78,7 @@ else
     || note "$SRCINFO: provides does not say spool=$version"
   # The release asset is named from the version twice over: the tag directory
   # and the tarball. A bump that misses either downloads someone else's build.
-  grep -Fq "/download/v$version/Spool-for-Jellyfin-$version-linux-x86_64.tar.zst" <<<"$srcinfo" \
+  grep -Fq "/download/v$version/Spool-$version-linux-x86_64.tar.zst" <<<"$srcinfo" \
     || note "$SRCINFO: source URL does not point at the v$version tarball"
 fi
 

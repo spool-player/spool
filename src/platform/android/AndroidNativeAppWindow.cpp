@@ -7,7 +7,7 @@
 
 #include <video/out/android_overlay.h>
 
-namespace JellyfinNative {
+namespace Spool {
 
 struct NativeAppWindow::PlatformData {
     // Where mpv draws subtitles when the video plane is not ours to draw on.
@@ -67,7 +67,7 @@ NativeAppWindow::NativeAppWindow(const QString& appId, QWindow *parent)
 {
     setColor(Qt::black);
     setResizeMode(QQuickView::SizeRootObjectToView);
-    setTitle(QStringLiteral("Spool for Jellyfin"));
+    setTitle(QStringLiteral("Spool"));
     android_overlay_set_callbacks(&PlatformData::overlayAcquire, &PlatformData::overlayPresent, m_platform.get());
 }
 
@@ -153,4 +153,4 @@ void NativeAppWindow::resizeEvent(QResizeEvent *event)
 void NativeAppWindow::handlePlatformSurfaceCreated() { }
 void NativeAppWindow::handlePlatformSurfaceAboutToBeDestroyed() { }
 
-} // namespace JellyfinNative
+} // namespace Spool

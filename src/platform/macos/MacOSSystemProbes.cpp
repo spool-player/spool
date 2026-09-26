@@ -4,7 +4,7 @@
 
 #include <algorithm>
 
-namespace JellyfinNative {
+namespace Spool {
 namespace {
     constexpr qint64 kMiB = 1024LL * 1024LL;
 
@@ -34,4 +34,4 @@ QString platformProcessMemoryDiagnostics()
     return {};
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

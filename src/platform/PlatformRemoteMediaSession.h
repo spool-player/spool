@@ -5,7 +5,7 @@
 
 #include <memory>
 
-namespace JellyfinNative {
+namespace Spool {
 
 struct RemoteMediaSessionState {
     QString title;
@@ -44,4 +44,4 @@ signals:
 
 std::unique_ptr<PlatformRemoteMediaSession> createPlatformRemoteMediaSession(QObject *parent = nullptr);
 
-} // namespace JellyfinNative
+} // namespace Spool

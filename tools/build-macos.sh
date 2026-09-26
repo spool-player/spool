@@ -19,8 +19,8 @@ SPOOL_MACOS_CREDENTIAL_SERVICE="${SPOOL_MACOS_CREDENTIAL_SERVICE:-com.sachk.spoo
 
 setup_native_ccache "$APP_ROOT"
 mkdir -p "$MPV_PREFIX" "$APP_BUILD" "$APP_INSTALL"
-MACOS_ICON="$BUILD_ROOT/jellyfin-native.icns"
-ICONSET="$BUILD_ROOT/jellyfin-native.iconset"
+MACOS_ICON="$BUILD_ROOT/spool.icns"
+ICONSET="$BUILD_ROOT/spool.iconset"
 rm -rf "$ICONSET"
 mkdir -p "$ICONSET"
 for size in 16 32 128 256 512; do
@@ -43,8 +43,8 @@ append_colon_path PKG_CONFIG_PATH "$MPV_PREFIX/lib/pkgconfig"
 rm -rf "$APP_BUNDLE"
 cmake_build_app "$APP_ROOT" "$APP_BUILD" \
   -DCMAKE_BUILD_TYPE=Release \
-  -DJELLYFIN_NATIVE_WEBOS=OFF \
-  -DJELLYFIN_MACOS_ICON="$MACOS_ICON" \
+  -DSPOOL_WEBOS=OFF \
+  -DSPOOL_MACOS_ICON="$MACOS_ICON" \
   -DSPOOL_MACOS_CREDENTIAL_SERVICE="$SPOOL_MACOS_CREDENTIAL_SERVICE" \
   -DCMAKE_PREFIX_PATH="$MPV_PREFIX${CMAKE_PREFIX_PATH:+;$CMAKE_PREFIX_PATH}" \
   -DCMAKE_INSTALL_PREFIX="$APP_INSTALL"
@@ -244,7 +244,7 @@ if [[ "$DEPLOY_APP" == "1" ]]; then
     --root Contents/Frameworks/libvulkan.1.dylib \
     --root Contents/Frameworks/libMoltenVK.dylib
   python3 "$APP_ROOT/tools/package-audit.py" inventory "$APP_BUNDLE" \
-    --output "$BUILD_ROOT/jellyfin-native.inventory.tsv"
+    --output "$BUILD_ROOT/spool.inventory.tsv"
   python3 "$APP_ROOT/tools/ffmpeg-capabilities.py" \
     --manifest "$APP_ROOT/tools/manifests/ffmpeg-capabilities.json" \
     audit-closure "$APP_BUNDLE"

@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace JellyfinNative {
+namespace Spool {
 
 class RequestGeneration final {
 public:
@@ -29,4 +29,4 @@ private:
     Token m_value = 0;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

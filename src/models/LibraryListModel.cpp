@@ -1,6 +1,6 @@
 #include "LibraryListModel.h"
 
-namespace JellyfinNative {
+namespace Spool {
 
 LibraryListModel::LibraryListModel(QObject *parent)
     : QAbstractListModel(parent)
@@ -99,4 +99,4 @@ const std::vector<LibraryItem>& LibraryListModel::libraries() const
     return m_libraries;
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

@@ -1,15 +1,15 @@
 #include "PlayerController.h"
 
-#include "../api/JellyfinApiFacade.h"
-#include "../common/JellyfinTypes.h"
 #include "../common/LogRotation.h"
 #include "../common/TlsTrust.h"
 #include "../diagnostics/Diagnostics.h"
+#include "../media/MediaTypes.h"
 #include "../platform/MpvConfigPolicy.h"
 #include "../platform/NativeAppWindow.h"
 #include "../platform/PlatformPaths.h"
 #include "../platform/PlatformPlaybackSurface.h"
 #include "../platform/PlatformSystemProbes.h"
+#include "../provider/PlaybackSource.h"
 #include "MpvOptionProfile.h"
 #include "MpvVideoItem.h"
 #include "PlaybackFailurePolicy.h"
@@ -39,7 +39,7 @@ extern "C" {
 #include <cstring>
 #include <utility>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
 
@@ -54,7 +54,7 @@ namespace {
         return level.constData();
     }
 
-    constexpr auto kMpvLogFileName = "spool-jellyfin-mpv.log";
+    constexpr auto kMpvLogFileName = "spool-mpv.log";
 
     constexpr uint64_t kTimePosRefreshReply = 0x6a666e7074730001ULL;
     constexpr auto kNightModeFilter
@@ -94,7 +94,7 @@ namespace {
 
     QByteArray mpvLogPath()
     {
-        const QByteArray logDir = qgetenv("JELLYFIN_NATIVE_LOG_DIR");
+        const QByteArray logDir = qgetenv("SPOOL_LOG_DIR");
         if (logDir.isEmpty()) {
             const QString fallback = startupCacheRoot({});
             return QFile::encodeName(QDir(fallback).filePath(QString::fromLatin1(kMpvLogFileName)));
@@ -176,7 +176,7 @@ namespace {
 
 } // namespace
 
-PlayerController::PlayerController(NativeAppWindow *window, JellyfinApiFacade *api, TlsTrustController *tlsTrust,
+PlayerController::PlayerController(NativeAppWindow *window, PlaybackSource *api, TlsTrustController *tlsTrust,
     const QString& subtitleFontsPath, QObject *parent)
     : QObject(parent)
     , m_window(window)
@@ -199,7 +199,7 @@ PlayerController::PlayerController(NativeAppWindow *window, JellyfinApiFacade *a
         });
     }
     if (m_api) {
-        connect(m_api, &JellyfinApiFacade::sessionTokenChanged, this, [this]() {
+        connect(m_api, &PlaybackSource::credentialsChanged, this, [this]() {
             if (auto *handle = m_mpvLifecycle.handle())
                 setMpvProperty(handle, "http-header-fields", "");
         });
@@ -291,7 +291,7 @@ PlayerController::PlayerController(NativeAppWindow *window, JellyfinApiFacade *a
             { { QStringLiteral("operation"), operation }, { QStringLiteral("message"), message } });
     });
     if (m_api) {
-        connect(m_api, &JellyfinApiFacade::playbackNetworkProfileChanged, this,
+        connect(m_api, &PlaybackSource::playbackNetworkProfileChanged, this,
             [this]() { discardPreparedMpvForOptionChange("network profile change"); });
     }
     scheduleIdleMpvPreparation();
@@ -448,7 +448,7 @@ bool PlayerController::configureAndInitializeMpv(mpv_handle *handle, bool needsV
     if (usesUserMpvConfig() && !applyMpvRuntimeOptions(MpvOptionApplyMode::Initial, handle))
         return false;
     int initializeResult;
-#if !defined(JELLYFIN_NATIVE_WEBOS) && !defined(Q_OS_ANDROID)
+#if !defined(SPOOL_WEBOS) && !defined(Q_OS_ANDROID)
     // Command-line precedence is applied by mpv after its own config parser,
     // before scripts or force-window can create a native player window.
     char embeddingOptions[][40] = {
@@ -1278,8 +1278,7 @@ void PlayerController::play(const PlaybackSession& session, bool startPaused)
     }
 
     const QByteArray urlBytes = session.url.toUtf8();
-    const QByteArray token = m_api ? m_api->session().accessToken.toUtf8() : QByteArray {};
-    const QByteArray header = token.isEmpty() ? QByteArray {} : QByteArrayLiteral("X-Emby-Token: ") + token;
+    const QByteArray header = m_api ? m_api->mediaRequestHeaders() : QByteArray {};
     if (!setRequiredMpvProperty(handle, "http-header-fields", header.constData())) {
         m_mpvLifecycle.cancelFileLoad();
         m_errorText = QStringLiteral("libmpv rejected the authenticated media request.");
@@ -1293,7 +1292,7 @@ void PlayerController::play(const PlaybackSession& session, bool startPaused)
         return;
     }
     if (m_api && m_tlsTrust) {
-        const QSslCertificate certificate = m_tlsTrust->trustedCertificate(QUrl(m_api->serverUrl()));
+        const QSslCertificate certificate = m_tlsTrust->trustedCertificate(m_api->mediaOrigin());
         if (!certificate.isNull()) {
             const QString trustDirectory = QDir(startupCacheRoot({})).filePath(QStringLiteral("tls"));
             const QString trustPath = trustDirectory + QLatin1Char('/')
@@ -1561,10 +1560,10 @@ void PlayerController::selectSubtitleStreamIndex(int streamIndex)
 {
     const int uiIndex = streamIndex < 0 ? 0 : uiTrackIndexForStream(QStringLiteral("Subtitle"), streamIndex, 1);
     if (uiIndex < 0) {
-        qWarning() << "player: Jellyfin subtitle stream index not found" << streamIndex;
+        qWarning() << "player: source subtitle stream index not found" << streamIndex;
         return;
     }
-    qInfo() << "player: selecting Jellyfin subtitle stream" << streamIndex << "uiIndex" << uiIndex;
+    qInfo() << "player: selecting source subtitle stream" << streamIndex << "uiIndex" << uiIndex;
     selectSubtitle(uiIndex);
 }
 
@@ -1587,10 +1586,10 @@ void PlayerController::selectAudioStreamIndex(int streamIndex)
 {
     const int uiIndex = uiTrackIndexForStream(QStringLiteral("Audio"), streamIndex, 0);
     if (uiIndex < 0) {
-        qWarning() << "player: Jellyfin audio stream index not found" << streamIndex;
+        qWarning() << "player: source audio stream index not found" << streamIndex;
         return;
     }
-    qInfo() << "player: selecting Jellyfin audio stream" << streamIndex << "uiIndex" << uiIndex;
+    qInfo() << "player: selecting source audio stream" << streamIndex << "uiIndex" << uiIndex;
     selectAudio(uiIndex);
 }
 
@@ -2620,4 +2619,4 @@ QVariantMap PlayerController::trickplayForSeconds(double seconds) const
     return result;
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

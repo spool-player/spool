@@ -4,7 +4,7 @@
 #include <QStringList>
 #include <QtGlobal>
 
-namespace JellyfinNative::AudioSyncPolicy {
+namespace Spool::AudioSyncPolicy {
 
 QString normalizedOutputKey(const QString& output)
 {

@@ -7,7 +7,7 @@
 #include <QObject>
 #include <QtGlobal>
 
-namespace JellyfinNative {
+namespace Spool {
 namespace {
     QMetaObject::Connection g_renderErrorConnection;
 }
@@ -95,4 +95,4 @@ bool platformUsesBackgroundPlaybackPolicy()
 void platformAudioTrackChanged(int) { }
 void platformVideoSizeChanged(int, int) { }
 
-} // namespace JellyfinNative
+} // namespace Spool

@@ -114,9 +114,6 @@ QtObject {
     function cardScaled(value) {
         return Math.max(1, Math.round(value * cardScale))
     }
-    function chromeScaled(value) {
-        return Math.max(1, Math.round(value * chromeScale * uiScale))
-    }
     // Pixels back into yardstick units. This is the only honest way to ask
     // how much room a container has, because it is free of both the panel's
     // density and the user's zoom.
@@ -150,9 +147,6 @@ QtObject {
     }
     function detailRowPosterWidth() {
         return cardScaled(176)
-    }
-    function detailHeroHeight(height) {
-        return Math.max(scaled(420), Math.min(scaled(660), Math.round(height * 0.64)))
     }
     // One card width serves the library grid and every row that quotes it, so a
     // home row and the grid behind it land on the same size at any window size

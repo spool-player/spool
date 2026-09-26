@@ -7,8 +7,8 @@
 
 #include <cstdlib>
 
-using JellyfinNative::ParsedPlaybackTracks;
-using JellyfinNative::PlaybackTrackState;
+using Spool::ParsedPlaybackTracks;
+using Spool::PlaybackTrackState;
 
 namespace {
 
@@ -27,7 +27,7 @@ bool commandEquals(const std::optional<QByteArrayList>& command, const QByteArra
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("playback-track-state")
+SPOOL_TEST_MAIN("playback-track-state")
 {
     PlaybackTrackState state;
 

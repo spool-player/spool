@@ -19,9 +19,9 @@ void require(bool condition, const char *message)
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("playback-failure-policy")
+SPOOL_TEST_MAIN("playback-failure-policy")
 {
-    using JellyfinNative::PlaybackFailurePolicy;
+    using Spool::PlaybackFailurePolicy;
 
     require(
         PlaybackFailurePolicy::isRetryableCodecFailure(QStringLiteral("DirectPlay"), true, MPV_ERROR_UNKNOWN_FORMAT),
@@ -44,16 +44,16 @@ JELLYFIN_TEST_MAIN("playback-failure-policy")
     require(!PlaybackFailurePolicy::shouldStartCodecFallback(true, false, true),
         "a SyncPlay member must not independently schedule a replacement stream");
 
-    JellyfinNative::MovieItem original;
+    Spool::MovieItem original;
     original.id = QStringLiteral("item");
     original.resumeTicks = 1;
-    const JellyfinNative::MovieItem retry = PlaybackFailurePolicy::retryItem(original, 42'000'000);
+    const Spool::MovieItem retry = PlaybackFailurePolicy::retryItem(original, 42'000'000);
     require(retry.id == original.id && retry.resumeTicks == 42'000'000,
         "fallback should preserve the item while resuming at the failed position");
 
-    JellyfinNative::PlaybackSession fallback;
+    Spool::PlaybackSession fallback;
     fallback.playMethod = QStringLiteral("Transcode");
-    const std::vector<JellyfinNative::PlaybackQueueItem> queue {
+    const std::vector<Spool::PlaybackQueueItem> queue {
         { QStringLiteral("item"), QStringLiteral("playlist-item") },
         { QStringLiteral("next"), QStringLiteral("playlist-next") },
     };

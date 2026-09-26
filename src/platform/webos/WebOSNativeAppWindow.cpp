@@ -27,7 +27,7 @@ extern "C" {
 #include <wayland-webos-foreign-client-protocol.h>
 #include <wayland-webos-shell-client-protocol.h>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
 
@@ -115,7 +115,7 @@ NativeAppWindow::NativeAppWindow(const QString& appId, QWindow *parent)
     setColor(Qt::transparent);
     setResizeMode(QQuickView::SizeRootObjectToView);
     setFlags(Qt::FramelessWindowHint | Qt::Window);
-    setTitle(QStringLiteral("Spool for Jellyfin"));
+    setTitle(QStringLiteral("Spool"));
     resize(1920, 1080);
     // Note: cursor suppression on webOS happens in main.cpp via
     // XCURSOR_PATH=/dev/null. Setting Qt::BlankCursor here would make Qt
@@ -602,4 +602,4 @@ const wl_webos_shell_surface_listener NativeAppWindow::PlatformData::shellSurfac
     &NativeAppWindow::PlatformData::shellAddonStatusChanged,
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

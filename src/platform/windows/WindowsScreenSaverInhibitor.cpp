@@ -4,7 +4,7 @@
 
 #include <windows.h>
 
-namespace JellyfinNative {
+namespace Spool {
 namespace {
 
     class WindowsScreenSaverBackend final : public ScreenSaverBackend {
@@ -36,4 +36,4 @@ std::unique_ptr<ScreenSaverBackend> createPlatformScreenSaverBackend()
     return std::make_unique<WindowsScreenSaverBackend>();
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

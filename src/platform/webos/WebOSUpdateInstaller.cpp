@@ -8,7 +8,7 @@
 #include <QProcess>
 #include <QTimer>
 
-namespace JellyfinNative {
+namespace Spool {
 namespace {
 
     constexpr qsizetype kMaximumResponseBytes = 64 * 1024;
@@ -225,4 +225,4 @@ void WebOSUpdateInstaller::complete(bool success, const QString& message)
         emit failed(message);
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

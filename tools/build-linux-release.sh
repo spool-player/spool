@@ -33,10 +33,10 @@ mkdir -p "$APP_INSTALL"
 
 cmake_build_app "$APP_ROOT" "$APP_BUILD" \
   -DCMAKE_BUILD_TYPE=Release \
-  -DJELLYFIN_NATIVE_WEBOS=OFF \
-  -DJELLYFIN_NATIVE_DEV_BUILD=OFF \
+  -DSPOOL_WEBOS=OFF \
+  -DSPOOL_DEV_BUILD=OFF \
   -DCMAKE_PREFIX_PATH="$MPV_PREFIX${CMAKE_PREFIX_PATH:+;$CMAKE_PREFIX_PATH}" \
   -DCMAKE_INSTALL_PREFIX="$APP_INSTALL"
 stage_elf_shared_library "$MPV_PREFIX/lib/libmpv.so*" "$APP_INSTALL/lib" "${READELF:-readelf}" >/dev/null
 
-printf '%s\n' "$APP_INSTALL/bin/jellyfin-native"
+printf '%s\n' "$APP_INSTALL/bin/spool"

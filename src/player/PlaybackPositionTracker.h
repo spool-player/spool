@@ -2,7 +2,7 @@
 
 #include <QElapsedTimer>
 
-namespace JellyfinNative {
+namespace Spool {
 
 // Where playback is, and what a new seek gesture should be measured from.
 //
@@ -57,4 +57,4 @@ private:
     QElapsedTimer m_positionClock;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

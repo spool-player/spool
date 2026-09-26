@@ -11,26 +11,25 @@
 #include <initializer_list>
 #include <utility>
 
-using JellyfinNative::DiscoveredServer;
-using JellyfinNative::episodicPlaybackStartIndex;
-using JellyfinNative::ExternalUrlInfo;
-using JellyfinNative::formatMediaInfo;
-using JellyfinNative::isGenericEpisodeTitle;
-using JellyfinNative::isPlayableItem;
-using JellyfinNative::itemEpisodeCode;
-using JellyfinNative::itemSubtitle;
-using JellyfinNative::LibraryItem;
-using JellyfinNative::MediaSegment;
-using JellyfinNative::MediaSourceInfo;
-using JellyfinNative::MediaStreamInfo;
-using JellyfinNative::metaFromJson;
-using JellyfinNative::MetaJsonKeyPolicy;
-using JellyfinNative::metaListFromJson;
-using JellyfinNative::metaListToJson;
-using JellyfinNative::metaStringListFromJson;
-using JellyfinNative::metaToJson;
-using JellyfinNative::MovieItem;
-using JellyfinNative::PersonItem;
+using Spool::episodicPlaybackStartIndex;
+using Spool::ExternalUrlInfo;
+using Spool::formatMediaInfo;
+using Spool::isGenericEpisodeTitle;
+using Spool::isPlayableItem;
+using Spool::itemEpisodeCode;
+using Spool::itemSubtitle;
+using Spool::LibraryItem;
+using Spool::MediaSegment;
+using Spool::MediaSourceInfo;
+using Spool::MediaStreamInfo;
+using Spool::metaFromJson;
+using Spool::MetaJsonKeyPolicy;
+using Spool::metaListFromJson;
+using Spool::metaListToJson;
+using Spool::metaStringListFromJson;
+using Spool::metaToJson;
+using Spool::MovieItem;
+using Spool::PersonItem;
 
 namespace {
 
@@ -48,13 +47,6 @@ QJsonObject jsonObject(std::initializer_list<std::pair<QString, QJsonValue>> ent
     for (const auto& entry : entries)
         object.insert(entry.first, entry.second);
     return object;
-}
-
-void requireDiscoveredServer(const DiscoveredServer& actual, const DiscoveredServer& expected, const char *message)
-{
-    require(actual.id == expected.id, message);
-    require(actual.name == expected.name, message);
-    require(actual.address == expected.address, message);
 }
 
 void requireLibraryItem(const LibraryItem& actual, const LibraryItem& expected, const char *message)
@@ -242,13 +234,6 @@ MediaSourceInfo mediaSource()
 
 void testDtoRoundTrips()
 {
-    DiscoveredServer server;
-    server.id = QStringLiteral("server-id");
-    server.name = QStringLiteral("Living Room Jellyfin");
-    server.address = QStringLiteral("https://jellyfin.example.test");
-    requireDiscoveredServer(metaFromJson<DiscoveredServer>(metaToJson(server)), server,
-        "DiscoveredServer did not survive MetaJson round trip");
-
     LibraryItem library;
     library.id = QStringLiteral("library-id");
     library.name = QStringLiteral("Movies");
@@ -643,7 +628,7 @@ void testEpisodePlaybackMetadata()
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("meta-json")
+SPOOL_TEST_MAIN("meta-json")
 {
     testDtoRoundTrips();
     testMovieRoundTripAndCamelCaseKey();

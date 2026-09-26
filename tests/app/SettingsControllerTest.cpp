@@ -4,6 +4,7 @@
 #include "cache/DatabaseManager.h"
 #include "platform/PlatformSettingsPolicy.h"
 
+#include "RecordingArtworkSource.h"
 #include "TestMain.h"
 
 #include <QCoreApplication>
@@ -13,11 +14,11 @@
 #include <cstdlib>
 #include <iostream>
 
-using JellyfinNative::ArtworkService;
-using JellyfinNative::DatabaseManager;
-using JellyfinNative::MovieItem;
-using JellyfinNative::platformDefaultArtworkFormat;
-using JellyfinNative::SettingsController;
+using Spool::ArtworkService;
+using Spool::DatabaseManager;
+using Spool::MovieItem;
+using Spool::platformDefaultArtworkFormat;
+using Spool::SettingsController;
 
 namespace {
 
@@ -31,7 +32,7 @@ void require(bool condition, const char *message)
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("settings-controller")
+SPOOL_TEST_MAIN("settings-controller")
 {
     QCoreApplication app(argc, argv);
     QTemporaryDir directory;
@@ -41,15 +42,16 @@ JELLYFIN_TEST_MAIN("settings-controller")
     require(database.initialize(directory.filePath(QStringLiteral("settings.sqlite"))),
         "settings database did not initialize");
 
+    Spool::Testing::RecordingArtworkSource artworkSource;
     ArtworkService artwork(QString(), 0, 1024, 1, nullptr);
-    artwork.setServerUrl(QStringLiteral("https://example.test"));
+    artwork.setSource(&artworkSource);
     MovieItem poster;
     poster.id = QStringLiteral("item1");
     poster.posterTag = QStringLiteral("tag1");
     const QVariant posterValue = QVariant::fromValue(poster);
     const auto posterUrl = [&] { return artwork.url(posterValue, QStringLiteral("poster")); };
 
-    SettingsController settings(&database, nullptr, nullptr, &artwork);
+    SettingsController settings(&database, nullptr, &artwork);
     QCoro::waitFor(settings.loadLocalAsync());
 
     // A fresh profile leaves the codec to the platform, and the artwork
@@ -78,7 +80,6 @@ JELLYFIN_TEST_MAIN("settings-controller")
     require(settings.value(QStringLiteral("playback/rememberSeriesAudioTrack")).toBool(),
         "fresh profile did not remember per-series audio tracks by default");
     require(settings.playerControlTooltipsEnabled(), "fresh profile unexpectedly hid player control tooltips");
-    require(settings.castButtonEnabled(), "desktop Cast button default was not enabled");
     require(settings.remoteControlTargetEnabled(), "desktop remote-control target default was not enabled");
 
     settings.setValue(QStringLiteral("playback/forwardCacheSizeMiB"), QStringLiteral("256"));
@@ -90,9 +91,7 @@ JELLYFIN_TEST_MAIN("settings-controller")
     settings.setValue(QStringLiteral("playback/rememberSeriesAudioTrack"), false);
     require(!settings.value(QStringLiteral("playback/rememberSeriesAudioTrack")).toBool(),
         "series audio-track retention toggle was not updated");
-    settings.setValue(QStringLiteral("remote/showCastButton"), false);
     settings.setValue(QStringLiteral("remote/acceptCommands"), false);
-    require(!settings.castButtonEnabled(), "Cast button toggle was not applied");
     require(!settings.remoteControlTargetEnabled(), "remote target toggle was not applied");
 
     settings.setAudioDelayMs(120);
@@ -166,7 +165,7 @@ JELLYFIN_TEST_MAIN("settings-controller")
             == QStringLiteral("3"),
         "completed control-tooltip sessions were not persisted");
 
-    SettingsController restored(&database, nullptr, nullptr, nullptr);
+    SettingsController restored(&database, nullptr, nullptr);
     QCoro::waitFor(restored.loadLocalAsync());
     require(restored.uiScalePercent() == 135, "persisted UI scale was not restored");
     require(restored.audioDelayMs() == 120, "persisted global desktop audio delay was not restored");
@@ -174,7 +173,6 @@ JELLYFIN_TEST_MAIN("settings-controller")
         "persisted forward cache size was not restored");
     require(!restored.value(QStringLiteral("playback/rememberSeriesAudioTrack")).toBool(),
         "series audio-track retention toggle was not restored");
-    require(!restored.castButtonEnabled(), "persisted Cast button toggle was not restored");
     require(!restored.remoteControlTargetEnabled(), "persisted remote target toggle was not restored");
     require(!restored.playerControlTooltipsEnabled(), "persisted control-tooltip sessions were not restored");
 

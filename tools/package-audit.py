@@ -137,10 +137,9 @@ def audit_elf(args: argparse.Namespace) -> int:
     regular_elfs = [path for path in root.rglob("*") if path.is_file() and not path.is_symlink() and is_elf(path)]
     infos = {path.resolve(): elf_info(path, readelf) for path in regular_elfs}
     providers: dict[str, set[Path]] = defaultdict(set)
-    for path, info in infos.items():
+    # The dynamic loader finds a NEEDED name as a file, never by SONAME.
+    for path in infos:
         providers[path.name].add(path)
-        if info.soname:
-            providers[info.soname].add(path)
     for link in root.rglob("*"):
         if link.is_symlink() and is_elf(link):
             providers[link.name].add(link.resolve())

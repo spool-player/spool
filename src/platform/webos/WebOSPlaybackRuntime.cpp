@@ -1,13 +1,12 @@
 #include "platform/PlatformPlaybackRuntime.h"
 
-#include "api/JellyfinApiFacade.h"
 #include "platform/webos/WebOSMpvRuntime.h"
 
 #include <QDebug>
 #include <QMetaObject>
 #include <QPointer>
 
-namespace JellyfinNative {
+namespace Spool {
 namespace {
 
     const QStringList kSoftwareVideoCodecs { QStringLiteral("mpeg1video"), QStringLiteral("mpeg2video"),
@@ -29,27 +28,24 @@ qint64 platformAudioDecodeCpuTimeNs()
     return WebOSMpvRuntime::audioDecodeCpuTimeNs();
 }
 
-void configurePlatformPlaybackCapabilities(JellyfinApiFacade& api, QObject& callbackContext)
+void configurePlatformPlaybackCapabilities(VideoCodecCapabilityApplier apply, QObject& callbackContext)
 {
-    api.setVideoCodecCapabilities(withSoftwareVideoCodecs({ QStringLiteral("h264") }), true);
-    QPointer<JellyfinApiFacade> guardedApi(&api);
+    apply(withSoftwareVideoCodecs({ QStringLiteral("h264") }), true);
     QPointer<QObject> guardedContext(&callbackContext);
-    WebOSMpvRuntime::probeStarfishVideoCodecsAsync([guardedApi, guardedContext](const QStringList& codecs) {
+    WebOSMpvRuntime::probeStarfishVideoCodecsAsync([apply, guardedContext](const QStringList& codecs) {
         if (!guardedContext)
             return;
         QMetaObject::invokeMethod(
             guardedContext,
-            [guardedApi, codecs] {
-                if (!guardedApi)
-                    return;
+            [apply, codecs] {
                 if (codecs.isEmpty()) {
                     qWarning() << "playback capabilities: Starfish probe returned no codecs; retaining software set";
                     return;
                 }
-                guardedApi->setVideoCodecCapabilities(withSoftwareVideoCodecs(codecs), true);
+                apply(withSoftwareVideoCodecs(codecs), true);
             },
             Qt::QueuedConnection);
     });
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

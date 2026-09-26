@@ -4,7 +4,7 @@
 
 #include <IOKit/pwr_mgt/IOPMLib.h>
 
-namespace JellyfinNative {
+namespace Spool {
 namespace {
 
     class MacOSScreenSaverBackend final : public ScreenSaverBackend {
@@ -12,7 +12,7 @@ namespace {
         bool acquire() override
         {
             const IOReturn result = IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleDisplaySleep,
-                kIOPMAssertionLevelOn, CFSTR("Spool for Jellyfin media playback"), &m_assertion);
+                kIOPMAssertionLevelOn, CFSTR("Spool media playback"), &m_assertion);
             if (result == kIOReturnSuccess)
                 return true;
             qWarning() << "screensaver: macOS idle assertion failed" << result;
@@ -43,4 +43,4 @@ std::unique_ptr<ScreenSaverBackend> createPlatformScreenSaverBackend()
     return std::make_unique<MacOSScreenSaverBackend>();
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

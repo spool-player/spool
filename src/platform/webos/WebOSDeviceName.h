@@ -4,7 +4,7 @@
 
 #include <functional>
 
-namespace JellyfinNative {
+namespace Spool {
 
 // The set's user-visible name, which webOS only reports asynchronously. Every
 // install would otherwise register with the same hardcoded name and be
@@ -14,4 +14,4 @@ namespace JellyfinNative {
 // renames the television in Settings, and never when it cannot be read.
 void requestWebOSDeviceName(std::function<void(const QString&)> callback);
 
-} // namespace JellyfinNative
+} // namespace Spool

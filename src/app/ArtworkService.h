@@ -1,6 +1,7 @@
 #pragma once
 
-#include "../common/JellyfinTypes.h"
+#include "../media/MediaTypes.h"
+#include "../provider/ArtworkSource.h"
 #include "ArtworkPrefetcher.h"
 
 #include <QByteArray>
@@ -24,7 +25,7 @@
 
 class QQuickImageResponse;
 
-namespace JellyfinNative {
+namespace Spool {
 
 class ArtworkByteCache final {
 public:
@@ -52,7 +53,8 @@ public:
 
     Q_INVOKABLE QString url(const QVariant& item, const QString& kind, int width = 0) const;
     QString itemUrl(const MovieItem& item, bool landscape, int width = 0) const override;
-    void setServerUrl(QString serverUrl);
+    // Where image URLs come from. Unset, every request resolves to no URL.
+    void setSource(const ArtworkSource *source);
     void setUiWidth(int width);
     // Which codec to ask the server for, and how hard it should compress.
     // Format is "webp" or "jpeg"; anything else falls back to the platform
@@ -122,7 +124,7 @@ private:
     QString artworkFormat() const;
 
     QString m_cacheDirectory;
-    QString m_serverUrl;
+    const ArtworkSource *m_source = nullptr;
     QString m_artworkFormat;
     int m_webpQuality = 75;
     int m_jpegQuality = 82;
@@ -146,4 +148,4 @@ private:
     int m_nextRequestId = 1;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

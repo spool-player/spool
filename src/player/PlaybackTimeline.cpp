@@ -4,7 +4,7 @@
 #include <cmath>
 #include <limits>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
 
@@ -119,4 +119,4 @@ int PlaybackTimeline::trickplayWidth() const
     return m_trickplay.width;
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

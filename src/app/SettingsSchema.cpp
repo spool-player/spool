@@ -1,6 +1,6 @@
 #include "SettingsSchema.h"
 
-#include "../common/JellyfinTypes.h"
+#include "../media/MediaTypes.h"
 #include "../platform/PlatformSettingsPolicy.h"
 
 #include <QVariantMap>
@@ -9,7 +9,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace JellyfinNative {
+namespace Spool {
 namespace {
 
     // Enhanced puts every frame through libplacebo, which is where the
@@ -61,6 +61,8 @@ namespace {
     constexpr SettingChoice kRailLabelChoices[]
         = { { "Never", "Never" }, { "On focus", "On focus" }, { "Always", "Always" } };
     constexpr SettingChoice kTextRenderModeChoices[] = { { "0", "Standard" }, { "1", "Curve" } };
+    constexpr SettingChoice kProviderUpdateChoices[]
+        = { { "auto", "Automatic" }, { "ask", "Ask first" }, { "manual", "Only when I check" } };
     constexpr SettingChoice kArtworkFormatChoices[]
         = { { "auto", "Automatic" }, { "webp", "WebP (smaller downloads)" }, { "jpeg", "JPEG (faster to decode)" } };
     constexpr SettingChoice kTechnicalMetadataChoices[]
@@ -306,8 +308,7 @@ const QVector<SettingSpec>& settingSpecs()
         sliderSpec("appearance/uiScalePercent", "Appearance", "Interface scale", "", "100", 50, 180, 5, "%",
             SettingTarget::UiScale),
         pageSpec("theme/accent", "Appearance", "Accent colour", "", SettingType::Select, kAccentChoices),
-        pageSpec("theme/reducedMotion", "Appearance", "Reduced motion", "Turns off focus and page animation",
-            SettingType::Toggle),
+        pageSpec("theme/reducedMotion", "Appearance", "Reduced motion", "", SettingType::Toggle),
         pageSpec(
             "i18n/locale", "Appearance", "Language", "Some text only changes after a restart", SettingType::Select),
         pageSpec("theme/technicalMetadata", "Appearance", "Technical details", "Codec, resolution, and audio format",
@@ -316,33 +317,29 @@ const QVector<SettingSpec>& settingSpecs()
         pageSpec("theme/railLabels", "Appearance", "Navigation labels", "", SettingType::Select, kRailLabelChoices)
             .advanced(),
         pageSpec("theme/antialiasedText", "Appearance", "Smooth text", "", SettingType::Toggle).advanced(),
-        pageSpec("theme/renderMode", "Appearance", "Text rendering", "Curve stays sharp at any scale",
-            SettingType::Select, kTextRenderModeChoices)
+        pageSpec("theme/renderMode", "Appearance", "Text rendering", "", SettingType::Select, kTextRenderModeChoices)
             .advanced(),
         selectSpec("artwork/format", "Appearance", "Artwork format",
             "Automatic picks JPEG on TVs, where decoding costs more than downloading", "auto", kArtworkFormatChoices,
             SettingTarget::ArtworkFormat)
             .advanced(),
-        sliderSpec("artwork/webpQuality", "Appearance", "WebP quality", "Applies to artwork fetched as WebP", "75", 40,
-            100, 1, "", SettingTarget::ArtworkWebpQuality)
+        sliderSpec("artwork/webpQuality", "Appearance", "WebP quality", "", "75", 40, 100, 1, "",
+            SettingTarget::ArtworkWebpQuality)
             .advanced(),
         sliderSpec("artwork/jpegQuality", "Appearance", "JPEG quality",
             "JPEG needs a higher number than WebP to look the same", "82", 40, 100, 1, "",
             SettingTarget::ArtworkJpegQuality)
             .advanced(),
-        toggleSpec("remote/showCastButton", "Remote Control", "Show Cast button",
-            "Choose and control another Jellyfin client", true, SettingTarget::CastButtonEnabled),
-        toggleSpec("remote/acceptCommands", "Remote Control", "Allow remote control",
-            "Let other Jellyfin clients play and control media on this device", true,
+        toggleSpec("remote/acceptCommands", "Remote Control", "Allow remote control", "", true,
             SettingTarget::RemoteControlTargetEnabled),
-        selectSpec("audio/trackMode", "Playback", "Audio track", "Which track plays when a video starts", "Default",
-            kAudioTrackModeChoices, SettingTarget::AudioTrackMode),
-        toggleSpec("playback/rememberSeriesAudioTrack", "Playback", "Remember audio track per series",
-            "Keeps your choice for the rest of the episodes", true, SettingTarget::RememberSeriesAudioTrack),
+        selectSpec("audio/trackMode", "Playback", "Audio track", "", "Default", kAudioTrackModeChoices,
+            SettingTarget::AudioTrackMode),
+        toggleSpec("playback/rememberSeriesAudioTrack", "Playback", "Remember audio track per series", "", true,
+            SettingTarget::RememberSeriesAudioTrack),
         toggleSpec("settings/nightMode", "Playback", "Night mode", "Lifts quiet dialogue and tames loud scenes", false,
             SettingTarget::NightMode),
-        sliderSpec("settings/audioDelayMs", "Playback", "Audio sync", "Nudge the audio earlier or later", "0", -2000,
-            2000, 10, "ms", SettingTarget::AudioDelay),
+        sliderSpec("settings/audioDelayMs", "Playback", "Audio sync", "", "0", -2000, 2000, 10, "ms",
+            SettingTarget::AudioDelay),
         toggleSpec("playback/showVolumeSlider", "Playback", "Volume slider in the player", "", true,
             SettingTarget::PlayerVolumeSlider)
             .onDesktop(),
@@ -407,6 +404,7 @@ const QVector<SettingSpec>& settingSpecs()
             SettingTarget::MaxStreamingHeight),
         toggleSpec("playback/manualStreamingBitrate", "Streaming", "Set my own bitrate limit",
             "Otherwise the limit is measured for you", false, SettingTarget::ManualStreamingBitrate),
+        pageSpec("action/connectionSpeed", "Streaming", "Connection speed", "", SettingType::Action),
         sliderSpec("playback/maxStreamingBitrateMbps", "Streaming", "Bitrate limit",
             "Anything higher is transcoded by the server", "120", 5, 1000, 5, "Mbps",
             SettingTarget::MaxStreamingBitrate)
@@ -426,8 +424,7 @@ const QVector<SettingSpec>& settingSpecs()
             "", nullptr, 0, SettingTarget::SubtitleLanguage),
         selectSpec("subtitles/mode", "Subtitles", "When to show subtitles", "", "Default", kSubtitleModeChoices,
             SettingTarget::SubtitleMode),
-        pageSpec("action/subtitleSettings", "Subtitles", "Subtitle appearance", "Size, position, colour, and font",
-            SettingType::Action),
+        pageSpec("action/subtitleSettings", "Subtitles", "Subtitle appearance", "", SettingType::Action),
 
         // Shown by the subtitle appearance panel, which can sit over live video.
         selectSpec("subtitles/styling", "Subtitle Appearance", "Style",
@@ -539,26 +536,22 @@ const QVector<SettingSpec>& settingSpecs()
             .onWebOS(),
 
         // Only platforms with an in-app installer expose this preference.
-        toggleSpec("updates/automatic", "Updates", "Automatic updates", "Check for new versions", true,
-            SettingTarget::AutomaticUpdates)
-#if defined(JELLYFIN_NATIVE_WEBOS)
+        toggleSpec("updates/automatic", "Updates", "Automatic updates", "", true, SettingTarget::AutomaticUpdates)
+#if defined(SPOOL_WEBOS)
             .onWebOS(),
 #else
             .onAndroid(),
 #endif
 
-        pageSpec("session/account", "Account", "Signed in as", "", SettingType::ReadOnly),
-        pageSpec("action/switchUser", "Account", "Switch profile", "", SettingType::Action),
-        pageSpec("action/logout", "Account", "Sign out", "Keeps this profile on the device", SettingType::Action),
-        pageSpec("action/manageCertificates", "Account", "Remembered certificates",
-            "Server certificates you chose to trust", SettingType::Action),
+        pageSpec("action/accounts", "Accounts", "Accounts", "", SettingType::Action),
+        pageSpec("action/providers", "Accounts", "Providers", "", SettingType::Action),
+        selectSpec("providers/updates", "Accounts", "Provider updates", "", "ask", kProviderUpdateChoices,
+            SettingTarget::External),
+        pageSpec("action/manageCertificates", "Accounts", "Remembered certificates", "", SettingType::Action),
 
-        pageSpec("action/exportDiagnostics", "Diagnostics", "Export diagnostics",
-            "Collects support information for you to review and send", SettingType::Action),
+        pageSpec("action/exportDiagnostics", "Diagnostics", "Export diagnostics", "", SettingType::Action),
         pageSpec("action/clearLogs", "Diagnostics", "Clear logs", "", SettingType::Action),
-        pageSpec("shell/diagnostics", "Diagnostics", "Diagnostics overlay", "Live playback and performance figures",
-            SettingType::Toggle)
-            .expert(),
+        pageSpec("shell/diagnostics", "Diagnostics", "Diagnostics overlay", "", SettingType::Toggle).expert(),
         toggleSpec("settings/toneMappingVisualization", "Diagnostics", "Tone mapping overlay",
             "False-colour view of how HDR is mapped", false, SettingTarget::ToneMappingVisualization)
             .expert()
@@ -568,10 +561,9 @@ const QVector<SettingSpec>& settingSpecs()
         pageSpec("action/clearLatencyStatistics", "Diagnostics", "Clear latency samples", "", SettingType::Action)
             .expert(),
 
-        pageSpec("about/version", "About", "Spool for Jellyfin", "", SettingType::ReadOnly),
+        pageSpec("about/version", "About", "Spool", "", SettingType::ReadOnly),
         pageSpec("about/locale", "About", "Active language", "", SettingType::ReadOnly),
-        pageSpec("action/openSourceNotices", "About", "Open-source notices",
-            "Licences and source for the bundled software", SettingType::Action),
+        pageSpec("action/openSourceNotices", "About", "Open-source notices", "", SettingType::Action),
     };
     return specs;
 }
@@ -677,4 +669,4 @@ QVariantList settingSchemaModel()
     return model;
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

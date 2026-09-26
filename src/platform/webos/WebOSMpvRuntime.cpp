@@ -178,7 +178,7 @@ std::string libmpvPath()
     const size_t slash = dir.rfind('/');
     if (slash == std::string::npos)
         return "libmpv.so.2";
-    // <app>/bin/jellyfin-native -> <app>/lib/libmpv.so.2 (matches the rpath
+    // <app>/bin/spool -> <app>/lib/libmpv.so.2 (matches the rpath
     // layout build-ipk.sh stages).
     return dir.substr(0, slash) + "/../lib/libmpv.so.2";
 }
@@ -232,7 +232,7 @@ bool loadNow()
 
 } // namespace
 
-namespace JellyfinNative::WebOSMpvRuntime {
+namespace Spool::WebOSMpvRuntime {
 
 bool ensureLoaded()
 {
@@ -298,7 +298,7 @@ void probeStarfishVideoCodecsAsync(std::function<void(QStringList)> callback)
     });
 }
 
-} // namespace JellyfinNative::WebOSMpvRuntime
+} // namespace Spool::WebOSMpvRuntime
 
 // ---------------------------------------------------------------------------
 // mpv client API entry points. Declarations come from the real headers, so
@@ -308,102 +308,102 @@ void probeStarfishVideoCodecsAsync(std::function<void(QStringList)> callback)
 
 mpv_handle *mpv_create(void)
 {
-    if (!JellyfinNative::WebOSMpvRuntime::ensureLoaded())
+    if (!Spool::WebOSMpvRuntime::ensureLoaded())
         return nullptr;
     return g_api.mpv_create();
 }
 
 int mpv_initialize(mpv_handle *ctx)
 {
-    if (!JellyfinNative::WebOSMpvRuntime::ensureLoaded())
+    if (!Spool::WebOSMpvRuntime::ensureLoaded())
         return MPV_ERROR_GENERIC;
     return g_api.mpv_initialize(ctx);
 }
 
 void mpv_destroy(mpv_handle *ctx)
 {
-    if (ctx && JellyfinNative::WebOSMpvRuntime::ensureLoaded())
+    if (ctx && Spool::WebOSMpvRuntime::ensureLoaded())
         g_api.mpv_destroy(ctx);
 }
 
 void mpv_terminate_destroy(mpv_handle *ctx)
 {
-    if (ctx && JellyfinNative::WebOSMpvRuntime::ensureLoaded())
+    if (ctx && Spool::WebOSMpvRuntime::ensureLoaded())
         g_api.mpv_terminate_destroy(ctx);
 }
 
 mpv_event *mpv_wait_event(mpv_handle *ctx, double timeout)
 {
-    if (!JellyfinNative::WebOSMpvRuntime::ensureLoaded())
+    if (!Spool::WebOSMpvRuntime::ensureLoaded())
         return nullptr;
     return g_api.mpv_wait_event(ctx, timeout);
 }
 
 int mpv_request_log_messages(mpv_handle *ctx, const char *min_level)
 {
-    if (!JellyfinNative::WebOSMpvRuntime::ensureLoaded())
+    if (!Spool::WebOSMpvRuntime::ensureLoaded())
         return MPV_ERROR_GENERIC;
     return g_api.mpv_request_log_messages(ctx, min_level);
 }
 
 int mpv_observe_property(mpv_handle *mpv, uint64_t reply_userdata, const char *name, mpv_format format)
 {
-    if (!JellyfinNative::WebOSMpvRuntime::ensureLoaded())
+    if (!Spool::WebOSMpvRuntime::ensureLoaded())
         return MPV_ERROR_GENERIC;
     return g_api.mpv_observe_property(mpv, reply_userdata, name, format);
 }
 
 int mpv_set_option_string(mpv_handle *ctx, const char *name, const char *data)
 {
-    if (!JellyfinNative::WebOSMpvRuntime::ensureLoaded())
+    if (!Spool::WebOSMpvRuntime::ensureLoaded())
         return MPV_ERROR_GENERIC;
     return g_api.mpv_set_option_string(ctx, name, data);
 }
 
 int mpv_set_property(mpv_handle *ctx, const char *name, mpv_format format, void *data)
 {
-    if (!JellyfinNative::WebOSMpvRuntime::ensureLoaded())
+    if (!Spool::WebOSMpvRuntime::ensureLoaded())
         return MPV_ERROR_GENERIC;
     return g_api.mpv_set_property(ctx, name, format, data);
 }
 
 int mpv_set_property_async(mpv_handle *ctx, uint64_t reply_userdata, const char *name, mpv_format format, void *data)
 {
-    if (!JellyfinNative::WebOSMpvRuntime::ensureLoaded())
+    if (!Spool::WebOSMpvRuntime::ensureLoaded())
         return MPV_ERROR_GENERIC;
     return g_api.mpv_set_property_async(ctx, reply_userdata, name, format, data);
 }
 
 int mpv_set_property_string(mpv_handle *ctx, const char *name, const char *data)
 {
-    if (!JellyfinNative::WebOSMpvRuntime::ensureLoaded())
+    if (!Spool::WebOSMpvRuntime::ensureLoaded())
         return MPV_ERROR_GENERIC;
     return g_api.mpv_set_property_string(ctx, name, data);
 }
 
 int mpv_get_property(mpv_handle *ctx, const char *name, mpv_format format, void *data)
 {
-    if (!JellyfinNative::WebOSMpvRuntime::ensureLoaded())
+    if (!Spool::WebOSMpvRuntime::ensureLoaded())
         return MPV_ERROR_GENERIC;
     return g_api.mpv_get_property(ctx, name, format, data);
 }
 
 int mpv_get_property_async(mpv_handle *ctx, uint64_t reply_userdata, const char *name, mpv_format format)
 {
-    if (!JellyfinNative::WebOSMpvRuntime::ensureLoaded())
+    if (!Spool::WebOSMpvRuntime::ensureLoaded())
         return MPV_ERROR_GENERIC;
     return g_api.mpv_get_property_async(ctx, reply_userdata, name, format);
 }
 
 void mpv_free_node_contents(mpv_node *node)
 {
-    if (node && JellyfinNative::WebOSMpvRuntime::ensureLoaded())
+    if (node && Spool::WebOSMpvRuntime::ensureLoaded())
         g_api.mpv_free_node_contents(node);
 }
 
 char *mpv_get_property_string(mpv_handle *ctx, const char *name)
 {
-    if (!JellyfinNative::WebOSMpvRuntime::ensureLoaded())
+    if (!Spool::WebOSMpvRuntime::ensureLoaded())
         return nullptr;
     return g_api.mpv_get_property_string(ctx, name);
 }
@@ -412,41 +412,41 @@ char *mpv_get_property_string(mpv_handle *ctx, const char *name)
 // than ::free. A handle that never loaded has nothing outstanding to release.
 void mpv_free(void *data)
 {
-    if (data && JellyfinNative::WebOSMpvRuntime::ensureLoaded())
+    if (data && Spool::WebOSMpvRuntime::ensureLoaded())
         g_api.mpv_free(data);
 }
 
 int mpv_command(mpv_handle *ctx, const char **args)
 {
-    if (!JellyfinNative::WebOSMpvRuntime::ensureLoaded())
+    if (!Spool::WebOSMpvRuntime::ensureLoaded())
         return MPV_ERROR_GENERIC;
     return g_api.mpv_command(ctx, args);
 }
 
 int mpv_command_ret(mpv_handle *ctx, const char **args, mpv_node *result)
 {
-    if (!JellyfinNative::WebOSMpvRuntime::ensureLoaded())
+    if (!Spool::WebOSMpvRuntime::ensureLoaded())
         return MPV_ERROR_GENERIC;
     return g_api.mpv_command_ret(ctx, args, result);
 }
 
 int mpv_command_async(mpv_handle *ctx, uint64_t reply_userdata, const char **args)
 {
-    if (!JellyfinNative::WebOSMpvRuntime::ensureLoaded())
+    if (!Spool::WebOSMpvRuntime::ensureLoaded())
         return MPV_ERROR_GENERIC;
     return g_api.mpv_command_async(ctx, reply_userdata, args);
 }
 
 int mpv_command_string(mpv_handle *ctx, const char *args)
 {
-    if (!JellyfinNative::WebOSMpvRuntime::ensureLoaded())
+    if (!Spool::WebOSMpvRuntime::ensureLoaded())
         return MPV_ERROR_GENERIC;
     return g_api.mpv_command_string(ctx, args);
 }
 
 const char *mpv_error_string(int error)
 {
-    if (!JellyfinNative::WebOSMpvRuntime::ensureLoaded())
+    if (!Spool::WebOSMpvRuntime::ensureLoaded())
         return "libmpv is not loaded";
     return g_api.mpv_error_string(error);
 }
@@ -456,39 +456,39 @@ const char *mpv_error_string(int error)
 
 int mpv_render_context_create(mpv_render_context **res, mpv_handle *mpv, mpv_render_param *params)
 {
-    if (!JellyfinNative::WebOSMpvRuntime::ensureLoaded())
+    if (!Spool::WebOSMpvRuntime::ensureLoaded())
         return MPV_ERROR_GENERIC;
     return g_api.mpv_render_context_create(res, mpv, params);
 }
 
 void mpv_render_context_free(mpv_render_context *ctx)
 {
-    if (ctx && JellyfinNative::WebOSMpvRuntime::ensureLoaded())
+    if (ctx && Spool::WebOSMpvRuntime::ensureLoaded())
         g_api.mpv_render_context_free(ctx);
 }
 
 int mpv_render_context_render(mpv_render_context *ctx, mpv_render_param *params)
 {
-    if (!JellyfinNative::WebOSMpvRuntime::ensureLoaded())
+    if (!Spool::WebOSMpvRuntime::ensureLoaded())
         return MPV_ERROR_GENERIC;
     return g_api.mpv_render_context_render(ctx, params);
 }
 
 void mpv_render_context_report_swap(mpv_render_context *ctx)
 {
-    if (ctx && JellyfinNative::WebOSMpvRuntime::ensureLoaded())
+    if (ctx && Spool::WebOSMpvRuntime::ensureLoaded())
         g_api.mpv_render_context_report_swap(ctx);
 }
 
 void mpv_render_context_set_update_callback(mpv_render_context *ctx, mpv_render_update_fn callback, void *callback_ctx)
 {
-    if (ctx && JellyfinNative::WebOSMpvRuntime::ensureLoaded())
+    if (ctx && Spool::WebOSMpvRuntime::ensureLoaded())
         g_api.mpv_render_context_set_update_callback(ctx, callback, callback_ctx);
 }
 
 uint64_t mpv_render_context_update(mpv_render_context *ctx)
 {
-    if (!ctx || !JellyfinNative::WebOSMpvRuntime::ensureLoaded())
+    if (!ctx || !Spool::WebOSMpvRuntime::ensureLoaded())
         return 0;
     return g_api.mpv_render_context_update(ctx);
 }

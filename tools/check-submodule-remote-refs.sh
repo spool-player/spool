@@ -5,8 +5,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODE="${1:---head}"
 ZERO_SHA="0000000000000000000000000000000000000000"
 
-if [[ "${JELLYFIN_SKIP_SUBMODULE_REMOTE_CHECK:-0}" == "1" ]]; then
-  echo "Skipping submodule remote check because JELLYFIN_SKIP_SUBMODULE_REMOTE_CHECK=1" >&2
+if [[ "${SPOOL_SKIP_SUBMODULE_REMOTE_CHECK:-0}" == "1" ]]; then
+  echo "Skipping submodule remote check because SPOOL_SKIP_SUBMODULE_REMOTE_CHECK=1" >&2
   exit 0
 fi
 

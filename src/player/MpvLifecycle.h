@@ -8,7 +8,7 @@
 struct mpv_event;
 struct mpv_handle;
 
-namespace JellyfinNative {
+namespace Spool {
 
 class MpvLifecycle final {
 public:
@@ -44,4 +44,4 @@ private:
     std::atomic<mpv_handle *> m_handle { nullptr };
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

@@ -13,7 +13,7 @@
 
 #include <algorithm>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
 
@@ -125,9 +125,9 @@ QVariantList TlsTrustController::rememberedCertificates() const
 
 void TlsTrustController::attachNetworkAccessManager(QNetworkAccessManager *manager, QString source)
 {
-    if (!manager || manager->property("jellyfinTlsTrustAttached").toBool())
+    if (!manager || manager->property("spoolTlsTrustAttached").toBool())
         return;
-    manager->setProperty("jellyfinTlsTrustAttached", true);
+    manager->setProperty("spoolTlsTrustAttached", true);
     connect(
         manager, &QNetworkAccessManager::sslErrors, this,
         [this, source = std::move(source)](
@@ -466,4 +466,4 @@ void TlsTrustController::reloadRemembered()
     m_rememberedCertificates = std::move(entries);
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

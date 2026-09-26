@@ -58,7 +58,19 @@ python3 "$ROOT/tools/android/universal_project.py" \
 
 printf 'sdk.dir=%s\n' "$ANDROID_HOME" >"$project/local.properties"
 # Compress the multi-ABI download; Android extracts only the device's ABI.
-(cd "$project" && ./gradlew --no-daemon -PlegacyPackaging=true assembleRelease)
+gradle_ok=0
+for attempt in 1 2 3; do
+  if (cd "$project" && ./gradlew --no-daemon -PlegacyPackaging=true assembleRelease); then
+    gradle_ok=1
+    break
+  fi
+  echo "Gradle invocation failed on attempt $attempt, retrying in 5 seconds..." >&2
+  sleep 5
+done
+if [[ $gradle_ok -ne 1 ]]; then
+  echo "error: Gradle build failed after 3 attempts" >&2
+  exit 1
+fi
 
 # AGP names the output after the project directory, so find it rather than
 # spell it: exactly one release APK is expected, and two would mean the project

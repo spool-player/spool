@@ -16,13 +16,13 @@ $dumpbin = (Get-Command dumpbin.exe -ErrorAction Stop).Source
 $binaries = @(Get-ChildItem -LiteralPath $stage -Recurse -File |
     Where-Object Extension -In @('.dll', '.exe') |
     Sort-Object FullName)
-$applicationExecutable = Join-Path $stage 'jellyfin-native.exe'
+$applicationExecutable = Join-Path $stage 'spool.exe'
 $applicationHeaders = @(& $dumpbin /nologo /headers $applicationExecutable)
 if ($LASTEXITCODE -ne 0) {
     throw "dumpbin could not inspect $applicationExecutable"
 }
 if (-not ($applicationHeaders -match '^\s*2\s+subsystem \(Windows GUI\)\s*$')) {
-    throw 'jellyfin-native.exe must use the Windows GUI subsystem so packaged launches do not open a terminal.'
+    throw 'spool.exe must use the Windows GUI subsystem so packaged launches do not open a terminal.'
 }
 
 $providers = @{}
@@ -59,7 +59,7 @@ foreach ($binary in $binaries) {
 }
 
 $rootPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-foreach ($name in @('jellyfin-native.exe', 'mpv-2.dll')) {
+foreach ($name in @('spool.exe', 'mpv-2.dll')) {
     $matches = @($binaries | Where-Object Name -EQ $name)
     if ($matches.Count -ne 1) {
         throw "The Windows runtime root must exist exactly once: $name"

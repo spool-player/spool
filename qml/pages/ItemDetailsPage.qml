@@ -139,10 +139,13 @@ FocusScope {
     property int actionIndex: 0
     property int overflowIndex: 0
     property string loadedDetailKey: ""
+    property bool contextPositionPending: true
     property bool seasonPickerOpen: false
     property int seasonPickerIndex: 0
     property var seasonEntries: []
     property bool routeRefreshScheduled: false
+
+    onContextRowChanged: Qt.callLater(positionContextRow)
 
     focus: true
 
@@ -580,6 +583,17 @@ FocusScope {
         if (similarRow)
             similarRow.currentIndex = similarCount > 0 ? Math.max(0, Math.min(similarRow.currentIndex, similarCount - 1)) :
                                                          0
+        Qt.callLater(positionContextRow)
+    }
+
+    function positionContextRow() {
+        if (!routeActive || !contextPositionPending || !contextRow || contextCount <= 0 || !loadedDetailKey.length)
+            return
+        if (compactEpisodicDetail) {
+            if (!contextRow.positionIndexAtStart(Content.detailContextInitialIndex))
+                return
+        }
+        contextPositionPending = false
     }
 
     function refreshDetailRows() {
@@ -588,6 +602,7 @@ FocusScope {
         if (key === loadedDetailKey)
             return
         loadedDetailKey = key
+        contextPositionPending = true
         if (contextRow)
             contextRow.currentIndex = 0
         if (similarRow)
@@ -818,6 +833,11 @@ FocusScope {
         const options = []
         if (showContextPlaybackActions)
             options.push(playAllOption, shuffleOption)
+        for (let index = 0; index < providerActionOptions.count; ++index) {
+            const option = providerActionOptions.itemAt(index)
+            if (option)
+                options.push(option)
+        }
         if (mediaInfoAvailable)
             options.push(mediaInfoOption)
         if (showLetterboxdAction)
@@ -851,6 +871,11 @@ FocusScope {
         } else {
             focusActionIndex(orderedActions().indexOf(menuAction))
         }
+    }
+
+    function runProviderAction(actionId) {
+        overflowOpen = false
+        Sources.runItemAction(actionId, String(item.movieId || ""), typeText)
     }
 
     function openMediaInfo() {
@@ -998,6 +1023,8 @@ FocusScope {
                 openMediaInfo()
             else if (option === letterboxdOption)
                 openLetterboxd()
+            else if (option && option.providerAction)
+                runProviderAction(option.providerAction)
             else if (option)
                 openExternalUrl(option.externalUrl)
         } else {
@@ -1513,6 +1540,8 @@ FocusScope {
                         cardWidth: root.contextPosterCards ? root.rowPosterWidth : root.rowLandscapeWidth
                         cardKind: root.contextPosterCards ? "poster" : "landscape"
                         cardGap: root.rowGap
+                        allowTrailingSpace: root.compactEpisodicDetail
+                        onWidthChanged: Qt.callLater(root.positionContextRow)
                         enabledRow: root.showContextRow
                         reserveWhenEmpty: root.reserveContextRow
                         loading: root.reserveContextRow
@@ -1622,6 +1651,21 @@ FocusScope {
                 iconName: "shuffle"
                 label: "Shuffle play"
                 onActivated: root.playDetailContext(true)
+            }
+
+            // Whatever else the item's provider does with it: playlists,
+            // collections, renaming. Declared in its manifest, so free to list.
+            Repeater {
+                id: providerActionOptions
+                model: root.overflowOpen ? Sources.itemActions(String(root.item.movieId || ""), root.typeText) : []
+
+                delegate: MenuOption {
+                    required property var modelData
+                    readonly property string providerAction: String(modelData.id || "")
+                    iconName: String(modelData.icon || "more_horiz")
+                    label: String(modelData.label || "")
+                    onActivated: root.runProviderAction(providerAction)
+                }
             }
 
             MenuOption {

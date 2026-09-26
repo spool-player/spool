@@ -1,22 +1,23 @@
 #include "SearchController.h"
 
-#include "../api/JellyfinApiFacade.h"
 #include "../common/AsyncTask.h"
 #include "LibraryPrefetchController.h"
 
 #include <QDebug>
+#include <QPointer>
 
+#include <memory>
 #include <utility>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
     constexpr int kSearchDebounceMs = 260;
 }
 
-SearchController::SearchController(JellyfinApiFacade *api, LibraryPrefetchController *prefetch, QObject *parent)
+SearchController::SearchController(SearchSource *source, LibraryPrefetchController *prefetch, QObject *parent)
     : QObject(parent)
-    , m_api(api)
+    , m_api(source)
     , m_prefetch(prefetch)
 {
     m_debounceTimer.setSingleShot(true);
@@ -28,6 +29,9 @@ void SearchController::setQuery(const QString& query)
 {
     const QString trimmed = query.trimmed();
     if (m_query != trimmed) {
+        // A response arriving during debounce belongs to the old text, even
+        // though the replacement request has not been submitted yet.
+        m_searchGeneration.invalidate();
         m_query = trimmed;
         emit queryChanged();
     }
@@ -56,14 +60,26 @@ void SearchController::submit()
     const RequestGeneration::Token generation = m_searchGeneration.next();
     setBusy(true);
 
+    // Results show as each source answers; busy lasts until the last one.
+    auto answered = std::make_shared<bool>(false);
+    QPointer<SearchController> guard(this);
+    auto update = [this, guard, generation, answered](std::vector<MovieItem> items) {
+        if (!guard || !m_searchGeneration.isCurrent(generation))
+            return;
+        *answered = true;
+        if (m_prefetch)
+            m_prefetch->prefetchPosters(items);
+        setResults(std::move(items));
+        emit resultsChanged();
+    };
     Async::runLatest(
-        this, m_api->searchItems(m_query), m_searchGeneration, generation,
-        [this](std::vector<MovieItem> items) {
-            if (m_prefetch)
-                m_prefetch->prefetchPosters(items);
-            setResults(std::move(items));
+        this, m_api->searchProgressively(m_query, 80, std::move(update)), m_searchGeneration, generation,
+        [this, answered] {
+            if (!*answered) {
+                clearResults();
+                emit resultsChanged();
+            }
             setBusy(false);
-            emit resultsChanged();
         },
         [this](const std::exception_ptr& error) {
             clearResults();
@@ -77,6 +93,7 @@ void SearchController::search(const QString& query)
 {
     const QString trimmed = query.trimmed();
     if (m_query != trimmed) {
+        m_searchGeneration.invalidate();
         m_query = trimmed;
         emit queryChanged();
     }
@@ -98,7 +115,10 @@ void SearchController::clear()
 
 void SearchController::loadSuggestions()
 {
-    if (!authenticated() || m_suggestionsLoaded || m_suggestionsBusy)
+    if (!authenticated())
+        return;
+    m_api->prepareSearch();
+    if (m_suggestionsLoaded || m_suggestionsBusy)
         return;
 
     const RequestGeneration::Token generation = m_suggestionsGeneration.next();
@@ -199,7 +219,7 @@ void SearchController::setResults(std::vector<MovieItem> items)
 
 bool SearchController::authenticated() const
 {
-    return m_api && !m_api->session().accessToken.isEmpty();
+    return m_api && m_api->signedIn();
 }
 
 void SearchController::setBusy(bool busy)
@@ -218,4 +238,4 @@ void SearchController::setSuggestionsBusy(bool busy)
     emit suggestionsChanged();
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

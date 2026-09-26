@@ -1,6 +1,6 @@
 # Contributing
 
-Spool for Jellyfin welcomes focused bug reports and feature proposals. Before submitting code, open or find an issue for consequential behavior changes so the user-facing contract is clear.
+Spool welcomes focused bug reports and feature proposals. Before submitting code, open or find an issue for consequential behavior changes so the user-facing contract is clear.
 
 ## Privacy
 
@@ -32,7 +32,7 @@ Describe the problem, the chosen behavior, affected platforms, privacy/security 
 ### Reviewing CI artifacts
 
 Open the PR's **build artifacts** check, follow **Details** to the workflow run,
-and download a `spool-for-jellyfin-*` package from **Artifacts** (GitHub sign-in
+and download a `spool-*` package from **Artifacts** (GitHub sign-in
 required). PRs use the same build, package, audit, and launch-test jobs as
 releases: Linux AppImage/portable tarball/Arch package, macOS DMGs for Apple
 Silicon and Intel, webOS IPK, Android per-ABI/universal APKs, and Windows

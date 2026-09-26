@@ -6,7 +6,7 @@
 #include <QLocale>
 #include <QSettings>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
     constexpr auto kSettingsKey = "i18n/locale";
@@ -101,4 +101,4 @@ void LocalizationManager::applyLocale(const QString& localeTag)
     emit localeChanged();
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

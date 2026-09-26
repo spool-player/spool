@@ -1,21 +1,21 @@
 #include "SettingsController.h"
 
-#include "../api/JellyfinApiFacade.h"
 #include "../cache/DatabaseManager.h"
 #include "../common/AsyncTask.h"
 #include "../platform/PlatformSettingsPolicy.h"
 #include "../player/PlayerController.h"
 #include "../player/RenderTargetProfile.h"
+#include "../provider/ProviderRegistry.h"
 #include "ArtworkService.h"
 #include "SettingsSchema.h"
 
 #include <QDebug>
-#include <QJsonArray>
+#include <QLocale>
 #include <QSet>
 
 #include <iterator>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
 
@@ -36,11 +36,10 @@ namespace {
 
 } // namespace
 
-SettingsController::SettingsController(DatabaseManager *database, JellyfinApiFacade *api, PlayerController *player,
-    ArtworkService *artwork, QObject *parent)
+SettingsController::SettingsController(
+    DatabaseManager *database, PlayerController *player, ArtworkService *artwork, QObject *parent)
     : QObject(parent)
     , m_database(database)
-    , m_api(api)
     , m_player(player)
     , m_artwork(artwork)
     , m_uiScalePercent(platformDefaultUiScalePercent())
@@ -49,10 +48,12 @@ SettingsController::SettingsController(DatabaseManager *database, JellyfinApiFac
 
 QStringList SettingsController::subtitleLanguageOptions() const
 {
+    loadSubtitleLanguages();
     return m_subtitleLanguageLabels;
 }
 int SettingsController::subtitleLanguageIndex() const
 {
+    loadSubtitleLanguages();
     const int index = m_subtitleLanguageCodes.indexOf(m_subtitlePreferences.language);
     return index >= 0 ? index : 0;
 }
@@ -68,8 +69,11 @@ QStringList SettingsController::systemSubtitleFonts() const
 
 QVariantList SettingsController::settingsSchema() const
 {
-    static const QVariantList schema = settingSchemaModel();
-    return schema;
+    // Cached for the same reason as the fonts above, and because the row set
+    // is fixed once the provider is chosen.
+    if (m_schema.isEmpty())
+        m_schema = settingSchemaModel();
+    return m_schema;
 }
 
 QVariantMap SettingsController::values() const
@@ -154,9 +158,7 @@ void SettingsController::applyLocalValues(const QVariantMap& storedValues)
         }
         const QVariant rawValue = storedValues.value(key);
         QVariant defaultValue = settingDefaultValue(spec);
-        if (spec.target == SettingTarget::CastButtonEnabled)
-            defaultValue = platformDefaultCastButtonEnabled();
-        else if (spec.target == SettingTarget::RemoteControlTargetEnabled)
+        if (spec.target == SettingTarget::RemoteControlTargetEnabled)
             defaultValue = platformDefaultRemoteControlTargetEnabled();
         else if (spec.target == SettingTarget::RenderQuality)
             defaultValue = QString::fromLatin1(platformDefaultRenderQuality());
@@ -219,76 +221,25 @@ void SettingsController::applyLocalValues(const QVariantMap& storedValues)
     emit remoteControlSettingsChanged();
 }
 
-void SettingsController::loadRemote()
+void SettingsController::loadSubtitleLanguages() const
 {
-    if (m_remoteLoadStarted || !m_api || m_api->session().accessToken.isEmpty())
+    if (m_subtitleLanguageCodes.size() > 1)
         return;
-    m_remoteLoadStarted = true;
-
-    Async::runScoped(
-        this, m_api->fetchCultures(),
-        [this](const QJsonArray& cultures) {
-            QStringList codes { QString() };
-            QStringList labels { QStringLiteral("Any language") };
-            QSet<QString> seen { QString() };
-
-            for (const QJsonValue& value : cultures) {
-                const QJsonObject culture = value.toObject();
-                const QString code = culture.value(QStringLiteral("ThreeLetterISOLanguageName")).toString();
-                if (code.isEmpty() || seen.contains(code))
-                    continue;
-                QString label = culture.value(QStringLiteral("DisplayName")).toString();
-                if (label.isEmpty())
-                    label = code.toUpper();
-                seen.insert(code);
-                codes.push_back(code);
-                labels.push_back(label);
-            }
-
-            if (!m_subtitlePreferences.language.isEmpty() && !seen.contains(m_subtitlePreferences.language)) {
-                codes.push_back(m_subtitlePreferences.language);
-                labels.push_back(m_subtitlePreferences.language.toUpper());
-            }
-
-            m_subtitleLanguageCodes = codes;
-            m_subtitleLanguageLabels = labels;
-            emit subtitleSettingsChanged();
-        },
-        [](const std::exception_ptr& error) {
-            qWarning() << "subtitles: culture list failed" << exceptionMessage(error);
-        });
-
-    Async::runScoped(
-        this, m_api->fetchUserConfiguration(),
-        [this](const QJsonObject& configuration) {
-            m_userConfiguration = configuration;
-            m_subtitlePreferences.audioLanguage
-                = configuration.value(QStringLiteral("AudioLanguagePreference")).toString();
-            const SettingSpec& languageSpec = specForKey("subtitles/language");
-            const SettingSpec& modeSpec = specForKey("subtitles/mode");
-            const SettingSpec& audioModeSpec = specForKey("audio/trackMode");
-            setSchemaValue(languageSpec, configuration.value(QStringLiteral("SubtitleLanguagePreference")).toString(),
-                true, false, false);
-            setSchemaValue(modeSpec,
-                configuration.value(QStringLiteral("SubtitleMode")).toString(QStringLiteral("Default")), true, false,
-                false);
-            setSchemaValue(audioModeSpec,
-                configuration.value(QStringLiteral("PlayDefaultAudioTrack")).toBool(true) ? QStringLiteral("Default")
-                                                                                          : QStringLiteral("Smart"),
-                true, false, false);
-            applySubtitlePreferencesToPlayer();
-            emit settingsValuesChanged();
-            emit subtitleSettingsChanged();
-        },
-        [](const std::exception_ptr& error) {
-            qWarning() << "subtitles: user configuration failed" << exceptionMessage(error);
-        });
-}
-
-void SettingsController::clearRemote()
-{
-    m_userConfiguration = {};
-    m_remoteLoadStarted = false;
+    // Every language Qt knows, by display name; the preference is stored as
+    // the ISO 639-2 code players match against.
+    QList<std::pair<QString, QString>> languages;
+    for (int value = QLocale::Abkhazian; value <= QLocale::LastLanguage; ++value) {
+        const auto language = static_cast<QLocale::Language>(value);
+        const QString code = QLocale::languageToCode(language, QLocale::ISO639Part2);
+        if (code.size() == 3)
+            languages.append({ QLocale::languageToString(language), code });
+    }
+    std::sort(languages.begin(), languages.end(),
+        [](const auto& a, const auto& b) { return a.first.localeAwareCompare(b.first) < 0; });
+    for (const auto& [label, code] : std::as_const(languages)) {
+        m_subtitleLanguageCodes.push_back(code);
+        m_subtitleLanguageLabels.push_back(label);
+    }
 }
 
 void SettingsController::completePlayerControlTooltipSession()
@@ -426,6 +377,7 @@ void SettingsController::setUiScalePercent(int percent)
 }
 void SettingsController::setSubtitleLanguageIndex(int index)
 {
+    loadSubtitleLanguages();
     if (index >= 0 && index < m_subtitleLanguageCodes.size())
         setValue(QStringLiteral("subtitles/language"), m_subtitleLanguageCodes.at(index));
 }
@@ -478,13 +430,9 @@ void SettingsController::applySchemaValue(const SettingSpec& spec, const QVarian
         if (apply && m_player)
             m_player->setNightModeEnabled(m_nightModeEnabled);
         break;
-    case SettingTarget::CastButtonEnabled:
-        m_castButtonEnabled = value.toBool();
-        break;
     case SettingTarget::RemoteControlTargetEnabled:
         m_remoteControlTargetEnabled = value.toBool();
-        if (m_api)
-            m_api->setRemoteControlTargetEnabled(m_remoteControlTargetEnabled);
+        emit remoteControlTargetEnabledChanged(m_remoteControlTargetEnabled);
         break;
     case SettingTarget::ToneMappingVisualization:
         m_toneMappingVisualizationEnabled = value.toBool();
@@ -598,7 +546,6 @@ void SettingsController::applySchemaValue(const SettingSpec& spec, const QVarian
     case SettingTarget::AudioTrackMode:
         m_subtitlePreferences.audioMode = value.toString();
         if (apply) {
-            saveSubtitleUserConfiguration();
             applySubtitlePreferencesToPlayer();
         }
         break;
@@ -607,14 +554,12 @@ void SettingsController::applySchemaValue(const SettingSpec& spec, const QVarian
     case SettingTarget::SubtitleLanguage:
         m_subtitlePreferences.language = value.toString();
         if (apply) {
-            saveSubtitleUserConfiguration();
             applySubtitlePreferencesToPlayer();
         }
         break;
     case SettingTarget::SubtitleMode:
         m_subtitlePreferences.mode = value.toString();
         if (apply) {
-            saveSubtitleUserConfiguration();
             applySubtitlePreferencesToPlayer();
         }
         break;
@@ -774,7 +719,6 @@ void SettingsController::emitSchemaSignals(const SettingSpec& spec)
     case SettingTarget::NightMode:
         emit nightModeChanged();
         break;
-    case SettingTarget::CastButtonEnabled:
     case SettingTarget::RemoteControlTargetEnabled:
         emit remoteControlSettingsChanged();
         break;
@@ -858,11 +802,9 @@ void SettingsController::applyArtworkEncoding()
 
 void SettingsController::applyPlaybackPreferences()
 {
-    if (!m_api)
-        return;
     const qint64 manualBitrate
         = m_manualStreamingBitrate ? static_cast<qint64>(m_maxStreamingBitrateMbps) * 1'000'000 : 0;
-    m_api->setPlaybackPreferences(manualBitrate, m_unlimitedLocalBitrate, m_preferRemux, m_maxStreamingHeight);
+    emit playbackPreferencesChanged(manualBitrate, m_unlimitedLocalBitrate, m_preferRemux, m_maxStreamingHeight);
 }
 
 void SettingsController::applyAudioDelayToPlayer()
@@ -940,23 +882,6 @@ void SettingsController::applyLoadedAudioDelay(const QString& output, int delayM
     emit audioDelayChanged();
 }
 
-void SettingsController::saveSubtitleUserConfiguration()
-{
-    if (!m_api || m_api->session().accessToken.isEmpty())
-        return;
-
-    QJsonObject configuration = m_userConfiguration;
-    configuration.insert(QStringLiteral("SubtitleLanguagePreference"), m_subtitlePreferences.language);
-    configuration.insert(QStringLiteral("SubtitleMode"), m_subtitlePreferences.mode);
-    const bool smartAudio = m_subtitlePreferences.audioMode == QStringLiteral("Smart");
-    configuration.insert(QStringLiteral("PlayDefaultAudioTrack"), !smartAudio);
-    m_userConfiguration = configuration;
-
-    Async::runScoped(
-        this, m_api->updateUserConfiguration(configuration), []() {},
-        [this](const std::exception_ptr& error) { emit errorOccurred(exceptionMessage(error)); });
-}
-
 void SettingsController::applyMpvConfigPolicy()
 {
     const MpvConfigPolicy policy = validatedPlatformMpvConfigPolicy(m_mpvConfigMode, m_mpvConfigDirectory);
@@ -970,4 +895,4 @@ void SettingsController::applySubtitlePreferencesToPlayer()
         m_player->setSubtitlePreferences(m_subtitlePreferences);
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

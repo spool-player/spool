@@ -338,9 +338,8 @@ FocusScope {
 
     focus: true
     onActiveFocusChanged: if (activeFocus)
-    focusRow(list.currentIndex)
+                              focusRow(list.currentIndex)
     Component.onCompleted: {
-        Settings.loadRemote()
         rebuildRows()
     }
 
@@ -427,7 +426,7 @@ FocusScope {
         bottomMargin: root.choiceVisible && choiceLoader.item ? choiceLoader.item.panelHeight + Metrics.scaled(16) : 0
         onCountChanged: {
             if (root.pendingFocusIndex < 0 || count !== root.rows.length)
-            return
+                return
             const targetIndex = root.pendingFocusIndex
             root.pendingFocusIndex = -1
             Qt.callLater(function () {
@@ -436,7 +435,7 @@ FocusScope {
         }
         onAccepted: index => root.activateRow(index)
         onEdgeUp: if (!root.overVideo && root.shell)
-        root.shell.focusNavBar()
+                      root.shell.focusNavBar()
 
         delegate: Item {
             id: delegateItem
@@ -532,7 +531,7 @@ FocusScope {
                     font.family: {
                         const value = String(Settings.values["subtitles/font"] || "")
                         if (value.indexOf("system:") === 0)
-                        return value.slice(7)
+                            return value.slice(7)
                         return value === "interface" ? Typography.sans : Typography.subtitle
                     }
                     font.pixelSize: Metrics.scaled(26) * Number(Settings.values["subtitles/scalePercent"] || 100) / 100

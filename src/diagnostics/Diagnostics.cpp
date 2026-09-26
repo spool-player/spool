@@ -1,6 +1,6 @@
 #include "Diagnostics.h"
 
-#include "../common/JellyfinTypes.h"
+#include "../media/MediaTypes.h"
 
 #include <QAbstractEventDispatcher>
 #include <QCoreApplication>
@@ -31,23 +31,23 @@
 #include <unistd.h>
 #endif
 
-namespace JellyfinNative::Diagnostics {
+namespace Spool::Diagnostics {
 
 namespace {
 
-#ifdef JELLYFIN_DIAGNOSTICS
+#ifdef SPOOL_DIAGNOSTICS
     constexpr bool kDiagnosticsEnabled = true;
 #else
     constexpr bool kDiagnosticsEnabled = false;
 #endif
 
-#ifdef JELLYFIN_DIAGNOSTICS_STACKDUMP
+#ifdef SPOOL_DIAGNOSTICS_STACKDUMP
     constexpr bool kStackDumpEnabled = true;
 #else
     constexpr bool kStackDumpEnabled = false;
 #endif
 
-#ifdef JELLYFIN_DIAGNOSTICS_ABORT_ON_HANG
+#ifdef SPOOL_DIAGNOSTICS_ABORT_ON_HANG
     constexpr bool kAbortOnHang = true;
 #else
     constexpr bool kAbortOnHang = false;
@@ -57,7 +57,7 @@ namespace {
     constexpr qint64 kShutdownWarnMs = 6000;
     bool diagnosticsEnabled()
     {
-        return kDiagnosticsEnabled && qEnvironmentVariableIntValue("JELLYFIN_NATIVE_DIAGNOSTICS") == 1;
+        return kDiagnosticsEnabled && qEnvironmentVariableIntValue("SPOOL_DIAGNOSTICS") == 1;
     }
 
     bool credentialKey(const QString& key)
@@ -231,7 +231,7 @@ namespace {
                 continue;
             const QString cmdline = QString::fromLocal8Bit(readSmallFile(QStringLiteral("/proc/%1/cmdline").arg(pid)))
                                         .replace(QLatin1Char('\0'), QLatin1Char(' '));
-            if (!cmdline.contains(appId) && !cmdline.contains(QStringLiteral("jellyfin-native")))
+            if (!cmdline.contains(appId) && !cmdline.contains(QStringLiteral("spool")))
                 continue;
             processes.append(procSnapshotObject(pid));
         }
@@ -358,7 +358,7 @@ QString supportReportPreview()
 QString saveSupportReport()
 {
 #ifdef Q_OS_ANDROID
-    QString directory = qEnvironmentVariable("JELLYFIN_NATIVE_LOG_DIR");
+    QString directory = qEnvironmentVariable("SPOOL_LOG_DIR");
 #else
     QString directory = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
 #endif
@@ -368,7 +368,7 @@ QString saveSupportReport()
         return {};
     QFile::setPermissions(directory, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
 
-    const QString path = QDir(directory).filePath(QStringLiteral("Spool-for-Jellyfin-Diagnostics-%1.json")
+    const QString path = QDir(directory).filePath(QStringLiteral("Spool-Diagnostics-%1.json")
             .arg(QDateTime::currentDateTimeUtc().toString(QStringLiteral("yyyyMMdd-hhmmss"))));
     QFile file(path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
@@ -547,4 +547,4 @@ void NetworkRequest::finish(int statusCode, const QString& errorText)
             { QStringLiteral("error"), errorText }, { QStringLiteral("durationMs"), nowMs() - m_startedMs } });
 }
 
-} // namespace JellyfinNative::Diagnostics
+} // namespace Spool::Diagnostics

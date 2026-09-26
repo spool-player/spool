@@ -1,10 +1,10 @@
 #pragma once
 
-#include "../common/JellyfinTypes.h"
+#include "../media/MediaTypes.h"
 
 #include <QString>
 
-namespace JellyfinNative {
+namespace Spool {
 
 class PlaybackTimeline final {
 public:
@@ -38,4 +38,4 @@ private:
     double m_activeSegmentEndSeconds = 0.0;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

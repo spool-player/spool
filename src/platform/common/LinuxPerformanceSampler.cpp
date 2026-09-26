@@ -9,7 +9,7 @@
 #include <algorithm>
 #include <unistd.h>
 
-namespace JellyfinNative {
+namespace Spool {
 namespace {
     QByteArray readFile(const QString& path)
     {
@@ -243,4 +243,4 @@ bool PlatformPerformanceSampler::sample(qint64 audioDecodeCpuTimeNs, PlatformPer
     return true;
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

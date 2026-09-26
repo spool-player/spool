@@ -21,16 +21,16 @@ PLATFORMS = (
         ("x86_64", "x86-64", "x86_64", "apk", "spool-x86_64.apk"),
     )),
     ("windows", "Windows", (
-        ("installer", "Installer", "x86_64", "exe", "Spool-for-Jellyfin-{version}-Windows-x64-Setup.exe"),
-        ("portable", "Portable", "x86_64", "exe", "Spool-for-Jellyfin-{version}-Windows-x64-Portable.exe"),
+        ("installer", "Installer", "x86_64", "exe", "Spool-{version}-Windows-x64-Setup.exe"),
+        ("portable", "Portable", "x86_64", "exe", "Spool-{version}-Windows-x64-Portable.exe"),
     )),
     ("macos", "macOS", (
-        ("arm64", "Apple Silicon", "arm64", "dmg", "Spool-for-Jellyfin-{version}-macOS-arm64.dmg"),
-        ("x86_64", "Intel", "x86_64", "dmg", "Spool-for-Jellyfin-{version}-macOS-x86_64.dmg"),
+        ("arm64", "Apple Silicon", "arm64", "dmg", "Spool-{version}-macOS-arm64.dmg"),
+        ("x86_64", "Intel", "x86_64", "dmg", "Spool-{version}-macOS-x86_64.dmg"),
     )),
     ("linux", "Linux", (
-        ("appimage", "AppImage", "x86_64", "AppImage", "Spool-for-Jellyfin-{version}-x86_64.AppImage"),
-        ("portable", "Portable tarball", "x86_64", "tar.zst", "Spool-for-Jellyfin-{version}-linux-x86_64.tar.zst"),
+        ("appimage", "AppImage", "x86_64", "AppImage", "Spool-{version}-x86_64.AppImage"),
+        ("portable", "Portable tarball", "x86_64", "tar.zst", "Spool-{version}-linux-x86_64.tar.zst"),
         ("arch", "Arch Linux package", "x86_64", "pkg.tar.zst", "spool-bin-{version}-*-x86_64.pkg.tar.zst"),
     )),
 )

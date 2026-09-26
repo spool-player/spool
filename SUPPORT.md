@@ -1,6 +1,6 @@
 # Support Policy
 
-Spool for Jellyfin is prerelease software. The latest `v0.x` prerelease is the only supported binary release; `master` is development code.
+Spool is prerelease software. The latest `v0.x` prerelease is the only supported binary release; `master` is development code.
 
 Use GitHub issues for reproducible project defects and feature requests. General Jellyfin server administration, media encoding, network configuration, and unsupported operating-system questions belong in the appropriate Jellyfin community support channel.
 

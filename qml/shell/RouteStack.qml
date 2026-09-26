@@ -5,7 +5,7 @@ import "PageReadiness.js" as PageReadiness
 FocusScope {
     id: root
 
-    property string route: "login"
+    property string route: "home"
     property var shell
     property bool startupReady: true
     focus: true
@@ -13,7 +13,7 @@ FocusScope {
     property var uiTransitionToken: 0
 
     // Resident-page host: pages are created once and route changes switch
-    // visibility + focus only. Login is destroyed on leave;
+    // visibility + focus only. Setup pages are destroyed on leave;
     // itemDetails/personDetails/search are evicted under memory pressure.
     property var pages: ({})
     property var activeLoader: null
@@ -28,18 +28,17 @@ FocusScope {
 
     function pageKey(nextRoute) {
         switch (nextRoute) {
-        case "login":
-            return "login"
+        case "accounts":
+        case "addProvider":
+        case "providerScreen":
         case "libraryGrid":
-            return "libraryGrid"
+            return nextRoute
         case "itemDetails":
             return "itemDetails"
         case "personDetails":
             return "personDetails"
         case "search":
             return "search"
-        case "remoteControl":
-            return "remoteControl"
         case "openSourceNotices":
             return "openSourceNotices"
         case "settings":
@@ -53,8 +52,12 @@ FocusScope {
 
     function pageSource(key) {
         switch (key) {
-        case "login":
-            return Qt.resolvedUrl("../pages/LoginPage.qml")
+        case "accounts":
+            return Qt.resolvedUrl("../pages/AccountsPage.qml")
+        case "addProvider":
+            return Qt.resolvedUrl("../pages/AddProviderPage.qml")
+        case "providerScreen":
+            return Qt.resolvedUrl("../pages/ProviderScreenPage.qml")
         case "libraryGrid":
             return Qt.resolvedUrl("../pages/LibraryGridPage.qml")
         case "itemDetails":
@@ -63,8 +66,6 @@ FocusScope {
             return Qt.resolvedUrl("../pages/PersonDetailsPage.qml")
         case "search":
             return Qt.resolvedUrl("../pages/SearchPage.qml")
-        case "remoteControl":
-            return Qt.resolvedUrl("../pages/RemoteControlPage.qml")
         case "openSourceNotices":
             return Qt.resolvedUrl("../pages/OpenSourceNoticesPage.qml")
         case "settings":
@@ -107,24 +108,24 @@ FocusScope {
     function showRoute() {
         const key = pageKey(route)
         const existing = pages[key]
-        const promoted = existing && existing.status === Loader.Loading
-        // Somebody is looking at the screen waiting for this page. The
-        // incubator's whole purpose is to protect frames it does not know are
-        // being wasted: it spreads a cold build over eighteen of them and the
-        // gui thread sits idle for half that window. Build it in one go.
-        const loader = loaderFor(key, true)
-        pendingLoader = loader
-        // Finish in-flight incubation synchronously when someone is actively
-        // waiting on this exact page: a promoted prewarm the user beat to the
-        // punch, or the startup route while nothing else is on screen yet.
-        if (promoted || activeRoute === "")
-            loader.asynchronous = false
-        const warm = loader.status === Loader.Ready && Boolean(loader.item)
+        // Classify the cache BEFORE loaderFor() can synchronously create a page.
+        // Start timing there too: otherwise cold construction disappears from
+        // the sample and the newly constructed page is misreported as a hit.
+        const promoted = Boolean(existing && existing.status === Loader.Loading)
+        const warm = Boolean(existing && existing.status === Loader.Ready && existing.item)
         const cacheHit = warm ? "hit" : promoted ? "promoted" : "miss"
+        pendingLoader = null
         uiTransitionToken = InputLatency.beginUiTransition("route:" + route + (warm ? ":warm" : ":cold"), activeRoute, route,
                                                            cacheHit)
         settleWatchdog.restart()
-        if (warm) {
+
+        const loader = loaderFor(key, true)
+        pendingLoader = loader
+        // Finishing a promoted loader can emit onLoaded synchronously and
+        // activate it here. Do not activate the same page a second time below.
+        if (promoted || activeRoute === "")
+            loader.asynchronous = false
+        if (pendingLoader === loader && loader.status === Loader.Ready && Boolean(loader.item)) {
             InputLatency.mark(uiTransitionToken, "instance")
             activatePending()
         }
@@ -172,7 +173,7 @@ FocusScope {
         // while it builds. What made a television slow was never the
         // prewarming; it was dropping every page the moment it left the
         // screen and paying to build it again on the way back.
-        if (Session.authenticated && !prewarmScheduled) {
+        if (Providers.hasAccounts && !prewarmScheduled) {
             prewarmScheduled = true
             // Most-wanted first. The budget stops this queue partway through on
             // a small television, so whatever stands at the front is what
@@ -186,7 +187,7 @@ FocusScope {
     }
 
     function dropTransientPages() {
-        for (const key of ["login"]) {
+        for (const key of ["accounts", "addProvider", "providerScreen"]) {
             const loader = pages[key]
             if (loader && loader !== activeLoader) {
                 delete pages[key]
@@ -234,7 +235,7 @@ FocusScope {
     }
 
     function evictBeyondBudget() {
-        const shown = useOrder.filter(key => Boolean(pages[key]));
+        const shown = useOrder.filter(key => Boolean(pages[key]))
         // Prewarmed pages never pass through noteUse(), so an order taken from
         // useOrder alone could not see them: the budget said three while the
         // process was holding five. Count every resident page, and spend the
@@ -248,7 +249,7 @@ FocusScope {
             if (!loader || loader === activeLoader || key === pinnedPageKey)
                 continue
             delete pages[key]
-            loader.destroy()
+            loader.destroy();
             --excess
             console.info("route host: released", key)
         }

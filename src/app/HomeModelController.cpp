@@ -1,6 +1,5 @@
 #include "HomeModelController.h"
 
-#include "../api/JellyfinApiFacade.h"
 #include "../cache/DatabaseManager.h"
 #include "../common/AsyncTask.h"
 #include "../common/MetaJson.h"
@@ -18,7 +17,7 @@
 #include <algorithm>
 #include <utility>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
     constexpr int kHomePayloadSchemaVersion = 12;
@@ -163,10 +162,10 @@ namespace {
 } // namespace
 
 HomeModelController::HomeModelController(
-    DatabaseManager *database, JellyfinApiFacade *api, LibraryPrefetchController *prefetch, QObject *parent)
+    DatabaseManager *database, Catalog *catalog, LibraryPrefetchController *prefetch, QObject *parent)
     : QObject(parent)
     , m_database(database)
-    , m_api(api)
+    , m_api(catalog)
     , m_prefetch(prefetch)
 {
 }
@@ -242,12 +241,7 @@ QCoro::Task<void> HomeModelController::loadCachedPayloadAsync()
 
 QString HomeModelController::payloadCacheKey() const
 {
-    if (!m_api)
-        return {};
-    const AuthSession session = m_api->session();
-    const QString userKey = session.userId.isEmpty() ? session.userName : session.userId;
-    const QString serverKey = session.serverId.isEmpty() ? m_api->serverUrl() : session.serverId;
-    return userKey.isEmpty() || serverKey.isEmpty() ? QString() : QStringLiteral("%1/%2").arg(serverKey, userKey);
+    return m_api ? m_api->libraryScopeKey() : QString();
 }
 
 void HomeModelController::saveCachedPayload(const QJsonObject& payload)
@@ -259,7 +253,7 @@ void HomeModelController::saveCachedPayload(const QJsonObject& payload)
 
 void HomeModelController::refresh(const std::vector<LibraryItem>& libraries)
 {
-    if (!m_api || m_api->session().accessToken.isEmpty())
+    if (!m_api || !m_api->signedIn())
         return;
     if (libraries.empty())
         return;
@@ -542,4 +536,4 @@ QJsonObject HomeModelController::payloadFromSections(const std::vector<MovieItem
     };
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

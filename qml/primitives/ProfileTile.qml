@@ -1,21 +1,18 @@
 import QtQuick
 import "../theme"
 
-// A saved account in the picker: initial-avatar tile, name, and the server it
-// belongs to. Everything it draws is derived from the account itself, so the
-// picker only has to hand it the profile fields.
+// An account: initial-avatar tile, name, and the server it belongs to.
 FocusScope {
     id: root
 
     property int tileSize: Metrics.scaled(152)
     property string username: ""
     property string serverName: ""
-    property string serverAddress: ""
     property bool needsSignIn: false
     property bool addTile: false
     property bool focused: activeFocus
 
-    readonly property int labelHeight: Metrics.scaled(addTile ? 34 : 66)
+    readonly property int labelHeight: Metrics.scaled(addTile || serverName.length === 0 ? 34 : 52)
 
     readonly property string initial: {
         const name = String(username).trim()
@@ -48,7 +45,8 @@ FocusScope {
         height: root.tileSize
         radius: Theme.radiusLarge
         color: root.addTile ? Theme.bgRaised : root.avatarColor
-        border.width: root.focused ? Theme.focusBorderWidth : root.addTile || (hover.hovered && Metrics.pointerActive)
+        border.width: root.focused ? Theme.focusBorderWidth : (root.addTile || (hover.hovered
+                                                                                && Metrics.pointerActive))
                                      ? Theme.hoverBorderWidth : 0
         border.color: root.focused ? Theme.accent : Theme.border
         antialiasing: true
@@ -135,17 +133,6 @@ FocusScope {
             text: root.serverName
             color: Theme.textMuted
             font.pixelSize: Metrics.scaled(13)
-            horizontalAlignment: Text.AlignHCenter
-            maximumLineCount: 1
-            elide: Text.ElideRight
-        }
-
-        SecondaryText {
-            width: parent.width
-            visible: !root.addTile && root.serverAddress.length > 0
-            text: root.serverAddress
-            color: Theme.textDisabled
-            font.pixelSize: Metrics.scaled(12)
             horizontalAlignment: Text.AlignHCenter
             maximumLineCount: 1
             elide: Text.ElideRight

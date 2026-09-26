@@ -1,10 +1,10 @@
 #include "platform/MpvConfigPolicy.h"
 
-namespace JellyfinNative {
+namespace Spool {
 
 MpvConfigPolicy validatedPlatformMpvConfigPolicy(const QString&, const QString&)
 {
     return {};
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

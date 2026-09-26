@@ -13,7 +13,7 @@
 
 #include <ctime>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
     qint64 g_staticInitializationNs = 0;
@@ -124,4 +124,4 @@ TerminationSignalHandler::TerminationSignalHandler(QCoreApplication& application
 
 TerminationSignalHandler::~TerminationSignalHandler() = default;
 
-} // namespace JellyfinNative
+} // namespace Spool

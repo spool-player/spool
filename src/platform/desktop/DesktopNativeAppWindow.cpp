@@ -4,7 +4,7 @@
 #include <QRegularExpression>
 #include <QResizeEvent>
 
-namespace JellyfinNative {
+namespace Spool {
 struct NativeAppWindow::PlatformData { };
 
 NativeAppWindow::NativeAppWindow(const QString& appId, QWindow *parent)
@@ -14,7 +14,7 @@ NativeAppWindow::NativeAppWindow(const QString& appId, QWindow *parent)
 {
     setColor(Qt::black);
     setResizeMode(QQuickView::SizeRootObjectToView);
-    setTitle(QStringLiteral("Spool for Jellyfin"));
+    setTitle(QStringLiteral("Spool"));
 #ifdef Q_OS_MACOS
     setFlags(flags() | Qt::ExpandedClientAreaHint | Qt::NoTitleBarBackgroundHint);
 #endif
@@ -82,7 +82,7 @@ void NativeAppWindow::exitToLauncher()
 
 QString NativeAppWindow::windowId() const
 {
-    return { };
+    return {};
 }
 
 void NativeAppWindow::exposeEvent(QExposeEvent *event)
@@ -99,4 +99,4 @@ void NativeAppWindow::handlePlatformSurfaceCreated() { }
 
 void NativeAppWindow::handlePlatformSurfaceAboutToBeDestroyed() { }
 
-} // namespace JellyfinNative
+} // namespace Spool

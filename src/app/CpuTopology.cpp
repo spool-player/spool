@@ -4,14 +4,14 @@
 #include <algorithm>
 #include <thread>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
 
     int environmentDecodeThreads()
     {
         bool ok = false;
-        const int value = QString::fromLocal8Bit(qgetenv("JELLYFIN_WEBP_DECODE_THREADS")).toInt(&ok);
+        const int value = QString::fromLocal8Bit(qgetenv("SPOOL_WEBP_DECODE_THREADS")).toInt(&ok);
         return ok ? value : 0;
     }
 
@@ -35,4 +35,4 @@ CpuTopology detectCpuTopology()
     return { logical, physical, smt, decodeThreads, source };
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

@@ -5,7 +5,7 @@
 #include <QFile>
 #include <QStandardPaths>
 
-namespace JellyfinNative::CredentialStore {
+namespace Spool::CredentialStore {
 namespace {
 
     QString credentialRoot()
@@ -54,4 +54,4 @@ void clear()
     QDir(credentialRoot()).removeRecursively();
 }
 
-} // namespace JellyfinNative::CredentialStore
+} // namespace Spool::CredentialStore

@@ -7,7 +7,7 @@ param(
 Initialize-WindowsBuildEnvironment
 $root = Get-RepositoryRoot
 $buildDir = Join-Path $root 'build\windows-release\app'
-if (-not (Test-MpvBuildCurrent -Prefix $env:JELLYFIN_MPV_ROOT)) {
+if (-not (Test-MpvBuildCurrent -Prefix $env:SPOOL_MPV_ROOT)) {
     # libmpv is built by clang and lld with a PATH, CC and CXX of its own; the
     # application is built by MSVC. Run it in a child process so that
     # environment cannot outlive it: in-process it did, and the resource

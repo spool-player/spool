@@ -3,7 +3,7 @@ Initialize-WindowsBuildEnvironment
 $root = Get-RepositoryRoot
 $buildDir = Join-Path $root 'build\windows-release\app'
 $stageDir = Join-Path $root 'build\windows-release\stage'
-$exe = Join-Path $buildDir 'jellyfin-native.exe'
+$exe = Join-Path $buildDir 'spool.exe'
 
 if (-not (Test-Path -LiteralPath $exe)) {
     throw "Release executable was not found: $exe"
@@ -26,13 +26,13 @@ foreach ($fontName in @(
     Copy-Item -LiteralPath (Join-Path $root "qml\fonts\$fontName") -Destination $fontDir
 }
 
-& (Join-Path $env:JELLYFIN_QT_ROOT 'bin\windeployqt.exe') `
+& (Join-Path $env:SPOOL_QT_ROOT 'bin\windeployqt.exe') `
     --release --no-translations --no-system-d3d-compiler --no-system-dxc-compiler `
     --no-compiler-runtime --no-opengl-sw `
     --skip-plugin-types qmltooling,generic `
     --include-plugins qwebp `
     --exclude-plugins qsqlibase,qsqlmimer,qsqloci,qsqlodbc,qsqlpsql `
-    --qmldir (Join-Path $root 'qml') (Join-Path $stageDir 'jellyfin-native.exe')
+    --qmldir (Join-Path $root 'qml') (Join-Path $stageDir 'spool.exe')
 if ($LASTEXITCODE -ne 0) { throw 'windeployqt failed.' }
 
 $foreignStylePaths = @(
@@ -77,7 +77,7 @@ if (-not (Test-Path -LiteralPath $webpPlugin)) {
     throw 'Qt WebP support was not deployed. Reinstall the pinned Qt imageformats archives with tools\windows\install-qt.ps1 -Force.'
 }
 
-$mpvBin = Join-Path $env:JELLYFIN_MPV_ROOT 'bin'
+$mpvBin = Join-Path $env:SPOOL_MPV_ROOT 'bin'
 $mpvCandidates = @(Get-ChildItem -LiteralPath $mpvBin -Filter '*mpv*.dll' -File)
 $mpvDll = $mpvCandidates | Where-Object Name -EQ 'mpv-2.dll' | Select-Object -First 1
 if (-not $mpvDll) { $mpvDll = $mpvCandidates | Select-Object -First 1 }
@@ -121,7 +121,7 @@ foreach ($binary in Get-ChildItem -LiteralPath $stageDir -Recurse -File |
         throw "The staged Windows payload has duplicate same-name providers: $($binary.Name)"
     }
     $stagedProviders[$key] = $binary.FullName
-    if ($binary.Name -in @('jellyfin-native.exe', 'mpv-2.dll') -or
+    if ($binary.Name -in @('spool.exe', 'mpv-2.dll') -or
         $binary.DirectoryName -ne $stageDir) {
         [void] $runtimeRoots.Add($binary.FullName)
     }
@@ -207,9 +207,9 @@ if ($LASTEXITCODE -ne 0) { throw 'FFmpeg dependency closure audit failed.' }
 
 $launchRoot = Join-Path $env:TEMP "spool-stage-launch-$PID"
 $env:LOCALAPPDATA = Join-Path $launchRoot 'data'
-$env:JELLYFIN_NATIVE_CACHE_HOME = Join-Path $launchRoot 'cache'
-$env:JELLYFIN_DIAGNOSTICS_DIR = Join-Path $launchRoot 'diagnostics'
-$launchProcess = Start-Process -FilePath (Join-Path $stageDir 'jellyfin-native.exe') `
+$env:SPOOL_CACHE_HOME = Join-Path $launchRoot 'cache'
+$env:SPOOL_DIAGNOSTICS_DIR = Join-Path $launchRoot 'diagnostics'
+$launchProcess = Start-Process -FilePath (Join-Path $stageDir 'spool.exe') `
     -ArgumentList '--launch-test' -WorkingDirectory $stageDir -PassThru
 if (-not $launchProcess.WaitForExit(45000)) {
     Stop-Process -Id $launchProcess.Id -Force
@@ -217,7 +217,7 @@ if (-not $launchProcess.WaitForExit(45000)) {
 }
 $launchProcess.Refresh()
 if ($launchProcess.ExitCode -ne 0) {
-    $launchLog = Join-Path $env:LOCALAPPDATA 'spool-jellyfin\logs\jellyfin-native.log'
+    $launchLog = Join-Path $env:LOCALAPPDATA 'spool-jellyfin\logs\spool.log'
     if (Test-Path -LiteralPath $launchLog) {
         Write-Host '--- staged executable launch log ---'
         Get-Content -LiteralPath $launchLog

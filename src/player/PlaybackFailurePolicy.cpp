@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <mpv/client.h>
 
-namespace JellyfinNative {
+namespace Spool {
 
 bool PlaybackFailurePolicy::isRetryableCodecFailure(const QString& playMethod, bool failedBeforeLoad, int mpvError)
 {
@@ -40,4 +40,4 @@ void PlaybackFailurePolicy::prepareFallbackSession(PlaybackSession& session,
     session.restoreStreamSelection = true;
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

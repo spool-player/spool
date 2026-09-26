@@ -1,4 +1,4 @@
-# Spool for Jellyfin
+# Spool
 
 - libmpv: We've forked this and made it compatible in the directory above. keep libmpv behind a thin PlayerController / PlaybackController facade and do not let Jellyfin/network/UI code know about mpv internals.
 - Qt6.11
@@ -10,6 +10,15 @@
   Models: C++ QAbstractListModel exposed to QML, not ad hoc QML data blobs. QAbstractListModel is the standard one-dimensional model base, and both GridView and ListView are designed to consume C++ models like that efficiently.
   10-foot / remote navigation: build around GridView / ListView + FocusScope + KeyNavigation + Keys. KeyNavigation is specifically for arrow/tab-based focus jumps, and FocusScope exists to keep reusable focus regions sane, which is exactly the problem space for D-pad TV UIs.
   HTTP asset caching: QNetworkDiskCache for posters, backdrops, and image responses. It is basic, but it plugs directly into QNetworkAccessManager; just remember it is basic by design and defaults to a 50 MB limit, so you will probably want to raise that.
+
+## Episode details
+
+Season details open the episode row at an in-progress episode, or the next
+playable episode after the last watched one. A completed season starts at its
+last watched episode. Episode details instead start at the episode being viewed.
+That episode is aligned to the row's left edge, including at the end of a season;
+earlier episodes remain available by scrolling left. The initial positioning
+does not take focus from the main action or reset subsequent manual navigation.
 
 ## Desktop mpv configuration and keys
 
@@ -176,7 +185,7 @@ not require ADB or broad storage permissions.
 
 # Name
 
-## Fast Jellyfin client for LG TVs and desktop
+## Fast media player for LG TVs and desktop
 
 // Download link box
 

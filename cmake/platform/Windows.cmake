@@ -1,4 +1,4 @@
-function(jellyfin_resolve_windows_dependencies)
+function(spool_resolve_windows_dependencies)
     set(MPV_ROOT "" CACHE PATH "Windows libmpv SDK prefix")
     find_path(MPV_INCLUDE_DIR mpv/client.h
         HINTS "${MPV_ROOT}/include"
@@ -32,7 +32,7 @@ function(jellyfin_resolve_windows_dependencies)
     endif()
 endfunction()
 
-function(jellyfin_configure_windows_targets native_target core_target)
+function(spool_configure_windows_targets native_target core_target)
     # Packaged desktop launches must not allocate a console. Diagnostics are
     # written to the app-owned log directory even when no stderr handle exists.
     set_target_properties(${native_target} PROPERTIES WIN32_EXECUTABLE TRUE)
@@ -54,9 +54,9 @@ function(jellyfin_configure_windows_targets native_target core_target)
     )
     configure_file(
         "${CMAKE_CURRENT_SOURCE_DIR}/cmake/platform/windows-version.rc.in"
-        "${CMAKE_CURRENT_BINARY_DIR}/jellyfin-native-version.rc"
+        "${CMAKE_CURRENT_BINARY_DIR}/spool-version.rc"
         @ONLY
     )
-    target_sources(${native_target} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/jellyfin-native-version.rc")
+    target_sources(${native_target} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/spool-version.rc")
     target_link_libraries(${core_target} PUBLIC MPV::MPV Advapi32 PRIVATE User32)
 endfunction()

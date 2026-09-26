@@ -2,7 +2,7 @@
 
 class QQuickWindow;
 
-namespace JellyfinNative {
+namespace Spool {
 
 struct DisplayOutputCapabilities;
 
@@ -17,4 +17,4 @@ namespace PlatformDisplayOutput {
 
 } // namespace PlatformDisplayOutput
 
-} // namespace JellyfinNative
+} // namespace Spool

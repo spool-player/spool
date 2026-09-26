@@ -127,17 +127,10 @@ KeyRouter {
 
     readonly property string route: Router.route
     readonly property var routeArgs: Router.args || ({})
-    property bool remoteConnectionKnown: false
-    property string lastRemoteTargetName: ""
-    onRouteChanged: {
-        root.exitArmedAt = 0
-        if (route === "remoteControl" && !RemoteControl.targetSelected) {
-            Qt.callLater(function () {
-                if (root.route === "remoteControl" && !RemoteControl.targetSelected)
-                    root.goHome()
-            })
-        }
-    }
+    // Routes that stand outside browsing: no rail, no now-playing chrome.
+    readonly property bool setupRoute: chromeRoute === "addProvider" || chromeRoute === "providerScreen"
+    readonly property bool signedIn: Providers.hasAccounts
+    onRouteChanged: root.exitArmedAt = 0
 
     // Back is how an Android app is left, and at the top of the stack there is
     // nowhere further to go. Nothing here ever exited, so the press did
@@ -151,11 +144,6 @@ KeyRouter {
     property int exitConfirmWindowMs: 3000
     property double exitArmedAt: 0
     property bool diagnosticsVisible: false
-    property string switchUserReturnProfileId: ""
-    property string switchUserReturnRoute: ""
-    property var switchUserReturnArgs: ({})
-    property bool switchUserReturnPending: false
-    readonly property bool canCancelSwitchUser: switchUserReturnProfileId.length > 0
     property bool mediaInfoVisible: false
     property bool itemMenuLoaded: false
     property int uiScaleShortcutKey: 0
@@ -164,16 +152,15 @@ KeyRouter {
     readonly property bool itemMenuOpen: itemContextMenuLoader.item ? itemContextMenuLoader.item.opened : false
     readonly property bool tlsTrustPending: TlsTrust.pending
     property var mediaInfoItem: ({})
-    property bool managementOverlayVisible: false
-    property string managementMode: ""
-    property var managementItem: ({})
+    // A provider screen asked for while something plays (a release picker).
+    property var providerOverlay: null
     property var personItem: ({})
     property var pendingPlaybackBackItem: ({})
     textInputActive: Qt.inputMethod.visible || InputKeys.isTextInputItem(root.Window.window
                                                                          ? root.Window.window.activeFocusItem : null)
     property var navigationTarget: routeStack
-    activeTarget: updateDialog.open ? updateDialog : tlsTrustPending ? tlsTrustDialog : managementOverlayVisible
-                                                                       ? managementOverlayLoader.item : itemMenuOpen
+    activeTarget: updateDialog.open ? updateDialog : tlsTrustPending ? tlsTrustDialog : providerOverlay
+                                                                       ? providerOverlayLoader.item : itemMenuOpen
                                                                          ? itemContextMenuLoader.item :
                                                                            mediaInfoVisible
                                                                            ? mediaInfoOverlayLoader.item : hasPlayer
@@ -324,30 +311,19 @@ KeyRouter {
                                "returnRoute": root.route
                            })
         }
-        function onRemoteSeekPreviewRequested(positionTicks, active) {
-            videoSurface.showRemoteSeekPreview(Number(positionTicks) / 10000000, active)
-        }
     }
 
     Connections {
-        target: RemoteControl
-        function onTargetChanged() {
-            if (RemoteControl.targetSelected) {
-                const name = RemoteControl.selectedTargetName || "remote device"
-                if (!root.remoteConnectionKnown || root.lastRemoteTargetName !== name)
-                    toast.show("Connected to " + name, toast.briefDurationMs)
-                root.remoteConnectionKnown = true
-                root.lastRemoteTargetName = name
-                return
-            }
-            if (!root.remoteConnectionKnown)
-                return
-            const targetName = root.lastRemoteTargetName || "remote device"
-            root.remoteConnectionKnown = false
-            root.lastRemoteTargetName = ""
-            if (root.route === "remoteControl")
-                root.goHome()
-            toast.show("Disconnected from " + targetName, toast.briefDurationMs)
+        target: Providers
+        function onRestoredChanged() {
+            if (App.initialized)
+                root.applyInitializedRoute()
+        }
+        function onAccountAdded() {
+            root.goHome()
+        }
+        function onComponentRequested(context) {
+            root.providerOverlay = context
         }
     }
     function showToastAction(message, actionText, callback) {
@@ -355,11 +331,11 @@ KeyRouter {
     }
 
     function defaultRoute() {
-        return Session.authenticated ? "home" : "login"
+        return root.signedIn ? "home" : "addProvider"
     }
 
     function restoreRecoveredRoute() {
-        if (!Router.recoveryPending || !Session.authenticated)
+        if (!Router.recoveryPending || !root.signedIn)
             return false
         const args = root.routeArgs
         if (root.route === "libraryGrid") {
@@ -404,31 +380,15 @@ KeyRouter {
     }
 
     function applyInitializedRoute() {
+        if (!Providers.restored)
+            return
         if (Router.recoveryPending) {
             if (root.restoreRecoveredRoute())
                 return
-            if (Session.authenticated)
+            if (root.signedIn)
                 return
         }
         Router.reset(root.defaultRoute())
-    }
-
-    Connections {
-        target: Session
-        function onAuthenticatedStateChanged() {
-            if (Session.authenticated && root.switchUserReturnPending) {
-                root.completeSwitchUserReturn()
-                return
-            }
-            if (Session.authenticated)
-                root.clearSwitchUserReturn()
-            if (Session.authenticated && root.restoreRecoveredRoute())
-                return
-            if (Session.authenticated)
-                Router.replace(root.defaultRoute())
-            else
-                Router.reset(root.defaultRoute())
-        }
     }
 
     // Every platform states its own text rendering rather than inheriting a
@@ -470,8 +430,6 @@ KeyRouter {
         // is what raises the on-screen keyboard, so the row stays the D-pad
         // target until Select is pressed.
         Theme.textEntryFollowsFocus = !Platform.isTV
-        root.remoteConnectionKnown = RemoteControl.targetSelected
-        root.lastRemoteTargetName = RemoteControl.targetSelected ? RemoteControl.selectedTargetName : ""
         if (App.initialized)
             root.applyInitializedRoute()
     }
@@ -641,56 +599,11 @@ KeyRouter {
         }
     }
 
-    function switchUser() {
-        switchUserReturnProfileId = Session.activeProfileId
-        switchUserReturnRoute = route
-        switchUserReturnArgs = Object.assign({}, routeArgs)
-        switchUserReturnPending = false
-        Router.reset("login")
-        App.switchUser()
-        navigationTarget = routeStack
-        InputKeys.focus(routeStack)
-    }
-
-    // The way out of a start that is not arriving: back to the server list,
-    // with discovery running again, without waiting for whatever is not
-    // answering.
-    function chooseServer() {
-        switchUser()
-        Qt.callLater(function () {
-            const page = routeStack.activeItem
-            if (page && page.openAddAccount)
-                page.openAddAccount()
-        })
-    }
-
-    function cancelSwitchUser() {
-        if (!canCancelSwitchUser)
-            return false
-        if (switchUserReturnPending)
-            return true
-        switchUserReturnPending = true
-        App.useProfile(switchUserReturnProfileId)
-        return true
-    }
-
-    function completeSwitchUserReturn() {
-        if (!switchUserReturnPending || !Session.authenticated)
-            return false
-        const returnRoute = switchUserReturnRoute
-        const returnArgs = switchUserReturnArgs
-        clearSwitchUserReturn()
-        Router.reset(returnRoute, returnArgs)
-        navigationTarget = routeStack
-        InputKeys.focus(routeStack)
-        return true
-    }
-
-    function clearSwitchUserReturn() {
-        switchUserReturnProfileId = ""
-        switchUserReturnRoute = ""
-        switchUserReturnArgs = ({})
-        switchUserReturnPending = false
+    function openProviderScreen(context) {
+        if (context)
+            pushRoute("providerScreen", {
+                          "context": context
+                      })
     }
 
     function releaseTextInput() {
@@ -713,12 +626,8 @@ KeyRouter {
             releaseTextInput()
             return true
         }
-        if (navBar.visible && navBar.remoteControlMenuOpen) {
-            navBar.closeRemoteMenu()
-            return true
-        }
-        if (navBar.visible && navBar.syncPlayMenuOpen) {
-            navBar.closeSyncPlayMenu()
+        if (navBar.visible && navBar.groupMenuOpen) {
+            navBar.closeGroupMenu()
             return true
         }
         if (diagnosticsVisible) {
@@ -729,8 +638,8 @@ KeyRouter {
             itemContextMenuLoader.item.closeMenu()
             return true
         }
-        if (managementOverlayVisible) {
-            closeManagementOverlay()
+        if (providerOverlay) {
+            providerOverlay.close()
             return true
         }
         if (mediaInfoVisible) {
@@ -756,7 +665,7 @@ KeyRouter {
             goHome()
             return true
         }
-        if (route === "home" || route === "login")
+        if (route === "home" || (route === "addProvider" && !root.signedIn))
             return backAtRoot()
         if (Router.canPop) {
             Router.pop(route === "personDetails" ? "itemDetails" : "home")
@@ -780,10 +689,8 @@ KeyRouter {
     }
 
     function forward() {
-        if (tlsTrustPending || textInputActive || (navBar.visible && (navBar.syncPlayMenuOpen
-                                                                      || navBar.remoteControlMenuOpen))
-                || diagnosticsVisible || itemMenuOpen || managementOverlayVisible || mediaInfoVisible
-                || playerSessionActive)
+        if (tlsTrustPending || textInputActive || (navBar.visible && navBar.groupMenuOpen) || diagnosticsVisible
+                || itemMenuOpen || providerOverlay || mediaInfoVisible || playerSessionActive)
             return true
         if (!Router.canForward)
             return false
@@ -801,7 +708,6 @@ KeyRouter {
     }
 
     function openItemMenu(item, anchorItem, context) {
-        Management.loadCurrentUserPolicy()
         itemMenuLoaded = true
         return itemContextMenuLoader.item ? itemContextMenuLoader.item.openForItem(item || ({}), anchorItem || null,
                                                                                    context || ({})) : false
@@ -813,7 +719,7 @@ KeyRouter {
     }
 
     function restoreFocusAfterItemMenu() {
-        if (managementOverlayVisible || mediaInfoVisible || diagnosticsVisible || player.visible)
+        if (providerOverlay || mediaInfoVisible || diagnosticsVisible || player.visible)
             return
         navigationTarget = routeStack
         InputKeys.focus(routeStack)
@@ -837,20 +743,6 @@ KeyRouter {
     function closeMediaInfo() {
         mediaInfoVisible = false
         mediaInfoItem = ({})
-        InputKeys.focus(routeStack)
-    }
-
-    function openManagement(mode, item) {
-        managementMode = mode
-        managementItem = item || ({})
-        managementOverlayVisible = true
-    }
-
-    function closeManagementOverlay() {
-        managementOverlayVisible = false
-        managementMode = ""
-        managementItem = ({})
-        Qt.inputMethod.hide()
         InputKeys.focus(routeStack)
     }
 
@@ -881,7 +773,7 @@ KeyRouter {
     }
 
     function focusNavBar() {
-        if (route === "login")
+        if (setupRoute)
             return
         const page = routeStack.activeItem
         if (page && page.revealHeader)
@@ -994,13 +886,9 @@ KeyRouter {
         PointHandler {
             acceptedButtons: Qt.LeftButton
             onActiveChanged: if (active) {
-                                 if (navBar.remoteControlMenuOpen && !navBar.containsRemoteControlPoint(root,
-                                                                                                        point.position.x,
-                                                                                                        point.position.y))
-                                     navBar.closeRemoteMenu(false)
-                                 if (navBar.syncPlayMenuOpen && !navBar.containsSyncPlayPoint(root, point.position.x,
-                                                                                              point.position.y))
-                                     navBar.closeSyncPlayMenu(false)
+                                 if (navBar.groupMenuOpen && !navBar.containsGroupPoint(root, point.position.x,
+                                                                                        point.position.y))
+                                     navBar.closeGroupMenu(false)
                              }
         }
     }
@@ -1039,9 +927,9 @@ KeyRouter {
                 // window lane; top and bottom can briefly coexist and leave the
                 // bar stretched across the viewport.
                 y: root.navBarAtBottom ? Math.max(0, parent.height - height) : 0
-                height: root.chromeRoute === "login" ? 0 : Metrics.topBarHeightPx
+                height: root.setupRoute ? 0 : Metrics.topBarHeightPx
                 edge: root.navBarAtBottom ? "bottom" : "top"
-                visible: root.chromeRoute !== "login"
+                visible: !root.setupRoute
                 z: 1
                 // Same reason as the height above: the rail marks where you are,
                 // not where you are going, so it does not blink its selection off
@@ -1052,8 +940,6 @@ KeyRouter {
                 onNavigate: r => {
                     if (r === "home")
                         root.goHome()
-                    else if (r === "switchUser")
-                        root.switchUser()
                     else if (r === "settings")
                         root.pushRoute("settings")
                     else
@@ -1062,39 +948,19 @@ KeyRouter {
                 onContentRequested: root.focusContent()
             }
 
-            // Space the now-playing bar takes out of the page, so content ends
-            // above it rather than under it.
-            readonly property real nowPlayingReserve: nowPlayingBar.visible ? nowPlayingBar.height : 0
-
             RouteStack {
                 id: routeStack
                 objectName: "shellRouteStack"
                 anchors.left: parent.left
                 anchors.right: parent.right
                 y: root.navBarAtBottom ? 0 : navBar.height
-                height: Math.max(0, parent.height - navBar.height - contentLayer.nowPlayingReserve)
+                height: Math.max(0, parent.height - navBar.height)
                 route: root.route
                 shell: root
                 startupReady: App.initialized
                 focus: !(root.hasPlayer && root.playerHoldsScreen)
                 onActiveFocusChanged: if (activeFocus)
                                           root.navigationTarget = routeStack
-            }
-
-            RemoteNowPlayingBar {
-                id: nowPlayingBar
-                objectName: "shellRemoteNowPlayingBar"
-                anchors.left: parent.left
-                anchors.right: parent.right
-                // Above the navigation when it sits at the bottom, against the
-                // viewport edge when it does not.
-                y: root.navBarAtBottom ? Math.max(0, navBar.y - height) : Math.max(0, parent.height - height)
-                z: 2
-                // The remote control page is this bar in full, so it would only
-                // duplicate itself there.
-                visible: shown && root.chromeRoute !== "remoteControl" && root.chromeRoute !== "login"
-                enabled: visible
-                onOpenRequested: root.pushRoute("remoteControl")
             }
         }
     }
@@ -1201,9 +1067,12 @@ KeyRouter {
                 ActionButton {
                     id: switchServerButton
                     Layout.alignment: Qt.AlignHCenter
-                    text: "Switch server"
+                    text: "Accounts"
                     kind: "secondary"
-                    onClicked: root.chooseServer()
+                    onClicked: {
+                        startupSplash.dismissed = true
+                        Router.reset("accounts")
+                    }
                 }
             }
         }
@@ -1227,18 +1096,30 @@ KeyRouter {
             }
         }
 
+        // A provider's own screen over whatever is showing, such as the release
+        // picker a provider raises while resolving playback.
         Loader {
-            id: managementOverlayLoader
+            id: providerOverlayLoader
             anchors.fill: parent
             z: 57
-            active: root.managementOverlayVisible
-            asynchronous: true
-            sourceComponent: ManagementDialog {
-                mode: root.managementMode
-                item: root.managementItem
-                onDismissed: root.closeManagementOverlay()
+            active: root.providerOverlay !== null
+            sourceComponent: ProviderSurface {
+                context: root.providerOverlay
+                overlay: true
+                onFinished: {
+                    root.providerOverlay = null
+                    InputKeys.focus(routeStack)
+                }
             }
-            onLoaded: item.prepare()
+        }
+
+        ProviderUpdatePrompt {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: root.safeBottomPx + Metrics.scaled(24)
+            shown: root.chromeRoute === "home" && !root.playerHoldsScreen && App.initialized
+            z: 65
         }
 
         Loader {

@@ -2,7 +2,7 @@
 
 #include <QString>
 
-namespace JellyfinNative::AudioSyncPolicy {
+namespace Spool::AudioSyncPolicy {
 
 QString normalizedOutputKey(const QString& output);
 QString outputDisplayName(const QString& output);

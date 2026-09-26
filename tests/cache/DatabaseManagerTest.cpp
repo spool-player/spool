@@ -1,4 +1,5 @@
 #include "cache/DatabaseManager.h"
+#include "platform/CredentialStore.h"
 
 #include "TestMain.h"
 #include <QCoroTask>
@@ -14,7 +15,7 @@
 #include <cstdlib>
 #include <iostream>
 
-using namespace JellyfinNative;
+using namespace Spool;
 
 namespace {
 
@@ -28,13 +29,13 @@ void require(bool condition, const char *message)
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("database-manager")
+SPOOL_TEST_MAIN("database-manager")
 {
     QCoreApplication app(argc, argv);
     QTemporaryDir directory;
     require(directory.isValid(), "temporary directory should be available");
     const QString credentialPath = directory.filePath(QStringLiteral("credentials"));
-    qputenv("JELLYFIN_CREDENTIAL_STORE_DIR", credentialPath.toUtf8());
+    qputenv("SPOOL_CREDENTIAL_STORE_DIR", credentialPath.toUtf8());
     const QString databasePath = directory.filePath(QStringLiteral("cache.sqlite"));
     const QString statePath = directory.filePath(QStringLiteral("state.sqlite"));
 
@@ -70,24 +71,31 @@ JELLYFIN_TEST_MAIN("database-manager")
     require(!batch.value(QStringLiteral("batch/missing")).isValid(),
         "batch read should preserve a missing value as invalid");
 
-    AccountProfile profile;
-    profile.profileId = QStringLiteral("profile");
-    profile.serverId = QStringLiteral("server");
-    profile.serverName = QStringLiteral("Server");
-    profile.serverUrl = QStringLiteral("https://example.test");
-    profile.userId = QStringLiteral("user");
-    profile.userName = QStringLiteral("User");
-    profile.accessToken = QStringLiteral("secret");
-    profile.lastUsedAt = 2;
-    profile.createdAt = 1;
-    database.upsertAccountProfile(profile);
-    const std::vector<AccountProfile> storedProfiles = QCoro::waitFor(database.loadAccountProfilesAsync());
-    require(storedProfiles.size() == 1 && storedProfiles.front().profileId == profile.profileId,
-        "account profile should be persisted before cache recovery");
-    require(storedProfiles.front().accessToken == profile.accessToken,
-        "account token should round-trip through the platform credential store");
-    require(QDir(credentialPath).entryList(QDir::Files).size() == 1,
-        "exactly one durable credential copy should be stored");
+    // The native Jellyfin client's sign-ins stay readable for the one-time
+    // move to provider accounts; the token only ever lives in the credential store.
+    const QString legacyToken = QStringLiteral("secret");
+    require(CredentialStore::save(QStringLiteral("profile"), legacyToken), "legacy token should be stored");
+    {
+        QSqlDatabase seed = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), QStringLiteral("legacy-seed"));
+        seed.setDatabaseName(statePath);
+        require(seed.open(), "durable state should open for legacy seed");
+        QSqlQuery query(seed);
+        require(query.exec(QStringLiteral("INSERT INTO profiles VALUES ('profile', 'server', 'Server', "
+                                          "'https://example.test', 'user', 'User', '', 2, 1, 0)")),
+            "legacy profile should be seeded");
+        seed.close();
+    }
+    QSqlDatabase::removeDatabase(QStringLiteral("legacy-seed"));
+    const auto requireLegacyAccount = [&](DatabaseManager& manager, const char *message) {
+        const QVariantList accounts = QCoro::waitFor(manager.loadLegacyAccountsAsync());
+        require(accounts.size() == 1, message);
+        const QVariantMap account = accounts.front().toMap();
+        require(account.value(QStringLiteral("server")).toString() == QStringLiteral("https://example.test")
+                && account.value(QStringLiteral("userId")).toString() == QStringLiteral("user")
+                && account.value(QStringLiteral("token")).toString() == legacyToken,
+            message);
+    };
+    requireLegacyAccount(database, "legacy sign-in should be readable with its token");
 #ifndef Q_OS_WIN
     const QFileInfo credentialInfo(QDir(credentialPath).entryInfoList(QDir::Files).front());
     require((credentialInfo.permissions()
@@ -97,7 +105,7 @@ JELLYFIN_TEST_MAIN("database-manager")
 #endif
     QFile durableState(statePath);
     require(durableState.open(QIODevice::ReadOnly), "durable state should be readable for token inspection");
-    require(!durableState.readAll().contains(profile.accessToken.toUtf8()),
+    require(!durableState.readAll().contains(legacyToken.toUtf8()),
         "SQLite durable state must not contain an access-token copy");
     durableState.close();
     database.saveDeviceId(QStringLiteral("device"));
@@ -108,8 +116,6 @@ JELLYFIN_TEST_MAIN("database-manager")
         "startup state should include requested values");
     require(!startup.values.value(QStringLiteral("batch/missing")).isValid(),
         "startup state should preserve missing values as invalid");
-    require(startup.profiles.size() == 1 && startup.profiles.front().profileId == profile.profileId,
-        "startup state should include account profiles");
 
     const QJsonObject homePayload {
         { QStringLiteral("title"), QStringLiteral("Continue Watching") },
@@ -133,13 +139,6 @@ JELLYFIN_TEST_MAIN("database-manager")
     QSqlDatabase::removeDatabase(QStringLiteral("payload-tamper"));
     require(QCoro::waitFor(database.loadHomePayloadAsync(QStringLiteral("server/user"), 1)).isEmpty(),
         "malformed home payload should be treated as a cache miss");
-
-    database.saveCacheEntry(QStringLiteral("discovery"), QStringLiteral("servers"), QByteArrayLiteral("not-json"));
-    require(QCoro::waitFor(database.loadDiscoveredServersAsync()).isEmpty(),
-        "malformed discovery payload should be treated as a cache miss");
-    require(
-        QCoro::waitFor(database.loadCacheEntryAsync(QStringLiteral("discovery"), QStringLiteral("servers"))).isEmpty(),
-        "malformed discovery payload should be deleted");
 
     database.saveCacheEntry(QStringLiteral("test"), QStringLiteral("fresh"), QByteArrayLiteral("value"), 5000);
     require(QCoro::waitFor(database.loadCacheEntryAsync(QStringLiteral("test"), QStringLiteral("fresh")))
@@ -176,9 +175,7 @@ JELLYFIN_TEST_MAIN("database-manager")
     require(QCoro::waitFor(recovered.schemaVersionAsync()) == 1, "corrupt cache should be rebuilt");
     require(QCoro::waitFor(recovered.loadSettingAsync(QStringLiteral("batch/first"))) == QStringLiteral("one"),
         "cache recovery must preserve durable settings");
-    const std::vector<AccountProfile> recoveredProfiles = QCoro::waitFor(recovered.loadAccountProfilesAsync());
-    require(recoveredProfiles.size() == 1 && recoveredProfiles.front().profileId == profile.profileId,
-        "cache recovery must preserve account profiles");
+    requireLegacyAccount(recovered, "cache recovery must preserve legacy sign-ins");
     recovered.shutdown();
 
     for (int attempt = 0; attempt < 4; ++attempt) {
@@ -208,8 +205,9 @@ JELLYFIN_TEST_MAIN("database-manager")
 
     DatabaseManager resetState;
     require(resetState.initialize(databasePath), "future durable state should not block startup");
-    require(QCoro::waitFor(resetState.loadAccountProfilesAsync()).empty(),
-        "unreadable durable state should restart at account setup");
+    require(QCoro::waitFor(resetState.loadLegacyAccountsAsync()).isEmpty()
+            && QCoro::waitFor(resetState.loadSettingAsync(QStringLiteral("batch/first"))).isEmpty(),
+        "unreadable durable state should restart empty");
     resetState.shutdown();
     require(QDir(directory.path()).entryList({ QStringLiteral("state.sqlite.corrupt-*") }, QDir::Files).size() == 1,
         "future durable state should be preserved as a diagnostic backup");

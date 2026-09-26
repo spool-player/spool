@@ -10,7 +10,7 @@
 #include <QPlatformSurfaceEvent>
 #include <QQuickImageProvider>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
 
@@ -196,4 +196,4 @@ QImage NativeAppWindow::copyOverlayImage() const
     return m_overlayImage;
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

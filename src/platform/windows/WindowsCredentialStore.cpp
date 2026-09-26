@@ -7,7 +7,7 @@
 
 #include <wincred.h>
 
-namespace JellyfinNative::CredentialStore {
+namespace Spool::CredentialStore {
 namespace {
 
     QString target(const QString& profileId)
@@ -43,7 +43,7 @@ bool save(const QString& profileId, const QString& accessToken)
     credential.CredentialBlobSize = static_cast<DWORD>(token.size());
     credential.CredentialBlob = reinterpret_cast<LPBYTE>(const_cast<char *>(token.constData()));
     credential.Persist = CRED_PERSIST_LOCAL_MACHINE;
-    credential.UserName = const_cast<LPWSTR>(L"Spool for Jellyfin");
+    credential.UserName = const_cast<LPWSTR>(L"Spool");
     return CredWriteW(&credential, 0) != FALSE;
 }
 
@@ -72,4 +72,4 @@ void clear()
     CredFree(credentials);
 }
 
-} // namespace JellyfinNative::CredentialStore
+} // namespace Spool::CredentialStore

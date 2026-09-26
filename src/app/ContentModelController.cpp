@@ -1,6 +1,5 @@
 #include "ContentModelController.h"
 
-#include "../api/JellyfinApiFacade.h"
 #include "../common/AsyncTask.h"
 #include "LibraryPrefetchController.h"
 
@@ -11,12 +10,11 @@
 #include <algorithm>
 #include <utility>
 
-namespace JellyfinNative {
+namespace Spool {
 
-ContentModelController::ContentModelController(
-    JellyfinApiFacade *api, LibraryPrefetchController *prefetch, QObject *parent)
+ContentModelController::ContentModelController(Catalog *catalog, LibraryPrefetchController *prefetch, QObject *parent)
     : QObject(parent)
-    , m_api(api)
+    , m_api(catalog)
     , m_prefetch(prefetch)
 {
 }
@@ -48,11 +46,12 @@ void ContentModelController::loadDetailRows(
     const RequestGeneration::Token generation = m_detailRowsGeneration.next();
     m_detailRowsPending = 0;
     m_detailRowsBusy = false;
+    m_detailContextInitialIndex = 0;
     m_detailSeasons.clear();
     m_detailSeasonOptions.clear();
     m_detailSimilarItems.clear();
 
-    if (itemId.isEmpty() || !m_api || m_api->session().accessToken.isEmpty()) {
+    if (itemId.isEmpty() || !m_api || !m_api->signedIn()) {
         emit detailRowsChanged();
         return;
     }
@@ -92,8 +91,23 @@ void ContentModelController::loadDetailRows(
     } else if (loadEpisodes) {
         Async::runLatest(
             this, m_api->fetchEpisodes(seriesId, seasonId), m_detailRowsGeneration, generation,
-            [this, generation, seriesId](const std::vector<MovieItem>& episodes) {
+            [this, generation, seriesId, itemId, itemType](const std::vector<MovieItem>& episodes) {
                 qInfo() << "detail rows: episodes loaded" << seriesId << episodes.size();
+                int initialIndex = episodicPlaybackStartIndex(episodes);
+                if (initialIndex < 0) {
+                    initialIndex = 0;
+                    for (int index = 0; index < static_cast<int>(episodes.size()); ++index) {
+                        if (episodes[static_cast<size_t>(index)].played)
+                            initialIndex = index;
+                    }
+                }
+                if (itemType == QStringLiteral("Episode")) {
+                    const auto current = std::find_if(episodes.cbegin(), episodes.cend(),
+                        [&itemId](const MovieItem& episode) { return episode.id == itemId; });
+                    if (current != episodes.cend())
+                        initialIndex = static_cast<int>(std::distance(episodes.cbegin(), current));
+                }
+                m_detailContextInitialIndex = initialIndex;
                 m_detailSeasons.setMovies(episodes);
                 m_prefetch->prefetchPosters(episodes);
                 emit detailRowsChanged();
@@ -169,7 +183,7 @@ void ContentModelController::loadItemDetail(const QString& itemId)
     const RequestGeneration::Token generation = m_detailItemGeneration.next();
     m_detailItem = {};
 
-    if (itemId.isEmpty() || !m_api || m_api->session().accessToken.isEmpty()) {
+    if (itemId.isEmpty() || !m_api || !m_api->signedIn()) {
         emit detailItemChanged();
         return;
     }
@@ -193,7 +207,7 @@ void ContentModelController::loadPersonItems(const QString& personId)
 {
     const RequestGeneration::Token generation = m_personItemsGeneration.next();
     clearPersonItems();
-    if (personId.isEmpty() || !m_api || m_api->session().accessToken.isEmpty()) {
+    if (personId.isEmpty() || !m_api || !m_api->signedIn()) {
         m_personItemsBusy = false;
         emit personItemsChanged();
         return;
@@ -399,6 +413,7 @@ void ContentModelController::reset()
     m_linkedItems.clear();
     m_detailItem = {};
     m_detailRowsBusy = false;
+    m_detailContextInitialIndex = 0;
     m_detailRowsPending = 0;
     m_personItemsBusy = false;
 
@@ -420,4 +435,4 @@ void ContentModelController::finishDetailRowLoad(RequestGeneration::Token genera
     }
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

@@ -2,7 +2,7 @@
 
 #include <QStringList>
 
-namespace JellyfinNative {
+namespace Spool {
 struct MovieItem;
 
 class ArtworkPrefetcher {
@@ -14,4 +14,4 @@ public:
     virtual QString itemUrl(const MovieItem& item, bool landscape, int width = 0) const = 0;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

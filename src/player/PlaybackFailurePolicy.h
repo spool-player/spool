@@ -1,9 +1,9 @@
 #pragma once
-#include "../common/JellyfinTypes.h"
+#include "../media/MediaTypes.h"
 
 #include <QString>
 
-namespace JellyfinNative {
+namespace Spool {
 
 class PlaybackFailurePolicy final {
 public:
@@ -14,4 +14,4 @@ public:
         int audioStreamIndex, int subtitleStreamIndex);
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

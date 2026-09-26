@@ -7,14 +7,35 @@
 #include <QTimer>
 #include <QVariant>
 #include <QVariantList>
+#include <QVariantMap>
+
+#include <functional>
 
 class QQuickWindow;
 class QQuickItem;
 
-namespace JellyfinNative {
+namespace Spool {
 class InputLatencyMonitor;
+class LibraryListModel;
 class RouterController;
-class AppController;
+
+// The handful of things the benchmark drives in the app, handed in so the
+// diagnostics layer never names the composition root.
+struct RenderBenchmarkHooks {
+    LibraryListModel *libraries = nullptr;
+    std::function<void(int index)> openLibrary;
+    std::function<int()> outstandingArtworkRequests;
+    // decodeMsTotal, decodedPixelsTotal and decodedImagesTotal, as the
+    // artwork service counts them.
+    std::function<QVariantMap()> artworkDecodeTotals;
+    // Identifies the implementation actually serving the UI, not merely a
+    // registered module. Update this when the JS application path is wired.
+    QString providerId;
+    QString providerRuntime;
+    // Requests application memory-pressure eviction. This does not flush Qt's
+    // disk/AOT caches, the OS page cache, or necessarily every resident page.
+    std::function<void()> forceColdCaches;
+};
 
 // Walks the app through a scripted set of route switches and writes down what
 // each one cost, so "does a page still appear in one frame" is a number in CI
@@ -32,14 +53,14 @@ class RenderBenchmark final : public QObject {
 
 public:
     // Returns nullptr when SPOOL_BENCH is unset, which is every ordinary run.
-    static RenderBenchmark *createIfRequested(AppController *app, RouterController *router,
+    static RenderBenchmark *createIfRequested(RenderBenchmarkHooks hooks, RouterController *router,
         InputLatencyMonitor *latency, QQuickWindow *window, QObject *parent);
 
     void start();
 
 private:
-    RenderBenchmark(AppController *app, RouterController *router, InputLatencyMonitor *latency, QQuickWindow *window,
-        QObject *parent);
+    RenderBenchmark(RenderBenchmarkHooks hooks, RouterController *router, InputLatencyMonitor *latency,
+        QQuickWindow *window, QObject *parent);
 
     void step();
     void recordSample();
@@ -64,7 +85,7 @@ private:
     void finishIdleProbe();
     void finish();
 
-    AppController *m_app = nullptr;
+    RenderBenchmarkHooks m_hooks;
     RouterController *m_router = nullptr;
     InputLatencyMonitor *m_latency = nullptr;
     // Offscreen, nothing asks for a frame on its own: no compositor is
@@ -73,6 +94,9 @@ private:
     // been swapped, so the harness has to keep asking for one.
     QQuickWindow *m_window = nullptr;
     QTimer *m_pump = nullptr;
+    QTimer *m_stepDeadline = nullptr;
+    int m_pumpIntervalMs = 8;
+    QVariantList m_failures;
 
     // The idle probe is the same kind of timer on the same interval as the
     // transition gap timer, so a pause that would show up as a dropped frame
@@ -106,9 +130,8 @@ private:
     // How long to sit still between steps. Doubles as the idle-probe window,
     // so the noise floor is sampled over the same span a transition occupies.
     int m_settleMs = 120;
-    // Drop every cached page before each step, so the walk measures what a
-    // route costs to build rather than what it costs to reveal. This is the
-    // case a television lives in, where memory keeps nothing resident.
+    // Request memory-pressure eviction before each step. Record actual
+    // cache-hit classification separately; this is not a fully cold process.
     bool m_forceCold = false;
 
     int m_position = -1;
@@ -118,4 +141,4 @@ private:
     QElapsedTimer m_stepTimer;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

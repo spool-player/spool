@@ -4,7 +4,7 @@
 #include <QVariantList>
 #include <QVariantMap>
 
-namespace JellyfinNative {
+namespace Spool {
 
 class RouterController final : public QObject {
     Q_OBJECT
@@ -18,6 +18,9 @@ class RouterController final : public QObject {
 
 public:
     explicit RouterController(QObject *parent = nullptr);
+    // `startRoute` is what the shell shows before the app has initialised:
+    // the provider's login page when it has one, otherwise home.
+    explicit RouterController(const QString& startRoute, QObject *parent = nullptr);
 
     QString route() const;
     QString previousRoute() const;
@@ -60,4 +63,4 @@ private:
     bool m_recoveryRequested = false;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

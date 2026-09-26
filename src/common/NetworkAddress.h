@@ -3,7 +3,7 @@
 #include <QHostAddress>
 #include <QString>
 
-namespace JellyfinNative {
+namespace Spool {
 
 inline bool isPrivateNetworkAddress(const QHostAddress& address)
 {
@@ -32,4 +32,4 @@ inline bool isLanHost(const QString& host)
         || !normalized.contains(QLatin1Char('.'));
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

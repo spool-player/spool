@@ -6,7 +6,7 @@
 #include <QSet>
 #include <QSettings>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
 
@@ -56,6 +56,12 @@ namespace {
 
 RouterController::RouterController(QObject *parent)
     : QObject(parent)
+{
+}
+
+RouterController::RouterController(const QString& startRoute, QObject *parent)
+    : QObject(parent)
+    , m_route(startRoute)
 {
 }
 
@@ -279,4 +285,4 @@ bool RouterController::restoreSnapshot()
     return true;
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

@@ -8,7 +8,7 @@
 #include <iostream>
 #include <vector>
 
-using namespace JellyfinNative;
+using namespace Spool;
 
 namespace {
 
@@ -37,7 +37,7 @@ QString idAt(const PlayQueueController& queue, int index)
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("play-queue-controller")
+SPOOL_TEST_MAIN("play-queue-controller")
 {
     QCoreApplication app(argc, argv);
 

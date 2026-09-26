@@ -7,7 +7,7 @@
 
 #include <cstdlib>
 
-using namespace JellyfinNative;
+using namespace Spool;
 
 namespace {
 
@@ -21,7 +21,7 @@ void require(bool condition, const char *message)
 
 }
 
-JELLYFIN_TEST_MAIN("audio-sync-policy")
+SPOOL_TEST_MAIN("audio-sync-policy")
 {
     QCoreApplication app(argc, argv);
 

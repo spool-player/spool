@@ -4,7 +4,7 @@
 
 class QString;
 
-namespace JellyfinNative {
+namespace Spool {
 
 class NativeAppWindow;
 
@@ -12,4 +12,4 @@ bool configurePlatformEnvironment(const QString& appRootPath);
 QSurfaceFormat platformSurfaceFormat();
 void configurePlatformWindow(NativeAppWindow& window);
 
-} // namespace JellyfinNative
+} // namespace Spool

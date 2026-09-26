@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-if [[ -z "${IN_NIX_SHELL:-}" && "${JELLYFIN_BUILD_IPK_ENTERED_NIX:-0}" != "1" ]]; then
+if [[ -z "${IN_NIX_SHELL:-}" && "${SPOOL_BUILD_IPK_ENTERED_NIX:-0}" != "1" ]]; then
   WORKSPACE_ROOT="$(cd "$ROOT/.." && pwd)"
   DEFAULT_SDK_ROOT="$ROOT/build/webos-sdk/arm-webos-linux-gnueabi_sdk-buildroot"
   if [[ -z "${WEBOS_SDK_ROOT:-}" && -d "$WORKSPACE_ROOT/build/webos-sdk/arm-webos-linux-gnueabi_sdk-buildroot" ]]; then
@@ -11,7 +11,7 @@ if [[ -z "${IN_NIX_SHELL:-}" && "${JELLYFIN_BUILD_IPK_ENTERED_NIX:-0}" != "1" ]]
   fi
   cd "$ROOT"
   exec nix develop "$ROOT" -c env \
-    JELLYFIN_BUILD_IPK_ENTERED_NIX=1 \
+    SPOOL_BUILD_IPK_ENTERED_NIX=1 \
     WEBOS_SDK_ROOT="${WEBOS_SDK_ROOT:-$DEFAULT_SDK_ROOT}" \
     bash -c 'cd "$1" && shift && exec bash ./build-ipk.sh "$@"' bash "$ROOT" "$@"
 fi
@@ -70,7 +70,7 @@ MPV_LTO_CROSS_FILE="$BUILD_DIR/webos-lto.cross.ini"
 WEBOS_BUILD_MEMORY_PER_JOB_MIB="${WEBOS_BUILD_MEMORY_PER_JOB_MIB:-1536}"
 WEBOS_BUILD_MEMORY_RESERVE_MIB="${WEBOS_BUILD_MEMORY_RESERVE_MIB:-2048}"
 WEBOS_BUILD_JOBS="$(recommended_parallel_jobs "$WEBOS_BUILD_MEMORY_PER_JOB_MIB" "$WEBOS_BUILD_MEMORY_RESERVE_MIB")"
-IMAGE_SUBTITLE_DIAGNOSTICS="${JELLYFIN_IMAGE_SUBTITLE_DIAGNOSTICS:-0}"
+IMAGE_SUBTITLE_DIAGNOSTICS="${SPOOL_IMAGE_SUBTITLE_DIAGNOSTICS:-0}"
 if [[ "$IMAGE_SUBTITLE_DIAGNOSTICS" == "0" ]]; then
   MPV_IMAGE_SUBTITLE_DIAGNOSTICS_FLAG=
   CMAKE_IMAGE_SUBTITLE_DIAGNOSTICS=OFF
@@ -93,11 +93,11 @@ if (( DO_BUILD || DO_STAGE )); then
   echo "Using static Qt6 build at $QT6_PREFIX"
 
   # Reject stale cached Qt prefixes that predate required local patches.
-  QT_PATCH_MARKERS=(JELLYFIN_QT_NO_CURSOR_SURFACE)
+  QT_PATCH_MARKERS=(SPOOL_QT_NO_CURSOR_SURFACE)
   for marker in "${QT_PATCH_MARKERS[@]}"; do
     if ! grep -rqal "$marker" "$QT6_PREFIX/lib" 2>/dev/null; then
       echo "error: Qt at $QT6_PREFIX is missing patch marker '$marker'." >&2
-      echo "       Rerun: bash $WEBOS_TOOLS_ROOT/build-qt6-611.sh" >&2
+      echo "       Rerun: ./build-ipk.sh" >&2
       exit 1
     fi
   done
@@ -259,7 +259,7 @@ cmake -S "$ROOT" -B "$CMAKE_BUILD_DIR" -GNinja \
   -DQt6_DIR="$QT6_PREFIX/lib/cmake/Qt6" \
   -DQT_HOST_PATH="$QT6_HOST_PREFIX" \
   -DCMAKE_INSTALL_PREFIX=/usr/palm/applications/com.sachk.spool \
-  -DJELLYFIN_IMAGE_SUBTITLE_DIAGNOSTICS="$CMAKE_IMAGE_SUBTITLE_DIAGNOSTICS"
+  -DSPOOL_IMAGE_SUBTITLE_DIAGNOSTICS="$CMAKE_IMAGE_SUBTITLE_DIAGNOSTICS"
 
 cmake --build "$CMAKE_BUILD_DIR" --parallel "$WEBOS_BUILD_JOBS"
 cmake --install "$CMAKE_BUILD_DIR" --prefix "$INSTALL_DIR"
@@ -292,11 +292,11 @@ cp -f "$ROOT/app/notices/OPEN_SOURCE_NOTICES.txt" "$ROOT/LICENSE" \
   "$APP_DIR/notices/"
 PATCHELF_BIN="$(command -v patchelf)"
 
-[[ -x "$INSTALL_DIR/bin/jellyfin-native" ]] || {
+[[ -x "$INSTALL_DIR/bin/spool" ]] || {
   echo "error: app install missing; run '$0 app' first" >&2
   exit 1
 }
-cp -f "$INSTALL_DIR/bin/jellyfin-native" "$STAGE_BIN/jellyfin-native"
+cp -f "$INSTALL_DIR/bin/spool" "$STAGE_BIN/spool"
 
 # mpv, curl, FFmpeg, and OpenSSL shared libraries are always needed. Stage
 # their real files and derive compatibility symlinks from each ELF SONAME so
@@ -335,7 +335,7 @@ done
 # segment URL by protocol name before mpv's libcurl backend is consulted, and
 # an FFmpeg without a TLS backend registers no https protocol to find. It
 # moves no bytes; libcurl still carries playback.
-for tls_consumer in "$STAGE_BIN/jellyfin-native" "$CURL_STAGED_LIBRARY" "$AVFORMAT_STAGED_LIBRARY"; do
+for tls_consumer in "$STAGE_BIN/spool" "$CURL_STAGED_LIBRARY" "$AVFORMAT_STAGED_LIBRARY"; do
   TLS_DYNAMIC_SECTION="$("$READELF_BIN" -d "$tls_consumer")"
   if [[ "$TLS_DYNAMIC_SECTION" != *"[libssl.so"* && "$TLS_DYNAMIC_SECTION" != *"[libcrypto.so"* ]]; then
     echo "error: $(basename "$tls_consumer") does not use the packaged shared OpenSSL build" >&2
@@ -354,14 +354,14 @@ fi
 "$PATCHELF_BIN" --force-rpath --set-rpath '$ORIGIN' "$MPV_STAGED_LIBRARY"
 "$PATCHELF_BIN" --force-rpath --set-rpath '$ORIGIN' "$CURL_STAGED_LIBRARY"
 "$PATCHELF_BIN" --force-rpath --set-rpath '$ORIGIN' "$AVFORMAT_STAGED_LIBRARY"
-"$PATCHELF_BIN" --force-rpath --set-rpath '$ORIGIN/../lib' "$STAGE_BIN/jellyfin-native"
+"$PATCHELF_BIN" --force-rpath --set-rpath '$ORIGIN/../lib' "$STAGE_BIN/spool"
 
 "$ROOT/tools/webos-native/audit-arm-binaries.sh" \
   "$READELF_BIN" "$OBJDUMP_BIN" --thumb-archive \
   "$QT6_PREFIX/lib/libQt6Core.a"
 "$ROOT/tools/webos-native/audit-arm-binaries.sh" \
   "$READELF_BIN" "$OBJDUMP_BIN" --thumb \
-  "$STAGE_BIN/jellyfin-native" "$MPV_STAGED_LIBRARY" "$CURL_STAGED_LIBRARY" \
+  "$STAGE_BIN/spool" "$MPV_STAGED_LIBRARY" "$CURL_STAGED_LIBRARY" \
   "$FFMPEG_STAGED_LIBRARY" "$AVFORMAT_STAGED_LIBRARY"
 
 echo "Stripping every staged webOS ELF"
@@ -376,13 +376,13 @@ done < <(find "$APP_DIR" -type f -print0)
 
 "$ROOT/tools/webos-native/audit-arm-binaries.sh" \
   "$READELF_BIN" "$OBJDUMP_BIN" --stripped \
-  "$STAGE_BIN/jellyfin-native" "$MPV_STAGED_LIBRARY" "$CURL_STAGED_LIBRARY" \
+  "$STAGE_BIN/spool" "$MPV_STAGED_LIBRARY" "$CURL_STAGED_LIBRARY" \
   "$FFMPEG_STAGED_LIBRARY" "$AVFORMAT_STAGED_LIBRARY" "$OPENSSL_STAGED_LIBRARY" \
   "$OPENSSL_CRYPTO_STAGED_LIBRARY"
 
 WEBOS_ELF_AUDIT_ARGS=(
   elf "$APP_DIR"
-  --root bin/jellyfin-native
+  --root bin/spool
   --readelf "$READELF_BIN"
 )
 for runtime_root in \
@@ -412,7 +412,7 @@ python3 "$ROOT/tools/package-audit.py" inventory "$APP_DIR" \
 fi
 
 if (( DO_PACKAGE )); then
-[[ -f "$APP_DIR/appinfo.json" && -x "$STAGE_BIN/jellyfin-native" ]] || {
+[[ -f "$APP_DIR/appinfo.json" && -x "$STAGE_BIN/spool" ]] || {
   echo "error: staged webOS app missing; run '$0 stage' first" >&2
   exit 1
 }

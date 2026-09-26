@@ -12,21 +12,19 @@
 #include <QThread>
 #include <QVariant>
 
-#include "../app/AccountProfile.h"
-#include "../common/JellyfinTypes.h"
+#include "../media/MediaTypes.h"
 
 #include <optional>
 #include <utility>
 #include <vector>
 
-namespace JellyfinNative {
+namespace Spool {
 
 class DatabaseWorker;
 
 struct StartupState {
     QString deviceId;
     QVariantMap values;
-    std::vector<AccountProfile> profiles;
 };
 
 class DatabaseManager final : public QObject {
@@ -39,21 +37,12 @@ public:
     bool initialize(const QString& databasePath);
     void shutdown();
 
-    QCoro::Task<QString> loadLastServerUrlAsync();
-    QCoro::Task<QString> loadLastUsernameAsync();
-    void saveLoginHints(const QString& serverUrl, const QString& username);
-
-    QCoro::Task<std::vector<AccountProfile>> loadAccountProfilesAsync();
-    QCoro::Task<std::optional<AccountProfile>> activateAccountProfileAsync(const QString& profileId);
-    void upsertAccountProfile(const AccountProfile& profile);
-    void expireAccountProfile(const QString& profileId);
-    void removeAccountProfile(const QString& profileId);
-    void clearAccountProfiles();
+    // Sign-ins saved by the native Jellyfin client, for the one-time move to
+    // provider accounts.
+    QCoro::Task<QVariantList> loadLegacyAccountsAsync();
     QCoro::Task<QString> loadDeviceIdAsync();
     void saveDeviceId(const QString& deviceId);
 
-    QCoro::Task<QJsonArray> loadDiscoveredServersAsync();
-    void saveDiscoveredServers(const QJsonArray& servers);
     QCoro::Task<QJsonObject> loadHomePayloadAsync(const QString& key, int schemaVersion);
     void saveHomePayload(const QString& key, int schemaVersion, const QJsonObject& payload);
     void invalidateHomePayloads();
@@ -85,4 +74,4 @@ private:
     QFuture<bool> m_initializationFuture;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

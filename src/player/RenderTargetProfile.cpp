@@ -8,7 +8,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
 
@@ -180,4 +180,4 @@ std::vector<MpvOption> RenderTargetPolicy::targetOptions(const RenderTargetProfi
     };
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

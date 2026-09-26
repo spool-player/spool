@@ -2,7 +2,7 @@
 
 #if defined(SPOOL_ANDROID)
 #include "android/AndroidUpdateInstaller.h"
-#elif defined(JELLYFIN_NATIVE_WEBOS)
+#elif defined(SPOOL_WEBOS)
 #include "webos/WebOSUpdateInstaller.h"
 #include <QTemporaryDir>
 #endif
@@ -18,7 +18,7 @@
 #include <QSaveFile>
 #include <QVersionNumber>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
 
@@ -37,7 +37,7 @@ namespace {
 #if defined(SPOOL_ANDROID)
         return SPOOL_ANDROID_VERSION_CODE;
 #else
-        const QVersionNumber version = QVersionNumber::fromString(QStringLiteral(JELLYFIN_VERSION));
+        const QVersionNumber version = QVersionNumber::fromString(QStringLiteral(SPOOL_VERSION));
         return version.majorVersion() * 100000000 + version.minorVersion() * 100000 + version.microVersion() * 100 + 99;
 #endif
     }
@@ -60,9 +60,9 @@ namespace {
     void configureRequest(QNetworkRequest& request, int timeout)
     {
 #if defined(SPOOL_ANDROID)
-        request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("Spool-Android/%1").arg(JELLYFIN_VERSION));
+        request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("Spool-Android/%1").arg(SPOOL_VERSION));
 #else
-        request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("Spool-webOS/%1").arg(JELLYFIN_VERSION));
+        request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("Spool-webOS/%1").arg(SPOOL_VERSION));
 #endif
         request.setTransferTimeout(timeout);
         request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::UserVerifiedRedirectPolicy);
@@ -105,7 +105,7 @@ UpdateController::UpdateController(QNetworkAccessManager *network, QString cache
         m_waitingForPermission = false;
         setStage(AndroidUpdateInstaller::canRequestPackageInstalls() ? Stage::Ready : Stage::PermissionRequired);
     });
-#elif defined(JELLYFIN_NATIVE_WEBOS)
+#elif defined(SPOOL_WEBOS)
     m_installer = new WebOSUpdateInstaller(this);
     connect(m_installer, &WebOSUpdateInstaller::statusChanged, this,
         [this](const QString& message) { qInfo() << "update: webOS installer:" << message; });
@@ -305,7 +305,7 @@ void UpdateController::offerRelease()
 
 QString UpdateController::packagePath() const
 {
-#if defined(JELLYFIN_NATIVE_WEBOS)
+#if defined(SPOOL_WEBOS)
     return m_packageDirectory ? m_packageDirectory->filePath(QStringLiteral("spool-update.ipk")) : QString();
 #else
     return QDir(m_cacheRoot).filePath(QStringLiteral("updates/spool-update.apk"));
@@ -324,7 +324,7 @@ void UpdateController::decline()
         QFile::remove(packagePath());
         m_packageReady = false;
     }
-#if defined(JELLYFIN_NATIVE_WEBOS)
+#if defined(SPOOL_WEBOS)
     m_packageDirectory.reset();
 #endif
     m_errorText.clear();
@@ -339,7 +339,7 @@ void UpdateController::download()
     resetDownload();
     m_packageReady = false;
     m_errorText.clear();
-#if defined(JELLYFIN_NATIVE_WEBOS)
+#if defined(SPOOL_WEBOS)
     // Only this application's freshly created directory is made traversable.
     // /tmp avoids permissions on app-cache ancestors owned by another service.
     m_packageDirectory = std::make_unique<QTemporaryDir>(QStringLiteral("/tmp/spool-update-XXXXXX"));
@@ -431,7 +431,7 @@ void UpdateController::finishDownload()
 
     m_output.reset();
     m_hash.reset();
-#if defined(JELLYFIN_NATIVE_WEBOS)
+#if defined(SPOOL_WEBOS)
     constexpr auto packagePermissions
         = QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ReadGroup | QFileDevice::ReadOther;
     if (!QFile::setPermissions(packagePath(), packagePermissions)) {
@@ -468,7 +468,7 @@ void UpdateController::install()
     }
     if (!AndroidUpdateInstaller::install(packagePath()))
         fail(QStringLiteral("Android could not open the package installer."));
-#elif defined(JELLYFIN_NATIVE_WEBOS)
+#elif defined(SPOOL_WEBOS)
     if (m_installer->isRunning())
         return;
     // The service may terminate this process to replace the application. Do not
@@ -537,4 +537,4 @@ void UpdateController::resetDownload()
     m_hash.reset();
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

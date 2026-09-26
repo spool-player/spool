@@ -25,7 +25,7 @@
 #include <cmath>
 #include <utility>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
 
@@ -49,7 +49,7 @@ namespace {
         return sourceSize.scaled(requestedSize, Qt::KeepAspectRatioByExpanding);
     }
 
-#if defined(JELLYFIN_ARTWORK_ASPECT_DIAGNOSTICS)
+#if defined(SPOOL_ARTWORK_ASPECT_DIAGNOSTICS)
     bool shouldLogAspectDiagnostic(const QSize& source, const QSize& requested, const QSize& decoded)
     {
         if (!source.isValid() || !requested.isValid() || !decoded.isValid() || source.width() <= 0
@@ -83,7 +83,7 @@ namespace {
         reader.setAutoTransform(false);
         const QSize scaledSize = decodeSizeForRequest(reader.size(), requestedSize);
         if (scaledSize.isValid()) {
-#if defined(JELLYFIN_ARTWORK_ASPECT_DIAGNOSTICS)
+#if defined(SPOOL_ARTWORK_ASPECT_DIAGNOSTICS)
             if (shouldLogAspectDiagnostic(reader.size(), requestedSize, scaledSize)) {
                 qWarning() << "artwork: aspect-preserving decode"
                            << "source=" << reader.size() << "requested=" << requestedSize << "decode=" << scaledSize;
@@ -483,11 +483,9 @@ QString ArtworkService::itemUrl(const MovieItem& item, bool landscape, int width
     return movieUrl(item, landscape ? QStringLiteral("landscape") : QStringLiteral("poster"), width);
 }
 
-void ArtworkService::setServerUrl(QString serverUrl)
+void ArtworkService::setSource(const ArtworkSource *source)
 {
-    while (serverUrl.endsWith(QLatin1Char('/')))
-        serverUrl.chop(1);
-    m_serverUrl = std::move(serverUrl);
+    m_source = source;
 }
 
 void ArtworkService::setUiWidth(int width)
@@ -596,36 +594,33 @@ QString ArtworkService::movieUrl(const MovieItem& item, const QString& kind, int
 QString ArtworkService::buildLosslessUrl(
     const QString& itemId, const QString& tag, const QString& imageType, int maxWidth) const
 {
-    if (m_serverUrl.isEmpty() || itemId.isEmpty() || tag.isEmpty() || imageType.isEmpty())
+    if (!m_source)
         return {};
-    QUrl url = serverUrlWithPath(m_serverUrl, { QStringLiteral("Items"), itemId, QStringLiteral("Images"), imageType });
-    QUrlQuery query;
-    query.addQueryItem(QStringLiteral("maxWidth"), QString::number(maxWidth));
-    query.addQueryItem(QStringLiteral("quality"), QStringLiteral("90"));
-    query.addQueryItem(QStringLiteral("format"), QStringLiteral("png"));
-    query.addQueryItem(QStringLiteral("tag"), tag);
-    url.setQuery(query);
-    return url.toString(QUrl::FullyEncoded);
+    ArtworkSource::ImageRequest request;
+    request.itemId = itemId;
+    request.tag = tag;
+    request.imageType = imageType;
+    request.maxWidth = maxWidth;
+    request.format = QStringLiteral("png");
+    request.quality = 90;
+    return m_source->imageUrl(request);
 }
 
 QString ArtworkService::buildUrl(const QString& itemId, const QString& tag, const QString& imageType, int maxWidth,
     int qualityOffset, int fillWidth, int fillHeight) const
 {
-    if (m_serverUrl.isEmpty() || itemId.isEmpty() || tag.isEmpty() || imageType.isEmpty())
+    if (!m_source)
         return {};
-    QUrl url = serverUrlWithPath(m_serverUrl, { QStringLiteral("Items"), itemId, QStringLiteral("Images"), imageType });
-    QUrlQuery query;
-    if (fillWidth > 0 && fillHeight > 0) {
-        query.addQueryItem(QStringLiteral("fillWidth"), QString::number(fillWidth));
-        query.addQueryItem(QStringLiteral("fillHeight"), QString::number(fillHeight));
-    } else {
-        query.addQueryItem(QStringLiteral("maxWidth"), QString::number(maxWidth));
-    }
-    query.addQueryItem(QStringLiteral("quality"), QString::number(qualityForOffset(qualityOffset)));
-    query.addQueryItem(QStringLiteral("format"), artworkFormat());
-    query.addQueryItem(QStringLiteral("tag"), tag);
-    url.setQuery(query);
-    return url.toString(QUrl::FullyEncoded);
+    ArtworkSource::ImageRequest request;
+    request.itemId = itemId;
+    request.tag = tag;
+    request.imageType = imageType;
+    request.maxWidth = maxWidth;
+    request.fillWidth = fillWidth;
+    request.fillHeight = fillHeight;
+    request.format = artworkFormat();
+    request.quality = qualityForOffset(qualityOffset);
+    return m_source->imageUrl(request);
 }
 
 QQuickImageResponse *ArtworkService::requestImageResponse(const QString& id, const QSize& requestedSize)
@@ -906,4 +901,4 @@ QQuickImageResponse *ArtworkImageProvider::requestImageResponse(const QString& i
                      : new ArtworkImageResponse(nullptr, {}, requestedSize);
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

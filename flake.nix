@@ -1,5 +1,5 @@
 {
-  description = "Jellyfin webOS native build environment";
+  description = "Spool build environment";
   nixConfig = {
     extra-substituters = [ "https://spool.cachix.org" ];
     extra-trusted-public-keys = [ "spool.cachix.org-1:yx+E3raAGXiyUNoMEscSu9c85b+WbgoV7swqyY8oL6s=" ];
@@ -555,7 +555,7 @@
         native_qt_cmake_path="${pkgs.spoolQt6.qtbase}:${pkgs.spoolQt6.qtdeclarative}:${pkgs.spoolQt6.qtsvg}:${pkgs.spoolQt6.qttools}:${pkgs.spoolQt6.qtwebsockets}:${pkgs.spoolQt6.qtshadertools}"
         export CMAKE_PREFIX_PATH="$native_qt_cmake_path''${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
         unset native_qt_cmake_path
-        export JELLYFIN_NATIVE_SHELL=1
+        export SPOOL_SHELL=1
 
         # macdeployqt and linuxdeploy-plugin-qt both discover plugins under one
         # Qt prefix, and every Qt module is a separate store path here. That
@@ -644,7 +644,7 @@
             runHook preBuild
             export HOME="$TMPDIR/home"
             export XDG_CACHE_HOME="$TMPDIR/cache"
-            export JELLYFIN_NATIVE_SHELL=1
+            export SPOOL_SHELL=1
             export SPOOL_QT_CMAKE_DIR="${pkgs.spoolQt6.qtbase}/lib/cmake/Qt6"
             export CMAKE_PREFIX_PATH="${pkgs.spoolQt6.qtbase}:${pkgs.spoolQt6.qtdeclarative}:${pkgs.spoolQt6.qtsvg}:${pkgs.spoolQt6.qttools}:${pkgs.spoolQt6.qtwebsockets}:${pkgs.spoolQt6.qtshadertools}''${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
             mkdir -p "$HOME" "$XDG_CACHE_HOME"
@@ -666,7 +666,7 @@
           '';
 
           meta = {
-            description = "Spool for Jellyfin";
+            description = "Spool";
             license = pkgs.lib.licenses.gpl3Plus;
             platforms = systems;
           };
@@ -788,11 +788,11 @@
           binaryPath =
             if pkgs.stdenv.hostPlatform.isDarwin
             then "build/macos/run-install/Spool.app/Contents/MacOS/Spool"
-            else "build/linux-release/install/bin/jellyfin-native";
+            else "build/linux-release/install/bin/spool";
           nativeBuildStamp =
             if pkgs.stdenv.hostPlatform.isDarwin
-            then "build/macos/.jellyfin-nix-source-id"
-            else "build/linux-release/.jellyfin-nix-source-id";
+            then "build/macos/.spool-nix-source-id"
+            else "build/linux-release/.spool-nix-source-id";
           mpvLibraryPath =
             if pkgs.stdenv.hostPlatform.isDarwin
             then "build/macos/mpv-prefix/lib"
@@ -823,7 +823,7 @@
             if pkgs.stdenv.hostPlatform.isDarwin
             then "$(sysctl -n hw.ncpu)"
             else "$(nproc)";
-          testScript = pkgs.writeShellScript "jellyfin-native-ctest" ''
+          testScript = pkgs.writeShellScript "spool-ctest" ''
             set -euo pipefail
             cd "$1"
             shift
@@ -845,14 +845,14 @@
                 if buildRoot == "" then binaryPath
                 else if pkgs.stdenv.hostPlatform.isDarwin
                 then "${buildRoot}/run-install/Spool.app/Contents/MacOS/Spool"
-                else "${buildRoot}/install/bin/jellyfin-native";
+                else "${buildRoot}/install/bin/spool";
               runnerMpvLibraryPath =
                 if buildRoot == "" then mpvLibraryPath
                 else "${buildRoot}/mpv-prefix/lib";
               runnerBuildStamp =
-                if buildRoot != "" then "${buildRoot}/.jellyfin-nix-source-id"
-                else if pkgs.stdenv.hostPlatform.isDarwin then "build/macos/.jellyfin-nix-source-id"
-                else "build/linux-release/.jellyfin-nix-source-id";
+                if buildRoot != "" then "${buildRoot}/.spool-nix-source-id"
+                else if pkgs.stdenv.hostPlatform.isDarwin then "build/macos/.spool-nix-source-id"
+                else "build/linux-release/.spool-nix-source-id";
               buildRootExport = pkgs.lib.optionalString (buildRoot != "")
                 ''export BUILD_ROOT="$REPO_ROOT/${buildRoot}"; '';
               runnerBuildCommand =
@@ -871,9 +871,9 @@
             }
 
             stage_flake_source() {
-              cache_base="''${XDG_CACHE_HOME:-$HOME/.cache}/jellyfin-native/nix-run"
+              cache_base="''${XDG_CACHE_HOME:-$HOME/.cache}/spool/nix-run"
               staged="$cache_base/${stagedSourceId}"
-              marker="$staged/.jellyfin-staged-source"
+              marker="$staged/.spool-staged-source"
               if [ ! -f "$marker" ]; then
                 tmp="$cache_base/.${stagedSourceId}.$$"
                 rm -rf "$tmp"
@@ -882,17 +882,17 @@
                 chmod -R u+w "$tmp"
                 rm -rf "$tmp/mpv"
                 ln -s "$MPV_SOURCE" "$tmp/mpv"
-                printf '%s\n' "${stagedSourceId}" > "$tmp/.jellyfin-staged-source"
+                printf '%s\n' "${stagedSourceId}" > "$tmp/.spool-staged-source"
                 rm -rf "$staged"
                 mv "$tmp" "$staged"
               fi
               printf '%s\n' "$staged"
             }
 
-            if [ -n "''${JELLYFIN_REPO:-}" ]; then
-              REPO_ROOT="$JELLYFIN_REPO"
+            if [ -n "''${SPOOL_REPO:-}" ]; then
+              REPO_ROOT="$SPOOL_REPO"
               if ! is_repo_root "$REPO_ROOT"; then
-                echo "error: JELLYFIN_REPO does not point to a usable jellyfin-webos checkout: $REPO_ROOT" >&2
+                echo "error: SPOOL_REPO does not point to a usable spool checkout: $REPO_ROOT" >&2
                 exit 1
               fi
             elif is_repo_root "$PWD"; then
@@ -913,7 +913,7 @@
               if [ -x "$BIN" ] && [ -f "$BUILD_STAMP" ] && [ "$(cat "$BUILD_STAMP")" = "${stagedSourceId}" ]; then
                 echo "native build is current (${stagedSourceId}); skipping rebuild"
               else
-                nix develop "$REPO_ROOT#native" -c bash -c "$scrub; ${buildRootExport}export JELLYFIN_CMAKE_EXTRA_ARGS='${cmakeExtraArgs}'; ${runnerBuildCommand}"
+                nix develop "$REPO_ROOT#native" -c bash -c "$scrub; ${buildRootExport}export SPOOL_CMAKE_EXTRA_ARGS='${cmakeExtraArgs}'; ${runnerBuildCommand}"
                 mkdir -p "$(dirname "$BUILD_STAMP")"
                 printf '%s\n' "${stagedSourceId}" > "$BUILD_STAMP"
               fi
@@ -938,13 +938,13 @@
           '';
 
           builder = makeRunner {
-            name = "jellyfin-native-build";
+            name = "spool-build";
             buildBeforeRun = true;
             buildOnly = true;
           };
 
           runner = makeRunner {
-            name = "jellyfin-native-run";
+            name = "spool-run";
             buildBeforeRun = true;
           };
 
@@ -955,7 +955,7 @@
           # retain the incremental build path.
           defaultRunner =
             assert builtins.getContext cachedPackageDerivation == {};
-            pkgs.writeShellScriptBin "jellyfin-native-default" ''
+            pkgs.writeShellScriptBin "spool-default" ''
             export PATH="${pkgs.lib.makeBinPath [ pkgs.nix pkgs.bashInteractive pkgs.coreutils ]}:$PATH"
             set -euo pipefail
 
@@ -963,10 +963,10 @@
               [ -f "$1/CMakeLists.txt" ] && [ -f "$1/tools/build-macos.sh" ] && [ -f "$1/mpv/meson.build" ]
             }
 
-            if [ -n "''${JELLYFIN_REPO:-}" ]; then
-              CHECKOUT="$JELLYFIN_REPO"
+            if [ -n "''${SPOOL_REPO:-}" ]; then
+              CHECKOUT="$SPOOL_REPO"
               if ! is_repo_root "$CHECKOUT"; then
-                echo "error: JELLYFIN_REPO does not point to a usable jellyfin-webos checkout: $CHECKOUT" >&2
+                echo "error: SPOOL_REPO does not point to a usable spool checkout: $CHECKOUT" >&2
                 exit 1
               fi
             elif is_repo_root "$PWD"; then
@@ -981,12 +981,12 @@
               if [ -x "$BIN" ] && [ -f "$BUILD_STAMP" ] && [ "$(cat "$BUILD_STAMP")" = "${stagedSourceId}" ]; then
                 echo "native checkout build is current (${stagedSourceId}); reusing it"
                 cd "$CHECKOUT"
-                exec "${runner}/bin/jellyfin-native-run" "$@"
+                exec "${runner}/bin/spool-run" "$@"
               fi
             fi
 
             if ! ${if immutableRevision then "true" else "false"}; then
-              exec "${runner}/bin/jellyfin-native-run" "$@"
+              exec "${runner}/bin/spool-run" "$@"
             fi
 
             echo "no current checkout build; checking immutable package caches"
@@ -1003,27 +1003,27 @@
               export QML_IMPORT_PATH="$QML2_IMPORT_PATH"
               exec "$CACHED_OUT/Applications/Spool.app/Contents/MacOS/Spool" "$@"
             '' else ''
-              exec "$CACHED_OUT/bin/jellyfin-native" "$@"
+              exec "$CACHED_OUT/bin/spool" "$@"
             ''}
           '';
 
           # Same build and ctest invocation the release workflow runs.
           tester = makeRunner {
-            name = "jellyfin-native-tests";
+            name = "spool-tests";
             buildBeforeRun = true;
             runTests = true;
           };
-          noBuildRunner = makeRunner { name = "jellyfin-native-run-no-build"; };
+          noBuildRunner = makeRunner { name = "spool-run-no-build"; };
           imageDebugRunner = makeRunner {
-            name = "jellyfin-native-image-debug";
-            cmakeExtraArgs = "-DJELLYFIN_ARTWORK_ASPECT_DIAGNOSTICS=ON";
+            name = "spool-image-debug";
+            cmakeExtraArgs = "-DSPOOL_ARTWORK_ASPECT_DIAGNOSTICS=ON";
             buildRoot = if pkgs.stdenv.hostPlatform.isDarwin
               then "build/macos-image-debug"
               else "build/linux-release-image-debug";
           };
           imageDebugBuilder = makeRunner {
-            name = "jellyfin-native-image-debug-build";
-            cmakeExtraArgs = "-DJELLYFIN_ARTWORK_ASPECT_DIAGNOSTICS=ON";
+            name = "spool-image-debug-build";
+            cmakeExtraArgs = "-DSPOOL_ARTWORK_ASPECT_DIAGNOSTICS=ON";
             buildRoot = if pkgs.stdenv.hostPlatform.isDarwin
               then "build/macos-image-debug"
               else "build/linux-release-image-debug";
@@ -1036,7 +1036,7 @@
           # nixpkgs `gammaray` probe must match the app's Qt; the #native shell
           # builds the app against nixpkgs Qt, so they line up.
           gammarayRunner = makeRunner {
-            name = "jellyfin-native-gammaray";
+            name = "spool-gammaray";
             # QuickInspector updates its scene-graph model on every render and
             # crashes GammaRay 3.4 during the mpv overlay transition. Keep the
             # default profiling runner stable; use .#gammaray-full for Quick Scenes.
@@ -1044,13 +1044,13 @@
           };
 
           gammarayFullRunner = makeRunner {
-            name = "jellyfin-native-gammaray-full";
+            name = "spool-gammaray-full";
             launchPrefix = "${pkgs.gammaray}/bin/gammaray ";
           };
         in {
           build = {
             type = "app";
-            program = "${builder}/bin/jellyfin-native-build";
+            program = "${builder}/bin/spool-build";
           };
 
           # Prefer an exact checkout build even after its source is committed.
@@ -1058,27 +1058,27 @@
           # realise the immutable package that release CI publishes to Cachix.
           default = {
             type = "app";
-            program = "${defaultRunner}/bin/jellyfin-native-default";
+            program = "${defaultRunner}/bin/spool-default";
           };
 
           run = {
             type = "app";
-            program = "${noBuildRunner}/bin/jellyfin-native-run-no-build";
+            program = "${noBuildRunner}/bin/spool-run-no-build";
           };
 
           tests = {
             type = "app";
-            program = "${tester}/bin/jellyfin-native-tests";
+            program = "${tester}/bin/spool-tests";
           };
 
           image-debug = {
             type = "app";
-            program = "${imageDebugRunner}/bin/jellyfin-native-image-debug";
+            program = "${imageDebugRunner}/bin/spool-image-debug";
           };
 
           image-debug-build = {
             type = "app";
-            program = "${imageDebugBuilder}/bin/jellyfin-native-image-debug-build";
+            program = "${imageDebugBuilder}/bin/spool-image-debug-build";
           };
         } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           windows-proton-build = {
@@ -1107,12 +1107,12 @@
 
           gammaray = {
             type = "app";
-            program = "${gammarayRunner}/bin/jellyfin-native-gammaray";
+            program = "${gammarayRunner}/bin/spool-gammaray";
           };
 
           gammaray-full = {
             type = "app";
-            program = "${gammarayFullRunner}/bin/jellyfin-native-gammaray-full";
+            program = "${gammarayFullRunner}/bin/spool-gammaray-full";
           };
         });
     };

@@ -9,13 +9,13 @@
 #include <cstdlib>
 #include <utility>
 
-using JellyfinNative::BrowseKind;
-using JellyfinNative::BrowseSessionController;
-using JellyfinNative::LibraryItem;
-using JellyfinNative::MediaSourceInfo;
-using JellyfinNative::MediaStreamInfo;
-using JellyfinNative::MovieItem;
-using JellyfinNative::PagedMovieItems;
+using Spool::BrowseKind;
+using Spool::BrowseSessionController;
+using Spool::LibraryItem;
+using Spool::MediaSourceInfo;
+using Spool::MediaStreamInfo;
+using Spool::MovieItem;
+using Spool::PagedMovieItems;
 
 namespace {
 
@@ -47,7 +47,7 @@ MovieItem item(QString id, QString title, QString type)
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("browse-session-controller")
+SPOOL_TEST_MAIN("browse-session-controller")
 {
     QTemporaryDir settingsDir;
     require(settingsDir.isValid(), "temporary settings directory");
@@ -61,7 +61,7 @@ JELLYFIN_TEST_MAIN("browse-session-controller")
     library.name = QStringLiteral("Movies");
     library.collectionType = QStringLiteral("movies");
     QVariantMap defaultQuery { { QStringLiteral("sortBy"), QStringLiteral("SortName") } };
-    session.enterLibrary(library, QStringLiteral("Movies"), defaultQuery);
+    session.enterLibrary(library, defaultQuery);
     requireBrowse(
         session, BrowseKind::Library, QStringLiteral("lib"), QStringLiteral("Movies"), "library descriptor set");
     require(session.libraryId() == QStringLiteral("lib"), "library id set");
@@ -70,7 +70,7 @@ JELLYFIN_TEST_MAIN("browse-session-controller")
 
     QVariantMap dateQuery { { QStringLiteral("sortBy"), QStringLiteral("DateCreated") } };
     require(session.setQuery(dateQuery), "query changed");
-    session.enterLibrary(library, QStringLiteral("Movies"), defaultQuery);
+    session.enterLibrary(library, defaultQuery);
     require(session.query().value(QStringLiteral("sortBy")).toString() == QStringLiteral("DateCreated"),
         "library query retained by library id");
 
@@ -86,7 +86,7 @@ JELLYFIN_TEST_MAIN("browse-session-controller")
     session.setQueryValue(QStringLiteral("IsPlayed"), {});
     require(!session.query().contains(QStringLiteral("IsPlayed")), "nullable filter removed");
     BrowseSessionController restored(nullptr);
-    restored.enterLibrary(library, QStringLiteral("Movies"), defaultQuery);
+    restored.enterLibrary(library, defaultQuery);
     require(restored.query().value(QStringLiteral("sortBy")) == QStringLiteral("DateCreated"),
         "sort restored after reopening");
     require(restored.query().value(QStringLiteral("sortOrder")) == QStringLiteral("Descending"),

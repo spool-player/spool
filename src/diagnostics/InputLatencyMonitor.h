@@ -17,7 +17,7 @@ class QEvent;
 class QQuickWindow;
 class QScreen;
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace Detail {
 
@@ -338,4 +338,4 @@ private:
     std::atomic_bool m_hasPresentedFrame { false };
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

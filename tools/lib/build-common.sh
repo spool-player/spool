@@ -9,7 +9,7 @@ ensure_native_shell() {
   local script="$2"
   shift 2
 
-  if [[ "${JELLYFIN_NATIVE_SHELL:-0}" == "1" ]]; then
+  if [[ "${SPOOL_SHELL:-0}" == "1" ]]; then
     return 0
   fi
   command -v nix >/dev/null 2>&1 || {
@@ -157,8 +157,8 @@ is_positive_integer() {
 }
 
 logical_cpu_count() {
-  if is_positive_integer "${JELLYFIN_BUILD_LOGICAL_CPUS:-}"; then
-    printf '%s\n' "$JELLYFIN_BUILD_LOGICAL_CPUS"
+  if is_positive_integer "${SPOOL_BUILD_LOGICAL_CPUS:-}"; then
+    printf '%s\n' "$SPOOL_BUILD_LOGICAL_CPUS"
   elif command -v nproc >/dev/null 2>&1; then
     nproc
   elif command -v getconf >/dev/null 2>&1; then
@@ -173,8 +173,8 @@ logical_cpu_count() {
 physical_cpu_count() {
   local logical physical
 
-  if is_positive_integer "${JELLYFIN_BUILD_PHYSICAL_CPUS:-}"; then
-    printf '%s\n' "$JELLYFIN_BUILD_PHYSICAL_CPUS"
+  if is_positive_integer "${SPOOL_BUILD_PHYSICAL_CPUS:-}"; then
+    printf '%s\n' "$SPOOL_BUILD_PHYSICAL_CPUS"
     return 0
   fi
 
@@ -244,8 +244,8 @@ memory_bytes_file_to_mib() {
 memory_limit_mib() {
   local memory_mib memory_bytes
 
-  if is_positive_integer "${JELLYFIN_BUILD_MEMORY_LIMIT_MIB:-}"; then
-    printf '%s\n' "$JELLYFIN_BUILD_MEMORY_LIMIT_MIB"
+  if is_positive_integer "${SPOOL_BUILD_MEMORY_LIMIT_MIB:-}"; then
+    printf '%s\n' "$SPOOL_BUILD_MEMORY_LIMIT_MIB"
     return 0
   fi
 
@@ -281,10 +281,10 @@ memory_limit_mib() {
 }
 
 recommended_parallel_jobs() {
-  local per_job_mib="${1:-${JELLYFIN_BUILD_MEMORY_PER_JOB_MIB:-1536}}"
-  local reserve_mib="${2:-${JELLYFIN_BUILD_MEMORY_RESERVE_MIB:-2048}}"
-  local min_jobs="${JELLYFIN_BUILD_MIN_JOBS:-1}"
-  local max_jobs="${JELLYFIN_BUILD_MAX_JOBS:-}"
+  local per_job_mib="${1:-${SPOOL_BUILD_MEMORY_PER_JOB_MIB:-1536}}"
+  local reserve_mib="${2:-${SPOOL_BUILD_MEMORY_RESERVE_MIB:-2048}}"
+  local min_jobs="${SPOOL_BUILD_MIN_JOBS:-1}"
+  local max_jobs="${SPOOL_BUILD_MAX_JOBS:-}"
   local logical physical memory_mib memory_jobs jobs
 
   if [[ -n "${JOBS:-}" ]]; then
@@ -300,7 +300,7 @@ recommended_parallel_jobs() {
   is_positive_integer "$reserve_mib" || reserve_mib=2048
   is_positive_integer "$min_jobs" || min_jobs=1
   if [[ -n "$max_jobs" ]] && ! is_positive_integer "$max_jobs"; then
-    echo "error: JELLYFIN_BUILD_MAX_JOBS must be a positive integer, got '$max_jobs'" >&2
+    echo "error: SPOOL_BUILD_MAX_JOBS must be a positive integer, got '$max_jobs'" >&2
     return 1
   fi
 
@@ -338,8 +338,8 @@ recommended_parallel_jobs() {
 describe_parallel_jobs() {
   local jobs="$1"
   local label="${2:-build}"
-  local per_job_mib="${3:-${JELLYFIN_BUILD_MEMORY_PER_JOB_MIB:-1536}}"
-  local reserve_mib="${4:-${JELLYFIN_BUILD_MEMORY_RESERVE_MIB:-2048}}"
+  local per_job_mib="${3:-${SPOOL_BUILD_MEMORY_PER_JOB_MIB:-1536}}"
+  local reserve_mib="${4:-${SPOOL_BUILD_MEMORY_RESERVE_MIB:-2048}}"
 
   printf 'Using %s parallel %s jobs (logical CPUs: %s, physical cores: %s, memory limit: %s MiB, per-job: %s MiB, reserve: %s MiB)\n' \
     "$jobs" "$label" "$(logical_cpu_count)" "$(physical_cpu_count)" "$(memory_limit_mib)" \
@@ -517,11 +517,11 @@ cmake_build_app() {
   local src="$1" build="$2"
   shift 2
   local cmake_args=("$@")
-  if [[ -n "${JELLYFIN_CMAKE_EXTRA_ARGS:-}" ]]; then
+  if [[ -n "${SPOOL_CMAKE_EXTRA_ARGS:-}" ]]; then
     # Shell-style splitting is intentional: this is for simple -Dname=value
     # switches from flake runners and local diagnostics.
     # shellcheck disable=SC2206
-    cmake_args+=(${JELLYFIN_CMAKE_EXTRA_ARGS})
+    cmake_args+=(${SPOOL_CMAKE_EXTRA_ARGS})
   fi
   if [[ -n "${SPOOL_QT_CMAKE_DIR:-}" ]]; then
     cmake_args+=("-DQt6_DIR=$SPOOL_QT_CMAKE_DIR")

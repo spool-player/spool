@@ -1,6 +1,6 @@
 #include "platform/PlatformProcess.h"
 
-namespace JellyfinNative {
+namespace Spool {
 
 ProcessStartupTiming captureProcessStartupTiming()
 {
@@ -16,4 +16,4 @@ TerminationSignalHandler::TerminationSignalHandler(QCoreApplication&)
 
 TerminationSignalHandler::~TerminationSignalHandler() = default;
 
-} // namespace JellyfinNative
+} // namespace Spool

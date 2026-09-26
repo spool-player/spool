@@ -42,10 +42,6 @@ FocusScope {
     readonly property bool inCollection: currentViewKind === "boxset" || currentViewKind === "collection"
     readonly property bool collectionEligible: actionable && (itemType === "Movie" || itemType === "Series" || itemType
                                                               === "Episode")
-    readonly property bool canManagePlaylists: Management.currentUserCanManagePlaylists
-    readonly property bool canManageCollections: Management.currentUserCanManageCollections
-    readonly property bool canRenameItem: Management.currentUserCanRenameItems
-    readonly property bool canDeleteItem: Management.currentUserCanDeleteItems
 
     visible: opened
     focus: opened
@@ -143,59 +139,13 @@ FocusScope {
                              label: favoriteState ? "Remove favourite" : "Add favourite",
                              checked: favoriteState
                          })
-            if (canManagePlaylists && queueable)
+            // Whatever else the item's provider does with it: playlists,
+            // collections, renaming. Declared up front, so this costs nothing.
+            for (const action of Sources.itemActions(itemId, itemType))
                 options.push({
-                                 action: "playlist",
-                                 icon: "playlist_add",
-                                 label: "Add to playlist",
-                                 checked: false
-                             })
-            if (canManageCollections && collectionEligible)
-                options.push({
-                                 action: "collection",
-                                 icon: "library_add",
-                                 label: "Add to collection",
-                                 checked: false
-                             })
-            if (inPlaylist && item.playlistItemId) {
-                options.push({
-                                 action: "moveUp",
-                                 icon: "keyboard_arrow_up",
-                                 label: "Move up",
-                                 checked: false
-                             })
-                options.push({
-                                 action: "moveDown",
-                                 icon: "keyboard_arrow_down",
-                                 label: "Move down",
-                                 checked: false
-                             })
-                options.push({
-                                 action: "removeParent",
-                                 icon: "remove_circle",
-                                 label: "Remove from playlist",
-                                 checked: false
-                             })
-            } else if (inCollection && canManageCollections) {
-                options.push({
-                                 action: "removeParent",
-                                 icon: "remove_circle",
-                                 label: "Remove from collection",
-                                 checked: false
-                             })
-            }
-            if ((itemType === "Playlist" && canManagePlaylists) || canRenameItem)
-                options.push({
-                                 action: "rename",
-                                 icon: "drive_file_rename_outline",
-                                 label: "Rename",
-                                 checked: false
-                             })
-            if (canDeleteItem)
-                options.push({
-                                 action: "delete",
-                                 icon: "delete",
-                                 label: "Delete",
+                                 action: "provider:" + action.id,
+                                 icon: action.icon || "more_horiz",
+                                 label: action.label,
                                  checked: false
                              })
         }
@@ -300,14 +250,8 @@ FocusScope {
         } else if (action === "favorite") {
             favoriteState = !favoriteState
             ItemState.setFavorite(itemId, favoriteState)
-        } else if (action === "playlist" || action === "collection") {
-            shell.openManagement(action, item)
-        } else if (action === "removeParent") {
-            shell.openManagement("remove", item)
-        } else if (action === "moveUp" || action === "moveDown") {
-            Management.movePlaylistItemInCurrent(item, action === "moveUp" ? -1 : 1)
-        } else if (action === "rename" || action === "delete") {
-            shell.openManagement(action, item)
+        } else if (action.startsWith("provider:")) {
+            Sources.runItemAction(action.slice(9), itemId, itemType)
         } else if (action === "info") {
             shell.openMediaInfo(item)
         }

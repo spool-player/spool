@@ -40,6 +40,8 @@ FocusScope {
     }
 
     function rowAvailable(row) {
+        if (row.key === "action/connectionSpeed" && !ProviderCapabilities.speedTest)
+            return false
         return SettingsNavigation.rowAvailable(row, Platform, Player.hdrPlayback, function (key) {
             return settingsValue({
                                      "key": key,
@@ -264,8 +266,14 @@ FocusScope {
     }
 
     function rowDescription(row) {
-        if (row.key === "session/account")
-            return Session.serverUrl
+        if (row.key === "action/connectionSpeed")
+            return App.connectionSpeedDescription
+        if (row.key === "action/accounts") {
+            const count = Providers.accounts.length
+            return count === 1 ? "1 account" : count + " accounts"
+        }
+        if (row.key === "action/providers" && Store.updates.length > 0)
+            return Store.updates.length === 1 ? "1 update" : Store.updates.length + " updates"
         if (row.key === "subtitles/mode" || row.key === "audio/trackMode") {
             const index = rowCurrentIndex(row)
             const labels = rowOptions(row)
@@ -293,17 +301,16 @@ FocusScope {
     }
 
     function rowValueText(row) {
-        if (row.key === "action/switchUser")
-            return "Choose"
-        if (row.key === "action/logout")
-            return "Sign out"
+        if (row.key === "action/connectionSpeed")
+            return "Measure again"
+        if (row.key === "action/accounts" || row.key === "action/providers")
+            return "Manage"
         if (row.key === "action/openSourceNotices" || row.key === "action/exportDiagnostics" || row.key
                 === "action/subtitleSettings" || row.key === "action/manageCertificates")
             return "Open"
         if (row.key === "action/clearLatencyStatistics" || row.key === "action/clearLogs")
             return "Clear"
-        if (row.key === "session/account")
-            return Session.activeProfileLabel.length > 0 ? Session.activeProfileLabel : "Offline"
+
         if (row.key === "about/version")
             return "v" + Qt.application.version
         if (row.key === "about/locale")
@@ -436,16 +443,18 @@ FocusScope {
             return
         }
         if (row.type === "action") {
-            if (row.key === "action/switchUser" && shell)
-                shell.switchUser()
-            else if (row.key === "action/logout")
-                App.logout()
+            if (row.key === "action/accounts" && shell)
+                shell.pushRoute("accounts")
+            else if (row.key === "action/providers" && shell)
+                shell.pushRoute("addProvider")
             else if (row.key === "action/manageCertificates")
                 certificateManagerVisible = true
             else if (row.key === "action/clearLatencyStatistics")
                 InputLatency.clearStatistics()
             else if (row.key === "action/clearLogs")
                 App.clearLogs()
+            else if (row.key === "action/connectionSpeed")
+                App.refreshConnectionSpeed()
             else if (row.key === "action/exportDiagnostics") {
                 diagnosticsExportPreview = App.diagnosticsPreview()
                 diagnosticsExportVisible = true
@@ -575,12 +584,12 @@ FocusScope {
 
     focus: true
     onActiveFocusChanged: if (activeFocus)
-    focusEntry()
+                              focusEntry()
     onVisibleChanged: {
         if (visible)
-        ensureRowsBuilt()
+            ensureRowsBuilt()
         if (visible && activeFocus)
-        Qt.callLater(focusEntry)
+            Qt.callLater(focusEntry)
     }
 
     property bool rowsBuilt: false
@@ -595,7 +604,6 @@ FocusScope {
     // Only take focus if the page is actually active: the route host
     // prewarms an invisible instance, which must not steal focus.
     Component.onCompleted: Qt.callLater(function () {
-        Settings.loadRemote()
         ensureRowsBuilt()
         if (activeFocus)
             focusEntry()
@@ -625,6 +633,12 @@ FocusScope {
         }
     }
     Connections {
+        target: ProviderCapabilities
+        function onChanged() {
+            root.refreshSettingsFilter(true)
+        }
+    }
+    Connections {
         target: Player
         function onHdrPlaybackChanged() {
             root.refreshSettingsFilter(true)
@@ -648,14 +662,14 @@ FocusScope {
         spacing: Metrics.scaled(10)
         onCurrentIndexChanged: {
             if (root.reconcilingSettingsRows)
-            return
+                return
             root.currentIndex = currentIndex
             root.selectedRowKey = currentIndex >= 0 && currentIndex < settingsRows.count ? settingsRows.get(
                                                                                                currentIndex).rowKey : ""
         }
         onAccepted: index => root.activateRow(root.rowAtVisibleIndex(index), index)
         onEdgeUp: if (root.shell)
-        root.shell.focusNavBar()
+                      root.shell.focusNavBar()
         delegate: Column {
             id: settingsDelegate
             required property int index

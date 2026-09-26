@@ -18,7 +18,7 @@
 #include <cstdlib>
 #include <iostream>
 
-using JellyfinNative::TlsTrustController;
+using Spool::TlsTrustController;
 
 namespace {
 
@@ -104,10 +104,10 @@ RequestResult request(QNetworkAccessManager& manager, const QUrl& url, const cha
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("tls-trust")
+SPOOL_TEST_MAIN("tls-trust")
 {
     QCoreApplication app(argc, argv);
-    QCoreApplication::setOrganizationName(QStringLiteral("JellyfinNativeTests"));
+    QCoreApplication::setOrganizationName(QStringLiteral("SpoolTests"));
     QCoreApplication::setApplicationName(QStringLiteral("TlsTrustTest"));
 
     QTemporaryDir settingsDirectory;

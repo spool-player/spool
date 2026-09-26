@@ -4,7 +4,7 @@
 #include <QStringList>
 #include <QtGlobal>
 
-namespace JellyfinNative {
+namespace Spool {
 
 struct SettingChoice;
 
@@ -40,11 +40,10 @@ bool platformSupportsDirectVideoOutput();
 // to it after a viewer has watched the first few seconds stutter.
 const char *platformDefaultVideoOutput();
 bool platformUsesPerOutputAudioDelay();
-bool platformDefaultCastButtonEnabled();
 bool platformDefaultRemoteControlTargetEnabled();
 QString normalizedPlatformAudioRoute(const QString& output);
 QString platformAudioRouteDisplayName(const QString& output);
 QString platformAudioDelayStorageKey(const QString& output);
 int platformAutomaticAudioDelayMs(const QString& output, int displayLatencyMs, int outputLatencyMs);
 
-} // namespace JellyfinNative
+} // namespace Spool

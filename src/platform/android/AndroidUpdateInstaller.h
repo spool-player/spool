@@ -2,7 +2,7 @@
 
 #include <QString>
 
-namespace JellyfinNative {
+namespace Spool {
 
 class AndroidUpdateInstaller final {
 public:
@@ -11,4 +11,4 @@ public:
     static bool openInstallSettings();
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

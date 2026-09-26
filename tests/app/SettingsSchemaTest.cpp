@@ -13,7 +13,7 @@
 #include <cstdlib>
 #include <iostream>
 
-using namespace JellyfinNative;
+using namespace Spool;
 
 namespace {
 
@@ -91,7 +91,6 @@ void requiredPersistedKeysArePresentExactlyOnce()
 {
     const QStringList expectedKeys {
         QStringLiteral("appearance/uiScalePercent"),
-        QStringLiteral("remote/showCastButton"),
         QStringLiteral("remote/acceptCommands"),
         QStringLiteral("artwork/format"),
         QStringLiteral("artwork/webpQuality"),
@@ -144,6 +143,7 @@ void requiredPersistedKeysArePresentExactlyOnce()
         QStringLiteral("input/yellowButton"),
         QStringLiteral("input/blueButton"),
         QStringLiteral("updates/automatic"),
+        QStringLiteral("providers/updates"),
         QStringLiteral("playback/videoOutput"),
         QStringLiteral("playback/renderQuality"),
         QStringLiteral("playback/autoAdjustQuality"),
@@ -170,7 +170,7 @@ void requiredPersistedKeysArePresentExactlyOnce()
 void audioOutputChoicesMatchPlatform()
 {
     const SettingSpec& audioOutput = requiredSpec(QStringLiteral("settings/audioOutputMode"));
-#ifdef JELLYFIN_NATIVE_WEBOS
+#ifdef SPOOL_WEBOS
     const QStringList expectedChoices { QStringLiteral("alsa"), QStringLiteral("starfish-pcm") };
     const QString expectedDefault = QStringLiteral("alsa");
     const QString unknownFallback = QStringLiteral("alsa");
@@ -206,7 +206,7 @@ void audioOutputChoicesMatchPlatform()
     }
     require(normalizedSettingValue(audioOutput, QStringLiteral("unexpected")).toString() == unknownFallback,
         QStringLiteral("unknown audio output did not use the platform default"));
-#ifndef JELLYFIN_NATIVE_WEBOS
+#ifndef SPOOL_WEBOS
     require(!expectedChoices.contains(QStringLiteral("starfish-pcm")),
         QStringLiteral("desktop audio choices must not expose Starfish"));
 #endif
@@ -382,14 +382,14 @@ void groupsAreDeclaredContiguously()
 }
 void pageRowsShareTheSchemaContract()
 {
-    const QStringList pageKeys { QStringLiteral("session/account"), QStringLiteral("action/switchUser"),
-        QStringLiteral("action/logout"), QStringLiteral("i18n/locale"), QStringLiteral("theme/accent"),
-        QStringLiteral("theme/reducedMotion"), QStringLiteral("theme/railLabels"), QStringLiteral("theme/renderMode"),
-        QStringLiteral("theme/antialiasedText"), QStringLiteral("theme/technicalMetadata"),
-        QStringLiteral("action/subtitleSettings"), QStringLiteral("action/resetSubtitleAppearance"),
-        QStringLiteral("about/version"), QStringLiteral("action/openSourceNotices"), QStringLiteral("about/locale"),
-        QStringLiteral("shell/diagnostics"), QStringLiteral("shell/latencyGuard"),
-        QStringLiteral("shell/latencyOverlay"), QStringLiteral("action/clearLatencyStatistics") };
+    const QStringList pageKeys { QStringLiteral("action/accounts"), QStringLiteral("action/providers"),
+        QStringLiteral("i18n/locale"), QStringLiteral("theme/accent"), QStringLiteral("theme/reducedMotion"),
+        QStringLiteral("theme/railLabels"), QStringLiteral("theme/renderMode"), QStringLiteral("theme/antialiasedText"),
+        QStringLiteral("theme/technicalMetadata"), QStringLiteral("action/subtitleSettings"),
+        QStringLiteral("action/resetSubtitleAppearance"), QStringLiteral("about/version"),
+        QStringLiteral("action/openSourceNotices"), QStringLiteral("about/locale"), QStringLiteral("shell/diagnostics"),
+        QStringLiteral("shell/latencyGuard"), QStringLiteral("shell/latencyOverlay"),
+        QStringLiteral("action/clearLatencyStatistics") };
     for (const QString& key : pageKeys) {
         const SettingSpec& spec = requiredSpec(key);
         require(!spec.persisted, QStringLiteral("page-owned row %1 must not be persisted").arg(key));
@@ -405,6 +405,19 @@ void pageRowsShareTheSchemaContract()
         QStringLiteral("rail label tuning should be hidden at Essential detail"));
     require(requiredSpec(QStringLiteral("shell/diagnostics")).level == SettingLevel::Expert,
         QStringLiteral("diagnostics controls should be hidden below Expert detail"));
+}
+
+void accountRowsAreProviderNeutral()
+{
+    for (const QString& key : { QStringLiteral("action/accounts"), QStringLiteral("action/providers"),
+             QStringLiteral("providers/updates"), QStringLiteral("action/manageCertificates") })
+        requiredSpec(key);
+    QSet<QString> keys;
+    for (const QVariant& item : settingSchemaModel())
+        keys.insert(item.toMap().value(QStringLiteral("key")).toString());
+    for (const QString& gone :
+        { QStringLiteral("session/account"), QStringLiteral("action/logout"), QStringLiteral("remote/showCastButton") })
+        require(!keys.contains(gone), QStringLiteral("%1 belonged to the native Jellyfin client").arg(gone));
 }
 
 void subtitleChoicesExplainTheirBehavior()
@@ -554,7 +567,7 @@ void buttonChoicesAndLabelsExposePlayerActions()
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("settings-schema")
+SPOOL_TEST_MAIN("settings-schema")
 {
     QCoreApplication app(argc, argv);
     requiredPersistedKeysArePresentExactlyOnce();
@@ -565,6 +578,7 @@ JELLYFIN_TEST_MAIN("settings-schema")
     schemaModelExposesEverySpecOnce();
     groupsAreDeclaredContiguously();
     pageRowsShareTheSchemaContract();
+    accountRowsAreProviderNeutral();
     subtitleChoicesExplainTheirBehavior();
     systemLanguageLabelNamesResolvedLanguage();
     buttonChoicesAndLabelsExposePlayerActions();

@@ -11,7 +11,7 @@
       "hidden": true,
       "generator": "Ninja",
       "cacheVariables": {
-        "JELLYFIN_NATIVE_WEBOS": "OFF"
+        "SPOOL_WEBOS": "OFF"
       }
     },
     {
@@ -20,7 +20,7 @@
       "binaryDir": "${sourceDir}/build/linux-dev/app",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "JELLYFIN_NATIVE_DEV_BUILD": "ON"
+        "SPOOL_DEV_BUILD": "ON"
       }
     },
     {
@@ -29,7 +29,7 @@
       "binaryDir": "${sourceDir}/build/linux-release/app",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "JELLYFIN_NATIVE_DEV_BUILD": "OFF"
+        "SPOOL_DEV_BUILD": "OFF"
       }
     },
     {
@@ -46,9 +46,9 @@
       "binaryDir": "${sourceDir}/build/windows-release/app",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_PREFIX_PATH": "$env{JELLYFIN_WINDOWS_PREFIX_PATH}",
-        "JELLYFIN_NATIVE_DEV_BUILD": "OFF",
-        "MPV_ROOT": "$env{JELLYFIN_MPV_ROOT}"
+        "CMAKE_PREFIX_PATH": "$env{SPOOL_WINDOWS_PREFIX_PATH}",
+        "SPOOL_DEV_BUILD": "OFF",
+        "MPV_ROOT": "$env{SPOOL_MPV_ROOT}"
       }
     }
   ],
