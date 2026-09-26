@@ -139,10 +139,13 @@ FocusScope {
     property int actionIndex: 0
     property int overflowIndex: 0
     property string loadedDetailKey: ""
+    property bool contextPositionPending: true
     property bool seasonPickerOpen: false
     property int seasonPickerIndex: 0
     property var seasonEntries: []
     property bool routeRefreshScheduled: false
+
+    onContextRowChanged: Qt.callLater(positionContextRow)
 
     focus: true
 
@@ -580,6 +583,17 @@ FocusScope {
         if (similarRow)
             similarRow.currentIndex = similarCount > 0 ? Math.max(0, Math.min(similarRow.currentIndex, similarCount - 1)) :
                                                          0
+        Qt.callLater(positionContextRow)
+    }
+
+    function positionContextRow() {
+        if (!routeActive || !contextPositionPending || !contextRow || contextCount <= 0 || !loadedDetailKey.length)
+            return
+        if (compactEpisodicDetail) {
+            if (!contextRow.positionIndexAtStart(Content.detailContextInitialIndex))
+                return
+        }
+        contextPositionPending = false
     }
 
     function refreshDetailRows() {
@@ -588,6 +602,7 @@ FocusScope {
         if (key === loadedDetailKey)
             return
         loadedDetailKey = key
+        contextPositionPending = true
         if (contextRow)
             contextRow.currentIndex = 0
         if (similarRow)
@@ -1525,6 +1540,8 @@ FocusScope {
                         cardWidth: root.contextPosterCards ? root.rowPosterWidth : root.rowLandscapeWidth
                         cardKind: root.contextPosterCards ? "poster" : "landscape"
                         cardGap: root.rowGap
+                        allowTrailingSpace: root.compactEpisodicDetail
+                        onWidthChanged: Qt.callLater(root.positionContextRow)
                         enabledRow: root.showContextRow
                         reserveWhenEmpty: root.reserveContextRow
                         loading: root.reserveContextRow

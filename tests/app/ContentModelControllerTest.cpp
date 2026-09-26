@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <iostream>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -58,6 +59,7 @@ LibraryItem makeLibrary(const QString& id, const QString& name, const QString& c
 
 class TestCatalog final : public Catalog, public SearchSource {
 public:
+    std::optional<std::vector<MovieItem>> episodeRows;
     bool signedIn() const override
     {
         return true;
@@ -130,6 +132,8 @@ public:
     {
         Q_UNUSED(seriesId);
         Q_UNUSED(seasonId);
+        if (episodeRows)
+            co_return std::vector<MovieItem>(*episodeRows);
         MovieItem episode;
         episode.id = QStringLiteral("episode-row");
         episode.title = QStringLiteral("The Loaded Episode");
@@ -566,6 +570,47 @@ SPOOL_TEST_MAIN("content-model-controller")
         "episode detail rows did not expose season selector options");
     require(controller.detailSeasonOptions()->get(0).id == QStringLiteral("season-1"),
         "season selector option did not preserve its season id");
+
+    std::vector<MovieItem> seasonEpisodes(6);
+    for (int index = 0; index < static_cast<int>(seasonEpisodes.size()); ++index) {
+        auto& episode = seasonEpisodes[static_cast<size_t>(index)];
+        episode.id = QStringLiteral("abcd1234:episode-%1").arg(index);
+        episode.itemType = QStringLiteral("Episode");
+        episode.played = index < 3;
+    }
+    seasonEpisodes[4].resumeTicks = 60LL * 10'000'000;
+    catalog.episodeRows = seasonEpisodes;
+    const auto loadEpisodeContext = [&](const QString& id, const QString& type) {
+        controller.loadDetailRows(id, type, QStringLiteral("series-1"), QStringLiteral("season-1"));
+        require(waitForDetailRowsIdle(controller, 1000), "episode context did not settle");
+    };
+    loadEpisodeContext(QStringLiteral("season-1"), QStringLiteral("Season"));
+    require(controller.detailContextInitialIndex() == 4,
+        "season details should begin at resumable progress before an earlier unwatched gap");
+    loadEpisodeContext(seasonEpisodes[1].id, QStringLiteral("Episode"));
+    require(controller.detailContextInitialIndex() == 1,
+        "episode details should begin at the current opaque episode id, even if it was watched");
+    seasonEpisodes[4].resumeTicks = 0;
+    catalog.episodeRows = seasonEpisodes;
+    loadEpisodeContext(QStringLiteral("season-1"), QStringLiteral("Season"));
+    require(controller.detailContextInitialIndex() == 3,
+        "season details should begin at the playable episode after the last watched episode");
+    loadEpisodeContext(QStringLiteral("missing"), QStringLiteral("Episode"));
+    require(controller.detailContextInitialIndex() == 3,
+        "an unavailable current episode should fall back to viewing progress");
+    for (auto& episode : seasonEpisodes)
+        episode.played = true;
+    catalog.episodeRows = seasonEpisodes;
+    loadEpisodeContext(QStringLiteral("season-1"), QStringLiteral("Season"));
+    require(controller.detailContextInitialIndex() == 5,
+        "a completed season should begin at its last watched episode rather than wrap to the beginning");
+    controller.reset();
+    require(controller.detailContextInitialIndex() == 0 && controller.detailSeasons()->rowCount() == 0,
+        "reset should discard both the old episode selection and its rows");
+    catalog.episodeRows = std::vector<MovieItem> {};
+    loadEpisodeContext(QStringLiteral("season-1"), QStringLiteral("Season"));
+    require(controller.detailContextInitialIndex() == 0, "an empty season must not retain an out-of-range index");
+    catalog.episodeRows.reset();
 
     controller.loadDetailRows(QStringLiteral("boxset-1"), QStringLiteral("BoxSet"), QString(), QString());
 
