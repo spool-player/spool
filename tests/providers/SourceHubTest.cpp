@@ -1,7 +1,9 @@
 #include "provider/SourceHub.h"
 #include "ProviderFixture.h"
 #include "TestMain.h"
+#include "app/ArtworkService.h"
 #include "cache/DatabaseManager.h"
+#include "common/MetaJson.h"
 #include "provider/ProviderRegistry.h"
 #include "provider/ProviderUiContext.h"
 #include "providers/local/LocalProvider.h"
@@ -80,7 +82,8 @@ SPOOL_TEST_MAIN("source-hub")
     };
     const QString a = add("spool.local", "a");
     const QString b = add("spool.local", "b");
-    const QString remote = add("fixture.test", "remote", { { QStringLiteral("label"), QStringLiteral("Remote") } });
+    const QString remote = add("fixture.test", "remote",
+        { { QStringLiteral("label"), QStringLiteral("Remote") }, { QStringLiteral("inheritedArtwork"), true } });
     const QString offline = add("fixture.test", "offline", { { QStringLiteral("failing"), true } });
     waitUntil([&] { return hub.sources().size() == 4; }, "every enabled account joins the hub");
     require(hub.capabilities().testFlag(Provider::Search) && hub.capabilities().testFlag(Provider::UserItemState),
@@ -135,6 +138,30 @@ SPOOL_TEST_MAIN("source-hub")
     image.maxWidth = 300;
     require(hub.imageUrl(image) == QStringLiteral("https://img.invalid/m1/Primary?w=300"),
         "artwork is built from the owning account's template with its own id");
+
+    // Exercise provider decoding, account scoping, cache persistence and the
+    // actual home/details artwork selector together: parent tags need parent IDs.
+    const MovieItem inherited = QCoro::waitFor(hub.fetchItemDetails(remoteItem));
+    MovieItem cached = metaFromJson<MovieItem>(metaToJson(inherited));
+    ArtworkService artwork(QString(), 0, 1024, 1, nullptr);
+    artwork.setSource(&hub);
+    require(artwork.url(QVariant::fromValue(cached), QStringLiteral("landscape"), 400)
+            == QStringLiteral("https://img.invalid/parent-thumb/Thumb?w=400"),
+        "cached home cards request inherited thumbnails from their account-scoped owner");
+    require(artwork.url(QVariant::fromValue(cached), QStringLiteral("backdrop"), 1920)
+            == QStringLiteral("https://img.invalid/parent-backdrop/Backdrop?w=1920"),
+        "details request inherited backdrops from their own owner, not the thumbnail owner");
+    cached.thumbTag.clear();
+    require(artwork.url(QVariant::fromValue(cached), QStringLiteral("landscape"), 400)
+            == QStringLiteral("https://img.invalid/parent-backdrop/Backdrop?w=400"),
+        "a home card without a thumbnail falls back to its backdrop owner");
+    cached.thumbTag = QStringLiteral("own-thumb");
+    cached.thumbItemId.clear();
+    cached.albumId = hub.scoped(remote, QStringLiteral("album"));
+    cached.albumPrimaryImageTag = QStringLiteral("album-cover");
+    require(artwork.url(QVariant::fromValue(cached), QStringLiteral("landscape"), 400)
+            == QStringLiteral("https://img.invalid/m1/Thumb?w=400"),
+        "an item's own thumbnail overrides both inherited and album cover identities");
 
     require(hub.itemActions(remoteItem, QStringLiteral("Movie")).size() == 1
             && hub.itemActions(remoteItem, QStringLiteral("Series")).isEmpty()

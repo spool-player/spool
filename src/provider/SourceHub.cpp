@@ -635,6 +635,8 @@ MovieItem SourceHub::scopedItem(MovieItem item, const QString& accountId) const
     item.seriesId = scoped(accountId, item.seriesId);
     item.seasonId = scoped(accountId, item.seasonId);
     item.albumId = scoped(accountId, item.albumId);
+    item.backdropItemId = scoped(accountId, item.backdropItemId);
+    item.thumbItemId = scoped(accountId, item.thumbItemId);
     for (PersonItem& person : item.people)
         person.id = scoped(accountId, person.id);
     return item;

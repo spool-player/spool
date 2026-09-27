@@ -1,6 +1,15 @@
 export function createSource(config, sourceHost) {
     let calls = 0;
-    const item = function(id) { return {id: id, title: config.label + ' ' + id, type: 'Movie'}; };
+    const item = function(id) {
+        const row = {id: id, title: config.label + ' ' + id, type: 'Movie'};
+        if (config.inheritedArtwork) {
+            row.thumbTag = 'thumb-tag';
+            row.thumbItemId = 'parent-thumb';
+            row.backdropTag = 'backdrop-tag';
+            row.backdropItemId = 'parent-backdrop';
+        }
+        return row;
+    };
     const failing = function() { if (config.failing) throw new Error('offline'); };
     return {
         describe: function() { return {artwork: 'https://img.invalid/{itemId}/{type}?w={width}'}; },
