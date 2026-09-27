@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Layouts
 import "../theme"
 import "../primitives"
 
@@ -87,26 +88,32 @@ Item {
     Surface {
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: parent.bottom
-        anchors.bottomMargin: 34
-        width: Math.min(parent.width - 96, toastContent.implicitWidth + 42)
-        height: 48
+        anchors.bottomMargin: Metrics.scaled(34)
+        width: Math.min(parent.width - Metrics.pageMarginPx * 2, toastContent.implicitWidth + Metrics.scaled(42))
+        height: Math.max(Metrics.controlHeightPx, toastContent.implicitHeight + Metrics.scaled(24))
         visible: root.message.length > 0
         elevated: true
 
-        Row {
+        RowLayout {
             id: toastContent
-            anchors.centerIn: parent
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.leftMargin: Metrics.scaled(21)
+            anchors.rightMargin: Metrics.scaled(21)
             spacing: Metrics.scaled(16)
 
             AppText {
-                anchors.verticalCenter: parent.verticalCenter
+                Layout.fillWidth: true
                 text: root.message
                 color: Theme.textPrimary
+                font.pixelSize: Metrics.bodySizePx
+                wrapMode: Text.Wrap
             }
 
             ActionButton {
                 visible: root.actionText.length > 0
-                anchors.verticalCenter: parent.verticalCenter
+                Layout.alignment: Qt.AlignVCenter
                 text: root.actionText
                 kind: "flat"
                 onClicked: root.triggerAction()
