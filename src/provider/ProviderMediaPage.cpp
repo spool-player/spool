@@ -189,6 +189,8 @@ namespace {
             media.logoTag = field(row, "logoTag");
             media.bannerTag = field(row, "bannerTag");
             media.thumbTag = field(row, "thumbTag");
+            media.backdropItemId = field(row, "backdropItemId", 1024);
+            media.thumbItemId = field(row, "thumbItemId", 1024);
             media.seriesPrimaryImageTag = field(row, "seriesPosterTag");
             media.albumPrimaryImageTag = field(row, "albumPosterTag");
             media.seriesId = field(row, "seriesId", 1024);

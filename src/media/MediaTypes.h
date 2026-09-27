@@ -223,6 +223,8 @@ struct MovieItem {
     Q_PROPERTY(QString logoTag MEMBER logoTag)
     Q_PROPERTY(QString bannerTag MEMBER bannerTag)
     Q_PROPERTY(QString thumbTag MEMBER thumbTag)
+    Q_PROPERTY(QString backdropItemId MEMBER backdropItemId)
+    Q_PROPERTY(QString thumbItemId MEMBER thumbItemId)
     Q_PROPERTY(QStringList genres MEMBER genres)
     Q_PROPERTY(QStringList tags MEMBER tags)
     Q_PROPERTY(QStringList studios MEMBER studios)
@@ -275,6 +277,9 @@ public:
     QString logoTag;
     QString bannerTag;
     QString thumbTag;
+    // Empty means the image belongs to this item; otherwise its opaque owner ID.
+    QString backdropItemId;
+    QString thumbItemId;
     QStringList genres;
     QStringList tags;
     QStringList studios;

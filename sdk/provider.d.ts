@@ -128,6 +128,8 @@ export interface Item {
     album?: string; albumId?: string; albumArtist?: string;
     /** Passed back as `{tag}` in the artwork template, or used as-is when it is an https URL and there is no template. */
     posterTag?: string; backdropTag?: string; logoTag?: string; bannerTag?: string; thumbTag?: string;
+    /** Owner of an inherited image; omitted for this item's own image. Scoped by the host like other item IDs. */
+    backdropItemId?: string; thumbItemId?: string;
     seriesPosterTag?: string; albumPosterTag?: string;
     genres?: string[]; tags?: string[]; studios?: string[];
     officialRating?: string; communityRating?: number; criticRating?: number;

@@ -152,6 +152,16 @@ bounded endpoint, omit `speedTest`; retain explicit quality/source choices
 instead of inventing a measurement. Per-account measurements are appropriate
 for a fixed media server, not interchangeable across arbitrary stream origins.
 
+## Artwork ownership
+
+An image tag belongs to an item, not necessarily the row that displays it.
+When a thumbnail or backdrop is inherited, return `thumbItemId` or
+`backdropItemId` alongside its tag. Omit the owner for the row's own image.
+Spool scopes these opaque IDs to the account and preserves them in cached
+media rows; home cards and details request the image from that owner.
+Do not attach a parent's tag to a child without its owner ID. Series posters
+and album covers retain their existing `seriesId`/`albumId` ownership.
+
 ## Screens
 
 A screen is mounted with a `provider` property (`ScreenContext` in `provider.d.ts`) and may

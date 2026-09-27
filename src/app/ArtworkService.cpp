@@ -545,9 +545,11 @@ QString ArtworkService::movieUrl(const MovieItem& item, const QString& kind, int
     } else if (kind == QStringLiteral("landscape")) {
         if (!item.thumbTag.isEmpty()) {
             tag = item.thumbTag;
+            itemId = item.thumbItemId.isEmpty() ? item.id : item.thumbItemId;
             imageType = QStringLiteral("Thumb");
         } else if (!item.backdropTag.isEmpty()) {
             tag = item.backdropTag;
+            itemId = item.backdropItemId.isEmpty() ? item.id : item.backdropItemId;
             imageType = QStringLiteral("Backdrop");
         } else if (tag.isEmpty() && !item.seriesId.isEmpty()) {
             itemId = item.seriesId;
@@ -562,9 +564,11 @@ QString ArtworkService::movieUrl(const MovieItem& item, const QString& kind, int
     } else if (kind == QStringLiteral("backdrop")) {
         if (!item.backdropTag.isEmpty()) {
             tag = item.backdropTag;
+            itemId = item.backdropItemId.isEmpty() ? item.id : item.backdropItemId;
             imageType = QStringLiteral("Backdrop");
         } else if (!item.thumbTag.isEmpty()) {
             tag = item.thumbTag;
+            itemId = item.thumbItemId.isEmpty() ? item.id : item.thumbItemId;
             imageType = QStringLiteral("Thumb");
         }
         maxWidth = width > 0 ? width : 1920;
@@ -584,6 +588,7 @@ QString ArtworkService::movieUrl(const MovieItem& item, const QString& kind, int
         qualityOffset = 11;
     } else if (kind == QStringLiteral("thumb")) {
         tag = item.thumbTag;
+        itemId = item.thumbItemId.isEmpty() ? item.id : item.thumbItemId;
         imageType = QStringLiteral("Thumb");
         maxWidth = width > 0 ? width : 720;
         qualityOffset = 7;
