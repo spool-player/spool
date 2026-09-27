@@ -46,8 +46,8 @@ Item {
             AppText {
                 Layout.fillWidth: true
                 text: "Updates for " + root.names()
-                elide: Text.ElideRight
-                maximumLineCount: 1
+                font.pixelSize: Metrics.bodySizePx
+                wrapMode: Text.Wrap
             }
 
             ActionButton {
