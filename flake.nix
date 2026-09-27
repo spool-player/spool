@@ -839,6 +839,8 @@
             buildBeforeRun ? false,
             buildOnly ? false,
             runTests ? false,
+            localProviders ? false,
+            checkoutScript ? "",
           }:
             let
               runnerBinaryPath =
@@ -860,7 +862,7 @@
                 then ''APP_INSTALL="$REPO_ROOT/${buildRoot}/run-install" DEPLOY_APP=0 exec bash ${buildScript}''
                 else buildCommand;
             in pkgs.writeShellScriptBin name ''
-            export PATH="${pkgs.lib.makeBinPath [ pkgs.nix pkgs.bashInteractive pkgs.coreutils pkgs.gnugrep pkgs.gnused ]}:$PATH"
+            export PATH="${pkgs.lib.makeBinPath ([ pkgs.nix pkgs.bashInteractive pkgs.coreutils pkgs.gnugrep pkgs.gnused ] ++ pkgs.lib.optional (localProviders || checkoutScript != "") pkgs.python3)}:$PATH"
             set -euo pipefail
 
             FLAKE_SOURCE="${self}"
@@ -898,9 +900,23 @@
             elif is_repo_root "$PWD"; then
               REPO_ROOT="$PWD"
             else
+              ${pkgs.lib.optionalString (localProviders || checkoutScript != "") ''
+              echo "error: run this local-provider workflow from the checkout root or set SPOOL_REPO" >&2
+              exit 1
+              ''}
               REPO_ROOT="$(stage_flake_source)"
             fi
             cd "$REPO_ROOT"
+            export REPO_ROOT
+
+            ${pkgs.lib.optionalString (checkoutScript != "") ''
+            exec bash "$REPO_ROOT/${checkoutScript}" "$@"
+            ''}
+            ${pkgs.lib.optionalString localProviders ''
+            if [ "''${1:-}" = "--dry-run" ]; then
+              exec bash "$REPO_ROOT/tools/build-local-providers.sh" "$@"
+            fi
+            ''}
 
             BIN="$REPO_ROOT/${runnerBinaryPath}"
             BUILD_STAMP="$REPO_ROOT/${runnerBuildStamp}"
@@ -910,10 +926,15 @@
             scrub='PATH=$(printf %s "$PATH" | tr ":" "\n" | grep -v webos-sdk | paste -sd:); export PATH; unset WEBOS_SDK_ROOT QT_PLUGIN_PATH QML2_IMPORT_PATH QML_IMPORT_PATH'
 
             if ${if buildBeforeRun then "true" else "false"}; then
-              if [ -x "$BIN" ] && [ -f "$BUILD_STAMP" ] && [ "$(cat "$BUILD_STAMP")" = "${stagedSourceId}" ]; then
+              if ${if localProviders then "false" else "true"} && [ -x "$BIN" ] && [ -f "$BUILD_STAMP" ] && [ "$(cat "$BUILD_STAMP")" = "${stagedSourceId}" ]; then
                 echo "native build is current (${stagedSourceId}); skipping rebuild"
               else
+                ${if localProviders then ''
+                # Sibling changes are not part of the flake source ID.
+                nix develop "$REPO_ROOT#native" -c bash -c "$scrub"'; exec bash "$REPO_ROOT/tools/build-local-providers.sh"'
+                '' else ''
                 nix develop "$REPO_ROOT#native" -c bash -c "$scrub; ${buildRootExport}export SPOOL_CMAKE_EXTRA_ARGS='${cmakeExtraArgs}'; ${runnerBuildCommand}"
+                ''}
                 mkdir -p "$(dirname "$BUILD_STAMP")"
                 printf '%s\n' "${stagedSourceId}" > "$BUILD_STAMP"
               fi
@@ -946,6 +967,27 @@
           runner = makeRunner {
             name = "spool-run";
             buildBeforeRun = true;
+          };
+
+          localProviderBuildRoot = if pkgs.stdenv.hostPlatform.isDarwin
+            then "build/macos-local-providers"
+            else "build/linux-release-local-providers";
+          localProviderRunner = makeRunner {
+            name = "spool-local-providers";
+            buildRoot = localProviderBuildRoot;
+            buildBeforeRun = true;
+            localProviders = true;
+          };
+          localProviderBuilder = makeRunner {
+            name = "spool-local-providers-build";
+            buildRoot = localProviderBuildRoot;
+            buildBeforeRun = true;
+            buildOnly = true;
+            localProviders = true;
+          };
+          localProviderIpkBuilder = makeRunner {
+            name = "spool-local-providers-ipk";
+            checkoutScript = "local-docs/build-local-providers-ipk.sh";
           };
 
           # A commit does not change the source tree the checkout build was
@@ -1051,6 +1093,19 @@
           build = {
             type = "app";
             program = "${builder}/bin/spool-build";
+          };
+
+          local-providers = {
+            type = "app";
+            program = "${localProviderRunner}/bin/spool-local-providers";
+          };
+          local-providers-build = {
+            type = "app";
+            program = "${localProviderBuilder}/bin/spool-local-providers-build";
+          };
+          local-providers-ipk = {
+            type = "app";
+            program = "${localProviderIpkBuilder}/bin/spool-local-providers-ipk";
           };
 
           # Prefer an exact checkout build even after its source is committed.

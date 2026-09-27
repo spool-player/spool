@@ -43,8 +43,9 @@ client become Jellyfin accounts.
 
 - **Bundled**: `providers/lock.json` pins each package by SHA-256 (Jellyfin, Emby and Plex, from
   spool-player/spool-jellyfin, spool-emby and spool-plex); CMake checks and unpacks it into
-  a resource at configure time. `-DSPOOL_PROVIDER_OVERRIDES=id=/path/to/checkout` bundles a working
-  tree instead. Pin the published release asset, so the app ships exactly what the store serves.
+  a resource at configure time. `-DSPOOL_PROVIDER_OVERRIDES=id=/path/to/checkout` replaces matching
+  pins with working trees and adds supplied provider IDs absent from the lock. Unspecified pins
+  remain unchanged; empty overrides preserve release behavior. Pin published release assets.
 - **Store**: spool-player/spool-providers lists reviewed releases; first-party ids (`spool.*`) follow
   their own releases automatically, community ones change through pull requests.
 - **Link**: a GitHub or GitLab project, a release's `.tar.zst`, or any site serving
@@ -60,15 +61,34 @@ code may add. `-DSPOOL_PROVIDER_SOURCES=` chooses what a build accepts:
 | Value | Store catalogues | By link | Installed from disk | For |
 | --- | --- | --- | --- | --- |
 | `open` (default) | yes | yes | yes | Every release build: GitHub, AUR, webOS, direct APKs |
-| `curated` | yes | no | yes | Google Play and App Store submissions |
+| `curated` | yes | no | yes | Reviewed catalogues where the target store accepts this model |
 | `bundled` | no | no | no | A first store submission, or a store that rejects `curated` |
 
+A bundled build never loads installed packages or their store-origin metadata, schedules no
+provider update check, and makes no store/feed requests. Provider update prompts remain empty,
+regardless of a saved automatic-update preference. Existing downloaded packages are left on disk
+but cannot override the bundled copies; switching back to an open or curated build restores the
+usual installed-package selection.
+
+For webOS, `build-ipk.sh` accepts `SPOOL_PROVIDER_SOURCES` and `SPOOL_PROVIDER_OVERRIDES`
+as environment variables and passes them to CMake on each app configure. Overrides are a
+semicolon-separated list of `id=/absolute/path` pairs. With neither variable set, each configure
+explicitly restores `open` and the pinned bundles, even when reusing a build directory previously
+configured for local providers. Run `./build-ipk.sh` without a phase argument for the full pipeline.
+
 A curated build also ignores `--provider-store`/`SPOOL_PROVIDER_STORE` and never follows the feed
-of a provider an earlier open build added by link. Google Play allows interpreted code loaded at
-run time as long as it can't be used to break Play policy; Apple allows JavaScript plug-ins under
-guideline 4.7 when the app answers for every one of them (an index, reporting, age limits, and
-no native APIs exposed to them without Apple's permission). Curation through the store's pull
-requests is what makes that answerable.
+of a provider an earlier open build added by link. Curation is not an App Store approval guarantee:
+downloaded JS/QML still needs review against Apple's downloaded-software rules and the conditions
+of guideline 4.7, including native-API exposure. Initial Apple submissions should use bundled
+providers, with provider code changes delivered through application updates.
+
+## Artwork ownership
+
+Inherited thumbnails and backdrops retain their opaque `thumbItemId` and
+`backdropItemId` beside the image tag. `SourceHub` scopes these IDs to the owning
+account, and `ArtworkService` selects that owner rather than the child row.
+Jellyfin and Emby populate them from parent-image metadata. Home payload schema
+13 discards older ownerless cached rows; no account migration or data wipe is needed.
 
 ## Screens
 
@@ -91,6 +111,10 @@ viewers may open it before warmup, and URLs outside the selected packages may st
 Compilation completion still requires engine-thread work; low-priority scheduling
 does not impose a real-time frame budget on Qt's compiler. Aggressive memory pressure and
 shutdown cancel pending warmup and release retained components; pressure does not restart it.
+
+Provider update prompts and toast feedback use the shared body typography and
+viewport/user scale. Long feedback wraps inside content-sized panels instead
+of inheriting Qt's unscaled default text size or clipping inside a fixed-height toast.
 
 ## Connection speed
 

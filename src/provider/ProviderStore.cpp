@@ -59,7 +59,8 @@ ProviderStore::ProviderStore(ProviderRegistry *registry, DatabaseManager *databa
     , m_sources(sources)
 {
     connect(registry, &ProviderRegistry::modulesChanged, this, &ProviderStore::catalogChanged);
-    Async::runScoped(this, loadOrigins(), [] { }, [](const std::exception_ptr&) { }, "provider origins");
+    if (storeAvailable())
+        Async::runScoped(this, loadOrigins(), [] { }, [](const std::exception_ptr&) { }, "provider origins");
 }
 
 QCoro::Task<void> ProviderStore::loadOrigins()
@@ -313,6 +314,8 @@ void ProviderStore::updateAll()
 
 void ProviderStore::uninstall(const QString& id)
 {
+    if (!storeAvailable())
+        return;
     const auto remove = [](ProviderStore *self, QString id) -> QCoro::Task<void> {
         QPointer<ProviderStore> guard(self);
         co_await self->loadOrigins();

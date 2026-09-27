@@ -11,6 +11,31 @@
   10-foot / remote navigation: build around GridView / ListView + FocusScope + KeyNavigation + Keys. KeyNavigation is specifically for arrow/tab-based focus jumps, and FocusScope exists to keep reusable focus regions sane, which is exactly the problem space for D-pad TV UIs.
   HTTP asset caching: QNetworkDiskCache for posters, backdrops, and image responses. It is basic, but it plugs directly into QNetworkAccessManager; just remember it is basic by design and defaults to a 50 MB limit, so you will probably want to raise that.
 
+## Local sibling providers
+
+Keep the app checkout and provider repositories together, for example
+`~/Documents/spool/spool` and `~/Documents/spool/<provider-repo>`. From the app
+checkout, these commands discover providers in immediate sibling directories
+with valid `manifest.json` files; repository folder names do not matter:
+
+```sh
+nix run .#local-providers -- --dry-run  # Show discovery and paths; no build or launch
+nix run .#local-providers              # Build the checkout and launch natively
+nix run .#local-providers-build        # Build natively without launching
+nix run .#local-providers-ipk          # Full local IPK build; no TV install or launch
+```
+
+The build-only and IPK commands also accept `-- --dry-run`. Discovery refuses
+parents with more than 200 immediate directories and duplicate provider IDs.
+These workflows enforce bundled-only provider loading and use discovered
+checkouts instead of their locked versions; undiscovered locked providers retain
+their pins. Native builds always use the working checkout, even on a clean Git
+revision, rather than an immutable Cachix app package. They rebuild incrementally
+on every invocation so sibling edits are included, using separate
+`build/linux-release-local-providers` or `build/macos-local-providers` outputs.
+Ordinary native builds continue to default to open provider loading without
+local overrides. Set `SPOOL_REPO` to the app checkout when invoking outside it.
+
 ## Episode details
 
 Season details open the episode row at an in-progress episode, or the next
