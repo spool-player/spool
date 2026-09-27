@@ -888,6 +888,8 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     target_sources(providers-tests PRIVATE ${SPOOL_PROVIDER_BUNDLE_SOURCES})
     add_test(NAME provider-sdk-tool
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/provider_package_test.py")
+    add_test(NAME local-provider-overrides
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/LocalProviderOverridesTest.py")
     add_executable(provider-contract-runner sdk/provider-contract-runner.cpp)
     target_link_libraries(provider-contract-runner PRIVATE Qt6::Core Qt6::Qml)
     target_sources(provider-contract-runner PRIVATE ${SPOOL_PROVIDER_BUNDLE_SOURCES})

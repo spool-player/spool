@@ -884,9 +884,11 @@ int main(int argc, char **argv)
                 &providers, providers.restore(), [] { }, [](const std::exception_ptr&) { }, "provider restore");
             // Checked once the launch has settled, so it never competes with
             // the first page for the network.
-            QTimer::singleShot(8000, &store, [&store, settings] {
-                store.checkForUpdates(settings->value(QStringLiteral("providers/updates")).toString());
-            });
+            if (store.storeAvailable()) {
+                QTimer::singleShot(8000, &store, [&store, settings] {
+                    store.checkForUpdates(settings->value(QStringLiteral("providers/updates")).toString());
+                });
+            }
         });
     auto router = std::make_unique<Spool::RouterController>(QStringLiteral("home"));
     Spool::ApplicationHooks applicationHooks;
