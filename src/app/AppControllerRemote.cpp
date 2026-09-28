@@ -17,6 +17,80 @@
 
 namespace Spool {
 
+AppController::PlayDestination AppController::userPlayDestination() const
+{
+    return m_remoteTargets ? PlayDestination(m_remoteTargets->selection()) : std::nullopt;
+}
+
+bool AppController::destinationIsCurrent(const PlayDestination& destination) const
+{
+    return !destination || (m_remoteTargets && m_remoteTargets->isCurrent(*destination));
+}
+
+// Returns true when the operation belongs to a remote (including failure), or
+// its captured destination expired. Neither case may fall through to local play.
+bool AppController::dispatchRemotePlay(const PlayDestination& destination, std::span<const MovieItem> items,
+    int startIndex, bool fromStart, const QString& mode, std::optional<qint64> positionTicks)
+{
+    if (!destinationIsCurrent(destination))
+        return true;
+    if (!destination || destination->targetId.isEmpty())
+        return false;
+    if (startIndex < 0 || startIndex >= static_cast<int>(items.size()) || items[size_t(startIndex)].id.isEmpty()
+        || !isPlayableItem(items[size_t(startIndex)])) {
+        setBusy(false);
+        showToast(QStringLiteral("This item cannot be queued."));
+        return true;
+    }
+    QStringList ids;
+    ids.reserve(static_cast<qsizetype>(items.size()));
+    int index = -1;
+    for (size_t row = 0; row < items.size(); ++row) {
+        const auto& item = items[row];
+        if (item.id.isEmpty() || !isPlayableItem(item))
+            continue;
+        if (row == size_t(startIndex))
+            index = ids.size();
+        ids.append(item.id);
+    }
+    const MovieItem& item = items[size_t(startIndex)];
+    const qint64 ticks = positionTicks.value_or(
+        fromStart || !isMeaningfulResumePosition(item.resumeTicks, item.runtimeTicks) ? 0 : item.resumeTicks);
+    const auto selection = *destination;
+    const bool startsPlayback = mode == QStringLiteral("now") || mode == QStringLiteral("shuffle");
+    // The remote controller owns command busy/error state. Do not leave the
+    // local loading indicator behind when a selected target disappears.
+    setBusy(false);
+    Async::runScoped(
+        this, m_remoteTargets->play(selection, ids, index, QString::number(ticks), mode),
+        [this, selection, startsPlayback](bool accepted) {
+            if (!m_remoteTargets || !m_remoteTargets->isCurrent(selection))
+                return;
+            if (accepted && startsPlayback)
+                stopPlayback();
+        },
+        [this, selection](const std::exception_ptr& error) {
+            if (!m_remoteTargets || !m_remoteTargets->isCurrent(selection))
+                return;
+            showToast(exceptionMessage(error));
+        },
+        "outbound remote playback");
+    return true;
+}
+
+void AppController::transferPlaybackToRemote()
+{
+    const auto destination = userPlayDestination();
+    if (!destination || destination->targetId.isEmpty() || !m_player->sessionActive())
+        return;
+    std::vector<MovieItem> items;
+    items.reserve(size_t(m_playQueue->count()));
+    for (int row = 0; row < m_playQueue->count(); ++row)
+        items.push_back(m_playQueue->itemAt(row));
+    dispatchRemotePlay(destination, items, m_playQueue->currentIndex(), false, QStringLiteral("now"),
+        std::max<qint64>(0, qint64(m_player->positionSeconds() * 10'000'000.0)));
+}
+
 bool AppController::inGroup() const
 {
     return m_group && m_group->enabled();
@@ -72,9 +146,9 @@ void AppController::handleRemoteCommand(const QString& accountId, const QVariant
     } else if (name == QStringLiteral("fastForward")) {
         inGroup() ? m_group->requestRelativeSeek(10.0) : m_player->seekForward();
     } else if (name == QStringLiteral("next")) {
-        playQueueNext();
+        playLocalQueueNext(std::nullopt);
     } else if (name == QStringLiteral("previous")) {
-        playQueuePrevious();
+        playLocalQueuePrevious(std::nullopt);
     } else if (name == QStringLiteral("volume")) {
         m_player->setVolume(command.value(QStringLiteral("value"), m_player->volume()).toInt());
     } else if (name == QStringLiteral("volumeStep")) {

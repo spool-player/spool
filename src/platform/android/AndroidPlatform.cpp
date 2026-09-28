@@ -208,9 +208,8 @@ QStringList platformSystemSubtitleFonts()
 
 int platformDefaultUiScalePercent()
 {
-    // Handset dp calibration belongs to Metrics, so the user-facing default
-    // is 100%. Keep the existing remote-oriented TV default.
-    return platformCapabilities().isTV ? 80 : 100;
+    // Viewport/dp calibration belongs to Metrics; saved percentages are unchanged.
+    return 100;
 }
 
 const char *platformDefaultArtworkFormat()

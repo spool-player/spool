@@ -181,11 +181,16 @@ FocusScope {
                     icon: "switch_account"
                 },
                 {
+                    label: "Playback devices",
+                    route: "remoteControl",
+                    icon: "cast"
+                },
+                {
                     label: "Settings",
                     route: "settings",
                     icon: "settings"
                 }
-            ]
+            ].filter(entry => entry.route !== "remoteControl" || RemoteTargets.available)
 
             delegate: Item {
                 id: railDelegate

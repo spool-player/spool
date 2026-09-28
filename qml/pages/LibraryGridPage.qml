@@ -712,7 +712,7 @@ FocusScope {
             return
         const item = Browse.items.get(index)
         if (button === Qt.RightButton && root.shell) {
-            root.shell.openItemMenu(item, grid.itemAtIndex(index))
+            root.shell.openItemMenu(item, grid.itemAtIndex(index), itemMenuContext(false))
             return
         }
         const itemId = String(item.movieId || "")
@@ -842,12 +842,18 @@ FocusScope {
             grid.activate()
     }
 
+    function itemMenuContext(deferBackdrop) {
+        return {
+            containerId: String(Browse.containerId || ""),
+            containerTitle: String(Browse.title || ""),
+            deferBackdropDismissal: deferBackdrop
+        }
+    }
+
     function longPress() {
         if (!grid.activeFocus || grid.currentIndex < 0 || !hasShell())
             return false
-        return shell.openItemMenu(Browse.items.get(grid.currentIndex) || ({}), currentCard(), {
-                                      "deferBackdropDismissal": true
-                                  })
+        return shell.openItemMenu(Browse.items.get(grid.currentIndex) || ({}), currentCard(), itemMenuContext(true))
     }
 
     function back() {
@@ -1473,9 +1479,9 @@ FocusScope {
                     onActivated: (index, button) => root.activatePointerIndex(index, button)
                     onContextRequested: index => {
                         if (root.shell)
-                            root.shell.openItemMenu(Browse.items.get(index), grid.itemAtIndex(index), {
-                                                        "deferBackdropDismissal": true
-                                                    })
+                            root.shell.openItemMenu(Browse.items.get(index), grid.itemAtIndex(index), root.itemMenuContext(
+                                                        true))
+
                     }
                     onContextGestureEnded: if (root.shell)
                                                root.shell.finishItemMenuOpeningGesture()

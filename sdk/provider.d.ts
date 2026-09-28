@@ -15,13 +15,22 @@
 
 export type Value = null | boolean | number | string | Value[] | { [key: string]: Value };
 
+/** Optional wire-major negotiation; absence on an API 0.2 host means no extensions. */
+export type Extensions = Readonly<Record<string, number>>;
+
 export interface HttpOptions {
     method?: 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
     headers?: Record<string, string>;
     body?: string;
+    /** spool.http-metadata v1: at most 16 response header names; never Set-Cookie. */
+    responseHeaders?: string[];
 }
 /** Redirects are not followed: `status` is 3xx and `location` is set. */
-export interface HttpResponse { status: number; body: string; location?: string }
+export interface HttpResponse {
+    status: number; body: string; location?: string;
+    /** Requested lowercase names only, bounded to 64 KiB; absent unless requested. */
+    headers?: Record<string, string>;
+}
 
 /** Authenticated generated download endpoint, or a range-capable media resource. */
 export interface SpeedTestEndpoint {
@@ -59,6 +68,8 @@ export interface Device {
  */
 export interface SourceHost {
     device: Device;
+    /** Frozen host-supported exact versions requested in manifest.extensions. */
+    readonly extensions?: Extensions;
     /** Only origins the account was set up with (or manifest `origins`). */
     http(url: string, options?: HttpOptions): Promise<HttpResponse>;
     /** 0–60000 ms. */
@@ -75,6 +86,14 @@ export interface OperationHost extends SourceHost {
     delay(milliseconds: number): Promise<void>;
     /** UDP broadcast on the local network; replies within `timeout` ms (100–5000). */
     discover(options: { port: number; message: string; timeout?: number }): Promise<{ address: string; text: string }[]>;
+    /** spool.lan-probe v1, login draft after allowLanDiscovery consent only.
+     * No authentication, cookies, redirects or origin grants. Up to 32 targets,
+     * four concurrent requests and 600 ms per page; bodies at most 4 KiB.
+     */
+    probeLocalHttp?(options: { port: number; path: string; cursor?: string; limit?: number }): Promise<{
+        responses: { origin: string; status: number; body: string }[];
+        cursor: string | null; exhausted: boolean;
+    }>;
     /**
      * Measures on the native provider worker, discarding response bodies.
      * Same origin/TLS policy as http; no redirects or cookies. Cancelled with
@@ -116,6 +135,8 @@ export interface BrowseFilters {
 
 export interface Item {
     id: string;
+    /** Opaque occurrence identity within a collection; not a media ID. */
+    entryId?: string;
     title: string;
     type: 'Movie' | 'Series' | 'Season' | 'Episode' | 'Audio' | 'MusicAlbum' | 'MusicArtist' | 'Playlist' | 'BoxSet'
         | 'Folder' | 'Video' | 'MusicVideo' | 'Book' | 'Photo' | 'PhotoAlbum' | 'TvChannel' | string;
@@ -176,9 +197,116 @@ export interface PickRequest { pick: Record<string, Value> }
 
 export interface Segment { type: 'Intro' | 'Outro' | 'Recap' | 'Preview' | 'Commercial'; startTicks: number | string; endTicks: number | string }
 
-export interface Source {
+// Optional catalogue extensions, wire major 1.
+export interface ItemAction {
+    id: string; label: string; icon?: string; enabled?: boolean; reason?: string;
+}
+export interface CollectionInfo {
+    ordered: boolean; removable: boolean; moveMode: 'none' | 'index' | 'after';
+}
+export interface PlaybackQueueSnapshot {
+    revision: string;
+    items: { itemId: string; entryId?: string; mediaType: 'audio' | 'video' }[];
+}
+export interface CatalogueExtensions {
+    /** spool.suggestions: bounded recommendations, not Continue Watching. */
+    suggestions?: Operation<PageArgs, Page>;
+    /** spool.item-actions: load on menu opening, not per rendered row. */
+    itemActions?: Operation<{ itemId: string; itemType: string; containerId?: string; entryId?: string },
+        { actions: ItemAction[] }>;
+    /** spool.collection-editing: every returned row carries its container-local entryId. */
+    collectionInfo?: Operation<{ containerId: string }, CollectionInfo>;
+    collectionEntries?: Operation<PageArgs & { containerId: string }, Page>;
+    collectionRemove?: Operation<{ containerId: string; entryId: string }, {}>;
+    /** index and afterEntryId describe the same destination after removing the moving entry. */
+    collectionMove?: Operation<{ containerId: string; entryId: string; index: number; afterEntryId: string | null }, {}>;
+}
+
+// Optional preference and application-data extensions, wire major 1.
+export interface PreferenceValues {
+    /** ISO-639-2, or empty for no preference. */
+    audioLanguage?: string;
+    audioMode?: 'Default' | 'Smart';
+    subtitleLanguage?: string;
+    subtitleMode?: 'Default' | 'Smart' | 'OnlyForced' | 'Always' | 'None';
+}
+export interface PreferenceExtensions {
+    preferencesRead?: Operation<{}, { values: PreferenceValues; writable: (keyof PreferenceValues)[] }>;
+    preferencesWrite?: Operation<{ values: Partial<PreferenceValues> }, {}>;
+}
+export interface ApplicationDataExtensions {
+    /** spool.settings-storage: maxBytes cannot exceed the host's 64 KiB/depth-16 bound. */
+    dataInfo?: Operation<{}, { maxBytes: number; conditionalWrites: boolean }>;
+    /** key is a canonical application-owned UUID, not a path; found distinguishes absent from null. */
+    dataRead?: Operation<{ key: string }, { found: boolean; value?: Value; revision?: string }>;
+    /** null expectedRevision is create-if-absent. Unsupported conditions must reject, not be ignored. */
+    dataWrite?: Operation<{ key: string; value: Value; expectedRevision?: string | null }, { revision?: string }>;
+    dataDelete?: Operation<{ key: string; expectedRevision?: string | null }, {}>;
+}
+
+// Optional outbound remote control, spool.remote-targets wire major 1.
+// This is independent of inbound Events.remote and remoteControl capability.
+export interface RemoteTarget {
+    id: string; name: string; detail?: string; origins?: string[]; commands: string[];
+    queueEditing: 'none' | 'replace' | 'in-place'; customControls?: boolean;
+}
+export interface RemoteState {
+    state: 'stopped' | 'playing' | 'paused' | 'buffering' | 'error';
+    commands: string[];
+    item?: Item;
+    /** Decimal ticks; absence means unknown, not zero. */
+    positionTicks?: string; runtimeTicks?: string;
+    volume?: number; muted?: boolean; rate?: number;
+    repeatMode?: 'RepeatNone' | 'RepeatAll' | 'RepeatOne'; shuffled?: boolean;
+    audioTracks?: { id: string; label: string; selected: boolean }[];
+    subtitleTracks?: { id: string; label: string; selected: boolean }[];
+    queueRevision?: string; currentEntryId?: string;
+    /** Genuine backend acknowledgment only; never a fabricated host sequence. */
+    commandSequence?: number;
+    /** Approved source origin; only numeric {index} substitution is permitted. */
+    preview?: { width: number; height: number; columns: number; rows: number;
+        count: number; intervalMs: number; urlTemplate: string };
+}
+export type RemoteTargetCommand =
+    | { action: 'play'; itemIds: string[]; index: number; positionTicks: string;
+        mode: 'now' | 'next' | 'last' | 'shuffle'; variantId?: string }
+    | { action: 'pause' | 'unpause' | 'stop' | 'next' | 'previous' }
+    | { action: 'seek'; positionTicks: string }
+    | { action: 'volume'; value: number }
+    | { action: 'mute' | 'shuffle'; value: boolean }
+    /** null subtitles mean Off; null audio is invalid. IDs are provider track IDs, not indexes. */
+    | { action: 'audioTrack' | 'subtitleTrack'; trackId: string | null }
+    | { action: 'repeat'; mode: 'RepeatNone' | 'RepeatAll' | 'RepeatOne' }
+    | { action: 'queuePlay' | 'queueRemove'; entryId: string }
+    | { action: 'queueMove'; entryId: string; index: number; afterEntryId: string | null };
+export interface RemoteTargetExtensions {
+    remoteTargets?: Operation<{}, { targets: RemoteTarget[] }>;
+    remoteConnect?: Operation<{ targetId: string }, RemoteState>;
+    remoteState?: Operation<{ targetId: string }, RemoteState>;
+    remoteQueue?: Operation<PageArgs & { targetId: string }, Page>;
+    remoteCommand?: Operation<{ targetId: string; command: RemoteTargetCommand }, { commandSequence?: number }>;
+}
+
+// Optional private account activation transaction, spool.account-activation v1.
+export interface AccountActivationExtensions {
+    /** Native-only: provider QML cannot request this operation directly. */
+    activate?: Operation<{
+        reason: 'linked' | 'startup' | 'switch' | 'family';
+        lastUsed: boolean;
+        /** Opaque in-memory proof, at most 16 KiB; never persisted or exposed to QML. */
+        grant?: Value;
+        /** Picker submissions are nested and cannot replace the native-controlled fields above. */
+        answers?: Record<string, Value>;
+    }, { grant?: Value } | PickRequest>;
+}
+
+export interface Source extends CatalogueExtensions, PreferenceExtensions, ApplicationDataExtensions,
+    RemoteTargetExtensions, AccountActivationExtensions {
     /** Required. Templates take {itemId} {type} {tag} {width} {height} {quality} {format}; trickplay {itemId} {width} {index} {variantId}. */
-    describe(): { artwork?: string; trickplay?: string };
+    describe(): { artwork?: string; trickplay?: string; extensions?: Extensions;
+        activation?: { familyId: string; identityId: string } };
+    /** Baseline-callable compatibility information; no network update check. */
+    extensionStatus?: Operation<{}, { enabled: Extensions; missingHost: string[] }>;
 
     libraries?: Operation<{}, { items: { id: string; title: string; collectionType?: string; posterTag?: string }[] }>;
     browse?: Operation<PageArgs & { parentId?: string; collectionType?: string; recursive?: boolean; genre?: string;
@@ -198,11 +326,13 @@ export interface Source {
 
     resolve?: Operation<PlaybackContext & { itemId: string; variantId?: string; positionTicks: string; forceTranscode: boolean }, Resolved | PickRequest>;
     segments?: Operation<{ itemId: string }, { segments: Segment[] }>;
-    /** Capability `speedTest`: supply your endpoint through host.speedTest(), never download test bodies in JS. */
+    /** New packages declare spool.speed-test v1; legacy speedTest capability remains supported. */
     speedTest?: Operation<{}, SpeedTestResult>;
     report?: Operation<{ event: 'start' | 'progress' | 'stop'; itemId: string; variantId: string; playSessionId: string;
         playMethod: string; positionTicks: string; paused?: boolean; rate: number; volume?: number; muted?: boolean;
-        failed?: boolean; audioStreamIndex: number; subtitleStreamIndex: number }, {}>;
+        failed?: boolean; audioStreamIndex: number; subtitleStreamIndex: number;
+        /** spool.playback-queue-reporting: immutable membership/order revision, omitted on unchanged progress. */
+        queue?: PlaybackQueueSnapshot; queueIndex?: number }, {}>;
 
     favorite?: Operation<{ itemId: string; value: boolean }, {}>;
     played?: Operation<{ itemId: string; value: boolean }, {}>;
@@ -245,6 +375,16 @@ export interface Events {
     changed: { itemId?: string };
     /** Merged into the stored configuration, e.g. a refreshed token. */
     configuration: Record<string, Value>;
+    /** Replaces this account's offers; cannot grant undeclared or unsupported versions. */
+    extensionsChanged: { extensions: Extensions };
+    /** Nonfatal spool.playback-queue-reporting status; never credentials or raw server errors. */
+    playbackQueueStatus: { revision: string; state: 'preparing' | 'ready' | 'unavailable' };
+    /** Invalidates only this source/target; never an inbound remote command. */
+    remoteChanged: { targetId: string };
+    /** Account-activation-only device-local family options; never settings-sync input.
+     * Providers must enforce who may change them. Values are booleans, not credentials or grants.
+     */
+    activationConfiguration: { configuration: Record<string, boolean> };
     group:
         | { type: 'connected' }
         | { type: 'joined' | 'update'; groupId: string; name: string; state: string; reason?: string; participants: string[]; at?: number }
@@ -282,12 +422,21 @@ export interface ScreenContext {
     role: 'login' | 'settings' | 'picker';
     /** For a picker: the `pick` object resolve or runItemAction returned. */
     arguments: Record<string, Value>;
+    /** New-host metadata: utility support for login, effective account offers otherwise. */
+    readonly extensions?: Extensions;
+    readonly missingHostExtensions?: readonly string[];
+    /** Notifying, device-local boolean options for this activation family; no credentials/grants. */
+    readonly activationConfiguration?: Readonly<Record<string, boolean>>;
     request(operation: string, args?: Record<string, Value>): Promise<Record<string, Value>>;
     /** Moves `items` into `rows` (a list model with `record` and `title` roles, up to 10,000 rows). */
     requestList(operation: string, args?: Record<string, Value>, append?: boolean): Promise<Record<string, Value>>;
     rows: unknown;
-    /** Login only: let the account reach a server the viewer typed or picked. */
+    /** Login server selection; existing accounts require spool.origin-grants and host consent. */
     allowOrigin(url: string): Promise<void>;
+    /** spool.lan-probe v1: explicit login-draft consent; does not authorize an origin. */
+    allowLanDiscovery?(): Promise<void>;
+    /** Cancel this draft's pending discovery/consent without closing password login. */
+    cancelLanDiscovery?(): void;
     /** login: { account, label, detail?, group?, configuration }; settings: { configuration? }; picker: the choice. */
     complete(result: Record<string, Value>): void;
     close(): void;

@@ -36,7 +36,8 @@ int main(int argc, char **argv)
     QTimer::singleShot(0, &app, [&] {
         const QJSValue module = engine.importModule(QFileInfo(app.arguments()[1]).absoluteFilePath());
         if (module.isError() || !module.property(QStringLiteral("run")).isCallable()) {
-            std::fprintf(stderr, "Contract module did not load or export run()\n");
+            std::fprintf(stderr, "Contract module did not load or export run(): %s\n",
+                qPrintable(module.isError() ? module.toString() : QStringLiteral("missing run")));
             result.complete(false);
             return;
         }

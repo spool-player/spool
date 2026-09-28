@@ -210,6 +210,10 @@ set(SPOOL_SHELL_SOURCES
     src/app/BrowseSessionController.h
     src/app/ContentModelController.cpp
     src/app/ContentModelController.h
+    src/app/CollectionEditingController.cpp
+    src/app/CollectionEditingController.h
+    src/app/RemoteTargetsController.cpp
+    src/app/RemoteTargetsController.h
     src/app/HomeModelController.cpp
     src/app/HomeModelController.h
     src/app/LibraryPrefetchController.cpp
@@ -232,6 +236,10 @@ set(SPOOL_SHELL_SOURCES
     src/app/SettingsController.h
     src/app/SettingsSchema.cpp
     src/app/SettingsSchema.h
+    src/app/SettingsSyncController.cpp
+    src/app/SettingsSyncController.h
+    src/app/SettingsSyncDocument.cpp
+    src/app/SettingsSyncDocument.h
     src/app/UpdateManifest.cpp
     src/app/UpdateManifest.h
     src/app/AppController.cpp
@@ -265,6 +273,10 @@ set(SPOOL_SHELL_SOURCES
     src/provider/PortableProvider.h
     src/provider/Provider.h
     src/provider/ProviderCapabilities.h
+    src/provider/ProviderExtensions.cpp
+    src/provider/ProviderExtensions.h
+    src/provider/ProviderExtensionData.cpp
+    src/provider/ProviderExtensionData.h
     src/provider/ProviderMediaPage.cpp
     src/provider/ProviderMediaPage.h
     src/provider/ProviderPackage.cpp
@@ -279,12 +291,15 @@ set(SPOOL_SHELL_SOURCES
     src/provider/ProviderUiContext.h
     src/provider/ScriptBridge.cpp
     src/provider/ScriptBridge.h
+    src/provider/LanProbe.cpp
+    src/provider/LanProbe.h
     src/provider/ScriptRuntime.cpp
     src/provider/ScriptRuntime.h
     src/provider/SpeedTest.cpp
     src/provider/SpeedTest.h
     src/provider/SearchSource.h
     src/provider/SourceHub.cpp
+    src/provider/SourceHubRemote.cpp
     src/provider/SourceHub.h
     src/provider/StreamQualityControl.h
     src/provider/UserItemStateSink.h
@@ -478,6 +493,8 @@ qt_add_qml_module(spool
         qml/browse/RowStackView.qml
         qml/pages/HomePage.qml
         qml/pages/ItemDetailsPage.qml
+        qml/pages/CollectionEditorPage.qml
+        qml/pages/RemoteControlPage.qml
         qml/pages/LibraryGridPage.qml
         qml/pages/LibraryNavigation.js
         qml/shell/ItemActivation.js
@@ -556,6 +573,8 @@ qt_add_qml_module(spool
         qml/shell/MediaInfoOverlay.qml
         qml/shell/OverlayDialog.qml
         qml/shell/ProviderSurface.qml
+        qml/shell/SettingSyncControl.qml
+        qml/shell/RemoteNowPlaying.qml
         qml/shell/ProviderUpdatePrompt.qml
         qml/shell/PageReadiness.js
         qml/shell/RoutePolicy.js
@@ -745,9 +764,13 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         browse-session-controller tests/app/BrowseSessionControllerTest.cpp
         settings-schema tests/app/SettingsSchemaTest.cpp
         settings-controller tests/app/SettingsControllerTest.cpp
+        settings-sync-controller tests/app/SettingsSyncControllerTest.cpp
+        settings-sync-document tests/app/SettingsSyncDocumentTest.cpp
         router-controller tests/app/RouterControllerTest.cpp
         library-query tests/app/LibraryQueryTest.cpp
         content-model-controller tests/app/ContentModelControllerTest.cpp
+        collection-editing tests/app/CollectionEditingControllerTest.cpp
+        remote-targets tests/app/RemoteTargetsControllerTest.cpp
         search-controller tests/app/SearchControllerTest.cpp
         group-clock tests/app/GroupClockTest.cpp
         group-playback-policy tests/app/GroupPlaybackPolicyTest.cpp
@@ -782,8 +805,12 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     set(SPOOL_TESTS_providers
         local-provider tests/providers/LocalProviderTest.cpp
         script-runtime tests/providers/ScriptRuntimeTest.cpp
+        script-runtime-network tests/providers/ScriptRuntimeNetworkTest.cpp
+        provider-legacy-contract tests/providers/LegacyProviderContractTest.cpp
         provider-media-page tests/providers/ProviderMediaPageTest.cpp
         provider-registry tests/providers/ProviderRegistryTest.cpp
+        provider-activation tests/providers/ProviderActivationTest.cpp
+        provider-extension-data tests/providers/ProviderExtensionDataTest.cpp
         source-hub tests/providers/SourceHubTest.cpp
         source-hub-speed-test tests/providers/SourceHubSpeedTest.cpp
         provider-store tests/providers/ProviderStoreTest.cpp
@@ -875,6 +902,10 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
             endif()
         endforeach()
     endforeach()
+
+    add_test(NAME provider-legacy-contract-interpreter COMMAND providers-tests provider-legacy-contract)
+    set_tests_properties(provider-legacy-contract-interpreter PROPERTIES
+        ENVIRONMENT "${SPOOL_TEST_ENV};QV4_FORCE_INTERPRETER=1;QML_DISABLE_DISK_CACHE=1")
 
     # Test binaries share one QML disk cache across builds whose bundled
     # provider resources all carry the same reproducible timestamp.
@@ -1014,6 +1045,8 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
             hold-navigation-controller tests/qml/tst_HoldNavigationController.qml
             library-navigation tests/qml/tst_LibraryNavigation.qml
             settings-navigation tests/qml/tst_SettingsNavigation.qml
+            setting-sync-control tests/qml/tst_SettingSyncControl.qml
+            remote-control-page tests/qml/tst_RemoteControlPage.qml
             settings-disclosure tests/qml/tst_SettingsDisclosure.qml
             settings-row-identity tests/qml/tst_SettingsRowIdentity.qml
             atomic-view-reveal tests/qml/tst_AtomicViewReveal.qml
@@ -1030,15 +1063,51 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
             )
         endif()
 
+        # These tests instantiate real settings surfaces. Filesystem imports
+        # bypass qt_add_qml_module's singleton qmldirs and are not equivalent
+        # to the application's resource imports.
+        find_package(Qt6 REQUIRED COMPONENTS QuickTest)
+        qt_add_executable(spool-qml-tests tests/QmlTestRunner.cpp tests/ExtensionIntegration.h)
+        target_compile_definitions(spool-qml-tests PRIVATE TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+        target_link_libraries(spool-qml-tests PRIVATE spool-core Qt6::QuickTest)
+        if(QT6_IS_SHARED_LIBS_BUILD)
+            set_property(TARGET spool-qml-tests PROPERTY QT_QML_MODULE_NO_IMPORT_SCAN TRUE)
+        else()
+            get_target_property(SPOOL_TEST_SCAN_ARGS spool QT_QML_IMPORT_SCANNER_EXTRA_ARGS)
+            set_property(TARGET spool-qml-tests PROPERTY QT_QML_IMPORT_SCANNER_EXTRA_ARGS ${SPOOL_TEST_SCAN_ARGS})
+        endif()
+        get_target_property(SPOOL_APP_SOURCES spool SOURCES)
+        set(SPOOL_TEST_PLATFORM_SOURCES ${SPOOL_APP_SOURCES})
+        list(FILTER SPOOL_TEST_PLATFORM_SOURCES INCLUDE REGEX "/[A-Za-z]+PlatformCapabilities\\.cpp$")
+        set(SPOOL_TEST_QML_RESOURCES ${SPOOL_APP_SOURCES})
+        list(FILTER SPOOL_TEST_QML_RESOURCES INCLUDE REGEX "/qrc_(qmake_Spool|spool_raw_qml_[0-9]+(_extra_qmldirs)?)\\.cpp$")
+        # Reuse the application's generated resources rather than declaring a
+        # second Spool module (which would also overwrite qrc_qmake_Spool.cpp).
+        target_sources(spool-qml-tests PRIVATE ${SPOOL_TEST_PLATFORM_SOURCES} ${SPOOL_TEST_QML_RESOURCES})
+        qt_add_resources(spool-qml-tests "component_qml_tests"
+            PREFIX "/qt/qml/Spool"
+            FILES
+                tests/qml/tst_SettingSyncControl.qml
+                tests/qml/tst_SubtitleSettingsPanel.qml
+                tests/qml/tst_RemoteControlPage.qml
+                tests/qml/tst_ExtensionIntegration.qml
+        )
+
         get_filename_component(SPOOL_QML_PREFIX "${Qt6Qml_DIR}/../../.." ABSOLUTE)
         set(SPOOL_QML_IMPORT_DIR "${SPOOL_QML_PREFIX}/lib/qt-6/qml")
         set(SPOOL_QML_TEST_ENV
             "QT_QPA_PLATFORM=offscreen"
             "QT_QUICK_BACKEND=software"
+            "QML_DISABLE_DISK_CACHE=1"
             "QML2_IMPORT_PATH=${SPOOL_QML_IMPORT_DIR}"
             "QML_IMPORT_PATH=${SPOOL_QML_IMPORT_DIR}"
             ${SPOOL_TEST_ENV}
         )
+
+        add_test(NAME extension-integration
+            COMMAND spool-qml-tests -input ":/qt/qml/Spool/tests/qml/tst_ExtensionIntegration.qml")
+        set_tests_properties(extension-integration PROPERTIES
+            ENVIRONMENT "${SPOOL_QML_TEST_ENV};SPOOL_EXTENSION_INTEGRATION=1" TIMEOUT 90)
 
         list(LENGTH SPOOL_QML_TESTS SPOOL_QML_TEST_COUNT)
         math(EXPR SPOOL_QML_TEST_LAST "${SPOOL_QML_TEST_COUNT} - 1")
@@ -1046,10 +1115,17 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
             math(EXPR qml_source_index "${qml_index} + 1")
             list(GET SPOOL_QML_TESTS ${qml_index} qml_test_name)
             list(GET SPOOL_QML_TESTS ${qml_source_index} qml_test_source)
-            add_test(NAME ${qml_test_name}
-                COMMAND "${QMLTESTRUNNER_EXECUTABLE}"
-                    -input "${CMAKE_CURRENT_SOURCE_DIR}/${qml_test_source}"
-            )
+            if(qml_test_name STREQUAL "setting-sync-control" OR qml_test_name STREQUAL "subtitle-settings-panel"
+                OR qml_test_name STREQUAL "remote-control-page")
+                add_test(NAME ${qml_test_name}
+                    COMMAND spool-qml-tests -input ":/qt/qml/Spool/${qml_test_source}"
+                )
+            else()
+                add_test(NAME ${qml_test_name}
+                    COMMAND "${QMLTESTRUNNER_EXECUTABLE}"
+                        -input "${CMAKE_CURRENT_SOURCE_DIR}/${qml_test_source}"
+                )
+            endif()
             set_tests_properties(${qml_test_name} PROPERTIES ENVIRONMENT "${SPOOL_QML_TEST_ENV}")
         endforeach()
     endif()

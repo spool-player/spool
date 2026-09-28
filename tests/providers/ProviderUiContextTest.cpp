@@ -77,6 +77,21 @@ SPOOL_TEST_MAIN("provider-ui-context")
             && engine.globalObject().property("secondCompleted").toBool();
     });
     require(!second->closed(), "dismissing one action does not close another action on the same source");
+    engine.evaluate(QStringLiteral(R"JS(
+        var activationError = '', activationListError = '', extensionError = '';
+        second.request('activate').then(function() {}, function(code) { activationError = code; });
+        second.requestList('activate').then(function() {}, function(code) { activationListError = code; });
+        second.request('suggestions').then(function() {}, function(code) { extensionError = code; });
+    )JS"));
+    waitFor([&] {
+        return !engine.globalObject().property("activationError").toString().isEmpty()
+            && !engine.globalObject().property("activationListError").toString().isEmpty()
+            && !engine.globalObject().property("extensionError").toString().isEmpty();
+    });
+    require(engine.globalObject().property("activationError").toString() == "action_unavailable"
+            && engine.globalObject().property("activationListError").toString() == "action_unavailable"
+            && engine.globalObject().property("extensionError").toString() == "unsupported_extension",
+        "provider QML cannot invoke private activation or unnegotiated optional operations");
     require(QCoro::waitFor(registry.callSource(source, "bump")).value("calls").toInt() == 1,
         "action cancellation leaves the source context running");
     engine.evaluate(QStringLiteral(R"JS(
@@ -174,5 +189,59 @@ SPOOL_TEST_MAIN("provider-ui-context")
     ProviderUiContext *orphan = picker();
     registry.setAccountEnabled(source, false);
     require(orphan->closed(), "stopping a source closes its screens");
+
+    auto discoveryPackage = ProviderFixture::package("fixture.test", "2.0.0");
+    auto manifest = QJsonDocument::fromJson(discoveryPackage.files.value("manifest.json")).object();
+    manifest.insert("extensions", QJsonObject { { "spool.lan-probe", 1 } });
+    discoveryPackage.files["manifest.json"] = QJsonDocument(manifest).toJson();
+    discoveryPackage.manifest = *ProviderManifest::parse(discoveryPackage.files.value("manifest.json"));
+    discoveryPackage.files["logic/provider.mjs"] = R"JS(
+export function createSource() {
+    return {
+        discoverMore(args, host) { return host.delay(10000).then(function() { return {}; }); },
+        delay(args, host) { return host.delay(20).then(function() { return {}; }); }
+    };
+}
+)JS";
+    QCoro::waitFor(registry.install(std::move(discoveryPackage)));
+    auto *login = qobject_cast<ProviderUiContext *>(registry.beginSetup("fixture.test"));
+    engine.globalObject().setProperty("login", engine.newQObject(login));
+    engine.evaluate(QStringLiteral(R"JS(
+        var consentError = '';
+        login.allowLanDiscovery().then(function() {}, function(code) { consentError = code; });
+    )JS"));
+    waitFor([&] { return !registry.networkConsent().isEmpty(); });
+    const QString dismissedConsentId = registry.networkConsent().value("id").toString();
+    login->cancelLanDiscovery();
+    waitFor([&] { return !engine.globalObject().property("consentError").toString().isEmpty(); });
+    require(registry.networkConsent().isEmpty() && !login->closed(),
+        "cancel local search dismisses its host consent without closing login");
+    registry.resolveNetworkConsent(dismissedConsentId, true);
+    engine.evaluate(QStringLiteral(R"JS(
+        var consentReady = false;
+        login.allowLanDiscovery().then(function() { consentReady = true; });
+    )JS"));
+    waitFor([&] { return !registry.networkConsent().isEmpty(); });
+    registry.resolveNetworkConsent(registry.networkConsent().value("id").toString(), true);
+    waitFor([&] { return engine.globalObject().property("consentReady").toBool(); });
+    engine.evaluate(QStringLiteral(R"JS(
+        var discoveryCancelled = false, unrelatedCompleted = false;
+        login.request('discoverMore').then(function() {}, function() { discoveryCancelled = true; });
+        login.request('delay').then(function() { unrelatedCompleted = true; });
+    )JS"));
+    login->cancelLanDiscovery();
+    waitFor([&] {
+        return engine.globalObject().property("discoveryCancelled").toBool()
+            && engine.globalObject().property("unrelatedCompleted").toBool();
+    });
+    require(!login->closed(), "cancelling discovery leaves unrelated manual/UDP request scopes usable");
+    engine.evaluate(QStringLiteral(R"JS(
+        var closedConsentRejected = false;
+        login.allowLanDiscovery().then(function() {}, function() { closedConsentRejected = true; });
+    )JS"));
+    waitFor([&] { return !registry.networkConsent().isEmpty(); });
+    login->close();
+    waitFor([&] { return engine.globalObject().property("closedConsentRejected").toBool(); });
+    require(registry.networkConsent().isEmpty(), "closing login dismisses pending host consent");
     return 0;
 }

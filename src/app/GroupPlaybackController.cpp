@@ -289,13 +289,9 @@ void GroupPlaybackController::requestRemoveItems(const QStringList& entryIds)
 
 void GroupPlaybackController::requestQueueItems(const QStringList& itemIds, bool queueNext)
 {
-    QStringList raw;
-    for (const QString& id : itemIds) {
-        if (m_hub->accountOf(id) == m_account)
-            raw.append(SourceHub::rawId(id));
-    }
-    if (enabled() && !raw.isEmpty())
-        send(QStringLiteral("queue"), { { QStringLiteral("itemIds"), raw }, { QStringLiteral("next"), queueNext } });
+    if (enabled() && !itemIds.isEmpty())
+        send(
+            QStringLiteral("queue"), { { QStringLiteral("itemIds"), itemIds }, { QStringLiteral("next"), queueNext } });
 }
 
 void GroupPlaybackController::requestPlayItem(const QString& entryId)
@@ -307,11 +303,8 @@ void GroupPlaybackController::requestPlayItem(const QString& entryId)
 QCoro::Task<void> GroupPlaybackController::publishQueue(
     QStringList itemIds, int playingIndex, qint64 startPositionTicks)
 {
-    QStringList raw;
-    for (const QString& id : std::as_const(itemIds))
-        raw.append(SourceHub::rawId(id));
     co_await m_hub->call(m_account, QStringLiteral("groupSend"),
-        { { QStringLiteral("action"), QStringLiteral("setQueue") }, { QStringLiteral("itemIds"), raw },
+        { { QStringLiteral("action"), QStringLiteral("setQueue") }, { QStringLiteral("itemIds"), itemIds },
             { QStringLiteral("index"), playingIndex },
             { QStringLiteral("positionTicks"), QString::number(startPositionTicks) } });
 }

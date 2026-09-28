@@ -218,7 +218,7 @@ FocusScope {
             reserveWhenEmpty: root.query.length < 2 && root.suggestionsBusy
             loading: root.suggestionsBusy
             emptyText: "Loading suggestions..."
-            visible: root.query.length < 2
+            visible: root.showSuggestions
             onActivated: index => root.activateSuggestion(index)
         }
 

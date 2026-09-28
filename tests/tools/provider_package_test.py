@@ -14,6 +14,10 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location("spool_provider", ROOT / "sdk/spool-provider.py")
 tool = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(tool)
+legacy_spec = importlib.util.spec_from_file_location(
+    "spool_provider_api02", ROOT / "tests/providers/fixtures/api02-95591f09/spool-provider.py")
+legacy_tool = importlib.util.module_from_spec(legacy_spec)
+legacy_spec.loader.exec_module(legacy_tool)
 
 try:
     from compression import zstd as _  # noqa: F401  Python 3.14+
@@ -71,6 +75,33 @@ class ValidateTest(unittest.TestCase):
             with self.subTest(changes=changes):
                 self.rejects(files(**{"manifest.json": json.dumps(manifest(**changes)).encode()}), fragment)
         self.rejects({k: v for k, v in files().items() if k != "manifest.json"}, "manifest.json")
+
+    def test_optional_extension_versions_are_exact_and_bounded(self):
+        declarations = {"spool.speed-test": 1, "future.feature": 2}
+        package = files(**{"manifest.json": json.dumps(manifest(extensions=declarations)).encode()})
+        self.assertEqual(tool.validate(package)["extensions"], declarations)
+        for invalid in (None, [], True, "spool.speed-test", {"feature": 1}, {"Bad.feature": 1},
+                        {"spool." + "x" * 123: 1}, {"spool.feature\n": 1},
+                        {f"future.feature{i}": 1 for i in range(33)},
+                        *({"spool.speed-test": version}
+                          for version in (0, -1, True, False, "1", None, [], {}, 1.5, 2147483648))):
+            with self.subTest(extensions=invalid):
+                self.rejects(files(**{"manifest.json": json.dumps(manifest(extensions=invalid)).encode()}),
+                             "manifest.extensions")
+        boundary = {f"future.feature{i}": 2147483647 for i in range(31)}
+        boundary["x." + "a" * 126] = 1.0
+        package = files(**{"manifest.json": json.dumps(manifest(extensions=boundary)).encode()})
+        self.assertEqual(tool.validate(package)["extensions"], boundary)
+
+    def test_new_declarations_work_with_frozen_api02_validator(self):
+        extensions = {f"spool.{name}": 1 for name in (
+            "artwork-owners", "speed-test", "suggestions", "playback-preferences", "settings-storage",
+            "item-actions", "collection-editing", "playback-queue-reporting", "remote-targets",
+            "http-metadata", "origin-grants", "lan-probe", "account-activation")}
+        package = files(**{"manifest.json": json.dumps(manifest(
+            extensions=extensions, capabilities=["search"], ui={"settings": "ui/Login.qml"})).encode()})
+        self.assertEqual(legacy_tool.validate(package)["extensions"], extensions)
+        self.assertEqual(tool.validate(package), legacy_tool.validate(package))
 
     def test_qml_imports_are_limited_to_what_spool_provides(self):
         for module in ("QtWebEngine", "Spool.Ui", "QtQuick.LocalStorage"):

@@ -76,8 +76,8 @@ public:
         return true;
     }
     QString libraryScopeKey() const override;
-    QCoro::Task<PagedMovieItems> fetchBrowsePage(
-        BrowseDescriptor descriptor, int startIndex = 0, int limit = 72, QVariantMap queryOptions = {}) override;
+    QCoro::Task<PagedMovieItems> fetchBrowsePage(BrowseDescriptor descriptor, int startIndex, int limit,
+        QVariantMap queryOptions, std::optional<QString> cursor) override;
     QCoro::Task<MovieItem> fetchItemDetails(QString itemId) override;
     QCoro::Task<std::vector<MovieItem>> fetchSeasons(QString seriesId) override;
     QCoro::Task<std::vector<MovieItem>> fetchEpisodes(QString seriesId, QString seasonId = {}) override;

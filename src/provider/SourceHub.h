@@ -15,6 +15,7 @@
 
 #include <memory>
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace Spool {
@@ -87,13 +88,33 @@ public:
     QCoro::Task<QVariantMap> call(QString accountId, QString operation, QVariantMap arguments = {});
     void setVideoCodecs(QStringList codecs, bool restrict);
 
-    // Item menu entries the owning provider declared for this kind of item.
-    Q_INVOKABLE QVariantList itemActions(const QString& itemId, const QString& itemType) const;
-    // Runs one; the provider may answer with a message, a change, or its own
-    // picker (a playlist to add to) before finishing.
-    Q_INVOKABLE void runItemAction(const QString& actionId, const QString& itemId, const QString& itemType);
+    // Menu policy is fetched only on opening; results are tied to this request.
+    Q_INVOKABLE int requestItemActions(
+        const QString& itemId, const QString& itemType, const QString& containerId = {}, const QString& entryId = {});
+    Q_INVOKABLE void cancelItemActions();
+    Q_INVOKABLE void runItemAction(const QString& actionId, const QString& itemId, const QString& itemType,
+        const QString& containerId = {}, const QString& entryId = {});
+    Q_INVOKABLE bool collectionEditingAvailable(const QString& containerId) const;
+    QCoro::Task<QVariantMap> collectionCall(QString containerId, QString operation, QVariantMap arguments = {});
+    QCoro::Task<PagedMovieItems> collectionEntries(QString containerId, std::optional<QString> cursor);
+    void cancelCollection(const QString& containerId);
+    void collectionChanged(const QString& containerId);
+    // Outbound remote IDs cross the provider boundary only through this facade.
+    bool remoteAvailable(const QString& accountId) const;
+    QCoro::Task<QVariantList> remoteTargets(QString accountId, QString scope);
+    QCoro::Task<QVariantMap> remoteState(QString targetId, bool connect, QString scope);
+    QCoro::Task<QVariantMap> remoteCommand(QString targetId, QVariantMap command, QVariantMap state, QString scope);
+    QCoro::Task<PagedMovieItems> remoteQueue(QString targetId, std::optional<QString> cursor, QString scope);
+    QVariantMap remoteQueueRow(const MovieItem& item) const;
     // The viewer's standing streaming limits from settings.
     void setPlaybackPreferences(qint64 manualMaxBitrate, bool unlimitedLocalNetwork, bool preferRemux, int maxHeight);
+    struct ReportingQueueEntry {
+        QString itemId;
+        QString entryId;
+        bool audio = false;
+        friend bool operator==(const ReportingQueueEntry&, const ReportingQueueEntry&) = default;
+    };
+    void setPlaybackQueue(std::vector<ReportingQueueEntry> items, int index);
     // Idle-only probes are serialized so accounts do not benchmark each other.
     void setPlaybackActive(bool active);
     void refreshSpeedTests();
@@ -102,8 +123,8 @@ public:
     // Catalog
     bool signedIn() const override;
     QString libraryScopeKey() const override;
-    QCoro::Task<PagedMovieItems> fetchBrowsePage(
-        BrowseDescriptor descriptor, int startIndex = 0, int limit = 72, QVariantMap queryOptions = {}) override;
+    QCoro::Task<PagedMovieItems> fetchBrowsePage(BrowseDescriptor descriptor, int startIndex, int limit,
+        QVariantMap queryOptions, std::optional<QString> cursor) override;
     QCoro::Task<MovieItem> fetchItemDetails(QString itemId) override;
     QCoro::Task<std::vector<MovieItem>> fetchSeasons(QString seriesId) override;
     QCoro::Task<std::vector<MovieItem>> fetchEpisodes(QString seriesId, QString seasonId = {}) override;
@@ -159,6 +180,8 @@ public:
 signals:
     void accountEvent(const QString& accountId, const QString& type, const QVariantMap& payload);
     void streamingQualityChanged();
+    void itemActionsReady(int requestId, const QVariantList& actions, const QString& problem);
+    void extensionSupportChanged(const QString& accountId);
 
 private:
     class Playback;
@@ -186,6 +209,9 @@ private:
     QCoro::Task<std::optional<QSet<QString>>> accessOf(QString accountId);
     QCoro::Task<void> searchOne(std::shared_ptr<SearchRun> run, size_t index, QString searchTerm);
     Provider *owner(const QString& scopedId) const;
+    QVariantList baselineItemActions(const QString& itemId, const QString& itemType) const;
+    QCoro::Task<QVariantList> fetchItemActions(
+        QString itemId, QString itemType, QString containerId, QString entryId, QString scope);
     MovieItem scopedItem(MovieItem item, const QString& accountId) const;
     std::vector<MovieItem> scopedItems(std::vector<MovieItem> items, const QString& accountId) const;
     template <typename Fetch>
@@ -202,6 +228,11 @@ private:
     QStringList m_videoCodecs;
     bool m_restrictVideoCodecs = false;
     QVariantMap m_preferences;
+    std::vector<ReportingQueueEntry> m_reportingQueue;
+    QHash<QString, QVariantMap> m_queueSnapshots;
+    std::vector<std::pair<QString, int>> m_queueLocations;
+    QHash<QString, int> m_queueIndexes;
+    quint64 m_queueRevision = 0;
     QTimer m_speedTestTimer;
     QString m_speedTestAccount;
     QString m_playbackAccount;
@@ -210,6 +241,8 @@ private:
     QString m_lastDetailsAccount;
     QHash<QString, QSet<QString>> m_access;
     quint64 m_searchSerial = 0;
+    int m_itemActionsRequest = 0;
+    QString m_itemActionsAccount;
 };
 
 } // namespace Spool

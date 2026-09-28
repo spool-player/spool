@@ -1,12 +1,15 @@
 #include "app/AppController.h"
 #include "app/ArtworkImageProvider.h"
 #include "app/ArtworkService.h"
+#include "app/CollectionEditingController.h"
 #include "app/CpuTopology.h"
 #include "app/GraphicsStartup.h"
 #include "app/GroupPlaybackController.h"
 #include "app/LocalizationManager.h"
 #include "app/MemoryBudget.h"
+#include "app/RemoteTargetsController.h"
 #include "app/RouterController.h"
+#include "app/SettingsSyncController.h"
 #include "app/UserItemStateController.h"
 #include "cache/DatabaseManager.h"
 #include "common/AsyncTask.h"
@@ -530,12 +533,7 @@ int main(int argc, char **argv)
         const QString arg = QString::fromLocal8Bit(argv[i]);
         if (arg == QStringLiteral("--play") && i + 1 < argc) {
             autoplayItemId = QString::fromLocal8Bit(argv[++i]);
-        } else if (!arg.startsWith('-') && arg.length() >= 16) {
-            autoplayItemId = arg;
         }
-    }
-    if (autoplayItemId.isEmpty()) {
-        autoplayItemId = QString::fromLocal8Bit(qgetenv("SPOOL_PLAY_ITEM"));
     }
 
     const QByteArray hdrRequest = Spool::GraphicsStartup::prepareBeforeWindow(graphicsApi, launchTest);
@@ -714,6 +712,7 @@ int main(int argc, char **argv)
     }
 #endif
     Spool::SourceHub hub(&providers);
+    Spool::CollectionEditingController collectionEditing(&hub);
     Spool::ProviderCapabilities providerCapabilities;
     QObject::connect(&hub, &Spool::Provider::capabilitiesChanged, &providerCapabilities,
         [&hub, &providerCapabilities] { providerCapabilities.setFlags(hub.capabilities()); });
@@ -759,6 +758,17 @@ int main(int argc, char **argv)
     updateApplicationIcon();
 #endif
     auto controller = std::make_unique<Spool::AppController>(&database, &hub, artworkService.get(), player.get());
+    Spool::SettingsSyncController settingsSync(controller->settings(), &database, &providers);
+    Spool::RemoteTargetsController remoteTargets(&hub, &providers, controller->group());
+    controller->attachRemoteTargets(&remoteTargets);
+    QObject::connect(&providers, &Spool::ProviderRegistry::accountIdentityRevoked, controller.get(),
+        &Spool::AppController::revokeAccountIdentity);
+    controller->attachSettingsSync(&settingsSync);
+    controller->settings()->attachSync(&settingsSync);
+    controller->settings()->attachInputLatency(&inputLatencyMonitor);
+    settingsSync.setForeground(app.applicationState() == Qt::ApplicationActive);
+    QObject::connect(&app, &QGuiApplication::applicationStateChanged, &settingsSync,
+        [&settingsSync](Qt::ApplicationState state) { settingsSync.setForeground(state == Qt::ApplicationActive); });
     QObject::connect(controller->settings(), &Spool::SettingsController::playbackPreferencesChanged, &hub,
         &Spool::SourceHub::setPlaybackPreferences);
     QObject::connect(
@@ -863,6 +873,7 @@ int main(int argc, char **argv)
         [](QQuickView::Status status) { logLine("view status changed: %d", static_cast<int>(status)); });
     auto localization = std::make_unique<Spool::LocalizationManager>();
     localization->attachToEngine(window.engine());
+    controller->settings()->attachLocalization(localization.get());
     // Providers start once the device identity they present is known: in
     // parallel, off the GUI thread, after the first frame is on its way.
     QObject::connect(controller.get(), &Spool::AppController::deviceIdentityReady, &providers,
@@ -891,6 +902,30 @@ int main(int argc, char **argv)
             }
         });
     auto router = std::make_unique<Spool::RouterController>(QStringLiteral("home"));
+    QTimer identityRouteReset;
+    identityRouteReset.setSingleShot(true);
+    bool identityRoutePending = false;
+    QObject::connect(&providers, &Spool::ProviderRegistry::accountIdentityRevoked, &identityRouteReset,
+        [&identityRouteReset, &identityRoutePending](const QString&) {
+            identityRoutePending = true;
+            identityRouteReset.start(0);
+        });
+    QObject::connect(&providers, &Spool::ProviderRegistry::sourceStarted, &identityRouteReset,
+        [&identityRouteReset, &identityRoutePending](Spool::Provider *) {
+            if (identityRoutePending)
+                identityRouteReset.start(0);
+        });
+    QObject::connect(&identityRouteReset, &QTimer::timeout, router.get(),
+        [&providers, &identityRoutePending, router = router.get()] {
+            bool active = false;
+            for (const QVariant& value : providers.accounts()) {
+                const QVariantMap account = value.toMap();
+                active |= account.value(QStringLiteral("enabled")).toBool()
+                    && account.value(QStringLiteral("connectionState")).toString() == QStringLiteral("active");
+            }
+            router->reset(active ? QStringLiteral("home") : QStringLiteral("accounts"));
+            identityRoutePending = !active;
+        });
     Spool::ApplicationHooks applicationHooks;
     applicationHooks.player = player.get();
     applicationHooks.settings = controller->settings();
@@ -945,6 +980,9 @@ int main(int argc, char **argv)
     qmlRegisterSingletonInstance("Spool", 1, 0, "ProviderCapabilities", &providerCapabilities);
     qmlRegisterSingletonInstance("Spool", 1, 0, "Providers", &providers);
     qmlRegisterSingletonInstance("Spool", 1, 0, "Sources", &hub);
+    qmlRegisterSingletonInstance("Spool", 1, 0, "CollectionEditing", &collectionEditing);
+    qmlRegisterSingletonInstance("Spool", 1, 0, "SettingsSync", &settingsSync);
+    qmlRegisterSingletonInstance("Spool", 1, 0, "RemoteTargets", &remoteTargets);
     qmlRegisterSingletonInstance("Spool", 1, 0, "Store", &store);
     qmlRegisterSingletonInstance("Spool", 1, 0, "Group", controller->group());
     qmlRegisterSingletonInstance("Spool", 1, 0, "Art", artworkService.get());
@@ -1117,7 +1155,7 @@ int main(int argc, char **argv)
             [autoplayItemId, c = controller.get()]() {
                 if (c->initialized()) {
                     logLine("startup: autoplay requested for item %s", qPrintable(autoplayItemId));
-                    QTimer::singleShot(300, c, [autoplayItemId, c]() { c->playItemId(autoplayItemId); });
+                    QTimer::singleShot(300, c, [autoplayItemId, c]() { c->playLocalItemId(autoplayItemId); });
                 }
             });
     }

@@ -192,3 +192,115 @@ install it from a link to the repository: GitHub resolves to
 To be listed in the store, open a pull request on `spool-player/spool-providers` adding
 `providers/<id>.json` with that feed entry. CI downloads the package, checks its digest and validates
 it; once merged, the store site is rebuilt and the provider appears in Spool.
+
+## Pagination and collection occurrences
+
+Pages carry opaque continuations: omit `cursor` for the first request and pass
+the returned token unchanged thereafter. Only `exhausted: true` ends a listing;
+short or empty nonterminal pages are valid when their cursor advances. Missing,
+empty or repeated nonterminal cursors fail with `invalid_pagination`.
+Collectors stop after 256 pages; collect-all also has a 10,000-row bound.
+Exceeding either bound without completion reports `response_limit`.
+
+`Item.entryId` identifies an occurrence within its container. It is not a media
+ID and is never account-prefixed. Duplicate media IDs retain separate entry IDs
+and queue occurrences. ID lookups fetch at most 50 unique IDs per request and
+reconstruct the original requested order, including duplicates and omitting
+missing rows.
+
+## Optional extensions
+
+Keep manifest `format: 2`, `api: "0.2"` and the existing baseline capability
+names. Declare optional features in a top-level `extensions` object, for example
+`{"spool.speed-test": 1}`. Values are exact positive wire-major integers
+(1 through 2147483647), not minimum versions. Declarations allow at most 32
+namespaced IDs of at most 128 characters. Unknown valid IDs or majors do not
+prevent baseline loading; malformed declarations are rejected.
+
+Both source and operation hosts expose the same frozen `host.extensions` map
+of supported declared versions. An older API 0.2 host has no such property:
+treat that as no optional support, never infer it from the application version.
+Return account/server offers in `describe().extensions`; effective support is
+the exact intersection of declarations, host support and account offers.
+`host.emit('extensionsChanged', {extensions})` replaces only that account's
+offers; support loss cancels affected calls and updates controls.
+
+Optional operations are checked before provider execution and fail with
+`unsupported_extension` when unavailable. Providers must also check support.
+New speed-test implementations declare `spool.speed-test` instead of adding
+the old unversioned capability. Inherited artwork owners require
+`spool.artwork-owners`; omit inherited child tags on old hosts while retaining
+own artwork and ordinary series/album fallback.
+
+Keep `extensionStatus` baseline-callable and ship provider-owned notices for
+old hosts. Missing host features show “Update Spool to use all features of this
+provider.” Server permissions and missing endpoints are separate conditions,
+not reasons to request an application update.
+
+### Optional network facilities
+
+`spool.http-metadata` allows `host.http` to request up to 16 response-header
+names. Only those lowercase names are returned, with a 64 KiB aggregate bound;
+cookie-setting headers are forbidden. Redirect and cookie policy is unchanged.
+
+`spool.origin-grants` lets account settings/pickers request an exact HTTP(S)
+origin. A host-owned confirmation names the provider, account and origin,
+including an unencrypted-HTTP warning. Approval updates the worker allowlist
+and persists without restarting the source; denial or stale consent grants
+nothing. Certificate trust remains separate.
+
+`spool.lan-probe` is available only to a login draft after explicit
+`provider.allowLanDiscovery()` consent. `host.probeLocalHttp` probes at most
+32 targets per page with four concurrent requests, a 600 ms wall deadline and
+4 KiB response bodies. It scans at most two ranked private/link-local IPv4
+networks (254 targets each), never public or IPv6 subnets. Opaque single-use
+cursors belong to that draft's snapshot. Requests carry no credentials or
+cookies and follow no redirects. Discovery does not grant authenticated access:
+normal server selection still calls `allowOrigin`. Cancel/Back uses
+`cancelLanDiscovery()` without disabling password or UDP login.
+
+### Catalogue and queue contracts
+
+`spool.suggestions` provides a bounded recommendation set. No extension means
+no suggestions section; Continue Watching is not substituted. Search remains
+a bounded top-N query with progressive account delivery.
+
+`spool.item-actions` fetches permission-aware actions when a menu opens.
+`spool.collection-editing` edits container-local occurrence IDs, preserving
+duplicates. The host supplies both the post-removal index and preceding entry
+ID for moves; the provider chooses its native move style. Unordered/read-only
+containers do not offer movement. Mutations are serialized and uncertain
+results trigger a refresh, not an assumed rollback.
+
+`spool.playback-queue-reporting` adds an immutable queue snapshot only on start,
+restart or membership/order revision. Ordinary progress can carry the current
+index without recopying the queue. Each account receives only its own entries.
+Unknown exact occurrence indexes are omitted rather than guessed.
+PMS queue preparation runs on the source host and emits sanitized
+`playbackQueueStatus` events; failure is nonfatal to ordinary playback reports.
+Mixed audio/video queues cannot be represented by one PMS queue. Bulk append
+is verified against count/order and occurrence IDs, with read-back before
+reconciliation after uncertain mutations; fixture success is not a live-server
+compatibility guarantee.
+
+### Native preferences and application data
+
+`spool.playback-preferences` exposes the service's own audio/subtitle defaults.
+Language values use ISO-639-2 (empty means no preference); the host normalizes
+two-letter codes through Qt. A writable mode must round-trip its full normalized
+vocabulary. Writes merge only the four mapped fields into a freshly fetched
+configuration and preserve unrelated fields and user policy.
+
+`spool.settings-storage` stores application-owned JSON documents by canonical
+UUID, not filesystem or service paths. Values include JSON null; `found:false`
+alone means absence. Documents are bounded to 64 KiB of compact UTF-8 JSON and
+depth 16, or the provider's smaller advertised limit. Malformed, oversized or
+inaccessible documents are errors, never empty documents to overwrite.
+
+`dataInfo.conditionalWrites` describes actual server guarantees. With CAS,
+`expectedRevision:null` means create-if-absent and a stale revision is
+`conflict`. Replacement-only implementations reject any expected revision with
+`unsupported_condition`. Jellyfin/Emby DisplayPreferences preserve the whole
+DTO and unrelated CustomPrefs while changing only `spool.data.v1` in the
+signed-in user's Spool partition; they advertise no CAS. Plex advertises
+neither a preference writer nor application-data storage.

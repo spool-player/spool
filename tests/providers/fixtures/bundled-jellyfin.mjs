@@ -35,7 +35,7 @@ export function run() {
     }};
     require(source.describe().artwork.indexOf('https://fixture.invalid/Items/{itemId}/Images/{type}') === 0,
         'artwork is a URL template');
-    return source.search({query: 'Example', cursor: '1', limit: 1}, host).then(function(page) {
+    return source.browse({parentId: 'library', collectionType: 'movies', cursor: '1', limit: 1}, host).then(function(page) {
         require(page.exhausted && page.cursor === null && page.total === 2, 'paging');
         require(page.items[0].id === 'film' && page.items[0].externalIds.Imdb === 'tt1', 'items');
         return source.resolve({itemId: 'film', variantId: 'chosen', positionTicks: '0'}, host);

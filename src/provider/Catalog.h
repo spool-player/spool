@@ -29,7 +29,7 @@ public:
     virtual QString libraryScopeKey() const = 0;
 
     virtual QCoro::Task<PagedMovieItems> fetchBrowsePage(
-        BrowseDescriptor descriptor, int startIndex = 0, int limit = 72, QVariantMap queryOptions = {})
+        BrowseDescriptor descriptor, int startIndex, int limit, QVariantMap queryOptions, std::optional<QString> cursor)
         = 0;
     virtual QCoro::Task<MovieItem> fetchItemDetails(QString itemId) = 0;
     virtual QCoro::Task<std::vector<MovieItem>> fetchSeasons(QString seriesId) = 0;

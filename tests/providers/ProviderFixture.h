@@ -78,7 +78,10 @@ inline Spool::ProviderPackageContents package(
     const QJsonObject manifest { { QStringLiteral("format"), 2 }, { QStringLiteral("api"), QStringLiteral("0.2") },
         { QStringLiteral("id"), id }, { QStringLiteral("name"), QStringLiteral("Fixture") },
         { QStringLiteral("version"), version }, { QStringLiteral("entry"), QStringLiteral("logic/provider.mjs") },
-        { QStringLiteral("capabilities"), QJsonArray { QStringLiteral("search") } },
+        { QStringLiteral("capabilities"), QJsonArray { QStringLiteral("search"), QStringLiteral("reporting") } },
+        { QStringLiteral("extensions"),
+            QJsonObject {
+                { QStringLiteral("spool.suggestions"), 1 }, { QStringLiteral("spool.playback-queue-reporting"), 1 } } },
         { QStringLiteral("ui"),
             QJsonObject { { QStringLiteral("login"), QStringLiteral("ui/Login.qml") },
                 { QStringLiteral("picker"), QStringLiteral("ui/Selection.qml") } } },

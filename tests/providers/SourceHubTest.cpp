@@ -4,6 +4,7 @@
 #include "app/ArtworkService.h"
 #include "cache/DatabaseManager.h"
 #include "common/MetaJson.h"
+#include "provider/PortableProvider.h"
 #include "provider/ProviderRegistry.h"
 #include "provider/ProviderUiContext.h"
 #include "providers/local/LocalProvider.h"
@@ -163,10 +164,23 @@ SPOOL_TEST_MAIN("source-hub")
             == QStringLiteral("https://img.invalid/m1/Thumb?w=400"),
         "an item's own thumbnail overrides both inherited and album cover identities");
 
-    require(hub.itemActions(remoteItem, QStringLiteral("Movie")).size() == 1
-            && hub.itemActions(remoteItem, QStringLiteral("Series")).isEmpty()
-            && hub.itemActions(hub.scoped(a, QStringLiteral("x")), QStringLiteral("Movie")).isEmpty(),
-        "item actions come from the owning provider's manifest, by type");
+    const auto menuActions = [&](const QString& itemId, const QString& type) {
+        QVariantList actions;
+        int completed = -1;
+        const auto connection = QObject::connect(
+            &hub, &SourceHub::itemActionsReady, [&](int request, const QVariantList& result, const QString&) {
+                completed = request;
+                actions = result;
+            });
+        const int request = hub.requestItemActions(itemId, type);
+        waitUntil([&] { return completed == request; }, "menu policy completes");
+        QObject::disconnect(connection);
+        return actions;
+    };
+    require(menuActions(remoteItem, QStringLiteral("Movie")).size() == 1
+            && menuActions(remoteItem, QStringLiteral("Series")).isEmpty()
+            && menuActions(hub.scoped(a, QStringLiteral("x")), QStringLiteral("Movie")).isEmpty(),
+        "older providers retain type-filtered manifest actions through the asynchronous menu");
 
     QString changed;
     QString toast;
@@ -202,6 +216,7 @@ SPOOL_TEST_MAIN("source-hub")
                     QVariantMap { { QStringLiteral("label"), QLatin1String(key) },
                         { QStringLiteral("libraries"), libraries }, { QStringLiteral("exact"), exact } } } });
         registry.useAccount(id);
+        waitUntil([&] { return registry.sourceRunning(id); }, "the selected user commits before another login");
         return id;
     };
     // The account used last on each server is the one in use.
@@ -259,5 +274,208 @@ SPOOL_TEST_MAIN("source-hub")
     const auto browsing = hub.sources();
     require(std::find(browsing.begin(), browsing.end(), hub.source(wide)) != browsing.end(),
         "an account running for search is promoted when chosen");
+    const QString pagingAccount = add("fixture.test", "pagination", { { QStringLiteral("pagination"), true } });
+    waitUntil([&] { return hub.source(pagingAccount) != nullptr; }, "pagination fixture starts");
+    const auto scoped = [&](const char *id) { return hub.scoped(pagingAccount, QString::fromLatin1(id)); };
+    auto *portable = qobject_cast<PortableProvider *>(hub.source(pagingAccount));
+    require(portable != nullptr, "fixture exposes the portable catalogue");
+    const auto sparse = QCoro::waitFor(hub.fetchEpisodes(scoped("sparse")));
+    require(sparse.size() == 3 && sparse[0].id == scoped("first") && sparse[1].id == scoped("second")
+            && sparse[2].id == scoped("last"),
+        "collectors traverse short and empty pages with opaque advancing cursors");
+    require(sparse[0].playlistItemId == QStringLiteral("entry:first"), "occurrence IDs remain opaque and unscoped");
+    const auto descriptor = BrowseDescriptor::library(scoped("sparse"), QStringLiteral("movies"));
+    const auto first = QCoro::waitFor(hub.fetchBrowsePage(descriptor, 0, 100, {}, std::nullopt));
+    const auto empty = QCoro::waitFor(hub.fetchBrowsePage(descriptor, 2, 100, {}, first.nextCursor));
+    const auto final = QCoro::waitFor(hub.fetchBrowsePage(descriptor, 2, 100, {}, empty.nextCursor));
+    require(first.items.size() == 2 && first.nextCursor == QStringLiteral("s:1") && !first.exhausted
+            && empty.items.empty() && empty.nextCursor == QStringLiteral("s:2") && !empty.exhausted
+            && final.items.size() == 1 && final.exhausted,
+        "browse forwards opaque continuation independently of the UI offset");
+    require(QCoro::waitFor(hub.fetchSeasons(scoped("many"))).size() == 205,
+        "seasons are collected beyond the first hundred rows");
+    const auto credits = QCoro::waitFor(hub.fetchItemsByPerson(scoped("many"), 150));
+    require(credits.items.size() == 150 && credits.items.back().id == scoped("149"),
+        "person credits honor their requested maximum across pages");
+    require(QCoro::waitFor(portable->fetchResumeItems(150)).size() == 150
+            && QCoro::waitFor(portable->fetchNextUpEpisodes(150)).size() == 150,
+        "requested-count lists fill their limit across provider pages");
+    const auto rejects = [&](QCoro::Task<std::vector<MovieItem>> task, const char *code) {
+        try {
+            QCoro::waitFor(std::move(task));
+        } catch (const std::exception& error) {
+            return QByteArray(error.what()) == code;
+        }
+        return false;
+    };
+    require(rejects(portable->fetchEpisodes(QStringLiteral("repeat")), "invalid_pagination"),
+        "repeated cursors fail rather than looping");
+    require(rejects(portable->fetchEpisodes(QStringLiteral("missing")), "invalid_pagination"),
+        "nonterminal pages require continuation");
+    require(rejects(portable->fetchEpisodes(QStringLiteral("empty-forever")), "response_limit"),
+        "collect-all has a hard page ceiling even for advancing empty pages");
+    try {
+        QCoro::waitFor(portable->fetchItemsByPerson(QStringLiteral("empty-forever"), 1));
+        require(false, "requested-count collectors must enforce the page ceiling");
+    } catch (const std::exception& error) {
+        require(QByteArray(error.what()) == "response_limit", "requested-count page ceiling reports response_limit");
+    }
+    require(rejects(portable->fetchEpisodes(QStringLiteral("too-many")), "response_limit"),
+        "collect-all refuses false completion at ten thousand rows");
+
+    QStringList ids;
+    for (int i = 0; i < 101; ++i)
+        ids.append(hub.scoped(pagingAccount, QString::number(i)));
+    ids.insert(1, ids.at(17));
+    ids.append(ids.at(100));
+    ids.append(scoped("missing"));
+    const auto fetched = QCoro::waitFor(hub.fetchItemsByIds(ids));
+    QStringList ordered;
+    for (const MovieItem& row : fetched)
+        ordered.append(row.id);
+    ids.removeLast();
+    require(ordered == ids, "ID lookup reconstructs every duplicate occurrence in input order and omits missing IDs");
+    const QVariantMap stats = QCoro::waitFor(hub.call(pagingAccount, QStringLiteral("batchStats")));
+    const QVariantList requests = stats.value(QStringLiteral("requests")).toList();
+    QSet<QString> requested;
+    require(requests.size() == 3, "one hundred and two unique IDs use three bounded batches");
+    for (const QVariant& request : requests) {
+        const QVariantList batch = request.toList();
+        require(batch.size() <= 50, "each metadata request contains at most fifty IDs");
+        for (const QVariant& id : batch) {
+            require(!requested.contains(id.toString()), "each unique ID is fetched only once");
+            requested.insert(id.toString());
+        }
+    }
+    require(requested.size() == 102, "batch records contain every unique requested ID including missing metadata");
+    require(stats.value(QStringLiteral("maximumActive")).toInt() <= 2, "metadata batches have bounded concurrency");
+    QStringList rawIds;
+    for (int i = 0; i < 101; ++i)
+        rawIds.append(QString::number(i));
+    auto lookupA = portable->fetchItemsByIds(rawIds);
+    auto lookupB = portable->fetchItemsByIds(rawIds);
+    require(QCoro::waitFor(std::move(lookupA)).size() == 101 && QCoro::waitFor(std::move(lookupB)).size() == 101,
+        "concurrent callers both complete their metadata lookups");
+    require(QCoro::waitFor(hub.call(pagingAccount, QStringLiteral("batchStats")))
+                .value(QStringLiteral("maximumActive"))
+                .toInt()
+            == 2,
+        "two overlapping callers still issue at most two batches per account");
+    for (const QString& operation : { QStringLiteral("groupSend"), QStringLiteral("remoteCommand") }) {
+        QVariantMap command { { QStringLiteral("itemIds"), QStringList { scoped("first"), remoteItem } },
+            { QStringLiteral("action"), QStringLiteral("setQueue") } };
+        const QVariantMap arguments = operation == QStringLiteral("remoteCommand")
+            ? QVariantMap { { QStringLiteral("command"), command } }
+            : command;
+        try {
+            QCoro::waitFor(hub.call(pagingAccount, operation, arguments));
+            require(false, "mixed-account server queues must fail");
+        } catch (const std::exception& error) {
+            require(QByteArray(error.what()) == "mixed_source_queue", "mixed queues have a distinct error");
+        }
+    }
+    require(QCoro::waitFor(hub.call(pagingAccount, QStringLiteral("batchStats")))
+                .value(QStringLiteral("queueCalls"))
+                .toInt()
+            == 0,
+        "mixed queues fail before invoking provider code");
+    QCoro::waitFor(hub.call(pagingAccount, QStringLiteral("groupSend"),
+        { { QStringLiteral("itemIds"), QStringList { scoped("first"), scoped("first") } } }));
+    const QVariantMap queue = QCoro::waitFor(hub.call(pagingAccount, QStringLiteral("batchStats")));
+    require(queue.value(QStringLiteral("queue")).toStringList()
+            == QStringList { QStringLiteral("first"), QStringLiteral("first") },
+        "valid server queues store raw IDs while retaining duplicate occurrences");
+    require(QCoro::waitFor(portable->fetchSearchSuggestions()).empty(),
+        "an account without suggestions never substitutes its populated resume results");
+    const QString reporting = add("fixture.test", "reporting",
+        { { QStringLiteral("catalogueExtensions"), true }, { QStringLiteral("label"), QStringLiteral("Reporting") } });
+    waitUntil([&] { return hub.source(reporting) != nullptr; }, "reporting account starts");
+    const auto suggestions = QCoro::waitFor(hub.source(reporting)->search()->fetchSearchSuggestions());
+    require(suggestions.size() == 1 && suggestions.front().id == QStringLiteral("suggestion"),
+        "negotiated suggestions invoke the dedicated operation");
+    const QString song = hub.scoped(reporting, QStringLiteral("song"));
+    std::vector<SourceHub::ReportingQueueEntry> reportingItems { { song, QStringLiteral("opaque:first"), true },
+        { remoteItem, {}, false }, { song, QStringLiteral("opaque:second"), true },
+        { hub.scoped(reporting, QStringLiteral("film")), {}, false } };
+    hub.setPlaybackQueue(reportingItems, 2);
+    PlaybackSession session;
+    session.itemId = song;
+    session.playSessionId = QStringLiteral("unchanged-session");
+    const auto reports = [&]() {
+        return QCoro::waitFor(hub.call(reporting, QStringLiteral("reportStats")))
+            .value(QStringLiteral("reports"))
+            .toList();
+    };
+    const auto progress
+        = [&]() { QCoro::waitFor(hub.playback()->reportPlaybackProgress(session, 100, false, 1, 100, false)); };
+    QCoro::waitFor(hub.playback()->reportPlaybackStart(session, 1, 100, false));
+    const QVariantMap started = reports().last().toMap();
+    const QVariantMap initialQueue = started.value(QStringLiteral("queue")).toMap();
+    const QVariantList rows = initialQueue.value(QStringLiteral("items")).toList();
+    require(rows.size() == 3 && rows.at(0).toMap().value("itemId").toString() == "song"
+            && rows.at(1).toMap().value("itemId").toString() == "song"
+            && rows.at(0).toMap().value("entryId").toString() == "opaque:first"
+            && rows.at(1).toMap().value("entryId").toString() == "opaque:second"
+            && rows.at(0).toMap().value("mediaType").toString() == "audio"
+            && rows.at(2).toMap().value("mediaType").toString() == "video" && started.value("queueIndex").toInt() == 1,
+        "reports filter foreign accounts, preserve duplicate occurrences and adjust the current index");
+    hub.setPlaybackQueue(reportingItems, 3);
+    progress();
+    require(!reports().last().toMap().contains("queue") && reports().last().toMap().value("queueIndex").toInt() == 2,
+        "index-only changes do not resend the immutable queue snapshot");
+    QCoro::waitFor(hub.playback()->reportPlaybackStart(session, 1, 100, false));
+    require(reports().last().toMap().value("queue").toMap() == initialQueue,
+        "every playback start includes the current snapshot even when membership is unchanged");
+    std::swap(reportingItems[0], reportingItems[2]);
+    hub.setPlaybackQueue(reportingItems, 0);
+    progress();
+    const QVariantMap reordered = reports().last().toMap().value("queue").toMap();
+    require(reordered.value("revision") != initialQueue.value("revision")
+            && reordered.value("items").toList().first().toMap().value("entryId").toString() == "opaque:second",
+        "queue edits reach an unchanged playback session as a new occurrence-ordered revision");
+    hub.setPlaybackQueue(reportingItems, -1);
+    progress();
+    require(!reports().last().toMap().contains("queue") && !reports().last().toMap().contains("queueIndex"),
+        "unknown shuffled duplicate occurrence indexes are omitted rather than guessed");
+    QCoro::waitFor(hub.playback()->reportPlaybackStopped(session, 100, false, 1));
+    require(!reports().last().toMap().contains("queue") && !reports().last().toMap().contains("queueIndex"),
+        "stop reports retain their existing queue-free contract");
+    registry.setAccountEnabled(reporting, false);
+    registry.setAccountEnabled(reporting, true);
+    waitUntil([&] { return hub.source(reporting) != nullptr; }, "reporting source restarts");
+    progress();
+    require(reports().last().toMap().value("queue").toMap() == reordered,
+        "a restarted provider receives the cached queue even before another start or membership change");
+    int queueStatuses = 0;
+    int playbackErrors = 0;
+    QObject::connect(&hub, &Provider::errorOccurred, [&] { ++playbackErrors; });
+    QObject::connect(&hub, &SourceHub::accountEvent, [&](const QString&, const QString& type, const QVariantMap&) {
+        if (type == QStringLiteral("playbackQueueStatus"))
+            ++queueStatuses;
+    });
+    QCoro::waitFor(hub.call(reporting, QStringLiteral("queueStatus"),
+        { { "revision", QStringLiteral("stale") }, { "state", QStringLiteral("unavailable") } }));
+    QCoro::waitFor(hub.call(reporting, QStringLiteral("queueStatus"),
+        { { "revision", reordered.value("revision") }, { "state", QStringLiteral("unavailable") } }));
+    waitUntil([&] { return queueStatuses == 1; }, "only the current queue revision exposes nonfatal status");
+    require(playbackErrors == 0, "optional queue limitations never become playback failures");
+    reportingItems.erase(reportingItems.begin());
+    hub.setPlaybackQueue(reportingItems, 1);
+    progress();
+    const QVariantList afterRemoval = reports().last().toMap().value("queue").toMap().value("items").toList();
+    require(afterRemoval.size() == 2 && afterRemoval.first().toMap().value("entryId").toString() == "opaque:first",
+        "removing the second occurrence keeps the first occurrence of the same media ID");
+    hub.setPlaybackQueue({}, -1);
+    progress();
+    require(reports().last().toMap().contains("queue")
+            && reports().last().toMap().value("queue").toMap().value("items").toList().isEmpty(),
+        "empty membership is reported as an explicit new revision, not stale cached entries");
+    PlaybackSession baselineSession;
+    baselineSession.itemId = remoteItem;
+    QCoro::waitFor(hub.playback()->reportPlaybackStart(baselineSession, 1, 100, false));
+    const QVariantMap baselineReport
+        = QCoro::waitFor(hub.call(remote, QStringLiteral("reportStats"))).value("reports").toList().last().toMap();
+    require(!baselineReport.contains("queue") && !baselineReport.contains("queueIndex"),
+        "non-negotiated accounts retain baseline reports without extension fields");
     return 0;
 }

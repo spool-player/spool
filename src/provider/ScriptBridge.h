@@ -13,6 +13,7 @@
 #include <QUrl>
 #include <QVariantMap>
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <functional>
@@ -25,6 +26,8 @@ class QNetworkReply;
 class QWebSocket;
 
 namespace Spool {
+
+struct LanProbeSession;
 
 // Interrupts JS that runs longer than 500 ms without returning to the event
 // loop. Qt permits setInterrupted() from another thread.
@@ -46,9 +49,11 @@ private:
     std::thread m_thread;
 };
 
-// Converts a JS value to an owned native value in one bounded walk; also
-// rejects cycles, functions and unsafe numbers.
-QVariant ownScriptValue(const QJSValue& value, int maximumNodes = 50000, qsizetype maximumBytes = 4 * 1024 * 1024);
+// Converts a JS value to an owned native value in one bounded walk. JSON data
+// allows all finite JSON numbers and document-sized arrays; ordinary results
+// retain the stricter safe-number and row-count limits.
+QVariant ownScriptValue(
+    const QJSValue& value, int maximumNodes = 50000, qsizetype maximumBytes = 4 * 1024 * 1024, bool jsonData = false);
 
 // Result delivery for one operation, type-erased per operation (not per row).
 struct ScriptResultSink {
@@ -61,10 +66,21 @@ struct ScriptResultSink {
 // What every source may reach and how. Shared by a source's host and its
 // operations; both check against the same origin list.
 struct ScriptAccess {
+    struct OriginGrant {
+        QList<QUrl> origins;
+        std::shared_ptr<std::atomic_bool> approval;
+    };
     QJSEngine *engine = nullptr;
     QNetworkAccessManager *network = nullptr;
     QList<QUrl> origins;
     std::function<void(QWebSocket *, QUrl)> socketHook;
+    QVariantMap extensions;
+    bool loginDraft = false;
+    bool lanConsent = false;
+    std::shared_ptr<LanProbeSession> lanSession;
+    QList<OriginGrant> stagedOrigins;
+    // Prepared activation sources cannot launch background authenticated work.
+    std::shared_ptr<std::atomic_bool> activationApproval;
     bool allows(const QUrl& url) const;
 };
 
@@ -82,6 +98,7 @@ public:
     void delay(int milliseconds, QJSValue resolve, QJSValue reject);
     void discover(int port, const QString& message, int timeoutMs, QJSValue resolve, QJSValue reject);
     void release();
+    void probeLocalHttp(const QVariantMap& options, QJSValue resolve, QJSValue reject);
 
 signals:
     // A response exceeded the size limit; the owner fails as a whole.
@@ -98,7 +115,8 @@ private:
 class ScriptOperation final : public QObject {
     Q_OBJECT
 public:
-    ScriptOperation(ScriptAccess *access, std::shared_ptr<ScriptResultSink> sink, QString scope, QObject *parent);
+    ScriptOperation(ScriptAccess *access, std::shared_ptr<ScriptResultSink> sink, QString scope, QObject *parent,
+        bool activationOperation = false);
     ~ScriptOperation() override;
     const QString& scope() const
     {
@@ -111,6 +129,7 @@ public:
     Q_INVOKABLE void speedTest(const QVariantMap& options, QJSValue resolve, QJSValue reject);
     Q_INVOKABLE void delay(int milliseconds, QJSValue resolve, QJSValue reject);
     Q_INVOKABLE void discover(int port, const QString& message, int timeoutMs, QJSValue resolve, QJSValue reject);
+    Q_INVOKABLE void probeLocalHttp(const QVariantMap& options, QJSValue resolve, QJSValue reject);
 
 private:
     void release();
@@ -120,6 +139,7 @@ private:
     ScriptRequests m_requests;
     QTimer m_deadline;
     bool m_settled = false;
+    bool m_activationOperation = false;
 };
 
 // Services that live as long as a source: websockets, events and timers.

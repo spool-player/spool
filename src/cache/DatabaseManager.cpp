@@ -20,7 +20,9 @@
 #include <QVector>
 
 #include <algorithm>
+#include <atomic>
 #include <memory>
+#include <stdexcept>
 
 namespace Spool {
 
@@ -108,8 +110,30 @@ public:
         query.prepare(QStringLiteral("INSERT INTO kv(key, value) VALUES(?, ?) "
                                      "ON CONFLICT(key) DO UPDATE SET value = excluded.value"));
         query.addBindValue(key);
-        query.addBindValue(value);
+        const QString text = value.toString();
+        query.addBindValue(text.isNull() ? QStringLiteral("") : text);
         query.exec();
+    }
+
+    void setValues(const QVariantMap& values)
+    {
+        if (values.isEmpty())
+            return;
+        if (!m_database.transaction())
+            throw std::runtime_error("Could not begin settings transaction");
+        QSqlQuery query(m_database);
+        bool ok = query.prepare(QStringLiteral("INSERT INTO kv(key, value) VALUES(?, ?) "
+                                               "ON CONFLICT(key) DO UPDATE SET value = excluded.value"));
+        for (auto it = values.cbegin(); ok && it != values.cend(); ++it) {
+            query.bindValue(0, it.key());
+            const QString text = it.value().toString();
+            query.bindValue(1, text.isNull() ? QStringLiteral("") : text);
+            ok = query.exec();
+        }
+        if (!ok || !m_database.commit()) {
+            m_database.rollback();
+            throw std::runtime_error("Could not persist settings transaction");
+        }
     }
 
 private:
@@ -154,7 +178,8 @@ private:
 
     bool openState(const QString& path)
     {
-        if (!ensureConnection(m_database, QStringLiteral("spool_native_state"), path) || !prepareConnection(m_database))
+        if (!ensureConnection(m_database, QStringLiteral("spool_native_state_") + m_connectionId, path)
+            || !prepareConnection(m_database))
             return false;
         secureDatabaseFiles(path);
         QSqlQuery query(m_database);
@@ -190,7 +215,7 @@ private:
 
     bool openCache(const QString& path)
     {
-        if (!ensureConnection(m_cacheDatabase, QStringLiteral("spool_native_cache"), path)
+        if (!ensureConnection(m_cacheDatabase, QStringLiteral("spool_native_cache_") + m_connectionId, path)
             || !prepareConnection(m_cacheDatabase))
             return false;
         secureDatabaseFiles(path);
@@ -198,8 +223,20 @@ private:
         if (!query.exec(QStringLiteral("PRAGMA user_version")) || !query.next())
             return false;
         const int existingVersion = query.value(0).toInt();
-        if (existingVersion > 1)
+        if (existingVersion > 2)
             return false;
+        // Cached rows now preserve collection occurrence identity and continuations.
+        // Disposable data is rebuilt; durable settings/accounts live separately.
+        if (existingVersion == 1) {
+            if (!m_cacheDatabase.transaction())
+                return false;
+            if (!query.exec(QStringLiteral("DROP TABLE IF EXISTS cache_entries"))
+                || !query.exec(QStringLiteral("DROP TABLE IF EXISTS home_payload"))
+                || !query.exec(QStringLiteral("PRAGMA user_version = 0")) || !m_cacheDatabase.commit()) {
+                m_cacheDatabase.rollback();
+                return false;
+            }
+        }
         if (!query.exec(QStringLiteral("CREATE TABLE IF NOT EXISTS cache_entries ("
                                        "namespace TEXT NOT NULL,"
                                        "key TEXT NOT NULL,"
@@ -219,7 +256,7 @@ private:
                                           "payload BLOB NOT NULL,"
                                           "saved_at INTEGER NOT NULL"
                                           ")"))
-            || !query.exec(QStringLiteral("PRAGMA user_version = 1"))) {
+            || !query.exec(QStringLiteral("PRAGMA user_version = 2"))) {
             qWarning() << "database: cache schema creation failed" << query.lastError().text();
             return false;
         }
@@ -320,12 +357,6 @@ public:
         query.addBindValue(QDateTime::currentMSecsSinceEpoch());
         if (!query.exec())
             qWarning() << "database: home payload write failed" << query.lastError().text();
-    }
-
-    void clearHomePayloads()
-    {
-        QSqlQuery query(m_cacheDatabase);
-        query.exec(QStringLiteral("DELETE FROM home_payload"));
     }
 
     int schemaVersion()
@@ -473,6 +504,8 @@ private:
         database = {};
         QSqlDatabase::removeDatabase(connectionName);
     }
+    inline static std::atomic<quint64> s_nextConnectionId { 0 };
+    const QString m_connectionId = QString::number(s_nextConnectionId.fetch_add(1, std::memory_order_relaxed));
     QSqlDatabase m_database;
     QSqlDatabase m_cacheDatabase;
     QString m_recoveryNotice;
@@ -497,7 +530,7 @@ namespace {
         };
         if (!worker || !QMetaObject::invokeMethod(worker, finish, Qt::QueuedConnection))
             finish();
-        co_return co_await future;
+        co_return co_await qCoro(future).result();
     }
 
     QString settingFromWorker(DatabaseWorker *worker, const QString& key, const QString& defaultValue)
@@ -620,11 +653,6 @@ void DatabaseManager::saveHomePayload(const QString& key, int schemaVersion, con
         [this, key, schemaVersion, payload]() { m_worker->setHomePayload(key, schemaVersion, payload); });
 }
 
-void DatabaseManager::invalidateHomePayloads()
-{
-    invokeOnWorkerAsync([this]() { m_worker->clearHomePayloads(); });
-}
-
 QCoro::Task<QString> DatabaseManager::loadSettingAsync(const QString& key, const QString& defaultValue)
 {
     if (!co_await awaitInitialization())
@@ -661,6 +689,19 @@ QCoro::Task<StartupState> DatabaseManager::loadStartupStateAsync(const QStringLi
 void DatabaseManager::saveSetting(const QString& key, const QString& value)
 {
     invokeOnWorkerAsync([this, key, value]() { m_worker->setValue(key, value); });
+}
+
+QCoro::Task<void> DatabaseManager::saveSettings(QVariantMap serializedValues)
+{
+    if (!co_await awaitInitialization())
+        throw std::runtime_error("Settings database is unavailable");
+    DatabaseWorker *worker = m_worker;
+    co_await workerTask(worker, [worker, values = std::move(serializedValues)] {
+        if (!worker)
+            throw std::runtime_error("Settings database is closed");
+        worker->setValues(values);
+        return true;
+    });
 }
 
 QCoro::Task<int> DatabaseManager::schemaVersionAsync()

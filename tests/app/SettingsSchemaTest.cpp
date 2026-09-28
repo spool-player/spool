@@ -380,31 +380,36 @@ void groupsAreDeclaredContiguously()
         currentGroup = group;
     }
 }
-void pageRowsShareTheSchemaContract()
+void syncPolicyRejectsUnsafeAndUnsupportedValues()
 {
-    const QStringList pageKeys { QStringLiteral("action/accounts"), QStringLiteral("action/providers"),
-        QStringLiteral("i18n/locale"), QStringLiteral("theme/accent"), QStringLiteral("theme/reducedMotion"),
-        QStringLiteral("theme/railLabels"), QStringLiteral("theme/renderMode"), QStringLiteral("theme/antialiasedText"),
-        QStringLiteral("theme/technicalMetadata"), QStringLiteral("action/subtitleSettings"),
-        QStringLiteral("action/resetSubtitleAppearance"), QStringLiteral("about/version"),
-        QStringLiteral("action/openSourceNotices"), QStringLiteral("about/locale"), QStringLiteral("shell/diagnostics"),
-        QStringLiteral("shell/latencyGuard"), QStringLiteral("shell/latencyOverlay"),
-        QStringLiteral("action/clearLatencyStatistics") };
-    for (const QString& key : pageKeys) {
-        const SettingSpec& spec = requiredSpec(key);
-        require(!spec.persisted, QStringLiteral("page-owned row %1 must not be persisted").arg(key));
-        require(schemaRow(key).value(QStringLiteral("source")).toString() == QStringLiteral("page"),
-            QStringLiteral("page-owned row %1 was missing from the schema model").arg(key));
+    const auto& font = requiredSpec(QStringLiteral("subtitles/font"));
+    require(settingSyncPolicy(font, QStringLiteral("system:Example")) == SettingSyncPolicy::DeviceOptIn,
+        QStringLiteral("installed font values must require explicit consent"));
+    require(settingSyncPolicy(font, QStringLiteral("interface")) == SettingSyncPolicy::PortableDefault,
+        QStringLiteral("bundled font values should be portable"));
+    for (const QString& key : { QStringLiteral("appearance/uiScalePercent"), QStringLiteral("remote/acceptCommands"),
+             QStringLiteral("playback/mpvConfigMode"), QStringLiteral("playback/mpvConfigDirectory"),
+             QStringLiteral("action/accounts") }) {
+        const auto& spec = requiredSpec(key);
+        require(
+            spec.syncPolicy == SettingSyncPolicy::Never && !settingAcceptsRemoteValue(spec, settingDefaultValue(spec)),
+            QStringLiteral("device authority/security setting became remotely writable: %1").arg(key));
     }
-    const QHash<QString, QString> accentChoices = choicesByLabelFromRow(schemaRow(QStringLiteral("theme/accent")));
-    require(accentChoices.size() == 3 && accentChoices.value(QStringLiteral("0")) == QStringLiteral("Blue")
-            && accentChoices.value(QStringLiteral("1")) == QStringLiteral("Purple")
-            && accentChoices.value(QStringLiteral("2")) == QStringLiteral("Indigo"),
-        QStringLiteral("accent colour choices were missing instead of falling back to the default palette"));
-    require(requiredSpec(QStringLiteral("theme/railLabels")).level == SettingLevel::Advanced,
-        QStringLiteral("rail label tuning should be hidden at Essential detail"));
-    require(requiredSpec(QStringLiteral("shell/diagnostics")).level == SettingLevel::Expert,
-        QStringLiteral("diagnostics controls should be hidden below Expert detail"));
+    const auto& bitrate = requiredSpec(QStringLiteral("playback/maxStreamingBitrateMbps"));
+    require(!settingAcceptsRemoteValue(bitrate, 1001) && settingAcceptsRemoteValue(bitrate, 55),
+        QStringLiteral("incoming bitrate must not silently clamp an unsupported value"));
+    const auto& mode = requiredSpec(QStringLiteral("audio/trackMode"));
+    require(!settingAcceptsRemoteValue(mode, QStringLiteral("FutureMode")),
+        QStringLiteral("unknown remote enum must remain unmodified"));
+    const auto& language = requiredSpec(QStringLiteral("audio/language"));
+    require(normalizedSettingValue(language, QStringLiteral("en")) == QStringLiteral("eng"),
+        QStringLiteral("language normalization did not use ISO639-2"));
+    require(!settingAcceptsRemoteValue(language, QStringLiteral("invalid-language")),
+        QStringLiteral("unknown language must not become no-preference"));
+    SettingSpec unclassified = language;
+    unclassified.syncPolicy = SettingSyncPolicy::Never;
+    require(!settingAcceptsRemoteValue(unclassified, QStringLiteral("eng")),
+        QStringLiteral("unclassified values must never accept remote writes"));
 }
 
 void accountRowsAreProviderNeutral()
@@ -577,7 +582,7 @@ SPOOL_TEST_MAIN("settings-schema")
     subtitleGeometryOverrideMatchesSchemaContract();
     schemaModelExposesEverySpecOnce();
     groupsAreDeclaredContiguously();
-    pageRowsShareTheSchemaContract();
+    syncPolicyRejectsUnsafeAndUnsupportedValues();
     accountRowsAreProviderNeutral();
     subtitleChoicesExplainTheirBehavior();
     systemLanguageLabelNamesResolvedLanguage();

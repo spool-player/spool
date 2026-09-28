@@ -82,6 +82,46 @@ downloaded JS/QML still needs review against Apple's downloaded-software rules a
 of guideline 4.7, including native-API exposure. Initial Apple submissions should use bundled
 providers, with provider code changes delivered through application updates.
 
+## Catalogue continuation and queues
+
+Browse pages retain provider cursors verbatim through the catalogue, hub, browse session
+and warm cache. The first request omits `cursor`; subsequent requests return the last opaque
+token, independently of the UI row offset. Only `exhausted` ends a listing: short or empty
+pages may continue, but each nonterminal page must supply a nonempty, previously unseen
+cursor or fail with `invalid_pagination`. Changing account, descriptor, filters or sort resets
+the continuation.
+
+Requested-count lists collect enough pages to fill their limit. Episodes and seasons collect
+all pages, with a 10,000-row ceiling. Every collector has a 256-page ceiling and reports
+`response_limit` if it cannot finish within its bounds; ordinary browse appends stay incremental.
+Metadata lookup requests contain at most 50 unique IDs, with at most two requests in flight
+per account. Results restore the caller's order and duplicate occurrences, omitting missing IDs.
+Server-bound group and remote-play queues reject foreign account IDs with `mixed_source_queue`
+before invoking the provider. Media/container IDs are account-scoped; playlist entry IDs remain
+opaque within their container.
+
+### Item menus and collection editing
+
+Menus request `spool.item-actions` policy only when opened, using the item's owning
+account. A negotiated list replaces manifest actions; older providers without that
+declaration retain their type-filtered manifest list. Closing a menu cancels its
+request, and execution checks the current policy again. Disabled actions retain their
+reason rather than claiming that server permissions require an app update.
+
+`spool.collection-editing` exposes **Manage entries** on playlist/collection menus.
+The shared editor reads native-order pages of at most 50 entries, retaining duplicate
+media as distinct opaque entry IDs. Remove and move controls follow `collectionInfo`;
+smart/read-only lists cannot gain controls from another account's capabilities.
+Moving down across the loaded boundary first reads the adjacent page, not the whole
+container. Both `index` and `afterEntryId` describe the destination after removing the
+moving occurrence.
+
+One mutation runs at a time. Success and uncertain errors both refresh the loaded
+prefix and permissions; the host never retries an uncertain mutation. Selection stays
+on its occurrence, or the nearest surviving row when removed. Refreshes obey the
+256-page/10,000-entry bounds and cursor checks, and support loss or account removal
+cancels the editor and clears stale entries.
+
 ## Artwork ownership
 
 Inherited thumbnails and backdrops retain their opaque `thumbItemId` and
@@ -118,9 +158,9 @@ of inheriting Qt's unscaled default text size or clipping inside a fixed-height 
 
 ## Connection speed
 
-Providers with a download-test endpoint declare `speedTest` and implement
-`speedTest(args, host)` by calling `host.speedTest({url, headers})`. The URL
-contains `{bytes}` and `{nonce}` placeholders; endpoint paths and authentication
+New providers with a download-test endpoint declare `spool.speed-test: 1` in
+`extensions` and implement `speedTest(args, host)` with `host.speedTest({url, headers})`.
+The URL contains `{bytes}` and `{nonce}` placeholders; endpoint paths and authentication
 stay inside the provider package. The native worker applies the account's
 origin allowlist and TLS trust policy, never follows redirects, and drains
 bounded buffers instead of decoding test data into JavaScript strings.
@@ -161,6 +201,80 @@ preferences never authorize serving an original above the ceiling. See
 [`sdk/README.md`](../sdk/README.md#quality-policy) for Plex's unit conversion and
 the source-selection policy for future Stremio-style providers. A catalogue
 host speed test cannot stand in for an unrelated CDN or torrent route.
+
+## Settings synchronization
+
+Sync defaults on and selects the first eligible active account in persistent
+connection order, waiting for earlier starting accounts. The chosen account is
+independent of playback and is never replaced automatically on failure,
+disablement, locking or removal. A source change requires confirmation because
+it discards unsent intent and starts a fresh remote-first bootstrap.
+
+Writable native audio/subtitle preferences take precedence. Other eligible
+settings use the provider's optional Spool-specific document storage, never both
+channels for one key. Plex has no such writer/store. Interface scale, credentials,
+trust, device identity, paths, playback sessions, caches and sync controls never
+leave the device. Portable settings default on; device-specific scalar settings
+require per-account opt-in. System subtitle fonts require opt-in in both directions.
+
+The Spool document uses decimal logical counters and random per-edit nonces,
+not clocks or device identifiers. Retained per-key maxima repair replacement-store
+races when clients reconnect, including edits overwritten after acknowledgment.
+DisplayPreferences provides eventual convergence, not atomic distributed writes
+or a durability guarantee for a permanently disconnected client. Real CAS stores
+use their revisions; unsupported conditions are never simulated.
+
+Local values and intent commit transactionally. Edits during bootstrap remain
+provisional until a remote read establishes the counter baseline. Opt-outs keep
+local values and discard unsent intent without deleting remote data. Offline
+intent remains durable; malformed/future documents stop writes rather than reset
+cloud data. Locale/latency retain their canonical stores and recover only unfinished
+application journals, never old replicas merely because local values differ.
+
+Changes debounce for 500 ms; one cycle runs at a time. Foreground refresh is
+bounded to once per minute, failures have a 30-second automatic retry floor, and
+suspended/off/locked sources do not poll. Editing rows defer remote applications;
+active playback defers the four track defaults until idle or the next explicit
+new-item handoff. Existing session and remembered-series selections remain prior.
+
+Settings starts with Interface scale, Language, Sync settings and Sync account.
+Native preferences use `sync`; application storage uses Material `cloud_sync`
+and explicitly says “Spool-specific sync.” Green filled dots mean confirmed
+sync, not an attempted write. Local-only, pending/saving, offline and error states
+have distinct labels. Focus and hover show body-sized channel/account help.
+
+Each setting remains one vertical navigation stop. Right enters its sync action;
+OK toggles sync; Left/Back returns. Slider/text rows use OK to enter value editing,
+where horizontal keys adjust the value/caret rather than move to sync. More sync
+controls exposes opt-outs for eligible dependency/HDR-hidden and player-only
+settings without duplicating reachable value editors.
+
+
+## Outbound playback devices
+
+`spool.remote-targets` is independent of inbound `remoteControl` and the local
+“Allow remote control” preference. The chooser lists This device first and
+loads enabled accounts progressively. Selecting a peer never starts or transfers
+media. Transfer is explicit; failed remote starts leave the local queue intact.
+Incoming commands, SyncPlay, automatic local advancement and CLI `--play` stay local.
+
+Only the selected peer is polled: one second while controls are visible, three
+seconds while attached but hidden, never while suspended. Queue pages are read
+on demand/revision changes, or at most every five seconds for an open unversioned
+queue. Optimistic commands reject older snapshots. Target IDs are account-scoped;
+entry IDs remain opaque, and mixed-account remote play is rejected before dispatch.
+
+Jellyfin/Emby queue editing replaces the target queue and therefore restarts
+playback while preserving the current occurrence/position and paused state where
+possible. Plex uses verified Companion identity, exact-origin consent and PMS
+entry IDs. Peer playback receives only a transient delegation token, never
+account/Home/PMS credentials. Missing play support leaves available transport
+controls intact. Ambiguous duplicate selection is not advertised on key-only peers.
+Advanced navigation/text controls remain provider-owned pickers.
+
+These adapters do not implement Plex watch-together or native SpoolLink peer
+enhancements. Protocol/loopback verification does not imply live-device support
+for an unadvertised backend command.
 
 ## Testing
 

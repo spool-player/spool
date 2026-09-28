@@ -120,6 +120,16 @@ ProviderUiContext::ProviderUiContext(
     , m_rows(this)
 {
     QQmlEngine::setObjectOwnership(this, QQmlEngine::CppOwnership);
+    connect(registry, &ProviderRegistry::extensionsChanged, this, [this](const QString& sourceId) {
+        if (sourceId == m_sourceId)
+            emit extensionsChanged();
+    });
+    connect(registry, &ProviderRegistry::modulesChanged, this, &ProviderUiContext::extensionsChanged);
+    connect(registry, &ProviderRegistry::activationConfigurationChanged, this, [this](const QString& accountId) {
+        if (accountId == m_sourceId)
+            emit activationConfigurationChanged();
+    });
+    connect(this, &ProviderUiContext::closedChanged, this, &ProviderUiContext::activationConfigurationChanged);
     connect(&m_rows, &ProviderListModel::committed, this, [this] {
         const quint64 request = std::exchange(m_listRequest, 0);
         settle(request, std::exchange(m_listResult, {}), true);
@@ -130,6 +140,21 @@ ProviderUiContext::~ProviderUiContext()
 {
     if (!m_closed)
         finish({}, true);
+}
+
+QVariantMap ProviderUiContext::extensions() const
+{
+    return !m_closed && m_registry ? m_registry->extensions(m_sourceId) : QVariantMap {};
+}
+
+QVariantMap ProviderUiContext::activationConfiguration() const
+{
+    return !m_closed && m_registry ? m_registry->activationConfiguration(m_sourceId) : QVariantMap {};
+}
+
+QStringList ProviderUiContext::missingHostExtensions() const
+{
+    return m_registry ? m_registry->missingHostExtensions(m_moduleId) : QStringList {};
 }
 
 QJSValue ProviderUiContext::promise(Pending *pending)
@@ -160,7 +185,8 @@ QJSValue ProviderUiContext::begin(const QString& operation, const QVariantMap& a
     Q_ASSERT(thread() == QThread::currentThread());
     Pending pending;
     QJSValue result = promise(&pending);
-    if (m_closed || !m_registry || m_pending.size() >= 8 || (list && m_listRequest)) {
+    if (operation == QStringLiteral("activate") || m_closed || !m_registry || m_pending.size() >= 8
+        || (list && m_listRequest)) {
         pending.reject.call({ QJSValue(QStringLiteral("action_unavailable")) });
         return result;
     }
@@ -169,7 +195,10 @@ QJSValue ProviderUiContext::begin(const QString& operation, const QVariantMap& a
     if (list)
         m_listRequest = id;
     QPointer<ProviderUiContext> guard(this);
-    m_registry->callSource(m_sourceId, operation, arguments, m_scope)
+    const QString scope = m_role == QStringLiteral("login") && operation == QStringLiteral("discoverMore")
+        ? m_scope + QStringLiteral("-lan")
+        : m_scope;
+    m_registry->callSource(m_sourceId, operation, arguments, scope)
         .then(
             [guard, id, list, append](QVariantMap value) {
                 if (!guard || guard->m_closed || !guard->m_pending.contains(id))
@@ -197,24 +226,58 @@ QJSValue ProviderUiContext::allowOrigin(const QString& url)
 {
     Pending pending;
     QJSValue result = promise(&pending);
-    if (m_closed || !m_registry || m_role != QStringLiteral("login")) {
+    if (m_closed || !m_registry || m_pending.size() >= 8
+        || (m_role != QStringLiteral("login") && m_role != QStringLiteral("settings")
+            && m_role != QStringLiteral("picker"))) {
         pending.reject.call({ QJSValue(QStringLiteral("origin_denied")) });
         return result;
     }
     const quint64 id = ++m_next;
     m_pending.insert(id, pending);
     QPointer<ProviderUiContext> guard(this);
-    m_registry->allowSetupOrigin(m_sourceId, QUrl::fromUserInput(url))
+    auto task = m_role == QStringLiteral("login")
+        ? m_registry->allowSetupOrigin(m_sourceId, QUrl::fromUserInput(url))
+        : m_registry->requestAccountOrigin(m_sourceId, QUrl(url, QUrl::StrictMode), m_scope);
+    task.then(
+        [guard, id] {
+            if (guard)
+                guard->settle(id, {}, true);
+        },
+        [guard, id](const std::exception&) {
+            if (guard)
+                guard->settle(id, { { QStringLiteral("error"), QStringLiteral("origin_denied") } }, false);
+        });
+    return result;
+}
+
+QJSValue ProviderUiContext::allowLanDiscovery()
+{
+    Pending pending;
+    QJSValue result = promise(&pending);
+    if (m_closed || !m_registry || m_role != QStringLiteral("login") || m_pending.size() >= 8) {
+        pending.reject.call({ QJSValue(QStringLiteral("discovery_denied")) });
+        return result;
+    }
+    const quint64 id = ++m_next;
+    m_pending.insert(id, pending);
+    QPointer<ProviderUiContext> guard(this);
+    m_registry->allowLanDiscovery(m_sourceId, m_scope + QStringLiteral("-lan"))
         .then(
             [guard, id] {
                 if (guard)
                     guard->settle(id, {}, true);
             },
-            [guard, id](const std::exception&) {
+            [guard, id](const std::exception& error) {
                 if (guard)
-                    guard->settle(id, { { QStringLiteral("error"), QStringLiteral("origin_denied") } }, false);
+                    guard->settle(id, { { QStringLiteral("error"), QString::fromLatin1(error.what()) } }, false);
             });
     return result;
+}
+
+void ProviderUiContext::cancelLanDiscovery()
+{
+    if (!m_closed && m_registry && m_role == QStringLiteral("login"))
+        m_registry->cancelLanDiscovery(m_sourceId, m_scope + QStringLiteral("-lan"));
 }
 
 void ProviderUiContext::settle(quint64 id, const QVariantMap& value, bool success)
@@ -236,7 +299,9 @@ void ProviderUiContext::settle(quint64 id, const QVariantMap& value, bool succes
 
 void ProviderUiContext::finish(const QVariantMap& result, bool cancelled)
 {
+    cancelLanDiscovery();
     m_closed = true;
+    emit extensionsChanged();
     if (m_registry)
         m_registry->cancelSourceScope(m_sourceId, m_scope);
     m_rows.cancelPending();
@@ -265,8 +330,7 @@ void ProviderUiContext::complete(const QVariantMap& result)
         if (m_registry->finishSetup(m_sourceId, result).isEmpty())
             return;
     } else if (m_role == QStringLiteral("settings") && result.contains(QStringLiteral("configuration"))) {
-        m_registry->updateConfiguration(m_sourceId, result.value(QStringLiteral("configuration")).toMap());
-        m_registry->restartAccount(m_sourceId);
+        m_registry->restartAccount(m_sourceId, result.value(QStringLiteral("configuration")).toMap());
     }
     finish(result, false);
     deleteLater();

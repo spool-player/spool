@@ -5,6 +5,7 @@
 #include <QString>
 #include <QStringList>
 #include <QVariantList>
+#include <QVariantMap>
 
 #include <optional>
 
@@ -22,6 +23,8 @@ struct ProviderManifest {
     QString entry;
     QString homepage;
     QStringList capabilities;
+    // Optional exact wire-major versions; unsupported declarations remain visible.
+    QVariantMap extensions;
     // Origins every account may reach besides the ones it was configured
     // with; "*" allows any HTTP(S) origin.
     QStringList origins;

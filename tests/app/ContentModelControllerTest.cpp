@@ -70,8 +70,8 @@ public:
         return QStringLiteral("test-scope");
     }
 
-    QCoro::Task<PagedMovieItems> fetchBrowsePage(
-        BrowseDescriptor descriptor, int startIndex = 0, int limit = 72, QVariantMap queryOptions = {}) override
+    QCoro::Task<PagedMovieItems> fetchBrowsePage(BrowseDescriptor descriptor, int startIndex, int limit,
+        QVariantMap queryOptions, std::optional<QString>) override
     {
         Q_UNUSED(startIndex);
         Q_UNUSED(limit);
@@ -378,7 +378,7 @@ bool waitForBrowsePage(Catalog& catalog, const BrowseDescriptor& descriptor, con
     QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
 
     Spool::Async::runDetached(
-        catalog.fetchBrowsePage(descriptor, 0, 72, queryOptions),
+        catalog.fetchBrowsePage(descriptor, 0, 72, queryOptions, std::nullopt),
         [&page, &finished, &loop](PagedMovieItems value) {
             page = std::move(value);
             finished = true;
