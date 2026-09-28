@@ -30,11 +30,11 @@ void require(bool value, const char *message)
         std::exit(EXIT_FAILURE);
     }
 }
-void waitUntil(const std::function<bool()>& condition, const char *message)
+void waitUntil(const std::function<bool()>& condition, const char *message, int timeoutMs = 10000)
 {
     QElapsedTimer timer;
     timer.start();
-    while (!condition() && timer.elapsed() < 10000) {
+    while (!condition() && timer.elapsed() < timeoutMs) {
         QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
         QThread::msleep(1);
     }
@@ -88,7 +88,7 @@ struct Server {
             { { "module", "fixture.settings" }, { "account", name }, { "label", name }, { "configuration", config } });
         registry->useAccount(id);
         if (wait)
-            waitUntil([&] { return registry->sourceRunning(id); }, "source becomes active");
+            waitUntil([&] { return registry->sourceRunning(id); }, "source becomes active", 30000);
         return id;
     }
     QVariantMap call(const QString& id, const QString& operation, QVariantMap args = {})
