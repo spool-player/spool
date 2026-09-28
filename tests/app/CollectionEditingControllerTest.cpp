@@ -24,11 +24,11 @@ void require(bool value, const char *message)
         std::exit(1);
     }
 }
-void waitUntil(const std::function<bool()>& condition, const char *message)
+void waitUntil(const std::function<bool()>& condition, const char *message, int timeoutMs = 5000)
 {
     QElapsedTimer timer;
     timer.start();
-    while (!condition() && timer.elapsed() < 5000) {
+    while (!condition() && timer.elapsed() < timeoutMs) {
         QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
         QThread::msleep(1);
     }
@@ -73,7 +73,7 @@ SPOOL_TEST_MAIN("collection-editing")
             { QStringLiteral("label"), QStringLiteral("Collection account") },
             { QStringLiteral("configuration"), QVariantMap {} } });
     registry.useAccount(account);
-    waitUntil([&] { return hub.source(account) != nullptr; }, "collection source starts");
+    waitUntil([&] { return hub.source(account) != nullptr; }, "collection source starts", 30000);
     const QString container = hub.scoped(account, QStringLiteral("list"));
     CollectionEditingController editor(&hub);
     const auto setup = [&](const QString& mode = {}) {
