@@ -554,7 +554,10 @@ void persistentSelectionOrder()
     Replica replica(server, "ordered");
     replica.load();
     waitUntil([&] { return server.registry->sourceRunning(second); }, "later fast source starts");
-    require(replica.sync->accountId().isEmpty(),
+    // Slow runners can finish the first describe while Replica is loading.
+    // Either waiting for it or already selecting it is correct; the second
+    // account must never become the authority just because it replied first.
+    require(replica.sync->accountId().isEmpty() || replica.sync->accountId() == first,
         "earlier starting source is not overtaken by alphabetical or response order");
     waitUntil([&] { return replica.cycles > 0 && !replica.sync->busy(); }, "earlier source resolves");
     require(replica.sync->accountId() == first, "persistent first connected eligible source owns sync");
