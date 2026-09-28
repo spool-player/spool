@@ -121,7 +121,7 @@ QUrl ProviderStore::feedUrlFor(const QString& input)
     return url;
 }
 
-QCoro::Task<QByteArray> ProviderStore::fetch(QUrl url, qint64 limit)
+QCoro::Task<QByteArray> ProviderStore::fetch(QUrl url, qint64 limit, QString transferId)
 {
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("Spool"));
@@ -132,6 +132,15 @@ QCoro::Task<QByteArray> ProviderStore::fetch(QUrl url, qint64 limit)
         if (received > limit)
             reply->abort();
     });
+    if (!transferId.isEmpty()) {
+        connect(reply, &QNetworkReply::downloadProgress, this, [this, transferId](qint64 received, qint64 total) {
+            auto progress = m_transferProgress.value(transferId).toMap();
+            progress.insert(QStringLiteral("received"), received);
+            progress.insert(QStringLiteral("total"), total);
+            m_transferProgress.insert(transferId, progress);
+            emit busyChanged();
+        });
+    }
     co_await reply;
     reply->deleteLater();
     const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
@@ -275,11 +284,24 @@ QVariantMap ProviderStore::entryFor(const QString& id) const
     return {};
 }
 
+QVariantList ProviderStore::transfers() const
+{
+    QVariantList result;
+    for (auto it = m_transferProgress.cbegin(); it != m_transferProgress.cend(); ++it) {
+        auto row = it.value().toMap();
+        row.insert(QStringLiteral("id"), it.key());
+        row.insert(QStringLiteral("state"), m_busy.value(it.key()));
+        result.append(row);
+    }
+    return result;
+}
+
 void ProviderStore::setBusy(const QString& id, const QString& state)
 {
-    if (state.isEmpty())
+    if (state.isEmpty()) {
         m_busy.remove(id);
-    else
+        m_transferProgress.remove(id);
+    } else
         m_busy.insert(id, state);
     emit busyChanged();
     emit catalogChanged();
@@ -385,9 +407,12 @@ QCoro::Task<void> ProviderStore::installEntry(QVariantMap entry, Origin origin)
         co_return;
     }
     QPointer<ProviderStore> guard(this);
+    m_transferProgress.insert(id,
+        QVariantMap {
+            { QStringLiteral("name"), name }, { QStringLiteral("received"), 0 }, { QStringLiteral("total"), -1 } });
     setBusy(id, QStringLiteral("downloading"));
     try {
-        const QByteArray archive = co_await fetch(QUrl(text(entry, "url")), kPackageLimit);
+        const QByteArray archive = co_await fetch(QUrl(text(entry, "url")), kPackageLimit, id);
         if (!guard)
             co_return;
         setBusy(id, QStringLiteral("installing"));

@@ -6,6 +6,8 @@
 #include <QFile>
 #include <QJSEngine>
 #include <QJSValue>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QThread>
 
 #include <cstdlib>
@@ -25,6 +27,23 @@ SPOOL_TEST_MAIN("provider-legacy-contract")
 {
     QCoreApplication app(argc, argv);
     QJSEngine engine;
+    QJSValue modules = engine.newObject();
+    QStringList tested;
+    for (const QString& name : { QStringLiteral("jellyfin"), QStringLiteral("emby"), QStringLiteral("plex") }) {
+        QFile manifest(QStringLiteral(":/providers/spool.%1/manifest.json").arg(name));
+        if (!manifest.open(QIODevice::ReadOnly)
+            || QJsonDocument::fromJson(manifest.readAll()).object().value("extensions").toObject().isEmpty())
+            continue;
+        const auto module = engine.importModule(QStringLiteral("qrc:/providers/spool.%1/logic/provider.mjs").arg(name));
+        require(!module.isError(), module.toString());
+        modules.setProperty(name, module);
+        tested.append(name);
+    }
+    if (tested.isEmpty()) {
+        std::cout
+            << "No extension-aware first-party providers in this bundle; baseline bundle contract runs separately\n";
+        return 77;
+    }
     const QString gluePath = QStringLiteral(TEST_SOURCE_DIR "/tests/providers/fixtures/api02-95591f09/runtime-glue.js");
     QFile fixture(gluePath);
     require(fixture.open(QIODevice::ReadOnly), QStringLiteral("Cannot open frozen API-0.2 glue"));
@@ -39,9 +58,9 @@ SPOOL_TEST_MAIN("provider-legacy-contract")
             + contract.property(QStringLiteral("stack")).toString());
     QJSValue result = engine.newObject();
     const QJSValue invoke = engine.evaluate(QStringLiteral(R"JS(
-        (function(contract, glue, result) {
+        (function(contract, glue, result, modules) {
             try {
-                Promise.resolve(contract.run(glue)).then(function() {
+                Promise.resolve(contract.run(glue, modules)).then(function() {
                     result.success = true;
                     result.done = true;
                 }, function(error) {
@@ -54,7 +73,7 @@ SPOOL_TEST_MAIN("provider-legacy-contract")
             }
         })
     )JS"));
-    const QJSValue started = invoke.call({ contract, glue, result });
+    const QJSValue started = invoke.call({ contract, glue, result, modules });
     require(!started.isError(), started.toString());
     QElapsedTimer deadline;
     deadline.start();
@@ -64,6 +83,6 @@ SPOOL_TEST_MAIN("provider-legacy-contract")
     }
     require(result.property(QStringLiteral("done")).toBool(), QStringLiteral("Legacy provider contract timed out"));
     require(result.property(QStringLiteral("success")).toBool(), result.property(QStringLiteral("error")).toString());
-    std::cout << "Frozen API-0.2 provider contracts passed for Jellyfin, Emby and Plex\n";
+    std::cout << "Frozen API-0.2 provider contracts passed for " << qPrintable(tested.join(", ")) << '\n';
     return 0;
 }

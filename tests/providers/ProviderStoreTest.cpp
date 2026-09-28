@@ -205,9 +205,25 @@ SPOOL_TEST_MAIN("provider-store")
             "entries without an https link and a digest are skipped");
         require(listed(store.community(), QStringLiteral("fixture.other")), "community providers are listed");
 
+        QVariantList transferHistory;
+        QObject::connect(&store, &ProviderStore::busyChanged, [&] {
+            for (const auto& transfer : store.transfers())
+                transferHistory.append(transfer);
+        });
         store.install(QStringLiteral("fixture.test"));
         waitUntil([&] { return installed.contains(QStringLiteral("fixture.test")); }, "a store install completes");
         require(registry.module(QStringLiteral("fixture.test")), "and registers the provider");
+        bool downloaded = false, installing = false;
+        for (const auto& transfer : transferHistory) {
+            const auto row = transfer.toMap();
+            require(row.value("id") == "fixture.test" && row.value("name") == "Fixture fixture.test",
+                "transfer progress belongs to the selected provider");
+            downloaded
+                |= row.value("received").toLongLong() == v1.size() && row.value("total").toLongLong() == v1.size();
+            installing |= row.value("state") == "installing";
+        }
+        require(downloaded && installing && store.transfers().isEmpty(),
+            "download byte progress reaches validation/installation then closes on success");
         require(
             listed(store.official(), QStringLiteral("fixture.test"), "installed"), "the listing shows it installed");
 
@@ -217,6 +233,7 @@ SPOOL_TEST_MAIN("provider-store")
             problems.last().contains(QStringLiteral("didn't match")) && !registry.module(QStringLiteral("fixture.bad")),
             "a download whose digest or identity differs is never installed");
 
+        require(store.transfers().isEmpty(), "failed validation closes the progress popup too");
         store.install(QStringLiteral("fixture.other"));
         waitUntil([&] { return installed.contains(QStringLiteral("fixture.other")); }, "a community install completes");
 

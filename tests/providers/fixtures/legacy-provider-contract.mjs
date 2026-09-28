@@ -1,8 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
 // Run current first-party providers through the unmodified API-0.2 host glue.
-import * as jellyfin from 'qrc:/providers/spool.jellyfin/logic/provider.mjs';
-import * as emby from 'qrc:/providers/spool.emby/logic/provider.mjs';
-import * as plex from 'qrc:/providers/spool.plex/logic/provider.mjs';
 
 function require(value, message) {
     if (!value)
@@ -136,7 +133,9 @@ function exercise(glue, name, module) {
         });
 }
 
-export function run(glue) {
-    return exercise(glue, 'jellyfin', jellyfin).then(() => exercise(glue, 'emby', emby))
-        .then(() => exercise(glue, 'plex', plex));
+export function run(glue, modules) {
+    let sequence = Promise.resolve();
+    for (const name of Object.keys(modules))
+        sequence = sequence.then(() => exercise(glue, name, modules[name]));
+    return sequence;
 }
