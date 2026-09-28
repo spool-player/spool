@@ -80,6 +80,20 @@ TestCase {
         signalName: "rowsChanged"
     }
 
+    function test_compactChooser() {
+        const page = createTemporaryObject(pageComponent, testCase, {
+                                               compact: true,
+                                               width: 560,
+                                               height: 600
+                                           })
+        verify(page)
+        compare(page.rows[0].key, "target:")
+        verify(!page.rows.some(row => row.key === "chooser"))
+        verify(remote.chooserVisible)
+        page.routeKey(Qt.Key_Down, "press", false)
+        verify(page.focusedIndex > 0)
+    }
+
     function init() {
         remote.selectedTargetId = ""
         remote.selectedTarget = ({})

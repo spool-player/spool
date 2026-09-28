@@ -4,9 +4,12 @@ import QtQuick
 import QtQuick.Layouts
 import "../theme"
 import "../primitives"
+import "../shell"
 
 FocusScope {
     id: root
+    property bool compact: false
+    property var customContext: null
     property var shell
     property var remote: RemoteTargets
     property var app: App
@@ -14,7 +17,7 @@ FocusScope {
     readonly property bool contentReady: true
     property bool choosing: true
     property bool queueOpen: false
-    property string focusedKey: "chooser"
+    property string focusedKey: compact ? "target:" : "chooser"
     property string editingKey: ""
     property real editedValue: 0
     readonly property var snapshot: remote.state || ({})
@@ -48,7 +51,8 @@ FocusScope {
                              }, extra || {})
     }
     function buildRows() {
-        const result = [row("chooser", choosing ? "Hide device chooser" : "Choose playback device", "devices")]
+        const result = compact ? [] : [row("chooser", choosing ? "Hide device chooser" : "Choose playback device",
+                                           "devices")]
         if (choosing) {
             // Local is always first, independent of progressive discovery order.
             result.push(row("target:", "This device", "tv", {
@@ -233,11 +237,14 @@ FocusScope {
         target: root.remote
         function onSelectionChanged() {
             root.editingKey = ""
+            root.customContext = null
             root.syncVisibility()
         }
     }
     Component.onCompleted: syncVisibility()
     Component.onDestruction: {
+        if (customContext)
+            customContext.close()
         remote.setChooserVisible(false)
         remote.setQueueVisible(false)
     }
@@ -329,18 +336,29 @@ FocusScope {
             remote.requestQueuePage(false)
         else if (entry.key === "queueRefresh")
             remote.requestQueuePage(true)
-        else if (entry.key === "advanced")
-            remote.openAdvancedControls()
-        else if (entry.key === "disconnect" || entry.key === "local") {
+        else if (entry.key === "advanced") {
+            if (compact && remote.createAdvancedControls)
+                customContext = remote.createAdvancedControls()
+            else
+                remote.openAdvancedControls()
+        } else if (entry.key === "disconnect" || entry.key === "local") {
             remote.disconnectTarget()
             if (entry.key === "local" && shell)
                 shell.goHome()
         }
     }
     function activate() {
-        perform(rows[focusedIndex])
+        if (customContext)
+            customSurface.activate()
+        else
+            perform(rows[focusedIndex])
     }
     function back() {
+        if (customContext) {
+            customContext.close()
+            customContext = null
+            return true
+        }
         if (editingKey) {
             editingKey = ""
             return true
@@ -353,6 +371,8 @@ FocusScope {
         return false
     }
     function routeKey(key, phase, repeat) {
+        if (customContext)
+            return customSurface.routeKey(key, phase, repeat)
         if (!InputKeys.isDirection(key))
             return false
         if (phase === "release")
@@ -380,8 +400,9 @@ FocusScope {
         color: Theme.bg
     }
     ColumnLayout {
+        visible: !root.customContext
         anchors.fill: parent
-        anchors.margins: Metrics.pageMarginPx
+        anchors.margins: root.compact ? Metrics.scaled(16) : Metrics.pageMarginPx
         spacing: Metrics.gapPx
         RowLayout {
             Layout.fillWidth: true
@@ -398,7 +419,7 @@ FocusScope {
                 AppText {
                     Layout.fillWidth: true
                     text: root.attached ? root.selected.name || "Remote playback" : "Playback devices"
-                    font.pixelSize: Metrics.titleSizePx
+                    font.pixelSize: root.compact ? Metrics.bodySizePx + Metrics.scaled(2) : Metrics.titleSizePx
                     elide: Text.ElideRight
                 }
                 AppText {
@@ -414,6 +435,7 @@ FocusScope {
         }
         AppText {
             Layout.fillWidth: true
+            visible: !root.compact || root.remote.problem.length > 0 || root.remote.busy || root.editingKey.length > 0
             text: root.remote.problem || (root.remote.busy ? "Working…" : root.editingKey
                                                              ? "Left and Right adjust. OK saves; Back cancels." :
                                                                "Up and Down choose a control. OK activates or edits.")
@@ -481,6 +503,28 @@ FocusScope {
             }
             FastWheelHandler {
                 flickable: list
+            }
+        }
+    }
+    ColumnLayout {
+        anchors.fill: parent
+        anchors.margins: Metrics.scaled(12)
+        visible: root.customContext !== null
+        ActionButton {
+            text: "Back to devices"
+            kind: "flat"
+            iconName: "arrow_back"
+            onClicked: root.back()
+        }
+        ProviderSurface {
+            id: customSurface
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            embedded: true
+            context: root.customContext
+            onFinished: {
+                root.customContext = null
+                InputKeys.focus(root)
             }
         }
     }

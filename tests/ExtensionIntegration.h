@@ -125,13 +125,14 @@ public:
         context->setContextProperty("RemoteTargets", remote.get());
         context->setContextProperty("I18n", &localization);
         auto *placeholders = QQmlPropertyMap::create(this);
+        placeholders->insert("enabled", false);
         placeholders->insert("hdrPlayback", false);
         placeholders->insert("sessionActive", false);
         placeholders->insert("speedTest", false);
         placeholders->insert("updates", QVariantList {});
         placeholders->insert("connectionSpeedDescription", QString());
         context->setContextProperty("ProviderCapabilities", new Spool::ProviderCapabilities(this));
-        for (const auto *name : { "Player", "Store", "App" })
+        for (const auto *name : { "Player", "Store", "App", "Group" })
             context->setContextProperty(name, placeholders);
     }
     Q_INVOKABLE QVariantMap stats(QString identity) const

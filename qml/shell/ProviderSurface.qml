@@ -14,7 +14,8 @@ FocusScope {
     readonly property var provider: context ? Providers.modules.find(m => m.id === context.moduleId) : null
     readonly property Item screen: loader.item
     property var loadedContext: null
-    signal finished
+    property bool embedded: false
+    signal finished(var result, bool cancelled)
 
     focus: true
 
@@ -73,14 +74,20 @@ FocusScope {
 
     Connections {
         target: root.context || null
-        function onFinished() {
-            root.finished()
+        function onFinished(result, cancelled) {
+            root.finished(result, cancelled)
         }
     }
 
     Rectangle {
         anchors.fill: parent
-        color: root.overlay ? Theme.overlayScrimStrong : Theme.bg
+        color: root.embedded ? "transparent" : root.overlay ? Theme.overlayScrimStrong : Theme.bg
+        MouseArea {
+            anchors.fill: parent
+            enabled: root.overlay
+            acceptedButtons: Qt.AllButtons
+            onWheel: wheel => wheel.accepted = true
+        }
     }
 
     Item {
@@ -101,9 +108,10 @@ FocusScope {
         Row {
             id: header
             x: Metrics.pageMarginPx
-            y: Metrics.pageMarginPx
+            y: root.embedded ? 0 : Metrics.pageMarginPx
             spacing: Metrics.scaled(14)
-            height: Metrics.touchTargetPx
+            visible: !root.embedded
+            height: visible ? Metrics.touchTargetPx : 0
 
             IconButton {
                 anchors.verticalCenter: parent.verticalCenter
@@ -151,7 +159,7 @@ FocusScope {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom
-            anchors.topMargin: Metrics.scaled(12)
+            anchors.topMargin: root.embedded ? 0 : Metrics.scaled(12)
             focus: true
             asynchronous: true
             Component.onCompleted: root.load()

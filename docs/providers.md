@@ -297,3 +297,10 @@ for an unadvertised backend command.
   repository carries its full `tests/contract.mjs`.
 - `live-jellyfin` runs sign-in to playback against a real server when `SPOOL_LIVE_JELLYFIN`,
   `SPOOL_LIVE_USER` and `SPOOL_LIVE_PASSWORD` are set; otherwise it skips.
+
+The top-right playback-device menu consumes `spool.remote-targets` data and can
+mount provider QML for advanced controls in place. `ProviderSurface.embedded`
+omits shell page chrome for those sections; `overlay` retains the underlying page
+and adds a modal scrim for playback choices and item actions. Successful login
+waits for account activation before revealing the library, avoiding a return to
+the provider chooser between authentication and activation.

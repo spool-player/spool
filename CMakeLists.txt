@@ -1050,6 +1050,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
             setting-sync-control tests/qml/tst_SettingSyncControl.qml
             remote-control-page tests/qml/tst_RemoteControlPage.qml
             provider-install-dialog tests/qml/tst_ProviderInstallDialog.qml
+            provider-shell tests/qml/tst_ProviderShell.qml
             settings-disclosure tests/qml/tst_SettingsDisclosure.qml
             settings-row-identity tests/qml/tst_SettingsRowIdentity.qml
             atomic-view-reveal tests/qml/tst_AtomicViewReveal.qml
@@ -1094,6 +1095,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
                 tests/qml/tst_SubtitleSettingsPanel.qml
                 tests/qml/tst_RemoteControlPage.qml
                 tests/qml/tst_ProviderInstallDialog.qml
+                tests/qml/tst_ProviderShell.qml
                 tests/qml/tst_ExtensionIntegration.qml
         )
 
@@ -1120,7 +1122,8 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
             list(GET SPOOL_QML_TESTS ${qml_index} qml_test_name)
             list(GET SPOOL_QML_TESTS ${qml_source_index} qml_test_source)
             if(qml_test_name STREQUAL "setting-sync-control" OR qml_test_name STREQUAL "subtitle-settings-panel"
-                OR qml_test_name STREQUAL "remote-control-page" OR qml_test_name STREQUAL "provider-install-dialog")
+                OR qml_test_name STREQUAL "remote-control-page" OR qml_test_name STREQUAL "provider-install-dialog"
+                OR qml_test_name STREQUAL "provider-shell")
                 add_test(NAME ${qml_test_name}
                     COMMAND spool-qml-tests -input ":/qt/qml/Spool/${qml_test_source}"
                 )
@@ -1132,6 +1135,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
             endif()
             set_tests_properties(${qml_test_name} PROPERTIES ENVIRONMENT "${SPOOL_QML_TEST_ENV}")
         endforeach()
+        set_tests_properties(provider-shell PROPERTIES ENVIRONMENT "${SPOOL_QML_TEST_ENV};SPOOL_EXTENSION_INTEGRATION=1")
     endif()
 endif()
 

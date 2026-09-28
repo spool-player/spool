@@ -304,3 +304,28 @@ inaccessible documents are errors, never empty documents to overwrite.
 DTO and unrelated CustomPrefs while changing only `spool.data.v1` in the
 signed-in user's Spool partition; they advertise no CAS. Plex advertises
 neither a preference writer nor application-data storage.
+
+### Discovery and contextual screens
+
+`host.discover({port, message, timeout})` sends the provider's UDP discovery message
+on active IPv4 broadcast interfaces and returns an ordinary JavaScript array of
+`{address, text}` replies. Jellyfin/Emby discovery uses broadcast, not multicast.
+The host owns sockets, reply limits and cancellation; providers parse their own
+protocol. Retry broadcast discovery when the viewer chooses local search, before
+the optional consented `spool.lan-probe` HTTP fallback. HTTP continuation pages can
+be short or empty when their wall deadline expires: follow each new cursor until
+`exhausted`, rather than assuming every page scanned the requested target limit.
+
+Provider QML is contextual. A playback `pick` result opens `ui.picker` over the
+current details page with a dimmed background and returns its completed arguments
+to resolution. Closing cancels the pending choice; it does not replace the details
+route. Providers can compose sections within their screens (for example, an inline
+Quick Connect code underneath password sign-in).
+
+`spool.remote-targets` supplies the shared device dropdown's target, state, command
+and queue data. Set a target's `customControls` when it also needs provider-owned
+QML. The host mounts `ui.picker` with `{kind: "remoteControls", targetId}` as a
+section inside the dropdown; `provider.complete`/`close` returns to shared device
+controls. Use layouts that adapt to the available width and height. Full-page
+remote controls can also open the same component as a modal overlay. Providers
+never need to navigate a shell route to add these controls.

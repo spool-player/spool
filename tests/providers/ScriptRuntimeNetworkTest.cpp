@@ -130,6 +130,10 @@ SPOOL_TEST_MAIN("script-runtime-network")
     QCoro::waitFor(runtime.addSource("other", {}, {}, extensions, true));
     QCoro::waitFor(runtime.addSource("account", {}, {}, extensions));
     QCoro::waitFor(runtime.addSource("baseline", {}, { QUrl(origin) }));
+    const auto udp = QCoro::waitFor(runtime.call(
+        "draft", "discover", { { "port", 7359 }, { "message", "spool-discovery-contract-test" }, { "timeout", 100 } }));
+    require(
+        udp.value("array").toBool(), "UDP discovery publishes an ordinary JavaScript array usable by provider code");
     const auto http = [&](QString source, QString path, QVariantMap options = {}) {
         return runtime.call(source, "http", { { "url", origin + path }, { "options", options } });
     };

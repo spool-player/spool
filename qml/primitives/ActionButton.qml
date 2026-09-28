@@ -9,6 +9,10 @@ T.Control {
     property bool pointerHovered: hover.hovered
     property string text: ""
     signal clicked
+    readonly property color foreground: !enabled ? Theme.textMuted : kind === "primary" ? Theme.accentText : kind
+                                                                                          === "danger"
+                                                                                          ? Theme.errorText :
+                                                                                            Theme.textPrimary
 
     implicitWidth: Math.max(Metrics.scaled(132), buttonContent.implicitWidth + Metrics.scaled(34))
     implicitHeight: Metrics.controlHeightPx
@@ -16,25 +20,24 @@ T.Control {
 
     background: Rectangle {
         radius: Theme.radiusMedium
-        color: root.kind === "primary" ? (tap.pressed ? Theme.accentDim : (root.pointerHovered || (
-                                                                               Metrics.keyboardFocusActive
-                                                                               && root.activeFocus) ? Theme.accent :
-                                                                                                      Theme.accentDim)) :
-                                         root.kind === "danger" ? (tap.pressed ? Theme.bgRaised : Theme.errorPanel) :
-                                                                  tap.pressed ? Theme.bgRaised : root.kind === "flat"
-                                                                                ? "transparent" : Theme.bgPanel
+        color: !root.enabled ? Theme.bgPanel : root.kind === "primary" ? Theme.accent : root.kind === "danger"
+                                                                         ? Theme.errorPanel : tap.pressed
+                                                                           ? Theme.bgRaised : root.kind === "flat"
+                                                                             ? "transparent" : Theme.bgPanel
         border.width: Metrics.keyboardFocusActive && root.activeFocus ? Theme.focusBorderWidth : root.pointerHovered ? Theme.hoverBorderWidth :
                                                                                                                        root.kind
                                                                                                                        === "flat"
                                                                                                                        ? 0 : Theme.hoverBorderWidth
-        border.color: Metrics.keyboardFocusActive && root.activeFocus ? Theme.textPrimary : root.pointerHovered ? Theme.borderStrong :
-                                                                                                                  root.kind
-                                                                                                                  === "primary"
-                                                                                                                  ? Theme.accentDim :
-                                                                                                                    root.kind
-                                                                                                                    === "danger"
-                                                                                                                    ? Theme.errorText :
-                                                                                                                      Theme.border
+        border.color: !root.enabled ? Theme.border : Metrics.keyboardFocusActive && root.activeFocus ? Theme.textPrimary :
+                                                                                                       root.pointerHovered
+                                                                                                       ? Theme.borderStrong :
+                                                                                                         root.kind
+                                                                                                         === "primary"
+                                                                                                         ? Theme.accentDim :
+                                                                                                           root.kind
+                                                                                                           === "danger"
+                                                                                                           ? Theme.errorText :
+                                                                                                             Theme.border
         antialiasing: true
     }
 
@@ -50,14 +53,13 @@ T.Control {
                 visible: root.iconName.length > 0
                 name: root.iconName
                 iconSize: Metrics.bodySizePx + 6
-                iconColor: root.enabled ? Theme.textPrimary : Theme.textDisabled
+                iconColor: root.foreground
             }
 
             AppText {
                 anchors.verticalCenter: parent.verticalCenter
                 text: root.text
-                color: root.enabled ? (root.kind === "danger" ? Theme.errorText : Theme.textPrimary) :
-                                      Theme.textDisabled
+                color: root.foreground
 
                 font.pixelSize: Metrics.bodySizePx
                 font.weight: root.kind === "primary" || root.kind === "danger" ? Font.DemiBold : Font.Medium
@@ -69,6 +71,7 @@ T.Control {
 
     TapHandler {
         id: tap
+        enabled: root.enabled
         onTapped: {
             InputKeys.focus(root)
             root.clicked()
