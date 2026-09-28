@@ -48,6 +48,7 @@ class ProviderStore final : public QObject {
     Q_PROPERTY(QString error READ error NOTIFY catalogChanged)
     Q_PROPERTY(QVariantList updates READ updates NOTIFY updatesChanged)
     Q_PROPERTY(QVariantMap busy READ busy NOTIFY busyChanged)
+    Q_PROPERTY(QVariantList transfers READ transfers NOTIFY busyChanged)
     Q_PROPERTY(bool storeAvailable READ storeAvailable CONSTANT)
     Q_PROPERTY(bool linksAllowed READ linksAllowed CONSTANT)
 
@@ -85,6 +86,8 @@ public:
         return m_busy;
     }
 
+    QVariantList transfers() const;
+
     // official.json always; index.json too when asked for or when something
     // from it is installed.
     Q_INVOKABLE void refresh(bool includeCommunity = true);
@@ -116,7 +119,7 @@ private:
 
     // Where each installed provider came from; every write waits for it.
     QCoro::Task<void> loadOrigins();
-    QCoro::Task<QByteArray> fetch(QUrl url, qint64 limit);
+    QCoro::Task<QByteArray> fetch(QUrl url, qint64 limit, QString transferId = {});
     QCoro::Task<QVariantList> fetchCatalog(QString name);
     QCoro::Task<void> installEntry(QVariantMap entry, Origin origin);
     bool allows(const Origin& origin) const;
@@ -135,6 +138,7 @@ private:
     QVariantList m_community;
     QVariantList m_updates;
     QVariantMap m_busy;
+    QVariantMap m_transferProgress;
     QHash<QString, Origin> m_origins;
     QString m_error;
     int m_loading = 0;

@@ -204,17 +204,18 @@ KeyRouter {
     property var navigationTarget: routeStack
     activeTarget: updateDialog.open ? updateDialog : tlsTrustPending ? tlsTrustDialog : networkConsentPending
                                                                        ? networkConsentLoader.item :
-                                                                         remoteGroupConfirmationPending
-                                                                         ? remoteGroupConfirmationLoader.item :
-                                                                           providerOverlay ? providerOverlayLoader.item :
-                                                                                             itemMenuOpen
-                                                                                             ? itemContextMenuLoader.item :
-                                                                                               mediaInfoVisible
-                                                                                               ? mediaInfoOverlayLoader.item :
-                                                                                                 hasPlayer
-                                                                                                 && player.visible
-                                                                                                 ? videoSurface :
-                                                                                                   navigationTarget
+                                                                         providerInstallDialog.visible
+                                                                         ? providerInstallDialog :
+                                                                           remoteGroupConfirmationPending
+                                                                           ? remoteGroupConfirmationLoader.item :
+                                                                             providerOverlay
+                                                                             ? providerOverlayLoader.item :
+                                                                               itemMenuOpen
+                                                                               ? itemContextMenuLoader.item :
+                                                                                 mediaInfoVisible
+                                                                                 ? mediaInfoOverlayLoader.item :
+                                                                                   hasPlayer && player.visible
+                                                                                   ? videoSurface : navigationTarget
     backHandler: function () {
         return root.back()
     }
@@ -697,6 +698,8 @@ KeyRouter {
             resolveNetworkConsent(false)
             return true
         }
+        if (providerInstallDialog.visible)
+            return true
         if (remoteGroupConfirmationPending) {
             RemoteTargets.confirmLeaveGroup(false)
             return true
@@ -1336,6 +1339,12 @@ KeyRouter {
                 onClicked: App.clearError()
             }
         }
+        ProviderInstallDialog {
+            id: providerInstallDialog
+            transfers: Store.transfers
+            z: 100
+        }
+
         UpdateDialog {
             id: updateDialog
             updater: Platform.updateController

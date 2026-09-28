@@ -581,6 +581,7 @@ qt_add_qml_module(spool
         qml/shell/RouteStack.qml
         qml/shell/TlsTrustDialog.qml
         qml/shell/UpdateDialog.qml
+        qml/shell/ProviderInstallDialog.qml
         qml/shell/ToastLayer.qml
         qml/shell/TopBar.qml
         qml/shell/VideoSurface.qml
@@ -904,6 +905,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     endforeach()
 
     add_test(NAME provider-legacy-contract-interpreter COMMAND providers-tests provider-legacy-contract)
+    set_tests_properties(provider-legacy-contract provider-legacy-contract-interpreter PROPERTIES SKIP_RETURN_CODE 77)
     set_tests_properties(provider-legacy-contract-interpreter PROPERTIES
         ENVIRONMENT "${SPOOL_TEST_ENV};QV4_FORCE_INTERPRETER=1;QML_DISABLE_DISK_CACHE=1")
 
@@ -1047,6 +1049,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
             settings-navigation tests/qml/tst_SettingsNavigation.qml
             setting-sync-control tests/qml/tst_SettingSyncControl.qml
             remote-control-page tests/qml/tst_RemoteControlPage.qml
+            provider-install-dialog tests/qml/tst_ProviderInstallDialog.qml
             settings-disclosure tests/qml/tst_SettingsDisclosure.qml
             settings-row-identity tests/qml/tst_SettingsRowIdentity.qml
             atomic-view-reveal tests/qml/tst_AtomicViewReveal.qml
@@ -1090,6 +1093,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
                 tests/qml/tst_SettingSyncControl.qml
                 tests/qml/tst_SubtitleSettingsPanel.qml
                 tests/qml/tst_RemoteControlPage.qml
+                tests/qml/tst_ProviderInstallDialog.qml
                 tests/qml/tst_ExtensionIntegration.qml
         )
 
@@ -1116,7 +1120,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
             list(GET SPOOL_QML_TESTS ${qml_index} qml_test_name)
             list(GET SPOOL_QML_TESTS ${qml_source_index} qml_test_source)
             if(qml_test_name STREQUAL "setting-sync-control" OR qml_test_name STREQUAL "subtitle-settings-panel"
-                OR qml_test_name STREQUAL "remote-control-page")
+                OR qml_test_name STREQUAL "remote-control-page" OR qml_test_name STREQUAL "provider-install-dialog")
                 add_test(NAME ${qml_test_name}
                     COMMAND spool-qml-tests -input ":/qt/qml/Spool/${qml_test_source}"
                 )

@@ -100,6 +100,7 @@ FocusScope {
             })
             break
         case "update":
+            pendingSetup = entry.id
             Store.update(entry.id)
             break
         case "installed":
