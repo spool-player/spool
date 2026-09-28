@@ -118,7 +118,12 @@ TestCase {
         SettingsSync.setAccountId(Integration.second)
         if (SettingsSync.accountChangePending)
             SettingsSync.confirmAccountChange(true)
-        tryVerify(() => SettingsSync.accountId === Integration.second && !SettingsSync.busy, 10000)
+        // The cancelled first-account cycle can finish before the debounced
+        // second-account cycle starts. Wait for B's applied snapshot, not that
+        // temporary idle interval.
+        tryVerify(() => SettingsSync.accountId === Integration.second && !SettingsSync.busy
+                        && Settings.values["audio/trackMode"] === "Default" && state("audio/trackMode").status
+                        === "synced", 10000)
         Integration.setReadDelay(0)
         compare(Settings.values["audio/trackMode"], "Default")
         wait(400)
