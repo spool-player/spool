@@ -9,6 +9,8 @@ import "../shell"
 FocusScope {
     id: root
     property bool compact: false
+    readonly property real preferredMenuHeight: customContext ? Metrics.scaled(600) : Math.min(Metrics.scaled(680), Metrics.scaled(
+                                                                                                   150) + list.contentHeight)
     property var customContext: null
     property var shell
     property var remote: RemoteTargets
@@ -397,7 +399,16 @@ FocusScope {
 
     Rectangle {
         anchors.fill: parent
-        color: Theme.bg
+        color: root.compact ? Theme.bgRaised : Theme.bg
+        radius: root.compact ? Theme.radiusPanel : 0
+        border.width: root.compact ? Theme.hoverBorderWidth : 0
+        border.color: Theme.borderStrong
+        MouseArea {
+            anchors.fill: parent
+            enabled: root.compact
+            acceptedButtons: Qt.AllButtons
+            onWheel: wheel => wheel.accepted = true
+        }
     }
     ColumnLayout {
         visible: !root.customContext

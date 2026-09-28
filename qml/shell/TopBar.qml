@@ -339,8 +339,10 @@ FocusScope {
         id: remoteMenuLoader
         active: root.remoteMenuOpen
         width: Math.min(root.width - Metrics.scaled(28), Metrics.scaled(560))
-        height: Math.min(Metrics.scaled(680), Math.max(Metrics.scaled(200), root.parent.height - root.height
-                                                       - Metrics.scaled(20)))
+        height: Math.min(item ? item.preferredMenuHeight : Metrics.scaled(360), Math.max(Metrics.scaled(200),
+                                                                                         root.parent.height
+                                                                                         - root.height - Metrics.scaled(
+                                                                                             20)))
         // Avoid mutually exclusive anchors: cached QML can retain both during
         // edge changes and calculate a negative menu height.
         x: root.width - width - Metrics.scaled(10)
