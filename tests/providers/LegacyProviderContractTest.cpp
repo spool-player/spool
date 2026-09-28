@@ -34,7 +34,7 @@ SPOOL_TEST_MAIN("provider-legacy-contract")
         if (!manifest.open(QIODevice::ReadOnly)
             || QJsonDocument::fromJson(manifest.readAll()).object().value("extensions").toObject().isEmpty())
             continue;
-        const auto module = engine.importModule(QStringLiteral("qrc:/providers/spool.%1/logic/provider.mjs").arg(name));
+        const auto module = engine.importModule(QStringLiteral(":/providers/spool.%1/logic/provider.mjs").arg(name));
         require(!module.isError(), module.toString());
         modules.setProperty(name, module);
         tested.append(name);
