@@ -156,7 +156,8 @@ void LibraryPrefetchController::startNext()
     qInfo() << "library prefetch: fetching" << request.title << request.cacheKey;
 
     Async::runLatest(
-        this, m_api->fetchBrowsePage(request.descriptor, 0, kLibraryPageSize), m_generation, generation,
+        this, m_api->fetchBrowsePage(request.descriptor, 0, kLibraryPageSize, {}, std::nullopt), m_generation,
+        generation,
         [this, request](const PagedMovieItems& page) {
             qInfo() << "library prefetch: cached" << request.title << page.items.size();
             storePage(request.cacheKey, page);

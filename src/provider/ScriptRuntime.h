@@ -3,10 +3,12 @@
 #include "ProviderMediaPage.h"
 
 #include <QCoroTask>
+#include <QHostAddress>
 #include <QObject>
 #include <QUrl>
 #include <QVariantMap>
 
+#include <atomic>
 #include <functional>
 #include <memory>
 
@@ -26,13 +28,18 @@ public:
     struct NetworkHooks {
         std::function<void(QNetworkAccessManager *)> network;
         std::function<void(QWebSocket *, QUrl)> socket;
+        // Native fixture injection; never exposed to provider code.
+        std::function<QList<QHostAddress>()> lanTargets;
     };
 
     ScriptRuntime(QString entryPoint, QVariantMap device, NetworkHooks hooks = {}, QObject *parent = nullptr);
     ~ScriptRuntime() override;
 
     // An origin of "*" lets the source reach any HTTP(S) origin.
-    QCoro::Task<QVariantMap> addSource(QString sourceId, QVariantMap configuration, QList<QUrl> origins);
+    // extensions is the host-supported subset of the module's declarations.
+    QCoro::Task<QVariantMap> addSource(QString sourceId, QVariantMap configuration, QList<QUrl> origins,
+        QVariantMap extensions = {}, bool loginDraft = false,
+        std::shared_ptr<std::atomic_bool> activationApproval = {});
     QCoro::Task<QVariantMap> call(QString sourceId, QString method, QVariantMap arguments = {}, QString scope = {});
     // Listing path: decoded on the worker straight into native items.
     QCoro::Task<ProviderMediaPage> callMediaPage(
@@ -41,6 +48,13 @@ public:
     QCoro::Task<MovieItem> callItem(QString sourceId, QString method, QVariantMap arguments = {});
     void cancelScope(const QString& sourceId, const QString& scope);
     void removeSource(const QString& sourceId);
+    // A supplied false token stages the grant without authorizing traffic.
+    // The caller commits it only after rechecking its consent/generation barrier.
+    // Dropping an uncommitted token never enables its origins.
+    QCoro::Task<void> grantOrigins(
+        QString sourceId, QList<QUrl> origins, std::shared_ptr<std::atomic_bool> approval = {});
+    QCoro::Task<void> allowLanDiscovery(QString sourceId);
+    void cancelLanDiscovery(QString sourceId);
 
 signals:
     // host.emit(type, payload) from a source, delivered on the owner's thread.

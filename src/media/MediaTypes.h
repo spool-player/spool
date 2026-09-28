@@ -11,6 +11,7 @@
 #include <QVariantMap>
 
 #include <exception>
+#include <optional>
 #include <vector>
 
 namespace Spool {
@@ -379,6 +380,8 @@ struct PagedMovieItems {
     int totalRecordCount = 0;
     int startIndex = 0;
     int limit = 0;
+    std::optional<QString> nextCursor;
+    bool exhausted = true;
 };
 
 struct PlaybackQueueItem {

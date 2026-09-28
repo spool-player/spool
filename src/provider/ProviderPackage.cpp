@@ -1,4 +1,5 @@
 #include "ProviderPackage.h"
+#include "ProviderExtensions.h"
 
 #include "../../third_party/zstd/bounded_zstd.h"
 
@@ -13,6 +14,8 @@
 #include <QSaveFile>
 #include <QSet>
 #include <QUuid>
+
+#include <stdexcept>
 
 namespace Spool {
 
@@ -152,6 +155,14 @@ std::optional<ProviderManifest> ProviderManifest::parse(const QByteArray& json, 
     manifest.icon = string(root, "icon");
     manifest.entry = string(root, "entry");
     manifest.homepage = string(root, "homepage");
+    if (root.contains(QStringLiteral("extensions"))) {
+        try {
+            manifest.extensions = ProviderExtensions::decode(root.value(QStringLiteral("extensions")).toVariant());
+        } catch (const std::runtime_error&) {
+            fail(error, QStringLiteral("manifest.extensions is invalid (invalid_extensions)"));
+            return std::nullopt;
+        }
+    }
     for (const QJsonValue& value : root.value(QStringLiteral("capabilities")).toArray())
         manifest.capabilities.append(value.toString());
     for (const QJsonValue& value : root.value(QStringLiteral("origins")).toArray())

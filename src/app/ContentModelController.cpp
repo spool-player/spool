@@ -119,7 +119,8 @@ void ContentModelController::loadDetailRows(
             });
     } else if (loadBoxSet) {
         Async::runLatest(
-            this, m_api->fetchBrowsePage(BrowseDescriptor::boxSet(itemId), 0, 200), m_detailRowsGeneration, generation,
+            this, m_api->fetchBrowsePage(BrowseDescriptor::boxSet(itemId), 0, 200, {}, std::nullopt),
+            m_detailRowsGeneration, generation,
             [this, generation, itemId](const PagedMovieItems& page) {
                 qInfo() << "detail rows: box set children loaded" << itemId << page.items.size();
                 m_detailSeasons.setMovies(page.items);
@@ -133,8 +134,8 @@ void ContentModelController::loadDetailRows(
             });
     } else if (loadAlbum) {
         Async::runLatest(
-            this, m_api->fetchBrowsePage(BrowseDescriptor::folderChildren(itemId), 0, 200), m_detailRowsGeneration,
-            generation,
+            this, m_api->fetchBrowsePage(BrowseDescriptor::folderChildren(itemId), 0, 200, {}, std::nullopt),
+            m_detailRowsGeneration, generation,
             [this, generation, itemId](const PagedMovieItems& page) {
                 qInfo() << "detail rows: album tracks loaded" << itemId << page.items.size();
                 m_detailSeasons.setMovies(page.items);

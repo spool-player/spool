@@ -32,6 +32,8 @@ FocusScope {
         case "addProvider":
         case "providerScreen":
         case "libraryGrid":
+        case "collectionEditor":
+        case "remoteControl":
             return nextRoute
         case "itemDetails":
             return "itemDetails"
@@ -60,6 +62,10 @@ FocusScope {
             return Qt.resolvedUrl("../pages/ProviderScreenPage.qml")
         case "libraryGrid":
             return Qt.resolvedUrl("../pages/LibraryGridPage.qml")
+        case "collectionEditor":
+            return Qt.resolvedUrl("../pages/CollectionEditorPage.qml")
+        case "remoteControl":
+            return Qt.resolvedUrl("../pages/RemoteControlPage.qml")
         case "itemDetails":
             return Qt.resolvedUrl("../pages/ItemDetailsPage.qml")
         case "personDetails":
@@ -187,7 +193,7 @@ FocusScope {
     }
 
     function dropTransientPages() {
-        for (const key of ["accounts", "addProvider", "providerScreen"]) {
+        for (const key of ["accounts", "addProvider", "providerScreen", "collectionEditor"]) {
             const loader = pages[key]
             if (loader && loader !== activeLoader) {
                 delete pages[key]

@@ -5,6 +5,7 @@
 #include "../platform/MpvConfigPolicy.h"
 
 #include <QCoroTask>
+#include <QHash>
 #include <QObject>
 #include <QStringList>
 #include <QVariantList>
@@ -12,9 +13,13 @@
 
 namespace Spool {
 
+enum class ChangeOrigin { User, RemoteSync, Initialization, Automatic, Preview };
 class DatabaseManager;
 class ArtworkService;
 class PlayerController;
+class LocalizationManager;
+class InputLatencyMonitor;
+class SettingsSyncController;
 struct SettingSpec;
 
 class SettingsController final : public QObject {
@@ -31,6 +36,7 @@ class SettingsController final : public QObject {
     Q_PROPERTY(QStringList subtitleLanguageOptions READ subtitleLanguageOptions NOTIFY subtitleSettingsChanged)
     Q_PROPERTY(int subtitleLanguageIndex READ subtitleLanguageIndex WRITE setSubtitleLanguageIndex NOTIFY
             subtitleSettingsChanged)
+    Q_PROPERTY(int audioLanguageIndex READ audioLanguageIndex WRITE setAudioLanguageIndex NOTIFY settingsValuesChanged)
     Q_PROPERTY(QString redButtonAction MEMBER m_redButtonAction NOTIFY buttonRemapChanged)
     Q_PROPERTY(QString greenButtonAction MEMBER m_greenButtonAction NOTIFY buttonRemapChanged)
     Q_PROPERTY(QString yellowButtonAction MEMBER m_yellowButtonAction NOTIFY buttonRemapChanged)
@@ -72,6 +78,8 @@ public:
     QString audioDelayTargetLabel() const;
     int subtitleLanguageIndex() const;
 
+    int audioLanguageIndex() const;
+    Q_INVOKABLE void setAudioLanguageIndex(int index);
     QStringList subtitleLanguageOptions() const;
     QStringList systemSubtitleFonts() const;
     QVariantList settingsSchema() const;
@@ -92,6 +100,16 @@ public:
     static QStringList localSettingKeys();
     void applyLocalValues(const QVariantMap& storedValues);
 
+    void attachLocalization(LocalizationManager *localization);
+    void attachInputLatency(InputLatencyMonitor *monitor);
+    void attachSync(SettingsSyncController *sync);
+    QCoro::Task<void> applyValues(
+        QVariantMap values, ChangeOrigin origin, QVariantMap additionalSerializedSettings = {});
+    bool supportsSyncValue(const QString& key, const QVariant& value) const;
+    QCoro::Task<void> recoverUnfinishedApplications();
+    QCoro::Task<void> retryPendingPersistence();
+    QCoro::Task<void> applyDeferredTrackDefaults();
+    void cancelRemoteApplications(const QString& key = {}, bool discardSyncLedger = true);
     QCoro::Task<void> loadLocalAsync();
     Q_INVOKABLE void setValue(const QString& key, const QVariant& value);
     Q_INVOKABLE void previewValue(const QString& key, const QVariant& value);
@@ -127,14 +145,19 @@ signals:
     void appearanceChanged();
     void settingChanged(const QString& key);
     void settingsValuesChanged();
+    void userValuesCommitted(QVariantMap values);
+    void userValuesCommitFailed();
+    void settingsPersistenceFailed(QString message);
     void playerControlTooltipsEnabledChanged();
     void remoteControlSettingsChanged();
     void errorOccurred(const QString& message);
 
 private:
-    bool setSchemaValue(const SettingSpec& spec, const QVariant& value, bool persist, bool apply, bool notify);
+    void submitValues(QVariantMap values, ChangeOrigin origin);
+    void mirrorExternalValue(const QString& key, const QVariant& value);
+    void applyExternalValue(const SettingSpec& spec, const QVariant& value);
     void applySchemaValue(const SettingSpec& spec, const QVariant& value, bool apply);
-    void emitSchemaSignals(const SettingSpec& spec);
+    void emitBatchSignals(const QVariantMap& values);
     void applyPlaybackPreferences();
     void applyArtworkEncoding();
     void applyAudioDelayToPlayer();
@@ -147,6 +170,16 @@ private:
     DatabaseManager *m_database = nullptr;
     PlayerController *m_player = nullptr;
     ArtworkService *m_artwork = nullptr;
+    LocalizationManager *m_localization = nullptr;
+    InputLatencyMonitor *m_inputLatency = nullptr;
+    SettingsSyncController *m_sync = nullptr;
+    QHash<QString, quint64> m_commitGenerations;
+    QVariantMap m_pendingApplications;
+    QHash<QString, quint64> m_serializedGenerations;
+    QVariantMap m_failedSerializedSettings;
+    quint64 m_commitGeneration = 0;
+    bool m_applyingExternal = false;
+    bool m_batchEffects = false;
     mutable QVariantList m_schema;
     QString m_artworkFormat = QStringLiteral("auto");
     int m_artworkWebpQuality = 75;

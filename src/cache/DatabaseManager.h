@@ -45,12 +45,12 @@ public:
 
     QCoro::Task<QJsonObject> loadHomePayloadAsync(const QString& key, int schemaVersion);
     void saveHomePayload(const QString& key, int schemaVersion, const QJsonObject& payload);
-    void invalidateHomePayloads();
 
     QCoro::Task<QString> loadSettingAsync(const QString& key, const QString& defaultValue = {});
     QCoro::Task<QVariantMap> loadValuesAsync(const QStringList& keys);
     QCoro::Task<StartupState> loadStartupStateAsync(const QStringList& keys);
     void saveSetting(const QString& key, const QString& value);
+    QCoro::Task<void> saveSettings(QVariantMap serializedValues);
 
     QCoro::Task<int> schemaVersionAsync();
     QCoro::Task<QByteArray> loadCacheEntryAsync(const QString& nameSpace, const QString& key, qint64 maxAgeMs = -1);

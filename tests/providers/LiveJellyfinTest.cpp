@@ -116,7 +116,7 @@ SPOOL_TEST_MAIN("live-jellyfin")
     QString accountId;
     QObject::connect(&registry, &ProviderRegistry::accountAdded, [&accountId](const QString& id) { accountId = id; });
     login->complete(account);
-    require(!accountId.isEmpty(), "the account is added");
+    waitUntil([&] { return !accountId.isEmpty(); }, "the authenticated account is committed");
     waitUntil([&] { return hub.source(accountId) != nullptr; }, "the account starts");
     const QString token = registry.accountList().front().configuration.value(QStringLiteral("token")).toString();
 
@@ -125,7 +125,8 @@ SPOOL_TEST_MAIN("live-jellyfin")
     require(!libraries.empty(), "libraries are listed");
     const LibraryItem movies = libraries.front();
     std::cout << "library: " << movies.name.toStdString() << " (" << movies.collectionType.toStdString() << ")\n";
-    const auto page = QCoro::waitFor(hub.fetchBrowsePage(BrowseDescriptor::library(movies.id, movies.collectionType)));
+    const auto page = QCoro::waitFor(
+        hub.fetchBrowsePage(BrowseDescriptor::library(movies.id, movies.collectionType), 0, 72, {}, std::nullopt));
     require(!page.items.empty() && page.totalRecordCount == int(page.items.size()), "the library has items");
     for (const MovieItem& item : page.items)
         std::cout << "  " << item.title.toStdString() << " [" << item.id.toStdString() << "]\n";

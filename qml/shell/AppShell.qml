@@ -59,6 +59,43 @@ KeyRouter {
     }
 
     Binding {
+        target: Theme
+        property: "accentIndex"
+        value: Number(Settings.values["theme/accent"])
+        restoreMode: Binding.RestoreNone
+    }
+    Binding {
+        target: Theme
+        property: "reducedMotion"
+        value: Boolean(Settings.values["theme/reducedMotion"])
+        restoreMode: Binding.RestoreNone
+    }
+    Binding {
+        target: Theme
+        property: "technicalMetadataMode"
+        value: String(Settings.values["theme/technicalMetadata"])
+        restoreMode: Binding.RestoreNone
+    }
+    Binding {
+        target: Theme
+        property: "sideRailLabels"
+        value: String(Settings.values["theme/railLabels"])
+        restoreMode: Binding.RestoreNone
+    }
+    Binding {
+        target: Theme
+        property: "antialiasedText"
+        value: Boolean(Settings.values["theme/antialiasedText"])
+        restoreMode: Binding.RestoreNone
+    }
+    Binding {
+        target: Theme
+        property: "normalTextRenderType"
+        value: Number(Settings.values["theme/renderMode"])
+        restoreMode: Binding.RestoreNone
+    }
+
+    Binding {
         target: Metrics
         property: "coarsePointer"
         value: true
@@ -143,7 +180,7 @@ KeyRouter {
     readonly property bool backExitsAtRoot: Platform.isAndroid
     property int exitConfirmWindowMs: 3000
     property double exitArmedAt: 0
-    property bool diagnosticsVisible: false
+    readonly property bool diagnosticsVisible: Boolean(Settings.values["shell/diagnostics"])
     property bool mediaInfoVisible: false
     property bool itemMenuLoaded: false
     property int uiScaleShortcutKey: 0
@@ -151,6 +188,12 @@ KeyRouter {
     property int settingsShortcutKey: 0
     readonly property bool itemMenuOpen: itemContextMenuLoader.item ? itemContextMenuLoader.item.opened : false
     readonly property bool tlsTrustPending: TlsTrust.pending
+    readonly property var networkConsent: Providers.networkConsent || ({})
+    readonly property bool networkConsentPending: Boolean(networkConsent.id)
+    readonly property bool remoteGroupConfirmationPending: RemoteTargets.groupLeaveConfirmationPending
+    readonly property bool remoteControlsVisible: contentLayer.visible && (chromeRoute === "remoteControl"
+                                                                           || remoteMini.visible)
+    onRemoteControlsVisibleChanged: RemoteTargets.setControlsVisible(remoteControlsVisible)
     property var mediaInfoItem: ({})
     // A provider screen asked for while something plays (a release picker).
     property var providerOverlay: null
@@ -159,13 +202,19 @@ KeyRouter {
     textInputActive: Qt.inputMethod.visible || InputKeys.isTextInputItem(root.Window.window
                                                                          ? root.Window.window.activeFocusItem : null)
     property var navigationTarget: routeStack
-    activeTarget: updateDialog.open ? updateDialog : tlsTrustPending ? tlsTrustDialog : providerOverlay
-                                                                       ? providerOverlayLoader.item : itemMenuOpen
-                                                                         ? itemContextMenuLoader.item :
-                                                                           mediaInfoVisible
-                                                                           ? mediaInfoOverlayLoader.item : hasPlayer
-                                                                             && player.visible ? videoSurface :
-                                                                                                 navigationTarget
+    activeTarget: updateDialog.open ? updateDialog : tlsTrustPending ? tlsTrustDialog : networkConsentPending
+                                                                       ? networkConsentLoader.item :
+                                                                         remoteGroupConfirmationPending
+                                                                         ? remoteGroupConfirmationLoader.item :
+                                                                           providerOverlay ? providerOverlayLoader.item :
+                                                                                             itemMenuOpen
+                                                                                             ? itemContextMenuLoader.item :
+                                                                                               mediaInfoVisible
+                                                                                               ? mediaInfoOverlayLoader.item :
+                                                                                                 hasPlayer
+                                                                                                 && player.visible
+                                                                                                 ? videoSurface :
+                                                                                                   navigationTarget
     backHandler: function () {
         return root.back()
     }
@@ -326,12 +375,29 @@ KeyRouter {
             root.providerOverlay = context
         }
     }
+
+    function resolveNetworkConsent(approved) {
+        if (networkConsentPending)
+            Providers.resolveNetworkConsent(String(networkConsent.id), approved)
+        Qt.callLater(function () {
+            if (root.activeTarget)
+                InputKeys.focus(root.activeTarget)
+        })
+    }
+
+    Component.onDestruction: {
+        if (root.networkConsentPending)
+            Providers.resolveNetworkConsent(String(root.networkConsent.id), false)
+    }
     function showToastAction(message, actionText, callback) {
         toast.showAction(message, actionText, callback)
     }
 
     function defaultRoute() {
-        return root.signedIn ? "home" : "addProvider"
+        if (!root.signedIn)
+            return "addProvider"
+        return Providers.accounts.some(account => account.enabled && account.connectionState === "active") ? "home" :
+                                                                                                             "accounts"
     }
 
     function restoreRecoveredRoute() {
@@ -402,9 +468,8 @@ KeyRouter {
     //
     // Linux native rendering goes through the platform FreeType/fontconfig
     // path, including the user's antialiasing and subpixel policy. Light
-    // hinting keeps baselines aligned without snapping stems to whole pixels,
-    // which is what small labels were being coarsened by. Other desktops
-    // retain Qt's scalable distance-field rendering.
+    // hinting keeps baselines aligned without snapping stems to whole pixels.
+    // The durable render-mode setting owns the text rasterizer.
     Component.onCompleted: {
         // A phone is a finger until something says otherwise. The pointer
         // handlers above only fire once the app has been touched, so without
@@ -418,13 +483,9 @@ KeyRouter {
             // the television's text look chiselled at a viewing distance.
             // Hinting the vertical metrics alone keeps the weight and the
             // baseline crisp while curves antialias smoothly.
-            Theme.normalTextRenderType = Text.NativeRendering
             Typography.sansHinting = Font.PreferVerticalHinting
         } else if (Qt.platform.os === "linux") {
-            Theme.normalTextRenderType = Text.NativeRendering
             Typography.sansHinting = Font.PreferVerticalHinting
-        } else {
-            Theme.normalTextRenderType = Text.QtRendering
         }
         // The TV keeps its two-step text entry: there the field taking focus
         // is what raises the on-screen keyboard, so the row stays the D-pad
@@ -606,6 +667,16 @@ KeyRouter {
                       })
     }
 
+    function openCollectionEditor(containerId, title) {
+        if (!containerId || !Sources.collectionEditingAvailable(containerId))
+            return false
+        pushRoute("collectionEditor", {
+                      containerId: containerId,
+                      title: title
+                  })
+        return true
+    }
+
     function releaseTextInput() {
         let item = root.Window.window ? root.Window.window.activeFocusItem : null
         while (item) {
@@ -622,6 +693,14 @@ KeyRouter {
             return updateDialog.back()
         if (tlsTrustPending)
             return tlsTrustDialog.back()
+        if (networkConsentPending) {
+            resolveNetworkConsent(false)
+            return true
+        }
+        if (remoteGroupConfirmationPending) {
+            RemoteTargets.confirmLeaveGroup(false)
+            return true
+        }
         if (textInputActive) {
             releaseTextInput()
             return true
@@ -631,7 +710,7 @@ KeyRouter {
             return true
         }
         if (diagnosticsVisible) {
-            diagnosticsVisible = false
+            Settings.setValue("shell/diagnostics", false)
             return true
         }
         if (itemMenuOpen && itemContextMenuLoader.item) {
@@ -689,8 +768,8 @@ KeyRouter {
     }
 
     function forward() {
-        if (tlsTrustPending || textInputActive || (navBar.visible && navBar.groupMenuOpen) || diagnosticsVisible
-                || itemMenuOpen || providerOverlay || mediaInfoVisible || playerSessionActive)
+        if (networkConsentPending || tlsTrustPending || textInputActive || (navBar.visible && navBar.groupMenuOpen)
+                || diagnosticsVisible || itemMenuOpen || providerOverlay || mediaInfoVisible || playerSessionActive)
             return true
         if (!Router.canForward)
             return false
@@ -797,6 +876,8 @@ KeyRouter {
     function globalShortcut(key, phase, repeat, modifiers) {
         if (phase === "press" && key !== 0)
             Metrics.keyboardFocusActive = true
+        if (networkConsentPending)
+            return false
         if (phase === "release" && key === uiScaleShortcutKey) {
             uiScaleShortcutKey = 0
             return true
@@ -852,7 +933,7 @@ KeyRouter {
         if (phase !== "release")
             return false
         if (control && key === Qt.Key_D) {
-            diagnosticsVisible = !diagnosticsVisible
+            Settings.setValue("shell/diagnostics", !diagnosticsVisible)
             return true
         }
         if (key === Qt.Key_Slash) {
@@ -954,13 +1035,28 @@ KeyRouter {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 y: root.navBarAtBottom ? 0 : navBar.height
-                height: Math.max(0, parent.height - navBar.height)
+                height: Math.max(0, parent.height - navBar.height - remoteMini.height)
                 route: root.route
                 shell: root
                 startupReady: App.initialized
                 focus: !(root.hasPlayer && root.playerHoldsScreen)
                 onActiveFocusChanged: if (activeFocus)
                                           root.navigationTarget = routeStack
+            }
+
+            RemoteNowPlaying {
+                id: remoteMini
+                objectName: "shellRemoteNowPlaying"
+                anchors.left: parent.left
+                anchors.right: parent.right
+                y: routeStack.y + routeStack.height
+                height: visible ? implicitHeight : 0
+                visible: (RemoteTargets.selectedTargetId.length > 0 || RemoteTargets.problem.length > 0)
+                         && root.chromeRoute !== "remoteControl" && !root.setupRoute
+                shell: root
+                onOpenControls: root.pushRoute("remoteControl")
+                onActiveFocusChanged: if (activeFocus)
+                                          root.navigationTarget = remoteMini
             }
         }
     }
@@ -1113,6 +1209,26 @@ KeyRouter {
             }
         }
 
+        Loader {
+            id: remoteGroupConfirmationLoader
+            anchors.fill: parent
+            z: 60
+            active: root.remoteGroupConfirmationPending
+            sourceComponent: ConfirmationDialog {
+                title: "Leave watch together?"
+                message: "Controlling another device leaves your current watch-together group. Selecting the device does not transfer or start playback."
+                confirmText: "Leave and select device"
+                onAccepted: {
+                    RemoteTargets.confirmLeaveGroup(true)
+                    root.focusContent()
+                }
+                onDismissed: {
+                    RemoteTargets.confirmLeaveGroup(false)
+                    root.focusContent()
+                }
+            }
+        }
+
         ProviderUpdatePrompt {
             anchors.left: parent.left
             anchors.right: parent.right
@@ -1231,6 +1347,31 @@ KeyRouter {
             trustController: TlsTrust
             inputKeys: InputKeys
             z: 250
+        }
+        Loader {
+            id: networkConsentLoader
+            anchors.fill: parent
+            z: 240
+            active: root.networkConsentPending
+            sourceComponent: ConfirmationDialog {
+                title: root.networkConsent.kind === "lan" ? "Search local network?" : "Allow provider connection?"
+                message: {
+                    const consent = root.networkConsent
+                    const owner = String(consent.provider || "") + (consent.account ? " — " + consent.account : "")
+                    if (consent.kind === "lan")
+                        return owner + " wants to search nearby private networks for servers.\n\n"
+                                + "This sends bounded, unauthenticated HTTP requests. It does not sign in "
+                                + "or allow authenticated connections to discovered servers."
+                    return owner + " wants permission to connect to this exact origin:\n\n" + String(consent.origin
+                                                                                                     || "") + "\n\n" + (
+                                consent.unencrypted
+                                ? "This connection is unencrypted. Other people on the network may be able to read or change its traffic.\n\n" :
+                                  "") + "Allow only if you trust this destination."
+                }
+                confirmText: root.networkConsent.kind === "lan" ? "Search" : "Allow"
+                onAccepted: root.resolveNetworkConsent(true)
+                onDismissed: root.resolveNetworkConsent(false)
+            }
         }
         InputLatencyWarning {
             anchors.fill: parent

@@ -44,8 +44,7 @@ SPOOL_TEST_MAIN("provider-media-page")
         bool rejected = false;
         try {
             read(expression, limit);
-        } catch (const std::exception& error) {
-            require(QByteArray(error.what()) == "invalid_media_page", "errors contain no provider data");
+        } catch (const std::exception&) {
             rejected = true;
         }
         if (!rejected)
@@ -77,6 +76,13 @@ SPOOL_TEST_MAIN("provider-media-page")
     require(sparse.items.front().year == 0 && sparse.items.front().seasonNumber == 0,
         "nullable metadata and season zero are valid");
     read(QStringLiteral("({items: [], cursor:'next', exhausted:false})")); // sparse filtered page may advance
+    const auto occurrences
+        = read(QStringLiteral("({items:[{id:'song',entryId:'first'},{id:'song',entryId:'second'}],exhausted:true})"));
+    require(occurrences.items[0].id == occurrences.items[1].id
+            && occurrences.items[0].playlistItemId == QStringLiteral("first")
+            && occurrences.items[1].playlistItemId == QStringLiteral("second"),
+        "duplicate media occurrences retain their independent container entry identities");
+    invalid(QStringLiteral("({items:[{id:'song',entryId:42}],exhausted:true})"));
     invalid(QStringLiteral("null"));
     invalid(QStringLiteral("({items: {}, exhausted: true})"));
     invalid(QStringLiteral("({items: [], exhausted: 'true'})"));

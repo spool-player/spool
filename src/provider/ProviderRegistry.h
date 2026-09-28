@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ProviderExtensionData.h"
 #include "ProviderMediaPage.h"
 #include "ProviderPackage.h"
 #include "ScriptRuntime.h"
@@ -8,12 +9,15 @@
 #include <QHash>
 #include <QObject>
 #include <QPointer>
+#include <QPromise>
 #include <QSet>
 #include <QThreadPool>
 #include <QUrl>
 #include <QVariantList>
 
 #include <functional>
+#include <memory>
+#include <optional>
 #include <vector>
 
 namespace Spool {
@@ -57,6 +61,9 @@ struct ProviderAccount {
     QVariantMap configuration;
     QList<QUrl> origins;
     qint64 lastUsed = 0;
+    // Provider-defined identity, scoped to this module; never authentication proof.
+    QString activationFamily;
+    QString activationIdentity;
 };
 
 // Every provider the app can run and every account signed in to one.
@@ -69,6 +76,7 @@ class ProviderRegistry final : public QObject {
     Q_PROPERTY(QVariantList accounts READ accounts NOTIFY accountsChanged)
     Q_PROPERTY(bool restored READ restored NOTIFY restoredChanged)
     Q_PROPERTY(bool hasAccounts READ hasAccounts NOTIFY accountsChanged)
+    Q_PROPERTY(QVariantMap networkConsent READ networkConsent NOTIFY networkConsentChanged)
 
 public:
     explicit ProviderRegistry(DatabaseManager *database, QObject *parent = nullptr);
@@ -113,8 +121,21 @@ public:
     QCoro::Task<ProviderMediaPage> callSourceMediaPage(
         QString sourceId, QString operation, QVariantMap arguments = {}, int maximumItems = 100, QString scope = {});
     QCoro::Task<MovieItem> callSourceItem(QString sourceId, QString operation, QVariantMap arguments = {});
+    int extensionVersion(const QString& accountId, const QString& extensionId) const;
+    QVariantMap extensions(const QString& sourceId) const;
+    QStringList missingHostExtensions(const QString& moduleId) const;
+    QCoro::Task<QVariantMap> callExtension(
+        QString accountId, QString extensionId, QString operation, QVariantMap arguments = {}, QString scope = {});
+    QCoro::Task<ProviderMediaPage> callExtensionMediaPage(QString accountId, QString extensionId, QString operation,
+        QVariantMap arguments = {}, int maximumItems = 100, QString scope = {});
     void cancelSourceScope(const QString& sourceId, const QString& scope);
     bool sourceRunning(const QString& sourceId) const;
+    bool accountOriginAllowed(const QString& accountId, const QUrl& url) const;
+    QString deviceId() const
+    {
+        return m_device.value(QStringLiteral("id")).toString();
+    }
+    QVariantMap activationConfiguration(const QString& accountId) const;
 
     QVariantList modules() const;
     QVariantList accounts() const;
@@ -139,35 +160,87 @@ public:
 
     // Called by ProviderUiContext.
     QCoro::Task<void> allowSetupOrigin(QString draftId, QUrl origin);
+    QCoro::Task<void> requestAccountOrigin(QString accountId, QUrl origin, QString scope = {});
+    QCoro::Task<void> allowLanDiscovery(QString draftId, QString scope);
+    void cancelLanDiscovery(const QString& draftId, const QString& scope);
+    QVariantMap networkConsent() const
+    {
+        return m_networkConsent;
+    }
+    Q_INVOKABLE void resolveNetworkConsent(const QString& requestId, bool approved);
     QString finishSetup(const QString& draftId, const QVariantMap& result);
     void updateConfiguration(const QString& accountId, const QVariantMap& changes);
-    void restartAccount(const QString& accountId);
+    void restartAccount(const QString& accountId, const QVariantMap& changes = {});
     void endContext(const QString& sourceId);
 
 signals:
     void modulesChanged();
     void accountsChanged();
     void restoredChanged();
+    void extensionsChanged(const QString& accountId);
+    void networkConsentChanged();
     void sourceStarted(Spool::Provider *provider);
     void sourceStopped(const QString& accountId);
+    void accountIdentityRevoked(const QString& accountId);
+    void activationConfigurationChanged(const QString& accountId);
     void accountAdded(const QString& accountId);
     void problem(const QString& message);
     // A provider component the shell should mount now (a picker).
     void componentRequested(QObject *context);
+    // Includes private prepared sources, which are never announced to SourceHub.
+    void contextSourceStopped(const QString& sourceId);
 
 private:
+    struct ExtensionCall {
+        QString extension;
+        QString scope;
+    };
     struct Running {
         QString module;
+        QString runtimeId;
+        QString accountId;
         quint64 generation = 0;
         QPointer<Provider> provider;
         QList<QUrl> origins;
         bool draft = false;
+        bool enableOnCommit = false;
+        QVariantMap hostExtensions;
+        QVariantMap offers;
+        QVariantMap extensions;
+        QHash<QString, quint64> extensionRevisions;
+        QHash<quint64, ExtensionCall> extensionCalls;
+        std::optional<ProviderExtensionData::StorageInfo> storageInfo;
+        bool lanConsent = false;
+        quint64 networkRevision = 0;
+        QVariantMap pendingConfiguration;
+        QVariantMap pendingOptions;
+        QList<QPair<QString, QVariantMap>> pendingEvents;
+        std::shared_ptr<std::atomic_bool> activationApproval;
     };
 
     ProviderAccount *account(const QString& id);
     ScriptRuntime *runtimeFor(ProviderModule& module);
-    QCoro::Task<void> start(QString accountId);
-    void stop(const QString& accountId);
+    QCoro::Task<void> start(QString accountId, QString reason = QStringLiteral("startup"), bool select = false,
+        std::optional<ProviderAccount> replacement = {});
+    void stop(const QString& sourceId, bool revokeIdentity = false);
+    void stopPublished(const QString& accountId);
+    QString runtimeSourceId(const QString& sourceId) const;
+    bool lastUsedIdentity(const ProviderAccount& candidate) const;
+    void commitSelection(const ProviderAccount& candidate);
+    struct PickerResult {
+        bool submitted = false;
+        QVariantMap values;
+    };
+    QCoro::Task<PickerResult> pickResult(QString sourceId, QVariantMap arguments, bool activation = false);
+    struct ActivationGrant {
+        QString identity;
+        QPointer<ScriptRuntime> runtime;
+        quint64 generation = 0;
+        QVariant value;
+    };
+    QString familyKey(const ProviderAccount& candidate) const;
+    void clearGrants(const QString& moduleId, const QString& family = {});
+    QCoro::Task<void> startRestored(QStringList ids);
     void restartModule(const QString& moduleId);
     // Account metadata goes to the database; configuration, which holds
     // credentials, goes to the platform credential store when it changed.
@@ -176,7 +249,12 @@ private:
     void handleEvent(const QString& sourceId, const QString& type, const QVariantMap& payload);
     void handleInterrupted(const QString& moduleId);
     ProviderUiContext *createContext(const QString& sourceId, const QString& role, const QString& moduleId);
-    template <typename T, typename Call> QCoro::Task<T> guarded(QString sourceId, Call call);
+    template <typename T, typename Call>
+    QCoro::Task<T> guarded(QString sourceId, Call call, QString extension = {}, QString scope = {});
+    bool legacySpeedTest(const QString& sourceId, const QString& operation) const;
+    void updateExtensions(const QString& sourceId, QVariantMap offers);
+    QCoro::Task<bool> requestNetworkConsent(QString sourceId, QString scope, QString kind, QUrl origin = {});
+    void cancelNetworkConsent(const QString& sourceId, const QString& scope = {});
 
     QPointer<DatabaseManager> m_database;
     QString m_installDirectory;
@@ -185,7 +263,19 @@ private:
     QHash<QString, ProviderModule> m_modules;
     std::vector<ProviderAccount> m_accounts;
     QHash<QString, Running> m_running;
+    QHash<QString, QString> m_runtimeSources;
+    QHash<QString, QString> m_preparing;
+    QHash<QString, ActivationGrant> m_activationGrants;
+    QHash<QString, quint64> m_familyEpochs;
+    QVariantMap m_activationOptions;
+    QSet<QString> m_lockedAccounts;
     quint64 m_nextGeneration = 0;
+    quint64 m_nextExtensionCall = 0;
+    QVariantMap m_networkConsent;
+    std::shared_ptr<QPromise<bool>> m_consentPromise;
+    QString m_consentSource;
+    QString m_consentScope;
+    QSet<QString> m_failedAccounts;
     bool m_restored = false;
     QStringList m_removedAccounts;
     QSet<QString> m_expired;

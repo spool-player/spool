@@ -1,4 +1,5 @@
 #include "app/BrowseSessionController.h"
+#include "app/LibraryPrefetchController.h"
 
 #include "TestMain.h"
 
@@ -130,6 +131,8 @@ SPOOL_TEST_MAIN("browse-session-controller")
     page.totalRecordCount = 3;
     page.startIndex = 0;
     page.limit = 1;
+    page.nextCursor = QStringLiteral("opaque:first");
+    page.exhausted = false;
     session.setPage(page, QStringLiteral("cache"), false);
     require(session.items()->count() == 1, "page stored one item");
     require(session.hasMore(), "page tracks remaining items");
@@ -149,6 +152,8 @@ SPOOL_TEST_MAIN("browse-session-controller")
     secondPage.totalRecordCount = 3;
     secondPage.startIndex = 1;
     secondPage.limit = 1;
+    secondPage.nextCursor = QStringLiteral("opaque:second");
+    secondPage.exhausted = false;
     session.setPage(secondPage, QStringLiteral("cache"), true);
     require(session.items()->count() == 2, "second page appended its item");
     require(session.nextStartIndex() == 2, "second page advanced the next start index");
@@ -176,8 +181,11 @@ SPOOL_TEST_MAIN("browse-session-controller")
     largeFirstPage.totalRecordCount = 300;
     largeFirstPage.startIndex = 0;
     largeFirstPage.limit = 100;
+    largeFirstPage.nextCursor = QStringLiteral("opaque:100");
+    largeFirstPage.exhausted = false;
     PagedMovieItems largeSecondPage = largeFirstPage;
     largeSecondPage.startIndex = 100;
+    largeSecondPage.nextCursor = QStringLiteral("opaque:200");
     for (int index = 0; index < 100; ++index) {
         largeFirstPage.items.push_back(
             item(QStringLiteral("large-%1").arg(index), QStringLiteral("Movie"), QStringLiteral("Movie")));
@@ -210,6 +218,50 @@ SPOOL_TEST_MAIN("browse-session-controller")
     session.setPage(metadataPage, QStringLiteral("metadata-cache"), false);
     require(session.mediaInfoFor(0, {}).value(QStringLiteral("audio")).toString() == QStringLiteral("7.1"),
         "undefined audio language omitted while channel layout remains");
+
+    page.limit = 100;
+    page.totalRecordCount = 0;
+    session.setPage(page, QStringLiteral("sparse"), false);
+    require(session.hasMore() && session.nextCursor() == page.nextCursor, "short pages retain opaque continuation");
+    PagedMovieItems empty;
+    empty.startIndex = 1;
+    empty.limit = 100;
+    empty.exhausted = false;
+    empty.nextCursor = QStringLiteral("opaque:empty");
+    session.setPage(empty, QStringLiteral("sparse"), true);
+    require(session.rowCount() == 1 && session.nextStartIndex() == 1 && session.hasMore(),
+        "empty advancing pages do not end a listing");
+    const auto rejects = [&](PagedMovieItems invalid) {
+        try {
+            session.setPage(invalid, QStringLiteral("sparse"), true);
+        } catch (const std::exception& error) {
+            return QByteArray(error.what()) == "invalid_pagination";
+        }
+        return false;
+    };
+    require(rejects(page), "any previously seen continuation is rejected, not only the previous one");
+    empty.nextCursor.reset();
+    require(rejects(empty), "a nonterminal page must provide a cursor");
+    session.setPage(page, QStringLiteral("sparse"), false);
+    session.setQueryValue(QStringLiteral("IsPlayed"), true);
+    require(!session.nextCursor() && !session.hasMore(), "filter changes discard old continuation");
+    session.setPage(page, QStringLiteral("sparse"), false);
+    session.setSort(QStringLiteral("SortName"), QStringLiteral("Ascending"));
+    require(!session.nextCursor(), "sort changes discard old continuation");
+    session.setPage(page, QStringLiteral("sparse"), false);
+    session.enterLibrary(library, {});
+    require(!session.nextCursor(), "descriptor or account changes discard old continuation");
+    session.setPage(page, QStringLiteral("sparse"), false);
+    finalPage.totalRecordCount = 1000;
+    session.setPage(finalPage, QStringLiteral("sparse"), true);
+    require(!session.hasMore() && !session.nextCursor(), "exhaustion overrides stale server totals");
+
+    Spool::LibraryPrefetchController cache(nullptr);
+    cache.storePage(QStringLiteral("cached"), page);
+    BrowseSessionController warm(&cache);
+    require(
+        warm.applyCachedPage(QStringLiteral("cached")) == 1 && warm.nextCursor() == page.nextCursor && warm.hasMore(),
+        "warm cache restores short-page continuation instead of inferring exhaustion from row count");
 
     session.reset();
     require(!session.descriptor().isValid(), "reset clears descriptor");

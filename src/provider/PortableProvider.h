@@ -7,6 +7,9 @@
 #include "SearchSource.h"
 #include "UserItemStateSink.h"
 
+#include "ProviderMediaPage.h"
+#include <QFuture>
+
 namespace Spool {
 
 class ProviderRegistry;
@@ -27,6 +30,7 @@ public:
     PortableProvider(ProviderRegistry *registry, QString accountId, QString label, Capabilities capabilities,
         const QVariantMap& description, QObject *parent = nullptr);
     ~PortableProvider() override;
+    void setExtensionSpeedTest(bool enabled);
 
     QString id() const override
     {
@@ -70,8 +74,8 @@ public:
     {
         return m_accountId;
     }
-    QCoro::Task<PagedMovieItems> fetchBrowsePage(
-        BrowseDescriptor descriptor, int startIndex = 0, int limit = 72, QVariantMap queryOptions = {}) override;
+    QCoro::Task<PagedMovieItems> fetchBrowsePage(BrowseDescriptor descriptor, int startIndex, int limit,
+        QVariantMap queryOptions, std::optional<QString> cursor) override;
     QCoro::Task<MovieItem> fetchItemDetails(QString itemId) override;
     QCoro::Task<std::vector<MovieItem>> fetchSeasons(QString seriesId) override;
     QCoro::Task<std::vector<MovieItem>> fetchEpisodes(QString seriesId, QString seasonId = {}) override;
@@ -97,18 +101,27 @@ public:
     QCoro::Task<QVariantMap> call(QString operation, QVariantMap arguments = {});
     // Quality ceiling and decodable codecs, merged into every resolve call.
     void setPlaybackContext(QVariantMap context);
+    // SourceHub supplies one account-filtered immutable snapshot per revision.
+    void setPlaybackQueueContext(QVariantMap snapshot, int index);
 
 private:
     class Playback;
-    QCoro::Task<std::vector<MovieItem>> list(QString operation, QVariantMap arguments, int limit, QString scope = {});
+    QCoro::Task<ProviderMediaPage> listPage(
+        QString operation, QVariantMap arguments, int limit, std::optional<QString> cursor, QString scope = {});
+    QCoro::Task<std::vector<MovieItem>> list(
+        QString operation, QVariantMap arguments, std::optional<int> limit, QString scope = {});
 
     ProviderRegistry *m_registry;
     QString m_accountId;
     QString m_label;
     Capabilities m_capabilities;
+    bool m_legacySpeedTest = false;
     QString m_artworkTemplate;
     QString m_trickplayTemplate;
     QVariantMap m_playbackContext;
+    QVariantMap m_queueSnapshot;
+    int m_queueIndex = -1;
+    QFuture<void> m_itemsTail;
     Playback *m_playback = nullptr;
 };
 

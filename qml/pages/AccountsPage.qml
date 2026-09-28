@@ -107,6 +107,18 @@ FocusScope {
             font.weight: Font.DemiBold
         }
 
+        AppText {
+            readonly property var selectedAccount: root.accountAt(grid.currentIndex)
+            Layout.fillWidth: true
+            visible: Boolean(selectedAccount && selectedAccount.missingHostExtensions
+                             && selectedAccount.missingHostExtensions.length > 0)
+            text: "Update Spool to use all features of this provider."
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
+            font.pixelSize: Metrics.bodySizePx
+            color: Theme.textSecondary
+        }
+
         GridView {
             id: grid
             Layout.alignment: Qt.AlignHCenter
@@ -114,7 +126,7 @@ FocusScope {
             readonly property int columns: Math.max(1, Math.min(root.count, Math.floor(parent.width / cellWidth)))
             Layout.preferredWidth: columns * cellWidth
             cellWidth: root.tileSize + Metrics.scaled(28)
-            cellHeight: root.tileSize + Metrics.scaled(82)
+            cellHeight: root.tileSize + Metrics.scaled(104)
             model: root.count
             interactive: contentHeight > height
             boundsBehavior: Flickable.StopAtBounds
@@ -125,10 +137,24 @@ FocusScope {
                 id: cell
                 required property int index
                 readonly property var account: root.accountAt(index)
+                readonly property string connectionState: account ? String(account.connectionState || "starting") : ""
+                readonly property string stateLabel: !account ? "" : account.needsSignIn ? "Sign in required" :
+                                                                                           connectionState === "locked"
+                                                                                           ? "Locked" : connectionState
+                                                                                             === "starting" && (
+                                                                                                 account.enabled
+                                                                                                 || account.pendingEnabled)
+                                                                                             ? "Connecting…" :
+                                                                                               !account.enabled
+                                                                                               ? "Hidden from home" :
+                                                                                                 connectionState
+                                                                                                 === "failed"
+                                                                                                 ? "Unavailable" : ""
                 width: grid.cellWidth
                 height: grid.cellHeight
 
                 ProfileTile {
+                    id: profileTile
                     anchors.horizontalCenter: parent.horizontalCenter
                     anchors.top: parent.top
                     anchors.topMargin: Metrics.scaled(8)
@@ -163,14 +189,26 @@ FocusScope {
                     seed: cell.account ? cell.account.moduleId : ""
                 }
 
-                Rectangle {
-                    visible: Boolean(cell.account) && cell.account.enabled && !cell.account.running
+                MaterialIcon {
+                    visible: Boolean(cell.account) && cell.account.enabled && cell.connectionState !== "active"
                     x: parent.width / 2 - root.tileSize / 2 + Metrics.scaled(8)
                     y: Metrics.scaled(16)
-                    width: Metrics.scaled(10)
-                    height: width
-                    radius: width / 2
-                    color: Theme.pending
+                    iconSize: Metrics.scaled(18)
+                    name: cell.connectionState === "locked" ? "lock" : cell.connectionState === "failed"
+                                                              ? "error_outline" : "hourglass_empty"
+                    iconColor: cell.connectionState === "failed" ? Theme.errorText : Theme.pending
+                }
+                AppText {
+                    anchors.top: profileTile.bottom
+                    anchors.topMargin: Metrics.scaled(4)
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: parent.width
+                    visible: cell.stateLabel.length > 0
+                    text: cell.stateLabel
+                    horizontalAlignment: Text.AlignHCenter
+                    font.pixelSize: Metrics.bodySizePx
+                    color: cell.connectionState === "failed" ? Theme.errorText : Theme.textSecondary
+                    elide: Text.ElideRight
                 }
             }
         }
@@ -187,7 +225,7 @@ FocusScope {
                          "value": "settings"
                      })
         out.push({
-                     "label": account.enabled ? "Hide from home" : "Show on home",
+                     "label": account.enabled || account.pendingEnabled ? "Hide from home" : "Show on home",
                      "value": "toggle"
                  })
         out.push({
@@ -205,7 +243,7 @@ FocusScope {
         if (action === "settings")
             shell.openProviderScreen(Providers.openSettings(account.id))
         else if (action === "toggle")
-            Providers.setAccountEnabled(account.id, !account.enabled)
+            Providers.setAccountEnabled(account.id, !(account.enabled || account.pendingEnabled))
         else if (action === "remove")
             Providers.removeAccount(account.id)
     }

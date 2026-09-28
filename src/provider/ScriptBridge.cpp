@@ -1,4 +1,5 @@
 #include "ScriptBridge.h"
+#include "LanProbe.h"
 #include "SpeedTest.h"
 
 #include <QJSValueIterator>
@@ -91,18 +92,20 @@ void ScriptWatchdog::run()
 }
 
 namespace {
-    QVariant own(
-        const QJSValue& value, int& nodes, qsizetype& bytes, int maximumNodes, qsizetype maximumBytes, int depth)
+    QVariant own(const QJSValue& value, int& nodes, qsizetype& bytes, int maximumNodes, qsizetype maximumBytes,
+        int depth, bool jsonData)
     {
         if (++nodes > maximumNodes || depth > 20 || bytes > maximumBytes)
             throw std::runtime_error("result_limit");
-        if (value.isNull() || value.isUndefined())
+        if (value.isNull())
+            return QVariant::fromValue(nullptr);
+        if (value.isUndefined())
             return {};
         if (value.isBool())
             return value.toBool();
         if (value.isNumber()) {
             const double number = value.toNumber();
-            if (!std::isfinite(number) || std::abs(number) > 9007199254740991.0)
+            if (!std::isfinite(number) || (!jsonData && std::abs(number) > 9007199254740991.0))
                 throw std::runtime_error("unsafe_number");
             return number;
         }
@@ -112,16 +115,17 @@ namespace {
                 throw std::runtime_error("result_limit");
             return text;
         }
-        if (value.isCallable() || value.isQObject() || !value.isObject())
+        if (value.isCallable() || value.isQObject() || !value.isObject()
+            || (jsonData && (value.isDate() || value.isRegExp() || value.isError())))
             throw std::runtime_error("invalid_result");
         if (value.isArray()) {
             const quint32 length = value.property(QStringLiteral("length")).toUInt();
-            if (length > 10000)
+            if (length > (jsonData ? 32768u : 10000u))
                 throw std::runtime_error("result_limit");
             QVariantList list;
             list.reserve(length);
             for (quint32 i = 0; i < length; ++i)
-                list.append(own(value.property(i), nodes, bytes, maximumNodes, maximumBytes, depth + 1));
+                list.append(own(value.property(i), nodes, bytes, maximumNodes, maximumBytes, depth + 1, jsonData));
             return list;
         }
         QVariantMap map;
@@ -129,17 +133,18 @@ namespace {
         while (iterator.hasNext()) {
             iterator.next();
             bytes += iterator.name().size() * sizeof(QChar);
-            map.insert(iterator.name(), own(iterator.value(), nodes, bytes, maximumNodes, maximumBytes, depth + 1));
+            map.insert(
+                iterator.name(), own(iterator.value(), nodes, bytes, maximumNodes, maximumBytes, depth + 1, jsonData));
         }
         return map;
     }
 } // namespace
 
-QVariant ownScriptValue(const QJSValue& value, int maximumNodes, qsizetype maximumBytes)
+QVariant ownScriptValue(const QJSValue& value, int maximumNodes, qsizetype maximumBytes, bool jsonData)
 {
     int nodes = 0;
     qsizetype bytes = 0;
-    return own(value, nodes, bytes, maximumNodes, maximumBytes, 0);
+    return own(value, nodes, bytes, maximumNodes, maximumBytes, 0, jsonData);
 }
 
 bool ScriptAccess::allows(const QUrl& url) const
@@ -150,10 +155,15 @@ bool ScriptAccess::allows(const QUrl& url) const
     if (scheme != QStringLiteral("https") && scheme != QStringLiteral("http") && scheme != QStringLiteral("wss")
         && scheme != QStringLiteral("ws"))
         return false;
-    return std::any_of(origins.begin(), origins.end(), [&url](const QUrl& origin) {
+    const auto matches = [&url](const QUrl& origin) {
         return origin.toString() == QStringLiteral("*")
             || (secure(origin.scheme()) == secure(url.scheme()) && origin.host() == url.host()
                 && defaultPort(origin) == defaultPort(url));
+    };
+    if (std::any_of(origins.cbegin(), origins.cend(), matches))
+        return true;
+    return std::any_of(stagedOrigins.cbegin(), stagedOrigins.cend(), [&matches](const OriginGrant& grant) {
+        return grant.approval->load() && std::any_of(grant.origins.cbegin(), grant.origins.cend(), matches);
     });
 }
 
@@ -193,6 +203,27 @@ void ScriptRequests::http(const QString& address, const QVariantMap& options, QJ
     const QByteArray body = options.value(QStringLiteral("body")).toString().toUtf8();
     if (body.size() > kMaxRequestBytes)
         return rejectWith(engine, reject, "request_limit");
+    QList<QByteArray> requestedHeaders;
+    if (options.contains(QStringLiteral("responseHeaders"))) {
+        if (m_access->extensions.value(QStringLiteral("spool.http-metadata")).toInt() != 1)
+            return rejectWith(engine, reject, "unsupported_extension");
+        const QVariant value = options.value(QStringLiteral("responseHeaders"));
+        if (value.metaType().id() != QMetaType::QVariantList && value.metaType().id() != QMetaType::QStringList)
+            return rejectWith(engine, reject, "header_denied");
+        const QVariantList names = value.toList();
+        if (names.size() > 16)
+            return rejectWith(engine, reject, "header_denied");
+        static const QRegularExpression token(QStringLiteral("\\A[!#$%&'*+.^_`|~0-9A-Za-z-]{1,256}\\z"));
+        for (const QVariant& name : names) {
+            if (name.metaType().id() != QMetaType::QString || !token.match(name.toString()).hasMatch())
+                return rejectWith(engine, reject, "header_denied");
+            const QByteArray normalized = name.toString().toLatin1().toLower();
+            if (normalized == "set-cookie" || normalized == "set-cookie2")
+                return rejectWith(engine, reject, "header_denied");
+            if (!requestedHeaders.contains(normalized))
+                requestedHeaders.append(normalized);
+        }
+    }
     QNetworkRequest request(url);
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
     request.setAttribute(QNetworkRequest::CookieLoadControlAttribute, QNetworkRequest::Manual);
@@ -223,25 +254,40 @@ void ScriptRequests::http(const QString& address, const QVariantMap& options, QJ
         if (!take())
             emit overflowed();
     });
-    connect(reply, &QNetworkReply::finished, this, [this, reply, take, buffer, resolve, reject]() mutable {
-        m_replies.remove(reply);
-        reply->deleteLater();
-        if (!take()) {
-            emit overflowed();
-            return;
-        }
-        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        QJSEngine *engine = m_access->engine;
-        if (status == 0 || (status < 400 && reply->error() != QNetworkReply::NoError))
-            return rejectWith(engine, reject, "network_error");
-        QJSValue response = engine->newObject();
-        response.setProperty(QStringLiteral("status"), status);
-        response.setProperty(QStringLiteral("body"), QString::fromUtf8(*buffer));
-        const QByteArray location = reply->rawHeader("Location");
-        if (!location.isEmpty())
-            response.setProperty(QStringLiteral("location"), QString::fromUtf8(location));
-        resolve.call({ response });
-    });
+    connect(reply, &QNetworkReply::finished, this,
+        [this, reply, take, buffer, requestedHeaders = std::move(requestedHeaders), resolve, reject]() mutable {
+            m_replies.remove(reply);
+            reply->deleteLater();
+            if (!take()) {
+                emit overflowed();
+                return;
+            }
+            const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            QJSEngine *engine = m_access->engine;
+            if (status == 0 || (status < 400 && reply->error() != QNetworkReply::NoError))
+                return rejectWith(engine, reject, "network_error");
+            QJSValue response = engine->newObject();
+            response.setProperty(QStringLiteral("status"), status);
+            response.setProperty(QStringLiteral("body"), QString::fromUtf8(*buffer));
+            const QByteArray location = reply->rawHeader("Location");
+            if (!location.isEmpty())
+                response.setProperty(QStringLiteral("location"), QString::fromUtf8(location));
+            if (!requestedHeaders.isEmpty()) {
+                QJSValue headers = engine->newObject();
+                qsizetype bytes = 0;
+                for (const QByteArray& name : requestedHeaders) {
+                    if (!reply->hasRawHeader(name))
+                        continue;
+                    const QByteArray value = reply->rawHeader(name);
+                    bytes += name.size() + value.size();
+                    if (bytes > 64 * 1024)
+                        return rejectWith(engine, reject, "response_limit");
+                    headers.setProperty(QString::fromLatin1(name), QString::fromLatin1(value));
+                }
+                response.setProperty(QStringLiteral("headers"), headers);
+            }
+            resolve.call({ response });
+        });
 }
 
 void ScriptRequests::speedTest(const QVariantMap& options, QJSValue resolve, QJSValue reject)
@@ -327,13 +373,51 @@ void ScriptRequests::discover(int port, const QString& message, int timeoutMs, Q
     });
 }
 
-ScriptOperation::ScriptOperation(
-    ScriptAccess *access, std::shared_ptr<ScriptResultSink> sink, QString scope, QObject *parent)
+void ScriptRequests::probeLocalHttp(const QVariantMap& options, QJSValue resolve, QJSValue reject)
+{
+    if (m_access->extensions.value(QStringLiteral("spool.lan-probe")).toInt() != 1)
+        return rejectWith(m_access->engine, reject, "unsupported_extension");
+    if (!m_access->loginDraft || !m_access->lanConsent || !m_access->lanSession)
+        return rejectWith(m_access->engine, reject, "discovery_denied");
+    if (m_pending.size() >= kMaxTimers)
+        return rejectWith(m_access->engine, reject, "discovery_busy");
+    auto *probe = new LanProbe(
+        m_access->lanSession,
+        [this, resolve, reject](QString error, QVariantMap result) mutable {
+            QJSEngine *engine = m_access->engine;
+            if (!error.isEmpty()) {
+                reject.call({ engine->toScriptValue(error) });
+                return;
+            }
+            // Qt's QVariantList property wrapper is not a plain JS Array.
+            // Publish the promised wire shape even when providers forward it unchanged.
+            const QVariantList rows = result.value(QStringLiteral("responses")).toList();
+            QJSValue responses = engine->newArray(rows.size());
+            for (qsizetype index = 0; index < rows.size(); ++index)
+                responses.setProperty(index, engine->toScriptValue(rows.at(index).toMap()));
+            QJSValue page = engine->newObject();
+            page.setProperty(QStringLiteral("responses"), responses);
+            page.setProperty(QStringLiteral("exhausted"), result.value(QStringLiteral("exhausted")).toBool());
+            const QVariant cursor = result.value(QStringLiteral("cursor"));
+            page.setProperty(QStringLiteral("cursor"),
+                cursor.isNull() ? QJSValue(QJSValue::NullValue) : QJSValue(cursor.toString()));
+            resolve.call({ page });
+        },
+        this);
+    m_pending.insert(probe);
+    connect(probe, &QObject::destroyed, this, [this, probe] { m_pending.remove(probe); });
+    // Completion can be synchronous (invalid input or an empty snapshot).
+    probe->start(options);
+}
+
+ScriptOperation::ScriptOperation(ScriptAccess *access, std::shared_ptr<ScriptResultSink> sink, QString scope,
+    QObject *parent, bool activationOperation)
     : QObject(parent)
     , m_access(access)
     , m_sink(std::move(sink))
     , m_scope(std::move(scope))
     , m_requests(access, this)
+    , m_activationOperation(activationOperation)
 {
     m_deadline.setSingleShot(true);
     connect(&m_deadline, &QTimer::timeout, this, [this] { cancel("operation_timeout"); });
@@ -369,8 +453,11 @@ void ScriptOperation::resolve(const QJSValue& result)
         m_settled = true;
         m_sink->complete();
         release();
-    } catch (const std::exception&) {
-        cancel("invalid_result");
+    } catch (const std::exception& error) {
+        // Only this native decoder contract is exposed; arbitrary exception
+        // messages can contain provider data.
+        cancel(QByteArrayView(error.what()) == QByteArrayView("invalid_pagination") ? "invalid_pagination"
+                                                                                    : "invalid_result");
     }
 }
 
@@ -391,6 +478,10 @@ void ScriptOperation::reject(const QJSValue& error)
 
 void ScriptOperation::http(const QString& url, const QVariantMap& options, QJSValue resolve, QJSValue reject)
 {
+    if (m_access->activationApproval && !m_access->activationApproval->load() && !m_activationOperation) {
+        reject.call({ QStringLiteral("account_locked") });
+        return;
+    }
     if (!m_settled)
         m_requests.http(url, options, std::move(resolve), std::move(reject));
 }
@@ -411,6 +502,12 @@ void ScriptOperation::discover(int port, const QString& message, int timeoutMs, 
 {
     if (!m_settled)
         m_requests.discover(port, message, timeoutMs, std::move(resolve), std::move(reject));
+}
+
+void ScriptOperation::probeLocalHttp(const QVariantMap& options, QJSValue resolve, QJSValue reject)
+{
+    if (!m_settled)
+        m_requests.probeLocalHttp(options, std::move(resolve), std::move(reject));
 }
 
 void ScriptOperation::release()
@@ -452,6 +549,10 @@ void ScriptSourceHost::emitEvent(const QString& type, const QJSValue& payload)
 
 void ScriptSourceHost::http(const QString& url, const QVariantMap& options, QJSValue resolve, QJSValue reject)
 {
+    if (m_access.activationApproval && !m_access.activationApproval->load()) {
+        reject.call({ QStringLiteral("account_locked") });
+        return;
+    }
     m_requests.http(url, options, std::move(resolve), std::move(reject));
 }
 
@@ -463,6 +564,8 @@ void ScriptSourceHost::delay(int milliseconds, QJSValue resolve, QJSValue reject
 int ScriptSourceHost::socket(
     const QString& address, const QVariantMap& headers, QJSValue onOpen, QJSValue onMessage, QJSValue onClose)
 {
+    if (m_access.activationApproval && !m_access.activationApproval->load())
+        return 0;
     const QUrl url(address);
     for (auto it = m_sockets.begin(); it != m_sockets.end();)
         it = it.value().isNull() ? m_sockets.erase(it) : std::next(it);

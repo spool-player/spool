@@ -5,6 +5,7 @@
 
 #include <QHash>
 #include <QObject>
+#include <QSet>
 #include <QString>
 #include <QVariantMap>
 
@@ -21,6 +22,7 @@ class BrowseSessionController final : public QObject {
     Q_PROPERTY(bool hasMore READ hasMore NOTIFY pagingChanged)
     Q_PROPERTY(int totalCount READ totalCount NOTIFY pagingChanged)
     Q_PROPERTY(QString libraryId READ libraryId NOTIFY changed)
+    Q_PROPERTY(QString containerId READ containerId NOTIFY changed)
     Q_PROPERTY(QString libraryCollectionType READ libraryCollectionType NOTIFY changed)
     Q_PROPERTY(QString title READ title NOTIFY changed)
     Q_PROPERTY(QString viewKind READ viewKind NOTIFY changed)
@@ -55,6 +57,10 @@ public:
     {
         return m_nextStartIndex;
     }
+    std::optional<QString> nextCursor() const
+    {
+        return m_nextCursor;
+    }
     int rowCount() const
     {
         return m_items.rowCount();
@@ -62,6 +68,11 @@ public:
     QString libraryId() const
     {
         return m_libraryId;
+    }
+    QString containerId() const
+    {
+        return m_descriptor.kind == BrowseKind::Playlist || m_descriptor.kind == BrowseKind::BoxSet ? m_descriptor.id
+                                                                                                    : QString();
     }
     QString libraryCollectionType() const
     {
@@ -106,7 +117,6 @@ public:
     void resetPaging(const QString& cacheKey = {});
     void setPage(const PagedMovieItems& page, const QString& cacheKey, bool append);
     void setLoadingMore(bool loading);
-    void setWarmCachePaging(int cachedCount, int pageSize);
     Q_INVOKABLE void prefetchVisibleRange(int firstIndex, int lastIndex);
     Q_INVOKABLE void prefetchPageForIndex(int lastIndex);
     Q_INVOKABLE void prefetchNextPage();
@@ -144,6 +154,8 @@ private:
     int m_totalCount = 0;
     int m_nextStartIndex = 0;
     int m_pageSize = 0;
+    std::optional<QString> m_nextCursor;
+    QSet<QString> m_seenCursors;
 
     QString m_libraryId;
     QString m_libraryCollectionType;

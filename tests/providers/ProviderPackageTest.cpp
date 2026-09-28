@@ -1,15 +1,20 @@
 #include "provider/ProviderPackage.h"
 #include "ProviderFixture.h"
 #include "TestMain.h"
+#include "provider/ProviderExtensions.h"
 
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QTemporaryDir>
 
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <limits>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -73,6 +78,55 @@ SPOOL_TEST_MAIN("provider-package-unpack")
     require(package->manifest.actions.size() == 1, "actions without an id are dropped");
     require(package->files.size() == 4 && !package->files.contains(QStringLiteral("logic/")),
         "files are read and directories are not files");
+    const auto withExtensions = [](const QVariant& extensions) {
+        QJsonObject root = QJsonDocument::fromJson(manifest()).object();
+        root.insert(QStringLiteral("extensions"), QJsonValue::fromVariant(extensions));
+        return QJsonDocument(root).toJson();
+    };
+    const QVariantMap declarations { { "spool.speed-test", 1 }, { "spool.suggestions", 2 }, { "future.feature", 1 } };
+    const auto extended = ProviderManifest::parse(withExtensions(declarations), &error);
+    require(extended && extended->extensions == declarations,
+        "unknown extension names and unsupported wire majors retain baseline package compatibility");
+    require(ProviderExtensions::supported(declarations) == QVariantMap { { "spool.speed-test", 1 } },
+        "host support never downgrades or grants unknown declarations");
+    require(ProviderExtensions::intersect(
+                declarations, { { "spool.speed-test", 1 }, { "spool.suggestions", 1 }, { "spool.item-actions", 1 } })
+            == QVariantMap { { "spool.speed-test", 1 } },
+        "account offers cannot grant undeclared or mismatched versions");
+    require(ProviderExtensions::intersect(declarations, { { "spool.speed-test", 2 } }).isEmpty()
+            && ProviderExtensions::intersect(declarations, {}).isEmpty(),
+        "different-major and withdrawn account offers lose support");
+    require(ProviderExtensions::operationExtension("preferencesWrite") == "spool.playback-preferences"
+            && ProviderExtensions::operationExtension("activate") == "spool.account-activation"
+            && ProviderExtensions::operationExtension("report").isEmpty()
+            && ProviderExtensions::operationExtension("runItemAction").isEmpty()
+            && ProviderExtensions::operationExtension("extensionStatus").isEmpty(),
+        "optional operations are guarded without capturing baseline reporting or compatibility discovery");
+    QList<QVariant> malformed { QVariant(), QVariantList {}, true, QStringLiteral("spool.speed-test"),
+        QVariantMap { { "feature", 1 } }, QVariantMap { { "Bad.feature", 1 } },
+        QVariantMap { { "spool.feature\n", 1 } }, QVariantMap { { QStringLiteral("spool.") + QString(123, 'x'), 1 } } };
+    for (const QVariant& major :
+        QList<QVariant> { 0, -1, true, false, QStringLiteral("1"), QVariant(), QVariantList {}, QVariantMap {}, 1.5,
+            qint64(2147483648), std::numeric_limits<double>::infinity(), std::numeric_limits<double>::quiet_NaN() })
+        malformed.append(QVariantMap { { "spool.speed-test", major } });
+    QVariantMap boundary;
+    for (int index = 0; index < 31; ++index)
+        boundary.insert(QStringLiteral("future.feature%1").arg(index), std::numeric_limits<int>::max());
+    boundary.insert(QStringLiteral("x.") + QString(126, 'a'), 1.0);
+    require(ProviderManifest::parse(withExtensions(boundary)).has_value(),
+        "32 declarations, 128-character ids and positive integer boundaries are accepted");
+    boundary.insert(QStringLiteral("future.overflow"), 1);
+    malformed.append(boundary);
+    for (const QVariant& extensions : malformed) {
+        require(!ProviderManifest::parse(withExtensions(extensions)), "malformed extension declarations reject");
+        bool rejected = false;
+        try {
+            ProviderExtensions::decode(extensions);
+        } catch (const std::runtime_error& failure) {
+            rejected = QByteArray(failure.what()) == "invalid_extensions";
+        }
+        require(rejected, "malformed dynamic account offers fail with invalid_extensions");
+    }
 
     // Several raw blocks, as a zstd encoder emits for incompressible input.
     Entries large = validEntries();

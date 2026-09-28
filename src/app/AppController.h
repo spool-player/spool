@@ -10,6 +10,7 @@
 #include "BrowseSessionController.h"
 #include "ContentModelController.h"
 #include "HomeModelController.h"
+#include "RemoteTargetsController.h"
 #include "SearchController.h"
 #include "SettingsController.h"
 
@@ -21,6 +22,8 @@
 #include <QVariantMap>
 
 #include <memory>
+#include <optional>
+#include <span>
 
 #include <vector>
 
@@ -32,6 +35,7 @@ class GroupPlaybackController;
 class LibraryPrefetchController;
 class PlaybackSource;
 class SourceHub;
+class SettingsSyncController;
 class StreamQualityControl;
 class UserItemStateController;
 class TlsTrustController;
@@ -53,6 +57,15 @@ class AppController final : public QObject {
 public:
     AppController(DatabaseManager *database, SourceHub *provider, ArtworkService *artwork, PlayerController *player,
         QObject *parent = nullptr);
+    void attachSettingsSync(SettingsSyncController *sync)
+    {
+        m_settingsSync = sync;
+    }
+    void attachRemoteTargets(RemoteTargetsController *targets)
+    {
+        m_remoteTargets = targets;
+    }
+    void revokeAccountIdentity(const QString& accountId);
 
     ArtworkService *artwork() const
     {
@@ -110,6 +123,9 @@ public:
     Q_INVOKABLE bool openLibraryById(const QString& libraryId);
     Q_INVOKABLE void playFromModel(QObject *model, int index, bool fromStart = false);
     Q_INVOKABLE void playItemId(const QString& itemId, bool fromStart = false);
+    // Explicit local launch path: inbound/CLI playback must never be relayed.
+    void playLocalItemId(const QString& itemId, bool fromStart = false);
+    Q_INVOKABLE void transferPlaybackToRemote();
     void stopPlayback();
     Q_INVOKABLE void playQueueNext();
     Q_INVOKABLE void playQueuePrevious();
@@ -169,6 +185,7 @@ private:
     void showToast(const QString& message);
     QCoro::Task<void> initializeAsync();
     void resetApplicationState();
+    void resetVisibleModels();
     void loadLibraries();
     void loadMoreCurrentItems();
     void refreshHomeRows()
@@ -180,16 +197,28 @@ private:
     RequestGeneration::Token beginBrowse(bool useWarmCache = false);
     QCoro::Task<void> startPlayback(MovieItem playItem, bool startPaused = false, bool forceTranscode = false,
         int audioStreamIndex = -2, int subtitleStreamIndex = -2, bool restartActive = false);
-    void playQueuedItems(const std::vector<MovieItem>& items, int startIndex, bool fromStart = false);
+    // nullopt is an explicitly local internal operation. A user operation captures
+    // even the local selection, so a later target change invalidates its lookup.
+    using PlayDestination = std::optional<RemoteTargetsController::Selection>;
+    PlayDestination userPlayDestination() const;
+    bool destinationIsCurrent(const PlayDestination& destination) const;
+    bool dispatchRemotePlay(const PlayDestination& destination, std::span<const MovieItem> items, int startIndex,
+        bool fromStart, const QString& mode = QStringLiteral("now"),
+        std::optional<qint64> positionTicks = std::nullopt);
+    void fetchPlayItem(const QString& itemId, bool fromStart, PlayDestination destination);
+    void playQueuedItems(
+        const std::vector<MovieItem>& items, int startIndex, bool fromStart, PlayDestination destination);
     bool modelIsOrderedList(MovieGridModel *model) const;
-    void playAlbumFrom(const MovieItem& track, bool fromStart);
+    void playAlbumFrom(const MovieItem& track, bool fromStart, PlayDestination destination);
     bool inGroup() const;
     void groupOrLocalTogglePause();
     void setPlaybackTransition(bool transition);
     QString queueEntryId(int index) const;
     bool enqueueForGroup(const MovieItem& item, bool queueNext);
-    void playQueuedItem(const MovieItem& item, bool fromStart = false);
-    void playEpisodeWithContext(const MovieItem& episode, int direction, bool fromStart);
+    void playQueuedItem(const MovieItem& item, bool fromStart, PlayDestination destination);
+    void playEpisodeWithContext(const MovieItem& episode, int direction, bool fromStart, PlayDestination destination);
+    void playLocalQueueNext(PlayDestination destination);
+    void playLocalQueuePrevious(PlayDestination destination);
     void playQueueCurrent(bool fromStart = false);
     void startQueuedPlayback(bool fromStart = false);
     // AppControllerRemote.cpp: commands another client sent through a source.
@@ -206,6 +235,7 @@ private:
     // Null when the provider lacks the matching capability.
     StreamQualityControl *m_quality = nullptr;
     GroupPlaybackController *m_group = nullptr;
+    RemoteTargetsController *m_remoteTargets = nullptr;
     ArtworkService *m_artwork = nullptr;
     PlayerController *m_player = nullptr;
     PlayQueueController *m_playQueue = nullptr;
@@ -213,6 +243,7 @@ private:
     BrowseSessionController *m_browse = nullptr;
     HomeModelController *m_home = nullptr;
     SettingsController *m_settings = nullptr;
+    SettingsSyncController *m_settingsSync = nullptr;
     LibraryPrefetchController *m_prefetch = nullptr;
     UserItemStateController *m_itemState = nullptr;
     SearchController *m_search = nullptr;
@@ -221,6 +252,7 @@ private:
     bool m_episodeQueuePending = false;
     LibraryListModel m_libraries;
     MovieItem m_activePlaybackItem;
+    QString m_playingAccountId;
     QList<MediaStreamInfo> m_activePlaybackStreams;
     int m_activeAudioStreamIndex = -1;
     int m_activeSubtitleStreamIndex = -1;

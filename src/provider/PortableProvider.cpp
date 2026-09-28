@@ -2,9 +2,16 @@
 
 #include "ProviderRegistry.h"
 
+#include <QCoroFuture>
+#include <QPointer>
+#include <QPromise>
+#include <QScopeGuard>
+#include <QSet>
 #include <QUrl>
 
 #include <algorithm>
+#include <iterator>
+#include <utility>
 
 namespace Spool {
 
@@ -79,10 +86,6 @@ namespace {
         co_return T {};
     }
 
-    QString cursorFor(int startIndex)
-    {
-        return startIndex > 0 ? QString::number(startIndex) : QString();
-    }
 } // namespace
 
 class PortableProvider::Playback final : public PlaybackSource {
@@ -91,6 +94,12 @@ public:
         : PlaybackSource(owner)
         , m_owner(owner)
     {
+        connect(owner->m_registry, &ProviderRegistry::extensionsChanged, this, [this](const QString& account) {
+            if (account == m_owner->m_accountId) {
+                ++m_queueSupportGeneration;
+                m_reportedQueueRevision.clear();
+            }
+        });
     }
 
     QByteArray mediaRequestHeaders() const override
@@ -216,13 +225,30 @@ private:
         args.insert(QStringLiteral("positionTicks"), QString::number(positionTicks));
         args.insert(QStringLiteral("audioStreamIndex"), session.audioStreamIndex);
         args.insert(QStringLiteral("subtitleStreamIndex"), session.subtitleStreamIndex);
+        QString queueRevision;
+        const quint64 supportGeneration = m_queueSupportGeneration;
+        if (event != QStringLiteral("stop")
+            && m_owner->m_registry->extensionVersion(
+                   m_owner->m_accountId, QStringLiteral("spool.playback-queue-reporting"))
+                == 1) {
+            queueRevision = m_owner->m_queueSnapshot.value(QStringLiteral("revision")).toString();
+            if (!queueRevision.isEmpty()
+                && (event == QStringLiteral("start") || queueRevision != m_reportedQueueRevision))
+                args.insert(QStringLiteral("queue"), m_owner->m_queueSnapshot);
+            if (m_owner->m_queueIndex >= 0)
+                args.insert(QStringLiteral("queueIndex"), m_owner->m_queueIndex);
+        }
         co_await m_owner->call(QStringLiteral("report"), args);
+        if (!queueRevision.isEmpty() && supportGeneration == m_queueSupportGeneration)
+            m_reportedQueueRevision = queueRevision;
     }
 
     PortableProvider *m_owner;
     QByteArray m_headers;
     QUrl m_origin;
     QString m_variantId;
+    QString m_reportedQueueRevision;
+    quint64 m_queueSupportGeneration = 0;
 };
 
 void PortableProvider::setPlaybackContext(QVariantMap context)
@@ -233,6 +259,20 @@ void PortableProvider::setPlaybackContext(QVariantMap context)
         emit m_playback->playbackNetworkProfileChanged();
 }
 
+void PortableProvider::setPlaybackQueueContext(QVariantMap snapshot, int index)
+{
+    m_queueSnapshot = std::move(snapshot);
+    m_queueIndex = index;
+}
+
+void PortableProvider::setExtensionSpeedTest(bool enabled)
+{
+    const Capabilities before = m_capabilities;
+    m_capabilities.setFlag(SpeedTest, m_legacySpeedTest || enabled);
+    if (before != m_capabilities)
+        emit capabilitiesChanged();
+}
+
 PortableProvider::PortableProvider(ProviderRegistry *registry, QString accountId, QString label,
     Capabilities capabilities, const QVariantMap& description, QObject *parent)
     : Provider(parent)
@@ -240,6 +280,7 @@ PortableProvider::PortableProvider(ProviderRegistry *registry, QString accountId
     , m_accountId(std::move(accountId))
     , m_label(std::move(label))
     , m_capabilities(capabilities)
+    , m_legacySpeedTest(capabilities.testFlag(SpeedTest))
     , m_artworkTemplate(description.value(QStringLiteral("artwork")).toString())
     , m_trickplayTemplate(description.value(QStringLiteral("trickplay")).toString())
     , m_playback(new Playback(this))
@@ -258,23 +299,61 @@ QCoro::Task<QVariantMap> PortableProvider::call(QString operation, QVariantMap a
     return m_registry->callSource(m_accountId, std::move(operation), std::move(arguments));
 }
 
-QCoro::Task<std::vector<MovieItem>> PortableProvider::list(
-    QString operation, QVariantMap arguments, int limit, QString scope)
+QCoro::Task<ProviderMediaPage> PortableProvider::listPage(
+    QString operation, QVariantMap arguments, int limit, std::optional<QString> cursor, QString scope)
 {
-    limit = std::clamp(limit, 1, 100);
     arguments.insert(QStringLiteral("limit"), limit);
-    ProviderMediaPage page = co_await orEmpty(
-        m_registry->callSourceMediaPage(m_accountId, std::move(operation), arguments, limit, std::move(scope)));
-    co_return std::move(page.items);
+    if (cursor)
+        arguments.insert(QStringLiteral("cursor"), *cursor);
+    else
+        arguments.remove(QStringLiteral("cursor"));
+    try {
+        co_return co_await m_registry->callSourceMediaPage(
+            m_accountId, std::move(operation), std::move(arguments), limit, std::move(scope));
+    } catch (const std::exception& error) {
+        if (QByteArray(error.what()) != "unsupported_operation")
+            throw;
+    }
+    co_return ProviderMediaPage { {}, {}, {}, true };
+}
+
+QCoro::Task<std::vector<MovieItem>> PortableProvider::list(
+    QString operation, QVariantMap arguments, std::optional<int> limit, QString scope)
+{
+    std::vector<MovieItem> items;
+    const QPointer<PortableProvider> guard(this);
+    if (limit && *limit <= 0)
+        co_return items;
+    std::optional<QString> cursor;
+    QSet<QString> seen;
+    for (int pages = 0; pages < 256; ++pages) {
+        if (!guard)
+            throw std::runtime_error("source_unavailable");
+        const int remaining = limit ? *limit - static_cast<int>(items.size()) : 10000 - static_cast<int>(items.size());
+        ProviderMediaPage page = co_await listPage(operation, arguments, std::min(remaining, 100), cursor, scope);
+        if (!page.exhausted) {
+            if (!page.cursor || page.cursor->isEmpty() || seen.contains(*page.cursor))
+                throw std::runtime_error("invalid_pagination");
+            seen.insert(*page.cursor);
+        }
+        items.insert(
+            items.end(), std::make_move_iterator(page.items.begin()), std::make_move_iterator(page.items.end()));
+        if (page.exhausted || (limit && items.size() >= static_cast<size_t>(*limit)))
+            co_return items;
+        if (!limit && items.size() >= 10000)
+            throw std::runtime_error("response_limit");
+        cursor = std::move(page.cursor);
+    }
+    throw std::runtime_error("response_limit");
 }
 
 QCoro::Task<PagedMovieItems> PortableProvider::fetchBrowsePage(
-    BrowseDescriptor descriptor, int startIndex, int limit, QVariantMap queryOptions)
+    BrowseDescriptor descriptor, int startIndex, int limit, QVariantMap queryOptions, std::optional<QString> cursor)
 {
     startIndex = std::max(0, startIndex);
     limit = std::clamp(limit, 1, 100);
     QString operation = QStringLiteral("browse");
-    QVariantMap args { { QStringLiteral("cursor"), cursorFor(startIndex) }, { QStringLiteral("limit"), limit } };
+    QVariantMap args;
     switch (descriptor.kind) {
     case BrowseKind::Library:
     case BrowseKind::Genre:
@@ -319,12 +398,13 @@ QCoro::Task<PagedMovieItems> PortableProvider::fetchBrowsePage(
         co_return PagedMovieItems { {}, 0, startIndex, limit };
     }
 
-    ProviderMediaPage page = co_await m_registry->callSourceMediaPage(m_accountId, operation, args, limit);
+    ProviderMediaPage page = co_await listPage(operation, std::move(args), limit, std::move(cursor));
+    if (!page.exhausted && (!page.cursor || page.cursor->isEmpty()))
+        throw std::runtime_error("invalid_pagination");
     const int count = static_cast<int>(page.items.size());
-    // Core pages by offset; a provider whose cursor is not an offset still
-    // pages correctly as long as it reports exhaustion.
     const int total = page.total ? static_cast<int>(*page.total) : startIndex + count + (page.exhausted ? 0 : 1);
-    co_return PagedMovieItems { std::move(page.items), total, startIndex, limit };
+    co_return PagedMovieItems { std::move(page.items), total, startIndex, limit, std::move(page.cursor),
+        page.exhausted };
 }
 
 QCoro::Task<MovieItem> PortableProvider::fetchItemDetails(QString itemId)
@@ -334,7 +414,7 @@ QCoro::Task<MovieItem> PortableProvider::fetchItemDetails(QString itemId)
 
 QCoro::Task<std::vector<MovieItem>> PortableProvider::fetchSeasons(QString seriesId)
 {
-    auto seasons = co_await list(QStringLiteral("seasons"), { { QStringLiteral("seriesId"), seriesId } }, 100);
+    auto seasons = co_await list(QStringLiteral("seasons"), { { QStringLiteral("seriesId"), seriesId } }, std::nullopt);
     for (MovieItem& season : seasons) {
         if (season.seriesId.isEmpty())
             season.seriesId = seriesId;
@@ -345,7 +425,7 @@ QCoro::Task<std::vector<MovieItem>> PortableProvider::fetchSeasons(QString serie
 QCoro::Task<std::vector<MovieItem>> PortableProvider::fetchEpisodes(QString seriesId, QString seasonId)
 {
     return list(QStringLiteral("episodes"),
-        { { QStringLiteral("seriesId"), seriesId }, { QStringLiteral("seasonId"), seasonId } }, 100);
+        { { QStringLiteral("seriesId"), seriesId }, { QStringLiteral("seasonId"), seasonId } }, std::nullopt);
 }
 
 QCoro::Task<std::vector<MovieItem>> PortableProvider::fetchResumeItems(int limit)
@@ -371,8 +451,8 @@ QCoro::Task<std::vector<MovieItem>> PortableProvider::fetchSimilarItems(QString 
 QCoro::Task<PersonCredits> PortableProvider::fetchItemsByPerson(QString personId, int maximumItems)
 {
     PersonCredits credits;
-    credits.items = co_await list(
-        QStringLiteral("personItems"), { { QStringLiteral("personId"), personId } }, std::min(maximumItems, 100));
+    credits.items
+        = co_await list(QStringLiteral("personItems"), { { QStringLiteral("personId"), personId } }, maximumItems);
     co_return credits;
 }
 
@@ -399,7 +479,50 @@ QCoro::Task<std::vector<MovieItem>> PortableProvider::fetchItemsByIds(QStringLis
 {
     if (itemIds.isEmpty())
         co_return {};
-    co_return co_await list(QStringLiteral("items"), { { QStringLiteral("ids"), itemIds } }, int(itemIds.size()));
+    // Serialize invocations for this account, with two bounded batches in flight
+    // inside each invocation. Source removal still cancels the registry operations.
+    QPromise<void> turn;
+    turn.start();
+    const QFuture<void> previous = std::exchange(m_itemsTail, turn.future());
+    const auto release = qScopeGuard([&turn] { turn.finish(); });
+    const QPointer<PortableProvider> guard(this);
+    if (previous.isValid())
+        co_await qCoro(previous).result();
+    QStringList unique = itemIds;
+    unique.removeDuplicates();
+    QHash<QString, MovieItem> found;
+    for (qsizetype offset = 0; offset < unique.size(); offset += 100) {
+        if (!guard)
+            throw std::runtime_error("source_unavailable");
+        std::vector<QCoro::Task<std::vector<MovieItem>>> pending;
+        pending.reserve(2);
+        for (qsizetype batch = offset; batch < std::min(offset + 100, unique.size()); batch += 50) {
+            const QStringList ids = unique.mid(batch, std::min(qsizetype(50), unique.size() - batch));
+            pending.push_back(list(QStringLiteral("items"), { { QStringLiteral("ids"), ids } }, int(ids.size())));
+        }
+        std::exception_ptr failure;
+        for (auto& task : pending) {
+            try {
+                for (MovieItem& item : co_await std::move(task)) {
+                    const QString id = item.id;
+                    found.insert(id, std::move(item));
+                }
+            } catch (...) {
+                if (!failure)
+                    failure = std::current_exception();
+            }
+        }
+        if (failure)
+            std::rethrow_exception(failure);
+    }
+    std::vector<MovieItem> ordered;
+    ordered.reserve(itemIds.size());
+    for (const QString& id : itemIds) {
+        const auto it = found.constFind(id);
+        if (it != found.cend())
+            ordered.push_back(*it);
+    }
+    co_return ordered;
 }
 
 QCoro::Task<std::vector<MovieItem>> PortableProvider::searchItems(QString searchTerm, int limit)
@@ -411,7 +534,9 @@ QCoro::Task<std::vector<MovieItem>> PortableProvider::searchItems(QString search
 
 QCoro::Task<std::vector<MovieItem>> PortableProvider::fetchSearchSuggestions(int limit)
 {
-    return list(QStringLiteral("resume"), {}, limit);
+    if (limit <= 0 || m_registry->extensionVersion(m_accountId, QStringLiteral("spool.suggestions")) != 1)
+        co_return std::vector<MovieItem> {};
+    co_return co_await list(QStringLiteral("suggestions"), {}, std::min(limit, 60), QStringLiteral("suggestions"));
 }
 
 QCoro::Task<void> PortableProvider::setItemFavorite(QString itemId, bool favorite)

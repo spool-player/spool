@@ -178,6 +178,7 @@ namespace {
             media.id = field(row, "id", 1024);
             if (media.id.isEmpty())
                 invalid();
+            media.playlistItemId = field(row, "entryId", 1024);
             media.title = field(row, "title");
             media.sortName = field(row, "sortName");
             if (media.sortName.isEmpty())
@@ -287,10 +288,10 @@ ProviderMediaPage readProviderMediaPage(const QJSValue& value, int maximumItems)
     if (!absent(cursor)) {
         result.cursor = reader.text(cursor, 4096);
         if (result.cursor->isEmpty())
-            invalid();
+            throw std::runtime_error("invalid_pagination");
     }
     if (!result.exhausted && !result.cursor)
-        invalid();
+        throw std::runtime_error("invalid_pagination");
     const QJSValue total = value.property(QStringLiteral("total"));
     if (!absent(total))
         result.total = integer(total);

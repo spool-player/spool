@@ -178,6 +178,10 @@ and zoom rather than a fixed phone grid. The Android Qt build carries a
 live-density notification patch so fold/configuration changes update the UI
 without requiring an app restart.
 
+New installations start at 100% interface scale on every platform, including
+webOS and Android TV. Existing saved percentages are preserved. Scale always
+stays device-local and is excluded from settings synchronization.
+
 `tools/android/build-universal-apk.sh` merges per-ABI APKs from one build into
 the single `spool-universal.apk` the release page offers, for people who do not
 know their device's architecture. The in-app updater never fetches it: the

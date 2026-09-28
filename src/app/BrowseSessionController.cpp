@@ -7,6 +7,7 @@
 #include <QElapsedTimer>
 #include <QSettings>
 #include <algorithm>
+#include <stdexcept>
 
 namespace Spool {
 
@@ -35,8 +36,7 @@ int BrowseSessionController::applyCachedPage(const QString& cacheKey)
 
     const auto prefetchedPage = m_prefetch->cachedPage(cacheKey);
     if (prefetchedPage) {
-        m_items.setMovies(prefetchedPage->items);
-        m_prefetch->prefetchPosters(prefetchedPage->items);
+        setPage(*prefetchedPage, cacheKey, false);
         return m_items.rowCount();
     }
     m_items.clear();
@@ -67,6 +67,8 @@ void BrowseSessionController::resetPaging(const QString& cacheKey)
     m_totalCount = 0;
     m_nextStartIndex = 0;
     m_pageSize = 0;
+    m_nextCursor.reset();
+    m_seenCursors.clear();
     emit pagingChanged();
 }
 
@@ -74,6 +76,18 @@ void BrowseSessionController::setPage(const PagedMovieItems& page, const QString
 {
     QElapsedTimer applyTimer;
     applyTimer.start();
+    if (!page.exhausted
+        && (!page.nextCursor || page.nextCursor->isEmpty() || (append && m_seenCursors.contains(*page.nextCursor)))) {
+        m_loadingMore = false;
+        m_hasMore = false;
+        emit pagingChanged();
+        throw std::runtime_error("invalid_pagination");
+    }
+    if (!append)
+        m_seenCursors.clear();
+    if (!page.exhausted)
+        m_seenCursors.insert(*page.nextCursor);
+    m_nextCursor = page.exhausted ? std::nullopt : page.nextCursor;
     if (append)
         m_items.appendMovies(page.items);
     else
@@ -90,10 +104,7 @@ void BrowseSessionController::setPage(const PagedMovieItems& page, const QString
     m_totalCount = hasServerTotal ? std::max(page.totalRecordCount, m_nextStartIndex) : m_nextStartIndex;
     if (page.limit > 0)
         m_pageSize = page.limit;
-    m_hasMore = hasServerTotal ? m_nextStartIndex < m_totalCount
-                               : page.items.size() >= static_cast<size_t>(std::max(1, page.limit));
-    if (page.items.empty())
-        m_hasMore = false;
+    m_hasMore = !page.exhausted;
     m_loadingMore = false;
 
     if (m_prefetch)
@@ -106,16 +117,6 @@ void BrowseSessionController::setLoadingMore(bool loading)
     if (m_loadingMore == loading)
         return;
     m_loadingMore = loading;
-    emit pagingChanged();
-}
-
-void BrowseSessionController::setWarmCachePaging(int cachedCount, int pageSize)
-{
-    m_nextStartIndex = cachedCount;
-    m_pageSize = std::max(1, pageSize);
-    m_totalCount = cachedCount;
-    m_hasMore = cachedCount >= pageSize;
-    m_loadingMore = true;
     emit pagingChanged();
 }
 
@@ -163,6 +164,7 @@ void BrowseSessionController::updatePlayed(const QString& itemId, bool played)
 
 void BrowseSessionController::enterLibrary(const LibraryItem& library, const QVariantMap& defaultQuery)
 {
+    resetPaging();
     m_libraryId = library.id;
     m_libraryCollectionType = library.collectionType;
     m_title = library.name;
@@ -279,6 +281,7 @@ bool BrowseSessionController::setQuery(QVariantMap query)
     if (m_query == query)
         return false;
     m_query = std::move(query);
+    resetPaging();
     if (!m_libraryId.isEmpty()) {
         m_libraryQueries.insert(m_libraryId, m_query);
         QSettings().setValue(QStringLiteral("browse/libraryQueries/") + m_libraryId, m_query);
@@ -307,6 +310,7 @@ void BrowseSessionController::setFilterOptions(const QVariantMap& options)
 
 void BrowseSessionController::clearBrowseIdentity()
 {
+    resetPaging();
     m_libraryId.clear();
     m_libraryCollectionType.clear();
     m_seriesId.clear();

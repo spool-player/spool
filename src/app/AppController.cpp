@@ -22,6 +22,7 @@
 #include "LibraryQuery.h"
 #include "SearchController.h"
 #include "SettingsController.h"
+#include "SettingsSyncController.h"
 #include "UserItemStateController.h"
 
 #include <QDebug>
@@ -101,6 +102,40 @@ AppController::AppController(
     , m_player(player)
 {
     m_playQueue = new PlayQueueController(m_playback, this);
+    const auto updateReportingQueue = [this] {
+        QHash<QString, bool> audioItems;
+        audioItems.reserve(m_playQueue->count());
+        for (int row = 0; row < m_playQueue->count(); ++row) {
+            const QModelIndex index = m_playQueue->index(row);
+            const QString id = m_playQueue->data(index, PlayQueueController::ItemIdRole).toString();
+            const QString type = m_playQueue->data(index, PlayQueueController::ItemTypeRole).toString();
+            // The queue has already applied isPlayableItem; its audio classes
+            // are Audio and AudioBook, with the remaining playable types video.
+            audioItems.insert(id, type == QStringLiteral("Audio") || type == QStringLiteral("AudioBook"));
+        }
+        const auto ordered = m_playQueue->nowPlayingQueue();
+        std::vector<SourceHub::ReportingQueueEntry> entries;
+        entries.reserve(ordered.size());
+        int current = m_playQueue->currentIndex();
+        const auto currentRow = m_playQueue->index(current);
+        const QString currentId = m_playQueue->data(currentRow, PlayQueueController::ItemIdRole).toString();
+        const QString currentEntry = m_playQueue->data(currentRow, PlayQueueController::PlaylistItemIdRole).toString();
+        int matchedIndex = -1;
+        int matches = 0;
+        for (const auto& item : ordered) {
+            if (item.itemId == currentId && item.playlistItemId == currentEntry) {
+                matchedIndex = static_cast<int>(entries.size());
+                ++matches;
+            }
+            entries.push_back({ item.itemId, item.playlistItemId, audioItems.value(item.itemId) });
+        }
+        // The public queue model does not expose the shuffled occurrence index.
+        // Never guess which anonymous duplicate is current.
+        if (m_playQueue->shuffled())
+            current = matches == 1 ? matchedIndex : -1;
+        m_provider->setPlaybackQueue(std::move(entries), current);
+    };
+    connect(m_playQueue, &PlayQueueController::queueChanged, this, updateReportingQueue);
     m_settings = new SettingsController(database, player, artwork, this);
     m_prefetch = new LibraryPrefetchController(m_catalog, artwork, this);
     m_browse = new BrowseSessionController(m_prefetch, this);
@@ -114,6 +149,10 @@ AppController::AppController(
         [this](const QString& accountId, const QString& type, const QVariantMap& payload) {
             if (type == QStringLiteral("remote"))
                 handleRemoteCommand(accountId, payload);
+            else if (type == QStringLiteral("playbackQueueStatus")
+                && payload.value(QStringLiteral("state")).toString() == QStringLiteral("unavailable"))
+                showToast(
+                    QStringLiteral("This provider could not synchronize the playback queue. Playback continues."));
         });
     connect(provider, &SourceHub::streamingQualityChanged, this, &AppController::streamingQualityChanged);
     // Probes must not compete with playback or foreground catalogue requests.
@@ -125,6 +164,10 @@ AppController::AppController(
     connect(this, &AppController::busyChanged, this, updateProbeActivity);
     connect(this, &AppController::playbackTransitionChanged, this, updateProbeActivity);
     connect(m_player, &PlayerController::sessionActiveChanged, this, updateProbeActivity);
+    connect(m_player, &PlayerController::sessionActiveChanged, this, [this] {
+        if (!m_player->sessionActive())
+            m_playingAccountId.clear();
+    });
     connect(m_browse, &BrowseSessionController::pagingChanged, this, updateProbeActivity);
     connect(m_search, &SearchController::busyChanged, this, updateProbeActivity);
     connect(m_search, &SearchController::suggestionsChanged, this, updateProbeActivity);
@@ -329,6 +372,8 @@ QCoro::Task<void> AppController::initializeAsync()
         qInfo() << "app: another instance holds the stored device identity; running as instance" << instanceSlot + 1;
     }
     m_settings->applyLocalValues(startupState.values);
+    if (m_settingsSync)
+        co_await m_settingsSync->loadLocalAsync();
     emit deviceIdentityReady(deviceId);
 
     m_initialized = true;
@@ -338,21 +383,42 @@ QCoro::Task<void> AppController::initializeAsync()
 void AppController::resetApplicationState()
 {
     m_remotePlaybackRequestGeneration.invalidate();
+    resetVisibleModels();
+    m_activePlaybackItem = {};
+}
+
+void AppController::resetVisibleModels()
+{
     m_prefetch->stop();
     if (m_artwork)
         m_artwork->cancelPrefetches();
-    if (m_database)
-        m_database->invalidateHomePayloads();
     m_libraries.clear();
     m_browse->clear();
     m_home->reset();
     m_content->reset();
     m_search->reset();
-    m_activePlaybackItem = {};
     m_libraryLoadGeneration.invalidate();
     m_browse->reset();
     setBusy(false);
     setErrorText({});
+}
+
+void AppController::revokeAccountIdentity(const QString& accountId)
+{
+    // The registry emits this before removing the old source, while opaque IDs
+    // still resolve through the hub. Unrelated providers retain their playback.
+    const bool ownsPending = m_provider->accountOf(m_activePlaybackItem.id) == accountId;
+    if (ownsPending)
+        m_playbackLoadGeneration.invalidate();
+    if (m_playingAccountId == accountId)
+        m_player->stopWithReason(QStringLiteral("account-identity-changed"));
+    if (ownsPending)
+        m_activePlaybackItem = {};
+    for (int row = m_playQueue->count() - 1; row >= 0; --row) {
+        if (m_provider->accountOf(m_playQueue->itemAt(row).id) == accountId)
+            m_playQueue->removeItem(row);
+    }
+    resetVisibleModels();
 }
 
 void AppController::goHome()
@@ -397,25 +463,39 @@ void AppController::playOrOpen(const MovieItem& item, bool fromStart)
     if (m_browse->enterItem(item)) {
         beginBrowse();
     } else {
-        playQueuedItem(item, fromStart);
+        playQueuedItem(item, fromStart, userPlayDestination());
     }
 }
 void AppController::playItemId(const QString& itemId, bool fromStart)
+{
+    fetchPlayItem(itemId, fromStart, userPlayDestination());
+}
+
+void AppController::playLocalItemId(const QString& itemId, bool fromStart)
+{
+    fetchPlayItem(itemId, fromStart, std::nullopt);
+}
+
+void AppController::fetchPlayItem(const QString& itemId, bool fromStart, PlayDestination destination)
 {
     if (itemId.isEmpty() || !m_catalog)
         return;
     setBusy(true, QStringLiteral("Loading item for playback…"));
     Async::runScoped(
         this, m_catalog->fetchItemDetails(itemId),
-        [this, fromStart](const MovieItem& item) {
+        [this, fromStart, destination](const MovieItem& item) {
             setBusy(false);
+            if (!destinationIsCurrent(destination))
+                return;
             if (!item.id.isEmpty())
-                playQueuedItem(item, fromStart);
+                playQueuedItem(item, fromStart, destination);
             else
                 showToast(QStringLiteral("Item not found."));
         },
-        [this](const std::exception_ptr& error) {
+        [this, destination](const std::exception_ptr& error) {
             setBusy(false);
+            if (!destinationIsCurrent(destination))
+                return;
             showToast(exceptionMessage(error));
         },
         "play item by id");
@@ -425,10 +505,19 @@ void AppController::playFromModel(QObject *model, int index, bool fromStart)
 {
     if (!model)
         return;
+    const auto destination = userPlayDestination();
 
     if (auto *queue = qobject_cast<PlayQueueController *>(model)) {
         if (queue != m_playQueue) {
             showToast(QStringLiteral("This item is no longer in the play queue."));
+            return;
+        }
+        if (destination && !destination->targetId.isEmpty()) {
+            std::vector<MovieItem> items;
+            items.reserve(size_t(queue->count()));
+            for (int row = 0; row < queue->count(); ++row)
+                items.push_back(queue->itemAt(row));
+            dispatchRemotePlay(destination, items, index, fromStart);
             return;
         }
         if (!queue->playAt(index)) {
@@ -448,13 +537,13 @@ void AppController::playFromModel(QObject *model, int index, bool fromStart)
     if (isBrowseContainer(item))
         playOrOpen(item, fromStart);
     else if (item.itemType == QStringLiteral("Episode") && !item.seriesId.isEmpty())
-        playQueuedItem(item, fromStart);
+        playQueuedItem(item, fromStart, destination);
     else if (item.itemType == QStringLiteral("Audio") && !item.albumId.isEmpty() && !modelIsOrderedList(movieModel))
-        playAlbumFrom(item, fromStart);
+        playAlbumFrom(item, fromStart, destination);
     else if (modelIsOrderedList(movieModel))
-        playQueuedItems(movieModel->movies(), index, fromStart);
+        playQueuedItems(movieModel->movies(), index, fromStart, destination);
     else
-        playQueuedItem(item, fromStart);
+        playQueuedItem(item, fromStart, destination);
 }
 
 // Whether the list a track was picked out of is one the user assembled or
@@ -482,10 +571,10 @@ bool AppController::modelIsOrderedList(MovieGridModel *model) const
     }
 }
 
-void AppController::playAlbumFrom(const MovieItem& track, bool fromStart)
+void AppController::playAlbumFrom(const MovieItem& track, bool fromStart, PlayDestination destination)
 {
     if (track.albumId.isEmpty()) {
-        playQueuedItem(track, fromStart);
+        playQueuedItem(track, fromStart, destination);
         return;
     }
 
@@ -494,26 +583,31 @@ void AppController::playAlbumFrom(const MovieItem& track, bool fromStart)
     // The same descriptor ContentModelController uses for album children, so
     // there is one definition of what an album contains.
     Async::runScoped(
-        this, m_catalog->fetchBrowsePage(BrowseDescriptor::folderChildren(track.albumId), 0, 200, {}),
-        [this, generation, track, fromStart](const PagedMovieItems& page) {
+        this, m_catalog->fetchBrowsePage(BrowseDescriptor::folderChildren(track.albumId), 0, 200, {}, std::nullopt),
+        [this, generation, track, fromStart, destination](const PagedMovieItems& page) {
             if (generation != m_albumQueueGeneration)
                 return;
             setBusy(false);
+            if (!destinationIsCurrent(destination))
+                return;
             const auto found = std::find_if(page.items.cbegin(), page.items.cend(),
                 [&track](const MovieItem& candidate) { return candidate.id == track.id; });
             if (found == page.items.cend()) {
-                playQueuedItem(track, fromStart);
+                playQueuedItem(track, fromStart, destination);
                 return;
             }
-            playQueuedItems(page.items, static_cast<int>(std::distance(page.items.cbegin(), found)), fromStart);
+            playQueuedItems(
+                page.items, static_cast<int>(std::distance(page.items.cbegin(), found)), fromStart, destination);
         },
-        [this, generation, track, fromStart](const std::exception_ptr&) {
+        [this, generation, track, fromStart, destination](const std::exception_ptr&) {
             if (generation != m_albumQueueGeneration)
                 return;
             setBusy(false);
+            if (!destinationIsCurrent(destination))
+                return;
             // The track is still what the user asked for; losing the rest of
             // the album is a worse outcome than not playing at all.
-            playQueuedItem(track, fromStart);
+            playQueuedItem(track, fromStart, destination);
         });
 }
 
@@ -529,8 +623,17 @@ void AppController::stopPlayback()
 
 void AppController::playQueueNext()
 {
+    if (m_remoteTargets && !m_remoteTargets->selection().targetId.isEmpty()) {
+        m_remoteTargets->send({ { QStringLiteral("action"), QStringLiteral("next") } });
+        return;
+    }
+    playLocalQueueNext(userPlayDestination());
+}
+
+void AppController::playLocalQueueNext(PlayDestination destination)
+{
     if (!m_playQueue->canGoNext()) {
-        playEpisodeWithContext(m_playQueue->currentItem(), 1, true);
+        playEpisodeWithContext(m_playQueue->currentItem(), 1, true, destination);
         return;
     }
     if (inGroup()) {
@@ -544,8 +647,17 @@ void AppController::playQueueNext()
 
 void AppController::playQueuePrevious()
 {
+    if (m_remoteTargets && !m_remoteTargets->selection().targetId.isEmpty()) {
+        m_remoteTargets->send({ { QStringLiteral("action"), QStringLiteral("previous") } });
+        return;
+    }
+    playLocalQueuePrevious(userPlayDestination());
+}
+
+void AppController::playLocalQueuePrevious(PlayDestination destination)
+{
     if (!m_playQueue->canGoPrevious()) {
-        playEpisodeWithContext(m_playQueue->currentItem(), -1, true);
+        playEpisodeWithContext(m_playQueue->currentItem(), -1, true, destination);
         return;
     }
     if (inGroup()) {
@@ -559,6 +671,10 @@ void AppController::playQueuePrevious()
 
 void AppController::playQueueItem(int index)
 {
+    if (m_remoteTargets && !m_remoteTargets->selection().targetId.isEmpty()) {
+        playFromModel(m_playQueue, index, false);
+        return;
+    }
     // A second click on the row already playing used to tear mpv down and
     // restart the same track from the top, which is never what the click meant.
     if (index == m_playQueue->currentIndex() && m_player->sessionActive())
@@ -619,6 +735,8 @@ void AppController::removeQueueItem(int index)
 
 void AppController::playNextFromItem(const MovieItem& item)
 {
+    if (dispatchRemotePlay(userPlayDestination(), std::span(&item, 1), 0, true, QStringLiteral("next")))
+        return;
     if (enqueueForGroup(item, true))
         return;
     if (!m_playQueue->playNext(item))
@@ -627,6 +745,8 @@ void AppController::playNextFromItem(const MovieItem& item)
 
 void AppController::addToQueueFromItem(const MovieItem& item)
 {
+    if (dispatchRemotePlay(userPlayDestination(), std::span(&item, 1), 0, true, QStringLiteral("last")))
+        return;
     if (enqueueForGroup(item, false))
         return;
     if (!m_playQueue->addToQueue(item))
@@ -657,12 +777,16 @@ void AppController::loadMoreCurrentItems()
         showToast(exceptionMessage(error));
     };
 
-    Async::runLatest(this, m_catalog->fetchBrowsePage(descriptor, startIndex, kLibraryPageSize, query),
+    Async::runLatest(this,
+        m_catalog->fetchBrowsePage(descriptor, startIndex, kLibraryPageSize, query, m_browse->nextCursor()),
         m_libraryLoadGeneration, loadGeneration, onDone, onError);
 }
 
-void AppController::playQueuedItems(const std::vector<MovieItem>& items, int startIndex, bool fromStart)
+void AppController::playQueuedItems(
+    const std::vector<MovieItem>& items, int startIndex, bool fromStart, PlayDestination destination)
 {
+    if (dispatchRemotePlay(destination, items, startIndex, fromStart))
+        return;
     if (!m_playQueue->playNow(items, startIndex)) {
         showToast(QStringLiteral("This item cannot be queued."));
         return;
@@ -681,7 +805,12 @@ void AppController::playModel(MovieGridModel *model, bool shuffled)
         showToast(QStringLiteral("This list has no playable items."));
         return;
     }
-    playQueuedItems(items, static_cast<int>(std::distance(items.begin(), firstPlayable)), false);
+    const auto destination = userPlayDestination();
+    const int startIndex = static_cast<int>(std::distance(items.begin(), firstPlayable));
+    if (dispatchRemotePlay(
+            destination, items, startIndex, false, shuffled ? QStringLiteral("shuffle") : QStringLiteral("now")))
+        return;
+    playQueuedItems(items, startIndex, false, destination);
     if (shuffled)
         m_playQueue->setShuffled(true);
 }
@@ -690,17 +819,33 @@ void AppController::queueEpisodicContainer(const QString& seriesId, const QStrin
 {
     if (seriesId.isEmpty())
         return;
+    const auto destination = userPlayDestination();
     Async::runScoped(
         this, m_catalog->fetchEpisodes(seriesId, seasonId),
-        [this, next](const std::vector<MovieItem>& episodes) {
+        [this, next, destination](const std::vector<MovieItem>& episodes) {
+            if (!destinationIsCurrent(destination))
+                return;
             if (episodes.empty()) {
                 setErrorText(QStringLiteral("There is nothing here to queue."));
+                return;
+            }
+            if (dispatchRemotePlay(
+                    destination, episodes, 0, true, next ? QStringLiteral("next") : QStringLiteral("last")))
+                return;
+            if (inGroup()) {
+                QStringList ids;
+                for (const auto& episode : episodes)
+                    if (!episode.id.isEmpty() && isPlayableItem(episode))
+                        ids.append(episode.id);
+                m_group->requestQueueItems(ids, next);
                 return;
             }
             if (!m_playQueue->addToQueue(episodes, next))
                 setErrorText(QStringLiteral("This item cannot be queued."));
         },
-        [this](const std::exception_ptr& error) {
+        [this, destination](const std::exception_ptr& error) {
+            if (!destinationIsCurrent(destination))
+                return;
             qWarning() << "queue: episode lookup failed" << exceptionMessage(error);
             setErrorText(QStringLiteral("Could not reach the server to queue that."));
         });
@@ -713,6 +858,7 @@ void AppController::playEpisodicContainer(const QString& seriesId, const QString
     if (m_episodeQueuePending)
         return;
     m_episodeQueuePending = true;
+    const auto destination = userPlayDestination();
 
     const quint64 generation = ++m_episodeQueueGeneration;
     setBusy(true,
@@ -720,10 +866,13 @@ void AppController::playEpisodicContainer(const QString& seriesId, const QString
                            : QStringLiteral("Finding the next episode in this season…"));
     Async::runScoped(
         this, m_catalog->fetchEpisodes(seriesId, seasonId),
-        [this, generation](const std::vector<MovieItem>& episodes) {
+        [this, generation, destination](const std::vector<MovieItem>& episodes) {
             if (generation != m_episodeQueueGeneration)
                 return;
             m_episodeQueuePending = false;
+            setBusy(false);
+            if (!destinationIsCurrent(destination))
+                return;
             const int startIndex = episodicPlaybackStartIndex(episodes);
             if (startIndex < 0) {
                 setBusy(false);
@@ -734,13 +883,15 @@ void AppController::playEpisodicContainer(const QString& seriesId, const QString
                         : QStringLiteral("No playable episodes are available."));
                 return;
             }
-            playQueuedItems(episodes, startIndex, false);
+            playQueuedItems(episodes, startIndex, false, destination);
         },
-        [this, generation](const std::exception_ptr& error) {
+        [this, generation, destination](const std::exception_ptr& error) {
             if (generation != m_episodeQueueGeneration)
                 return;
             m_episodeQueuePending = false;
             setBusy(false);
+            if (!destinationIsCurrent(destination))
+                return;
             showToast(exceptionMessage(error));
         },
         "episodic container playback");
@@ -755,12 +906,14 @@ void AppController::cancelEpisodicPlaybackSelection()
     setBusy(false);
 }
 
-void AppController::playQueuedItem(const MovieItem& item, bool fromStart)
+void AppController::playQueuedItem(const MovieItem& item, bool fromStart, PlayDestination destination)
 {
     if (item.itemType == QStringLiteral("Episode") && !item.seriesId.isEmpty()) {
-        playEpisodeWithContext(item, 0, fromStart);
+        playEpisodeWithContext(item, 0, fromStart, destination);
         return;
     }
+    if (dispatchRemotePlay(destination, std::span(&item, 1), 0, fromStart))
+        return;
     if (!m_playQueue->playNow(item)) {
         showToast(QStringLiteral("This item cannot be queued."));
         return;
@@ -768,11 +921,12 @@ void AppController::playQueuedItem(const MovieItem& item, bool fromStart)
     startQueuedPlayback(fromStart);
 }
 
-void AppController::playEpisodeWithContext(const MovieItem& episode, int direction, bool fromStart)
+void AppController::playEpisodeWithContext(
+    const MovieItem& episode, int direction, bool fromStart, PlayDestination destination)
 {
     if (episode.itemType != QStringLiteral("Episode") || episode.seriesId.isEmpty()) {
-        if (direction == 0 && m_playQueue->playNow(episode))
-            startQueuedPlayback(fromStart);
+        if (direction == 0)
+            playQueuedItems({ episode }, 0, fromStart, destination);
         return;
     }
 
@@ -781,16 +935,19 @@ void AppController::playEpisodeWithContext(const MovieItem& episode, int directi
     setBusy(true, direction == 0 ? QStringLiteral("Loading episode queue…") : QStringLiteral("Finding episode…"));
     Async::runScoped(
         this, m_catalog->fetchEpisodes(episode.seriesId),
-        [this, generation, episode, direction, fromStart](const std::vector<MovieItem>& episodes) {
+        [this, generation, episode, direction, fromStart, destination](const std::vector<MovieItem>& episodes) {
             if (generation != m_episodeQueueGeneration)
                 return;
             m_episodeQueuePending = false;
+            setBusy(false);
+            if (!destinationIsCurrent(destination))
+                return;
             const auto current = std::find_if(episodes.begin(), episodes.end(),
                 [&episode](const MovieItem& candidate) { return candidate.id == episode.id; });
             if (current == episodes.end()) {
                 setBusy(false);
-                if (direction == 0 && m_playQueue->playNow(episode))
-                    startQueuedPlayback(fromStart);
+                if (direction == 0)
+                    playQueuedItems({ episode }, 0, fromStart, destination);
                 else
                     showToast(QStringLiteral("This episode was not found in its series."));
                 return;
@@ -811,6 +968,8 @@ void AppController::playEpisodeWithContext(const MovieItem& episode, int directi
                 }
                 targetIndex = candidate;
             }
+            if (dispatchRemotePlay(destination, episodes, targetIndex, direction == 0 ? fromStart : true))
+                return;
 
             if (!m_playQueue->playNow(episodes, targetIndex)) {
                 setBusy(false);
@@ -820,13 +979,15 @@ void AppController::playEpisodeWithContext(const MovieItem& episode, int directi
             qInfo() << "play queue: loaded episode context" << episodes.size() << "items, target" << targetIndex;
             startQueuedPlayback(direction == 0 ? fromStart : true);
         },
-        [this, generation, episode, direction, fromStart](const std::exception_ptr& error) {
+        [this, generation, episode, direction, fromStart, destination](const std::exception_ptr& error) {
             if (generation != m_episodeQueueGeneration)
                 return;
             m_episodeQueuePending = false;
             setBusy(false);
-            if (direction == 0 && m_playQueue->playNow(episode)) {
-                startQueuedPlayback(fromStart);
+            if (!destinationIsCurrent(destination))
+                return;
+            if (direction == 0) {
+                playQueuedItems({ episode }, 0, fromStart, destination);
                 return;
             }
             showToast(exceptionMessage(error));
@@ -956,11 +1117,17 @@ QCoro::Task<void> AppController::startPlayback(MovieItem playItem, bool startPau
             session.restoreStreamSelection = true;
         }
     }
+    if (!restartActive && !forceTranscode) {
+        co_await m_settings->applyDeferredTrackDefaults();
+        if (!m_playbackLoadGeneration.isCurrent(generation))
+            co_return;
+    }
     m_activePlaybackStreams = session.mediaStreams;
     const int fileAudioDelayMs = restartActive ? m_player->fileAudioDelayMs() : 0;
     const int subtitleDelayMs = restartActive ? m_player->subtitleDelayMs() : 0;
     setBusy(false);
     m_player->play(session, startPaused);
+    m_playingAccountId = m_provider->accountOf(session.itemId);
     if (restartActive) {
         m_player->setFileAudioDelayMs(fileAudioDelayMs);
         m_player->setSubtitleDelayMs(subtitleDelayMs);
@@ -1110,7 +1277,13 @@ void AppController::loadLibraryFilterOptions(RequestGeneration::Token generation
 
 void AppController::showCurrentItemsPage(const PagedMovieItems& page, const QString& cacheKey, bool append)
 {
-    m_browse->setPage(page, cacheKey, append);
+    try {
+        m_browse->setPage(page, cacheKey, append);
+    } catch (const std::exception& error) {
+        setBusy(false);
+        showToast(QString::fromUtf8(error.what()));
+        return;
+    }
     // Keep the warm cache in sync with what the user just saw so the next
     // open of this library can skip the refresh while the data is fresh.
     if (!append && page.startIndex == 0 && m_prefetch)
@@ -1140,7 +1313,7 @@ RequestGeneration::Token AppController::beginBrowse(bool useWarmCache)
         m_artwork->cancelPrefetches();
     if (useWarmCache) {
         const int cachedCount = m_browse->applyCachedPage(cacheKey);
-        m_browse->setWarmCachePaging(cachedCount, kLibraryPageSize);
+        m_browse->setLoadingMore(true);
         if (cachedCount > 0) {
             const qint64 ageMs = m_prefetch ? m_prefetch->pageAgeMs(cacheKey) : -1;
             if (ageMs >= 0 && ageMs < kFreshLibraryCacheMs) {
@@ -1157,8 +1330,8 @@ RequestGeneration::Token AppController::beginBrowse(bool useWarmCache)
     }
 
     Async::runLatest(
-        this, m_catalog->fetchBrowsePage(descriptor, 0, kLibraryPageSize, query), m_libraryLoadGeneration, generation,
-        [this, cacheKey](const PagedMovieItems& page) { showCurrentItemsPage(page, cacheKey, false); },
+        this, m_catalog->fetchBrowsePage(descriptor, 0, kLibraryPageSize, query, std::nullopt), m_libraryLoadGeneration,
+        generation, [this, cacheKey](const PagedMovieItems& page) { showCurrentItemsPage(page, cacheKey, false); },
         [this](const std::exception_ptr& error) {
             m_browse->setLoadingMore(false);
             showToast(exceptionMessage(error));

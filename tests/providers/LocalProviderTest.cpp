@@ -75,8 +75,8 @@ SPOOL_TEST_MAIN("local-provider")
     require(libraries.front().name == QStringLiteral("fixtures"), "the library is named after the folder");
 
     // Media files only: the playlist and the subtitle sidecar are not items.
-    const auto page = QCoro::waitFor(
-        catalog->fetchBrowsePage(BrowseDescriptor::library(libraries.front().id, libraries.front().collectionType)));
+    const auto page = QCoro::waitFor(catalog->fetchBrowsePage(
+        BrowseDescriptor::library(libraries.front().id, libraries.front().collectionType), 0, 72, {}, std::nullopt));
     require(page.totalRecordCount == 4, "four media files in the fixtures");
     require(page.items.size() == 4, "the first page holds them all");
     require(hasTitle(page.items, QStringLiteral("audio")), "the flac is listed");
@@ -90,12 +90,17 @@ SPOOL_TEST_MAIN("local-provider")
     require(page.items[1].itemType == QStringLiteral("Movie"), "video files are movies");
     require(page.items[1].isPlayable(), "video items are playable");
 
-    const auto paged = QCoro::waitFor(
-        catalog->fetchBrowsePage(BrowseDescriptor::library(QStringLiteral("local"), QStringLiteral("movies")), 1, 2));
+    const auto paged = QCoro::waitFor(catalog->fetchBrowsePage(
+        BrowseDescriptor::library(QStringLiteral("local"), QStringLiteral("movies")), 1, 2, {}, std::nullopt));
     require(paged.items.size() == 2 && paged.startIndex == 1 && paged.totalRecordCount == 4, "paging is honoured");
     require(paged.items.front().title == QStringLiteral("direct-mpeg2"), "paging starts where asked");
+    require(!paged.exhausted && paged.nextCursor == QStringLiteral("3"), "local pages expose continuation");
+    const auto last = QCoro::waitFor(catalog->fetchBrowsePage(
+        BrowseDescriptor::library(QStringLiteral("local"), QStringLiteral("movies")), 3, 1, {}, paged.nextCursor));
+    require(last.items.size() == 1 && last.exhausted && !last.nextCursor, "a full final page is terminal");
 
-    const auto other = QCoro::waitFor(catalog->fetchBrowsePage(BrowseDescriptor::person(QStringLiteral("nobody"))));
+    const auto other = QCoro::waitFor(
+        catalog->fetchBrowsePage(BrowseDescriptor::person(QStringLiteral("nobody")), 0, 72, {}, std::nullopt));
     require(other.items.empty() && other.totalRecordCount == 0, "browse shapes a folder cannot serve are empty");
 
     const MovieItem mkv = page.items[1];

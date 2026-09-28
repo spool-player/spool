@@ -47,6 +47,9 @@ class ProviderUiContext final : public QObject {
     Q_PROPERTY(QVariantMap arguments READ arguments CONSTANT)
     Q_PROPERTY(bool closed READ closed NOTIFY closedChanged)
     Q_PROPERTY(Spool::ProviderListModel *rows READ rows CONSTANT)
+    Q_PROPERTY(QVariantMap extensions READ extensions NOTIFY extensionsChanged)
+    Q_PROPERTY(QStringList missingHostExtensions READ missingHostExtensions NOTIFY extensionsChanged)
+    Q_PROPERTY(QVariantMap activationConfiguration READ activationConfiguration NOTIFY activationConfigurationChanged)
 
 public:
     ProviderUiContext(ProviderRegistry *registry, QString sourceId, QString moduleId, QString role, QUrl component);
@@ -84,13 +87,18 @@ public:
     {
         return &m_rows;
     }
+    QVariantMap extensions() const;
+    QStringList missingHostExtensions() const;
+    QVariantMap activationConfiguration() const;
 
     Q_INVOKABLE QJSValue request(const QString& operation, const QVariantMap& arguments = {});
     // Moves `items` into `rows`; the promise resolves with the rest.
     Q_INVOKABLE QJSValue requestList(const QString& operation, const QVariantMap& arguments = {}, bool append = false);
-    // Setup only: lets this source reach the server the viewer typed or
-    // picked. Resolves once calls to it can be made.
+    // Login grants the viewer's chosen server; account screens require
+    // negotiated origin grants and host-owned confirmation.
     Q_INVOKABLE QJSValue allowOrigin(const QString& url);
+    Q_INVOKABLE QJSValue allowLanDiscovery();
+    Q_INVOKABLE void cancelLanDiscovery();
     // login: {account, label, detail?, group?, configuration}
     // settings: {configuration} to save and reconnect with, or {}
     // picker: the arguments to resolve again with
@@ -99,6 +107,8 @@ public:
 
 signals:
     void closedChanged();
+    void extensionsChanged();
+    void activationConfigurationChanged();
     void finished(const QVariantMap& result, bool cancelled);
 
 private:

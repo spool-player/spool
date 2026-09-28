@@ -218,8 +218,10 @@ std::vector<MovieItem> LocalProvider::items(int startIndex, int limit) const
 }
 
 QCoro::Task<PagedMovieItems> LocalProvider::fetchBrowsePage(
-    BrowseDescriptor descriptor, int startIndex, int limit, QVariantMap)
+    BrowseDescriptor descriptor, int startIndex, int limit, QVariantMap, std::optional<QString>)
 {
+    startIndex = std::max(0, startIndex);
+    limit = std::max(1, limit);
     PagedMovieItems page;
     page.startIndex = startIndex;
     page.limit = limit;
@@ -230,6 +232,10 @@ QCoro::Task<PagedMovieItems> LocalProvider::fetchBrowsePage(
     if (wholeLibrary || descriptor.kind == BrowseKind::FolderChildren) {
         page.items = items(startIndex, limit);
         page.totalRecordCount = static_cast<int>(m_records.size());
+        const int end = startIndex + static_cast<int>(page.items.size());
+        page.exhausted = end >= page.totalRecordCount;
+        if (!page.exhausted)
+            page.nextCursor = QString::number(end);
     }
     co_return page;
 }

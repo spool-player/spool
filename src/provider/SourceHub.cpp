@@ -7,6 +7,8 @@
 #include <QDebug>
 
 #include <algorithm>
+#include <limits>
+#include <stdexcept>
 
 namespace Spool {
 
@@ -269,6 +271,13 @@ SourceHub::SourceHub(ProviderRegistry *registry, QObject *parent)
     connect(registry, &ProviderRegistry::sourceStarted, this, &SourceHub::addSource);
     connect(registry, &ProviderRegistry::sourceStopped, this, &SourceHub::removeSource);
     connect(registry, &ProviderRegistry::accountsChanged, this, &SourceHub::syncBrowse);
+    const auto supportChanged = [this](const QString& account) {
+        if (account == m_itemActionsAccount)
+            cancelItemActions();
+        emit extensionSupportChanged(account);
+    };
+    connect(registry, &ProviderRegistry::extensionsChanged, this, supportChanged);
+    connect(registry, &ProviderRegistry::sourceStopped, this, supportChanged);
     connect(registry, &ProviderRegistry::restoredChanged, this, [this] {
         // Nothing to wait for: announce the empty state so the shell moves on.
         if (m_registry->restored()
@@ -303,12 +312,49 @@ void SourceHub::addSource(Provider *provider)
     const QString accountId = provider->id();
     const bool browse = accountEnabled(accountId);
     m_entries.insert(prefixOf(accountId), { accountId, provider, browse });
+    connect(provider, &Provider::capabilitiesChanged, this, [this, accountId, provider] {
+        if (!provider->capabilities().testFlag(Provider::SpeedTest)) {
+            if (m_speedTestAccount == accountId)
+                cancelSpeedTest();
+            auto entry = m_entries.find(prefixOf(accountId));
+            if (entry != m_entries.end()) {
+                entry->speedState = Entry::SpeedState::Pending;
+                entry->measuredBitrate = 0;
+                entry->parallelRequests = 2;
+            }
+            pushPlaybackContext();
+        }
+        refresh();
+    });
     connect(provider, &Provider::contentChanged, this, [this, accountId](const QString& itemId) {
         if (itemId.isEmpty())
             m_access.remove(accountId);
         emit contentChanged(itemId.isEmpty() ? QString() : scoped(accountId, itemId));
     });
     connect(provider, &Provider::sourceEvent, this, [this, accountId](const QString& type, const QVariantMap& payload) {
+        if (type == QStringLiteral("remoteChanged")) {
+            const auto target = payload.value(QStringLiteral("targetId"));
+            if (m_registry->extensionVersion(accountId, QStringLiteral("spool.remote-targets")) != 1
+                || target.metaType().id() != QMetaType::QString || target.toString().isEmpty()
+                || target.toString().size() > 1024)
+                return;
+            emit accountEvent(
+                accountId, type, { { QStringLiteral("targetId"), scoped(accountId, target.toString()) } });
+            return;
+        }
+        if (type == QStringLiteral("playbackQueueStatus")) {
+            const QString state = payload.value(QStringLiteral("state")).toString();
+            const QString revision = payload.value(QStringLiteral("revision")).toString();
+            if (m_registry->extensionVersion(accountId, QStringLiteral("spool.playback-queue-reporting")) != 1
+                || revision.isEmpty()
+                || revision != m_queueSnapshots.value(accountId).value(QStringLiteral("revision")).toString()
+                || (state != QStringLiteral("preparing") && state != QStringLiteral("ready")
+                    && state != QStringLiteral("unavailable")))
+                return;
+            emit accountEvent(
+                accountId, type, { { QStringLiteral("revision"), revision }, { QStringLiteral("state"), state } });
+            return;
+        }
         emit accountEvent(accountId, type, payload);
     });
     connect(provider, &Provider::errorOccurred, this, &Provider::errorOccurred);
@@ -321,6 +367,8 @@ void SourceHub::addSource(Provider *provider)
 
 void SourceHub::removeSource(const QString& accountId)
 {
+    if (!m_entries.contains(prefixOf(accountId)))
+        return;
     const Entry entry = m_entries.take(prefixOf(accountId));
     if (m_speedTestAccount == accountId)
         cancelSpeedTest();
@@ -346,8 +394,13 @@ void SourceHub::syncBrowse()
     bool changed = false;
     for (Entry& entry : m_entries) {
         const bool browse = accountEnabled(entry.accountId);
-        changed |= entry.browse != browse;
-        entry.browse = browse;
+        if (entry.browse != browse) {
+            changed = true;
+            entry.browse = browse;
+            if (entry.accountId == m_itemActionsAccount)
+                cancelItemActions();
+            emit extensionSupportChanged(entry.accountId);
+        }
     }
     if (changed)
         refresh();
@@ -412,6 +465,25 @@ std::vector<Provider *> SourceHub::sources() const
 
 QCoro::Task<QVariantMap> SourceHub::call(QString accountId, QString operation, QVariantMap arguments)
 {
+    // Server-bound queues arrive scoped. Never turn another account's media
+    // into a valid-looking raw ID on the selected server.
+    if (operation == QStringLiteral("groupSend") || operation == QStringLiteral("remoteCommand")) {
+        const bool remote = operation == QStringLiteral("remoteCommand");
+        QVariantMap command = remote ? arguments.value(QStringLiteral("command")).toMap() : arguments;
+        if (command.contains(QStringLiteral("itemIds"))) {
+            QStringList ids = command.value(QStringLiteral("itemIds")).toStringList();
+            for (QString& id : ids) {
+                if (accountOf(id) != accountId)
+                    throw std::runtime_error("mixed_source_queue");
+                id = rawId(id);
+            }
+            command.insert(QStringLiteral("itemIds"), ids);
+            if (remote)
+                arguments.insert(QStringLiteral("command"), command);
+            else
+                arguments = std::move(command);
+        }
+    }
     auto *portable = qobject_cast<PortableProvider *>(source(accountId));
     if (!portable)
         throw std::runtime_error("source_unavailable");
@@ -425,14 +497,14 @@ void SourceHub::setVideoCodecs(QStringList codecs, bool restrict)
     pushPlaybackContext();
 }
 
-QVariantList SourceHub::itemActions(const QString& itemId, const QString& itemType) const
+QVariantList SourceHub::baselineItemActions(const QString& itemId, const QString& itemType) const
 {
     const QString account = accountOf(itemId);
     const auto& accounts = m_registry->accountList();
     const auto owner = std::find_if(accounts.begin(), accounts.end(), [&](const auto& a) { return a.id == account; });
     const ProviderModule *module = owner == accounts.end() ? nullptr : m_registry->module(owner->module);
     QVariantList actions;
-    if (!module)
+    if (!module || module->manifest.extensions.contains(QStringLiteral("spool.item-actions")))
         return actions;
     for (const QVariant& value : module->manifest.actions) {
         const QVariantMap action = value.toMap();
@@ -443,17 +515,107 @@ QVariantList SourceHub::itemActions(const QString& itemId, const QString& itemTy
     return actions;
 }
 
-void SourceHub::runItemAction(const QString& actionId, const QString& itemId, const QString& itemType)
+QCoro::Task<QVariantList> SourceHub::fetchItemActions(
+    QString itemId, QString itemType, QString containerId, QString entryId, QString scope)
 {
     const QString account = accountOf(itemId);
-    const auto run = [](SourceHub *self, QString account, QVariantMap args) -> QCoro::Task<void> {
+    if (!source(account) || !accountEnabled(account))
+        throw std::runtime_error("source_unavailable");
+    if (!containerId.isEmpty() && accountOf(containerId) != account)
+        throw std::runtime_error("mixed_source_collection");
+    if (m_registry->extensionVersion(account, QStringLiteral("spool.item-actions")) != 1)
+        co_return baselineItemActions(itemId, itemType);
+    QVariantMap args { { QStringLiteral("itemId"), rawId(itemId) }, { QStringLiteral("itemType"), itemType } };
+    if (!containerId.isEmpty())
+        args.insert(QStringLiteral("containerId"), rawId(containerId));
+    if (!entryId.isEmpty())
+        args.insert(QStringLiteral("entryId"), entryId);
+    const auto result = co_await m_registry->callExtension(account, QStringLiteral("spool.item-actions"),
+        QStringLiteral("itemActions"), std::move(args), std::move(scope));
+    const auto actions = result.value(QStringLiteral("actions")).toList();
+    if (result.value(QStringLiteral("actions")).metaType().id() != QMetaType::QVariantList)
+        throw std::runtime_error("invalid_item_actions");
+    if (actions.size() > 128)
+        throw std::runtime_error("response_limit");
+    QSet<QString> ids;
+    for (const auto& value : actions) {
+        const auto action = value.toMap();
+        const auto id = action.value(QStringLiteral("id")).toString();
+        if (id.isEmpty() || ids.contains(id) || action.value(QStringLiteral("label")).toString().isEmpty())
+            throw std::runtime_error("invalid_item_actions");
+        if (action.contains(QStringLiteral("enabled"))
+            && action.value(QStringLiteral("enabled")).metaType().id() != QMetaType::Bool)
+            throw std::runtime_error("invalid_item_actions");
+        ids.insert(id);
+    }
+    co_return actions;
+}
+
+int SourceHub::requestItemActions(
+    const QString& itemId, const QString& itemType, const QString& containerId, const QString& entryId)
+{
+    cancelItemActions();
+    const int request = m_itemActionsRequest;
+    m_itemActionsAccount = accountOf(itemId);
+    // Even baseline answers arrive after QML has stored the request identity.
+    QTimer::singleShot(0, this, [this, request, itemId, itemType, containerId, entryId] {
+        if (request != m_itemActionsRequest)
+            return;
+        Async::runScoped(
+            this, fetchItemActions(itemId, itemType, containerId, entryId, QStringLiteral("item-menu")),
+            [this, request](QVariantList actions) {
+                if (request == m_itemActionsRequest)
+                    emit itemActionsReady(request, actions, {});
+            },
+            [this, request](const std::exception_ptr&) {
+                if (request == m_itemActionsRequest)
+                    emit itemActionsReady(
+                        request, {}, QStringLiteral("Provider actions are unavailable. Try reopening the menu."));
+            },
+            "item menu");
+    });
+    return request;
+}
+
+void SourceHub::cancelItemActions()
+{
+    m_itemActionsRequest = m_itemActionsRequest == std::numeric_limits<int>::max() ? 1 : m_itemActionsRequest + 1;
+    if (!m_itemActionsAccount.isEmpty())
+        m_registry->cancelSourceScope(m_itemActionsAccount, QStringLiteral("item-menu"));
+    m_itemActionsAccount.clear();
+}
+
+void SourceHub::runItemAction(const QString& actionId, const QString& itemId, const QString& itemType,
+    const QString& containerId, const QString& entryId)
+{
+    const QString account = accountOf(itemId);
+    const auto run = [](SourceHub *self, QString account, QString scopedItemId, QString scopedContainerId,
+                         QVariantMap args) -> QCoro::Task<void> {
         QPointer<SourceHub> guard(self);
+        QPointer<Provider> sourceGuard(self->source(account));
+        const auto actions
+            = co_await self->fetchItemActions(scopedItemId, args.value(QStringLiteral("itemType")).toString(),
+                scopedContainerId, args.value(QStringLiteral("entryId")).toString(), QStringLiteral("item-action"));
+        if (!guard)
+            co_return;
+        if (!sourceGuard || sourceGuard != self->source(account) || !self->accountEnabled(account))
+            throw std::runtime_error("source_unavailable");
+        const auto requested = args.value(QStringLiteral("action")).toString();
+        const bool permitted = std::any_of(actions.begin(), actions.end(), [&](const QVariant& value) {
+            const auto action = value.toMap();
+            return action.value(QStringLiteral("id")).toString() == requested
+                && action.value(QStringLiteral("enabled"), true).toBool();
+        });
+        if (!permitted)
+            throw std::runtime_error("action_unavailable");
         QVariantMap result = co_await self->call(account, QStringLiteral("runItemAction"), args);
         if (guard && result.contains(QStringLiteral("pick"))) {
             const QVariantMap choice
                 = co_await self->m_registry->pick(account, result.value(QStringLiteral("pick")).toMap());
             if (!guard || choice.isEmpty())
                 co_return;
+            if (!sourceGuard || sourceGuard != self->source(account) || !self->accountEnabled(account))
+                throw std::runtime_error("source_unavailable");
             args.insert(choice);
             result = co_await self->call(account, QStringLiteral("runItemAction"), args);
         }
@@ -466,11 +628,70 @@ void SourceHub::runItemAction(const QString& actionId, const QString& itemId, co
     };
     Async::runScoped(
         this,
-        run(this, account,
+        run(this, account, itemId, containerId,
             { { QStringLiteral("action"), actionId }, { QStringLiteral("itemId"), rawId(itemId) },
-                { QStringLiteral("itemType"), itemType } }),
-        [] {}, [this](const std::exception_ptr&) { emit toastRequested(QStringLiteral("That didn't work")); },
+                { QStringLiteral("itemType"), itemType }, { QStringLiteral("containerId"), rawId(containerId) },
+                { QStringLiteral("entryId"), entryId } }),
+        [] {},
+        [this](const std::exception_ptr& error) {
+            const auto code = exceptionMessage(error);
+            emit toastRequested(code.contains(QStringLiteral("http_403"))
+                        || code.contains(QStringLiteral("permission_denied"))
+                        || code.contains(QStringLiteral("action_unavailable"))
+                    ? tr("This action is not permitted for this account.")
+                    : tr("The action could not be completed. Reopen the menu to refresh available actions."));
+        },
         "item action");
+}
+
+bool SourceHub::collectionEditingAvailable(const QString& containerId) const
+{
+    const auto account = accountOf(containerId);
+    return source(account) && accountEnabled(account)
+        && m_registry->extensionVersion(account, QStringLiteral("spool.collection-editing")) == 1;
+}
+
+QCoro::Task<QVariantMap> SourceHub::collectionCall(QString containerId, QString operation, QVariantMap arguments)
+{
+    if (!collectionEditingAvailable(containerId))
+        throw std::runtime_error("unsupported_extension");
+    if (operation != QStringLiteral("collectionInfo") && operation != QStringLiteral("collectionRemove")
+        && operation != QStringLiteral("collectionMove"))
+        throw std::runtime_error("unsupported_extension");
+    arguments.insert(QStringLiteral("containerId"), rawId(containerId));
+    co_return co_await m_registry->callExtension(accountOf(containerId), QStringLiteral("spool.collection-editing"),
+        std::move(operation), std::move(arguments), QStringLiteral("collection-editor"));
+}
+
+QCoro::Task<PagedMovieItems> SourceHub::collectionEntries(QString containerId, std::optional<QString> cursor)
+{
+    if (!collectionEditingAvailable(containerId))
+        throw std::runtime_error("unsupported_extension");
+    const QString account = accountOf(containerId);
+    QVariantMap args { { QStringLiteral("containerId"), rawId(containerId) }, { QStringLiteral("limit"), 50 } };
+    if (cursor)
+        args.insert(QStringLiteral("cursor"), *cursor);
+    QPointer<SourceHub> guard(this);
+    auto page = co_await m_registry->callExtensionMediaPage(account, QStringLiteral("spool.collection-editing"),
+        QStringLiteral("collectionEntries"), std::move(args), 50, QStringLiteral("collection-editor"));
+    if (!guard)
+        throw std::runtime_error("cancelled");
+    PagedMovieItems result;
+    result.items = scopedItems(std::move(page.items), account);
+    result.nextCursor = std::move(page.cursor);
+    result.exhausted = page.exhausted;
+    result.limit = 50;
+    co_return result;
+}
+
+void SourceHub::cancelCollection(const QString& containerId)
+{
+    m_registry->cancelSourceScope(accountOf(containerId), QStringLiteral("collection-editor"));
+}
+
+void SourceHub::collectionChanged(const QString& containerId)
+{
+    emit contentChanged(containerId);
 }
 
 void SourceHub::setPlaybackPreferences(
@@ -490,6 +711,62 @@ void SourceHub::setOverride(qint64 bitrate, int height)
     pushPlaybackContext();
 }
 
+void SourceHub::setPlaybackQueue(std::vector<ReportingQueueEntry> items, int index)
+{
+    if (items != m_reportingQueue) {
+        m_reportingQueue = std::move(items);
+        QHash<QString, QVariantList> accountItems;
+        m_queueLocations.clear();
+        m_queueLocations.reserve(m_reportingQueue.size());
+        for (const auto& item : m_reportingQueue) {
+            QString account = accountOf(item.itemId);
+            // A stopped/restarting source still owns its queued media.
+            if (account.isEmpty()) {
+                for (const auto& saved : m_registry->accountList()) {
+                    if (item.itemId.startsWith(prefixOf(saved.id) + QLatin1Char(':'))) {
+                        account = saved.id;
+                        break;
+                    }
+                }
+            }
+            if (account.isEmpty()) {
+                m_queueLocations.emplace_back(QString(), -1);
+                continue;
+            }
+            auto& rows = accountItems[account];
+            m_queueLocations.emplace_back(account, static_cast<int>(rows.size()));
+            QVariantMap row { { QStringLiteral("itemId"), rawId(item.itemId) },
+                { QStringLiteral("mediaType"), item.audio ? QStringLiteral("audio") : QStringLiteral("video") } };
+            if (!item.entryId.isEmpty())
+                row.insert(QStringLiteral("entryId"), item.entryId);
+            rows.append(row);
+        }
+        // Keep an empty revision for accounts whose last entry was removed.
+        for (auto it = m_queueSnapshots.cbegin(); it != m_queueSnapshots.cend(); ++it) {
+            if (!accountItems.contains(it.key()))
+                accountItems.insert(it.key(), {});
+        }
+        for (auto it = accountItems.cbegin(); it != accountItems.cend(); ++it) {
+            auto& snapshot = m_queueSnapshots[it.key()];
+            if (snapshot.isEmpty() || snapshot.value(QStringLiteral("items")).toList() != it.value()) {
+                snapshot = { { QStringLiteral("revision"), QString::number(++m_queueRevision) },
+                    { QStringLiteral("items"), it.value() } };
+            }
+        }
+    }
+    m_queueIndexes.clear();
+    if (index >= 0 && index < static_cast<int>(m_queueLocations.size())) {
+        const auto& [account, localIndex] = m_queueLocations[static_cast<size_t>(index)];
+        if (!account.isEmpty())
+            m_queueIndexes.insert(account, localIndex);
+    }
+    for (const Entry& entry : std::as_const(m_entries)) {
+        if (auto *portable = qobject_cast<PortableProvider *>(entry.provider.data()))
+            portable->setPlaybackQueueContext(
+                m_queueSnapshots.value(entry.accountId), m_queueIndexes.value(entry.accountId, -1));
+    }
+}
+
 void SourceHub::pushPlaybackContext()
 {
     // The viewer's pick in the player wins over the standing preference.
@@ -503,6 +780,8 @@ void SourceHub::pushPlaybackContext()
             context.insert(QStringLiteral("measuredBitrate"), entry.measuredBitrate);
             context.insert(QStringLiteral("parallelRequests"), entry.parallelRequests);
             portable->setPlaybackContext(context);
+            portable->setPlaybackQueueContext(
+                m_queueSnapshots.value(entry.accountId), m_queueIndexes.value(entry.accountId, -1));
         }
     }
 }
@@ -683,7 +962,7 @@ QString SourceHub::libraryScopeKey() const
 }
 
 QCoro::Task<PagedMovieItems> SourceHub::fetchBrowsePage(
-    BrowseDescriptor descriptor, int startIndex, int limit, QVariantMap queryOptions)
+    BrowseDescriptor descriptor, int startIndex, int limit, QVariantMap queryOptions, std::optional<QString> cursor)
 {
     // A genre or studio link has no ID of its own; it belongs to the account
     // whose item it was opened from.
@@ -696,7 +975,8 @@ QCoro::Task<PagedMovieItems> SourceHub::fetchBrowsePage(
     descriptor.id = rawId(descriptor.id);
     descriptor.seriesId = rawId(descriptor.seriesId);
     descriptor.seasonId = rawId(descriptor.seasonId);
-    PagedMovieItems page = co_await provider->catalog()->fetchBrowsePage(descriptor, startIndex, limit, queryOptions);
+    PagedMovieItems page = co_await provider->catalog()->fetchBrowsePage(
+        descriptor, startIndex, limit, std::move(queryOptions), std::move(cursor));
     page.items = scopedItems(std::move(page.items), account);
     co_return page;
 }
@@ -824,16 +1104,20 @@ QCoro::Task<std::vector<MovieItem>> SourceHub::fetchItemsByIds(QStringList itemI
     QHash<QString, MovieItem> found;
     for (auto& [accountId, task] : pending) {
         try {
-            for (MovieItem& item : scopedItems(co_await std::move(task), accountId))
-                found.insert(item.id, std::move(item));
+            for (MovieItem& item : scopedItems(co_await std::move(task), accountId)) {
+                const QString id = item.id;
+                found.insert(id, std::move(item));
+            }
         } catch (const std::exception& error) {
             qWarning() << "hub:" << accountId.left(kPrefix) << "items unavailable:" << error.what();
         }
     }
     std::vector<MovieItem> ordered;
+    ordered.reserve(itemIds.size());
     for (const QString& id : std::as_const(itemIds)) {
-        if (found.contains(id))
-            ordered.push_back(found.value(id));
+        const auto it = found.constFind(id);
+        if (it != found.cend())
+            ordered.push_back(*it);
     }
     co_return ordered;
 }

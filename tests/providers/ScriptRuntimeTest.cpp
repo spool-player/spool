@@ -41,6 +41,38 @@ SPOOL_TEST_MAIN("script-runtime")
 {
     QCoreApplication app(argc, argv);
     using Spool::ScriptRuntime;
+    {
+        ScriptRuntime extensions(
+            QStringLiteral(TEST_SOURCE_DIR "/tests/providers/fixtures/extensions.mjs"), QVariantMap {});
+        const QVariantMap supported { { "spool.speed-test", 1 } };
+        QCoro::waitFor(extensions.addSource("enabled", {}, {}, supported));
+        QCoro::waitFor(extensions.addSource("baseline", {}, {}));
+        for (int attempt = 0; attempt < 2; ++attempt) {
+            const auto enabled = QCoro::waitFor(extensions.call("enabled", "inspect"));
+            require(enabled.value("extensions").toMap() == supported && enabled.value("blocked").toInt() == 8,
+                "providers cannot overwrite, extend, remove or replace negotiated host support");
+            require(enabled.value("shared").toBool() && enabled.value("frozen").toBool(),
+                "source and successive operation hosts share one frozen extension map");
+            const auto baseline = QCoro::waitFor(extensions.call("baseline", "inspect"));
+            require(baseline.value("extensions").toMap().isEmpty() && baseline.value("frozen").toBool(),
+                "a source without declared host support cannot inherit another source's extensions");
+        }
+
+        QList<QVariantMap> events;
+        QObject::connect(&extensions, &ScriptRuntime::event, &app,
+            [&](const QString&, const QString&, const QVariantMap& payload) { events.append(payload); });
+        // Queue replacement before the main loop can deliver the old factory's
+        // event. Even a reused account id must not acquire old generation offers.
+        auto removed = extensions.addSource("reused", { { "event", supported } }, {}, supported);
+        extensions.removeSource("reused");
+        const QVariantMap newOffer { { "spool.suggestions", 1 } };
+        auto replacement = extensions.addSource("reused", { { "event", newOffer } }, {}, newOffer);
+        QCoro::waitFor(std::move(removed));
+        QCoro::waitFor(std::move(replacement));
+        QCoro::waitFor(extensions.call("reused", "inspect"));
+        require(events == QList<QVariantMap> { QVariantMap { { "extensions", newOffer } } },
+            "queued extension events from a removed generation cannot change a replacement account");
+    }
     QTcpServer server;
     require(server.listen(QHostAddress::LocalHost), "fixture server listens");
     const QString origin = QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort());
@@ -223,6 +255,27 @@ SPOOL_TEST_MAIN("script-runtime")
     rejects(runtime->call("a", "throws"), "synchronous exceptions settle operations");
     rejects(runtime->call("a", "cycle"), "cyclic results fail bounded conversion");
     rejects(runtime->call("a", "largeInteger"), "unsafe integer results rejected");
+    const QVariantList reportRows { QVariantMap {
+                                        { "itemId", "same" }, { "entryId", "first" }, { "mediaType", "audio" } },
+        QVariantMap { { "itemId", "same" }, { "entryId", "second" }, { "mediaType", "audio" } } };
+    const QVariantMap reportArguments { { "queue", QVariantMap { { "revision", "1" }, { "items", reportRows } } },
+        { "positionTicks", QStringLiteral("9007199254740993") }, { "afterEntryId", QVariant::fromValue(nullptr) } };
+    QCoro::waitFor(runtime->call("a", "report", reportArguments));
+    const QVariantMap recordedReport
+        = QCoro::waitFor(runtime->call("a", "reportStats")).value("reports").toList().first().toMap();
+    require(recordedReport.value("queue").toMap().value("items").toList() == reportRows
+            && recordedReport.value("positionTicks").toString() == "9007199254740993"
+            && recordedReport.contains("afterEntryId") && recordedReport.value("afterEntryId").isNull()
+            && !recordedReport.contains("queueIndex"),
+        "nested report arrays preserve duplicate occurrences, tick strings, explicit null and omitted fields");
+    QVariantMap deepArguments { { "value", true } };
+    for (int depth = 0; depth < 21; ++depth)
+        deepArguments = { { "nested", deepArguments } };
+    rejects(runtime->call("a", "bump", deepArguments), "over-depth arguments reject before invoking provider code");
+    rejects(runtime->call("a", "bump", { { "rows", QVariantList(10001, 1) } }),
+        "overlong native argument arrays reject before invoking provider code");
+    require(QCoro::waitFor(runtime->call("a", "state")).value("calls").toInt() == 1,
+        "rejected argument trees cannot mutate source state");
     rejects(runtime->call("a", "missing"), "missing feature reports unsupported operation");
     const auto code = [&](const char *method) {
         try {

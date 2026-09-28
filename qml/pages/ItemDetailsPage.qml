@@ -134,6 +134,48 @@ FocusScope {
     property bool favoriteState: false
     property bool playedState: false
     property bool overflowOpen: false
+    property int providerActionsRequest: -1
+    property var providerActions: []
+    property string providerActionsStatus: ""
+    property bool canEditCollection: false
+    readonly property string actionContainerId: itemModel === Browse.items ? String(Browse.containerId || "") : ""
+    readonly property string actionEntryId: String(routeItem.playlistItemId || "")
+    onOverflowOpenChanged: {
+        if (overflowOpen)
+            loadProviderActions()
+        else {
+            if (providerActionsRequest >= 0)
+                Sources.cancelItemActions()
+            providerActionsRequest = -1
+            providerActions = []
+        }
+    }
+    function loadProviderActions() {
+        canEditCollection = (typeText === "Playlist" || typeText === "BoxSet") && Sources.collectionEditingAvailable(String(
+                                                                                                                         item.movieId
+                                                                                                                         || ""))
+        providerActions = []
+        providerActionsStatus = "Loading provider actions…"
+        providerActionsRequest = Sources.requestItemActions(String(item.movieId || ""), typeText, actionContainerId,
+                                                            actionEntryId)
+    }
+    Connections {
+        target: Sources
+        function onItemActionsReady(requestId, actions, problem) {
+            if (!root.overflowOpen || requestId !== root.providerActionsRequest)
+                return
+            root.providerActions = actions
+            root.providerActionsStatus = problem
+            Qt.callLater(function () {
+                if (root.overflowOpen && root.focusZone === "overflow")
+                    root.focusOverflow(root.overflowIndex)
+            })
+        }
+        function onExtensionSupportChanged(accountId) {
+            if (root.overflowOpen)
+                root.loadProviderActions()
+        }
+    }
     property point overflowAnchorPoint: Qt.point(0, 0)
     property string focusZone: "actions"
     property int actionIndex: 0
@@ -456,8 +498,10 @@ FocusScope {
     onRouteActiveChanged: {
         if (routeActive)
             enterRoute(false)
-        else
+        else {
+            overflowOpen = false
             App.cancelEpisodicPlaybackSelection()
+        }
     }
 
     onActiveFocusChanged: {
@@ -833,6 +877,8 @@ FocusScope {
         const options = []
         if (showContextPlaybackActions)
             options.push(playAllOption, shuffleOption)
+        if (canEditCollection)
+            options.push(collectionEditorOption)
         for (let index = 0; index < providerActionOptions.count; ++index) {
             const option = providerActionOptions.itemAt(index)
             if (option)
@@ -847,7 +893,7 @@ FocusScope {
             if (option)
                 options.push(option)
         }
-        return options
+        return options.filter(option => option.enabled)
     }
 
     function focusOverflow(index) {
@@ -875,7 +921,13 @@ FocusScope {
 
     function runProviderAction(actionId) {
         overflowOpen = false
-        Sources.runItemAction(actionId, String(item.movieId || ""), typeText)
+        Sources.runItemAction(actionId, String(item.movieId || ""), typeText, actionContainerId, actionEntryId)
+    }
+
+    function openCollectionEditor() {
+        overflowOpen = false
+        if (shell)
+            shell.openCollectionEditor(String(item.movieId || ""), titleText)
     }
 
     function openMediaInfo() {
@@ -1019,6 +1071,8 @@ FocusScope {
                 playDetailContext(false)
             else if (option === shuffleOption)
                 playDetailContext(true)
+            else if (option === collectionEditorOption)
+                openCollectionEditor()
             else if (option === mediaInfoOption)
                 openMediaInfo()
             else if (option === letterboxdOption)
@@ -1048,7 +1102,10 @@ FocusScope {
         if (focusZone === "similar")
             return similarRow.longPress()
         return focusZone === "actions" && shell ? shell.openItemMenu(item, orderedActions()[actionIndex], {
-                                                                         "deferBackdropDismissal": true
+                                                                         "deferBackdropDismissal": true,
+                                                                         "containerId": actionContainerId,
+                                                                         "containerTitle": String(Browse.title || ""),
+                                                                         "entryId": actionEntryId
                                                                      }) : false
     }
 
@@ -1410,8 +1467,7 @@ FocusScope {
                             iconName: "menu"
                             label: "More"
                             checked: root.overflowOpen
-                            visible: root.showContextPlaybackActions || root.mediaInfoAvailable
-                                     || root.showLetterboxdAction || root.showExternalActions
+                            visible: String(root.item.movieId || "").length > 0
                             enabledButton: root.selectedIndex >= 0
                             onActivated: root.toggleOverflow()
                         }
@@ -1653,17 +1709,32 @@ FocusScope {
                 onActivated: root.playDetailContext(true)
             }
 
-            // Whatever else the item's provider does with it: playlists,
-            // collections, renaming. Declared in its manifest, so free to list.
+            MenuOption {
+                id: collectionEditorOption
+                visible: root.canEditCollection
+                iconName: "edit"
+                label: "Manage entries"
+                onActivated: root.openCollectionEditor()
+            }
+            AppText {
+                width: parent.width
+                visible: root.providerActionsStatus.length > 0
+                text: root.providerActionsStatus
+                color: Theme.textSecondary
+                font.pixelSize: Metrics.bodySizePx
+                wrapMode: Text.WordWrap
+            }
             Repeater {
                 id: providerActionOptions
-                model: root.overflowOpen ? Sources.itemActions(String(root.item.movieId || ""), root.typeText) : []
+                model: root.overflowOpen ? root.providerActions : []
 
                 delegate: MenuOption {
                     required property var modelData
                     readonly property string providerAction: String(modelData.id || "")
                     iconName: String(modelData.icon || "more_horiz")
                     label: String(modelData.label || "")
+                    enabled: modelData.enabled !== false
+                    Accessible.description: String(modelData.reason || "")
                     onActivated: root.runProviderAction(providerAction)
                 }
             }
