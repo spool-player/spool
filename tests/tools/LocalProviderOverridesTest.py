@@ -34,21 +34,21 @@ class DiscoveryTest(unittest.TestCase):
         first = self.provider("zeta checkout", "test.alpha")
         second = self.provider("alpha checkout", "test.zeta")
         self.provider("unrelated/nested", "test.nested")
-        self.assertEqual(tool.discover(self.root), f"test.alpha={first};test.zeta={second}")
+        self.assertEqual(tool.discover(self.root), f"test.alpha={first.resolve()};test.zeta={second.resolve()}")
 
     def test_duplicate_ids_fail_with_both_checkouts(self):
         first = self.provider("one")
         second = self.provider("two")
         with self.assertRaisesRegex(ValueError, "duplicate provider ID test.provider") as caught:
             tool.discover(self.root)
-        self.assertIn(str(first), str(caught.exception))
-        self.assertIn(str(second), str(caught.exception))
+        self.assertIn(str(first.resolve()), str(caught.exception))
+        self.assertIn(str(second.resolve()), str(caught.exception))
 
     def test_directory_limit_precedes_manifest_reads(self):
         candidate = self.provider("candidate")
         for index in range(198):
             (self.workspace / f"unrelated-{index}").mkdir()
-        self.assertEqual(tool.discover(self.root), f"test.provider={candidate}")
+        self.assertEqual(tool.discover(self.root), f"test.provider={candidate.resolve()}")
         (candidate / "manifest.json").write_text("invalid JSON")
         (self.workspace / "directory-201").mkdir()
         with self.assertRaisesRegex(ValueError, "more than 200 immediate directories"):
@@ -59,7 +59,7 @@ class DiscoveryTest(unittest.TestCase):
         (candidate / "manifest.json").write_text("{")
         with self.assertRaisesRegex(ValueError, "invalid provider candidate") as caught:
             tool.discover(self.root)
-        self.assertIn(str(candidate), str(caught.exception))
+        self.assertIn(str(candidate.resolve()), str(caught.exception))
 
     def test_sdk_contract_and_required_packaged_files(self):
         candidate = self.provider("candidate")
