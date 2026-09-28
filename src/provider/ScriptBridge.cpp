@@ -369,7 +369,10 @@ void ScriptRequests::discover(int port, const QString& message, int timeoutMs, Q
     QTimer::singleShot(timeoutMs, socket, [this, socket, replies, resolve]() mutable {
         m_pending.remove(socket);
         socket->deleteLater();
-        resolve.call({ m_access->engine->toScriptValue(*replies) });
+        QJSValue rows = m_access->engine->newArray(replies->size());
+        for (qsizetype index = 0; index < replies->size(); ++index)
+            rows.setProperty(index, m_access->engine->toScriptValue(replies->at(index).toMap()));
+        resolve.call({ rows });
     });
 }
 

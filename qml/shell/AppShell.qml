@@ -708,8 +708,8 @@ KeyRouter {
             releaseTextInput()
             return true
         }
-        if (navBar.visible && navBar.groupMenuOpen) {
-            navBar.closeGroupMenu()
+        if (navBar.visible && navBar.menuOpen) {
+            navBar.back()
             return true
         }
         if (diagnosticsVisible) {
@@ -771,7 +771,7 @@ KeyRouter {
     }
 
     function forward() {
-        if (networkConsentPending || tlsTrustPending || textInputActive || (navBar.visible && navBar.groupMenuOpen)
+        if (networkConsentPending || tlsTrustPending || textInputActive || (navBar.visible && navBar.menuOpen)
                 || diagnosticsVisible || itemMenuOpen || providerOverlay || mediaInfoVisible || playerSessionActive)
             return true
         if (!Router.canForward)
@@ -970,6 +970,9 @@ KeyRouter {
         PointHandler {
             acceptedButtons: Qt.LeftButton
             onActiveChanged: if (active) {
+                                 if (navBar.remoteMenuOpen && !navBar.containsRemotePoint(root, point.position.x,
+                                                                                          point.position.y))
+                                     navBar.closeRemoteMenu(false)
                                  if (navBar.groupMenuOpen && !navBar.containsGroupPoint(root, point.position.x,
                                                                                         point.position.y))
                                      navBar.closeGroupMenu(false)
@@ -1018,6 +1021,7 @@ KeyRouter {
                 // Same reason as the height above: the rail marks where you are,
                 // not where you are going, so it does not blink its selection off
                 // for the frames a page takes to arrive.
+                shell: root
                 currentRoute: root.chromeRoute
                 onActiveFocusChanged: if (activeFocus)
                                           root.navigationTarget = navBar

@@ -813,18 +813,27 @@ QCoro::Task<void> RemoteTargetsController::loadQueue(Selection selected, bool re
     m_loadedRevision = revision;
 }
 
-void RemoteTargetsController::openAdvancedControls()
+QObject *RemoteTargetsController::createAdvancedControls()
 {
-    if (m_selection.targetId.isEmpty() || m_connecting || !m_target.value("customControls").toBool()
-        || (m_advancedControls && !m_advancedControls->closed()))
-        return;
+    if (m_selection.targetId.isEmpty() || m_connecting || !m_target.value("customControls").toBool())
+        return nullptr;
+    if (m_advancedControls && !m_advancedControls->closed())
+        return m_advancedControls;
     auto *context = qobject_cast<ProviderUiContext *>(m_registry->openPicker(m_selection.accountId,
         { { "kind", "remoteControls" }, { "targetId", SourceHub::rawId(m_selection.targetId) } }));
     if (!context) {
         setProblem(tr("Advanced controls are unavailable for this target."));
-        return;
+        return nullptr;
     }
     m_advancedControls = context;
+    return context;
+}
+
+void RemoteTargetsController::openAdvancedControls()
+{
+    auto *context = qobject_cast<ProviderUiContext *>(createAdvancedControls());
+    if (!context)
+        return;
     const auto selected = m_selection;
     QPointer<ProviderUiContext> picker(context);
     QTimer::singleShot(0, this, [this, selected, picker] {

@@ -24,7 +24,7 @@ FocusScope {
         const out = community ? [
                                     {
                                         "kind": "header",
-                                        "title": "Official"
+                                        "title": "By Spool"
                                     }
                                 ] : []
         out.push(...Store.official.map(entry => Object.assign({}, entry, {

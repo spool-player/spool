@@ -119,6 +119,7 @@ public:
     Q_INVOKABLE void setQueueVisible(bool visible);
     Q_INVOKABLE void confirmLeaveGroup(bool accepted);
     Q_INVOKABLE void openAdvancedControls();
+    Q_INVOKABLE QObject *createAdvancedControls();
     // Also used by lifecycle adapters on platforms without QGuiApplication.
     void setForeground(bool foreground);
 signals:

@@ -4,6 +4,7 @@ import QtQuick
 import QtQuick.Layouts
 import "../theme"
 import "../primitives"
+import "../pages"
 
 // Horizontal navigation bar: primary routes on the left, watching together on
 // the right when an account supports it. D-pad:
@@ -17,6 +18,10 @@ FocusScope {
     // of a thumb, and its vertical keys follow it.
     property string edge: "top"
     signal navigate(string route)
+    property var shell
+    property bool remoteMenuOpen: false
+    readonly property bool menuOpen: groupMenuOpen || remoteMenuOpen
+    readonly property bool remoteVisible: RemoteTargets.available
     signal contentRequested
 
     readonly property bool groupMenuOpen: groupMenuLoader.item ? groupMenuLoader.item.menuOpen : false
@@ -30,7 +35,7 @@ FocusScope {
 
     // Index space: the rail's buttons, then the group button when shown.
     function lastIndex() {
-        return railRepeater.count - (groupVisible ? 0 : 1)
+        return railRepeater.count + (remoteVisible ? 1 : 0) + (groupVisible ? 1 : 0) - 1
     }
 
     function focusedIndex() {
@@ -39,12 +44,16 @@ FocusScope {
             if (item && item.hasButtonFocus())
                 return i
         }
-        return groupButton.activeFocus ? railRepeater.count : 0
+        return remoteButton.activeFocus ? railRepeater.count : groupButton.activeFocus ? lastIndex() : 0
     }
 
     function focusIndex(index) {
         const clamped = Math.max(0, Math.min(lastIndex(), index))
-        if (clamped === railRepeater.count) {
+        if (remoteVisible && clamped === railRepeater.count) {
+            InputKeys.focus(remoteButton)
+            return
+        }
+        if (groupVisible && clamped === lastIndex()) {
             InputKeys.focus(groupButton)
             return
         }
@@ -67,6 +76,7 @@ FocusScope {
     function openGroupMenu() {
         if (!groupVisible)
             return
+        remoteMenuOpen = false
         groupMenuLoaded = true
         if (groupMenuLoader.item)
             groupMenuLoader.item.openMenu()
@@ -93,7 +103,15 @@ FocusScope {
             return
         }
         const index = focusedIndex()
-        if (index === railRepeater.count) {
+        if (remoteMenuOpen && remoteMenuLoader.item) {
+            remoteMenuLoader.item.activate()
+            return
+        }
+        if (remoteVisible && index === railRepeater.count) {
+            openRemoteMenu()
+            return
+        }
+        if (groupVisible && index === lastIndex()) {
             openGroupMenu()
             return
         }
@@ -103,16 +121,26 @@ FocusScope {
     }
 
     function back() {
+        if (remoteMenuOpen) {
+            if (remoteMenuLoader.item && remoteMenuLoader.item.back())
+                return true
+            closeRemoteMenu(true)
+            return true
+        }
         if (!groupMenuOpen)
             return false
         closeGroupMenu()
         return true
     }
 
-    onActiveFocusChanged: if (!activeFocus)
+    onActiveFocusChanged: if (!activeFocus) {
                               closeGroupMenu(false)
+                              closeRemoteMenu(false)
+                          }
 
     function routeKey(key, phase, repeat) {
+        if (remoteMenuOpen && remoteMenuLoader.item)
+            return remoteMenuLoader.item.routeKey(key, phase, repeat)
         const menu = groupMenuLoader.item
         if (menu && menu.menuOpen)
             return menu.routeKey(key, phase, repeat)
@@ -181,16 +209,11 @@ FocusScope {
                     icon: "switch_account"
                 },
                 {
-                    label: "Playback devices",
-                    route: "remoteControl",
-                    icon: "cast"
-                },
-                {
                     label: "Settings",
                     route: "settings",
                     icon: "settings"
                 }
-            ].filter(entry => entry.route !== "remoteControl" || RemoteTargets.available)
+            ]
 
             delegate: Item {
                 id: railDelegate
@@ -224,6 +247,21 @@ FocusScope {
 
         Item {
             Layout.fillWidth: true
+        }
+
+        Item {
+            visible: root.remoteVisible
+            Layout.preferredWidth: visible ? root.railCellWidth : 0
+            Layout.fillHeight: true
+            IconButton {
+                id: remoteButton
+                anchors.centerIn: parent
+                iconName: "cast"
+                accessibleName: "Playback devices"
+                railStyle: true
+                selected: root.remoteMenuOpen || RemoteTargets.selectedTargetId.length > 0
+                onClicked: root.remoteMenuOpen ? root.closeRemoteMenu(true) : root.openRemoteMenu()
+            }
         }
 
         Item {
@@ -273,5 +311,45 @@ FocusScope {
             onRequestClose: root.closeGroupMenu()
         }
         onLoaded: item.openMenu()
+    }
+    function openRemoteMenu() {
+        closeGroupMenu(false)
+        remoteMenuOpen = true
+        RemoteTargets.setControlsVisible(true)
+        Qt.callLater(() => {
+            if (remoteMenuLoader.item)
+                InputKeys.focus(remoteMenuLoader.item)
+        })
+    }
+    function closeRemoteMenu(restoreFocus) {
+        if (!remoteMenuOpen)
+            return
+        remoteMenuOpen = false
+        RemoteTargets.setControlsVisible(RemoteTargets.selectedTargetId.length > 0)
+        if (restoreFocus)
+            InputKeys.focus(remoteButton)
+    }
+    function containsRemotePoint(item, x, y) {
+        if (remoteButton.contains(remoteButton.mapFromItem(item, x, y)))
+            return true
+        const menu = remoteMenuLoader.item
+        return Boolean(menu && menu.contains(menu.mapFromItem(item, x, y)))
+    }
+    Loader {
+        id: remoteMenuLoader
+        active: root.remoteMenuOpen
+        width: Math.min(root.width - Metrics.scaled(28), Metrics.scaled(560))
+        height: Math.min(Metrics.scaled(680), Math.max(Metrics.scaled(200), root.parent.height - root.height
+                                                       - Metrics.scaled(20)))
+        // Avoid mutually exclusive anchors: cached QML can retain both during
+        // edge changes and calculate a negative menu height.
+        x: root.width - width - Metrics.scaled(10)
+        y: root.edge === "bottom" ? -height - Metrics.scaled(10) : root.height + Metrics.scaled(10)
+        z: 50
+        sourceComponent: RemoteControlPage {
+            compact: true
+            shell: root.shell
+        }
+        onLoaded: InputKeys.focus(item)
     }
 }
