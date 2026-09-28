@@ -289,6 +289,10 @@ export function createSource(config, sourceHost) {
         state() { return {calls, extensions: sourceHost.extensions}; },
         offers(args) { sourceHost.emit('extensionsChanged', {extensions: args.extensions}); return {}; },
         fetch(args, host) { return host.http(args.url); },
+        discoverMore(args, host) {
+            if (args.inspect) return {ready: sourceHost.extensions['spool.lan-probe'] === 1};
+            return host.probeLocalHttp(args);
+        },
         dataFixture(args) {
             if (args.maximum !== undefined) maximum = args.maximum;
             if (args.conditional !== undefined) conditional = args.conditional;
@@ -537,6 +541,9 @@ export function createSource(config, sourceHost) {
 
     auto *lanDraft = qobject_cast<ProviderUiContext *>(registry.beginSetup("fixture.test"));
     const QString lanSource = lanDraft->sourceId();
+    require(failure(registry.callSource(lanSource, "discoverMore", { { "port", 8096 }, { "path", "/" } }))
+            == "discovery_denied",
+        "login discovery reaches the operation host and still requires consent");
     consentSettled = consentApproved = false;
     registry.allowLanDiscovery(lanSource, "lan")
         .then([&] { consentSettled = consentApproved = true; }, [&](const std::exception&) { consentSettled = true; });
@@ -555,6 +562,12 @@ export function createSource(config, sourceHost) {
             && !failure(registry.callSource(lanSource, "fetch", { { "url", peer.toString() } })).isEmpty()
             && requests == 1,
         "LAN consent never grants authenticated HTTP origins");
+    require(
+        QCoro::waitFor(registry.callSource(lanSource, "discoverMore", { { "inspect", true } })).value("ready").toBool(),
+        "login drafts can dispatch their declared discovery operation");
+    require(
+        failure(registry.callSource(extendedAlice, "discoverMore", { { "inspect", true } })) == "unsupported_extension",
+        "draft discovery does not enable undeclared account operations");
     require(failure(registry.allowLanDiscovery(extendedAlice, "lan")) == "unsupported_extension",
         "signed-in accounts cannot request subnet discovery");
     lanDraft->close();

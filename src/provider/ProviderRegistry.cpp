@@ -838,7 +838,12 @@ QCoro::Task<QVariantMap> ProviderRegistry::callSource(
     if (operation == QStringLiteral("activate"))
         throw std::runtime_error("action_unavailable");
     const QString extension = ProviderExtensions::operationExtension(operation);
-    if (!extension.isEmpty() && !legacySpeedTest(sourceId, operation))
+    // Discovery belongs to the login draft, before an account can negotiate
+    // extensions. The operation host still enforces its separate LAN consent.
+    const auto running = m_running.constFind(sourceId);
+    const bool loginDiscovery = operation == QStringLiteral("discoverMore") && running != m_running.cend()
+        && running->draft && running->hostExtensions.value(QStringLiteral("spool.lan-probe")).toInt() == 1;
+    if (!extension.isEmpty() && !loginDiscovery && !legacySpeedTest(sourceId, operation))
         co_return co_await callExtension(sourceId, extension, operation, arguments, scope);
     co_return co_await guarded<QVariantMap>(sourceId, [=](ScriptRuntime *runtime, const QString& runtimeId) {
         return runtime->call(runtimeId, operation, arguments, scope);
