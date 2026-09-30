@@ -14,8 +14,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
 namespace Spool {
 
 namespace {
@@ -25,6 +29,26 @@ namespace {
     constexpr int kMaxTimers = 16;
     constexpr int kMaxSockets = 4;
     constexpr int kMaxDiscoveryReplies = 64;
+
+#ifdef Q_OS_WIN
+    void *openWorkerThread()
+    {
+        HANDLE handle = OpenThread(THREAD_QUERY_INFORMATION, FALSE, GetCurrentThreadId());
+        if (!handle)
+            throw std::runtime_error("thread_cpu_unavailable");
+        return handle;
+    }
+
+    quint64 workerCpuTime(void *handle)
+    {
+        FILETIME created {}, exited {}, kernel {}, user {};
+        if (!GetThreadTimes(handle, &created, &exited, &kernel, &user))
+            return std::numeric_limits<quint64>::max();
+        const auto ticks
+            = [](const FILETIME& value) { return (quint64(value.dwHighDateTime) << 32) | value.dwLowDateTime; };
+        return ticks(kernel) + ticks(user);
+    }
+#endif
 
     void rejectWith(QJSEngine *engine, QJSValue& reject, const char *code)
     {
@@ -45,6 +69,9 @@ namespace {
 
 ScriptWatchdog::ScriptWatchdog(QJSEngine *engine)
     : m_engine(engine)
+#ifdef Q_OS_WIN
+    , m_workerHandle(openWorkerThread())
+#endif
     , m_thread([this] { run(); })
 {
 }
@@ -58,6 +85,9 @@ ScriptWatchdog::~ScriptWatchdog()
     }
     m_changed.notify_one();
     m_thread.join();
+#ifdef Q_OS_WIN
+    CloseHandle(m_workerHandle);
+#endif
 }
 
 void ScriptWatchdog::arm()
@@ -65,6 +95,13 @@ void ScriptWatchdog::arm()
     std::lock_guard lock(m_mutex);
     m_armed = true;
     m_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+#ifdef Q_OS_WIN
+    m_cpuStarted = workerCpuTime(m_workerHandle);
+    if (m_cpuStarted == std::numeric_limits<quint64>::max()) {
+        m_engine->setInterrupted(true);
+        m_armed = false;
+    }
+#endif
     m_changed.notify_one();
 }
 
@@ -85,6 +122,15 @@ void ScriptWatchdog::run()
         const auto deadline = m_deadline;
         if (!m_changed.wait_until(
                 lock, deadline, [this, deadline] { return m_stopping || !m_armed || m_deadline != deadline; })) {
+#ifdef Q_OS_WIN
+            // FILETIME is in 100 ns ticks. Native IO and time when this worker
+            // was not scheduled cannot make a short script look runaway.
+            const quint64 cpuNow = workerCpuTime(m_workerHandle);
+            if (cpuNow != std::numeric_limits<quint64>::max() && cpuNow - m_cpuStarted < 5000000) {
+                m_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(10);
+                continue;
+            }
+#endif
             m_engine->setInterrupted(true);
             m_armed = false;
         }

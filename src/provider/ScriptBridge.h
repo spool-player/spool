@@ -29,8 +29,9 @@ namespace Spool {
 
 struct LanProbeSession;
 
-// Interrupts JS that runs longer than 500 ms without returning to the event
-// loop. Qt permits setInterrupted() from another thread.
+// Interrupts JS after 500 ms without returning to the event loop. Windows
+// measures worker CPU time so loader IO and descheduling do not spend the
+// execution budget. Qt permits setInterrupted() from another thread.
 class ScriptWatchdog {
 public:
     explicit ScriptWatchdog(QJSEngine *engine);
@@ -46,6 +47,10 @@ private:
     bool m_stopping = false;
     bool m_armed = false;
     std::chrono::steady_clock::time_point m_deadline;
+#ifdef Q_OS_WIN
+    void *m_workerHandle = nullptr;
+    quint64 m_cpuStarted = 0;
+#endif
     std::thread m_thread;
 };
 
