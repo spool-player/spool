@@ -264,6 +264,7 @@ private:
     QString m_errorText;
     QString m_repeatMode = QStringLiteral("RepeatNone");
     RequestGeneration m_libraryLoadGeneration;
+    RequestGeneration m_libraryListGeneration;
     RequestGeneration m_playbackLoadGeneration;
     RequestGeneration m_syncPlayQueueRequestGeneration;
     RequestGeneration m_remotePlaybackRequestGeneration;

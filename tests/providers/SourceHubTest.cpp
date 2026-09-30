@@ -2,6 +2,8 @@
 #include "ProviderFixture.h"
 #include "TestMain.h"
 #include "app/ArtworkService.h"
+#include "app/HomeModelController.h"
+#include "app/LibraryPrefetchController.h"
 #include "cache/DatabaseManager.h"
 #include "common/MetaJson.h"
 #include "provider/PortableProvider.h"
@@ -477,5 +479,69 @@ SPOOL_TEST_MAIN("source-hub")
         = QCoro::waitFor(hub.call(remote, QStringLiteral("reportStats"))).value("reports").toList().last().toMap();
     require(!baselineReport.contains("queue") && !baselineReport.contains("queueIndex"),
         "non-negotiated accounts retain baseline reports without extension fields");
+    {
+        DatabaseManager homeDatabase;
+        require(homeDatabase.initialize(directory.filePath(QStringLiteral("home/cache.sqlite"))),
+            "isolated homepage database opens");
+        ProviderRegistry homeRegistry(&homeDatabase);
+        homeRegistry.setInstallDirectory(installs);
+        homeRegistry.loadModules();
+        SourceHub homeHub(&homeRegistry);
+        homeHub.setPlaybackActive(true);
+        QCoro::waitFor(homeRegistry.restore());
+        LibraryPrefetchController homePrefetch(&homeHub);
+        HomeModelController home(nullptr, &homeHub, &homePrefetch);
+        QObject::connect(&homeHub, &SourceHub::browseSourcesChanged, &home, [&] {
+            QSet<QString> accounts;
+            for (Provider *source : homeHub.sources())
+                accounts.insert(source->id());
+            home.invalidate([&](const QString& id) { return accounts.contains(homeHub.accountOf(id)); });
+        });
+        const auto addHomeAccount = [&](const QString& key) {
+            const QString id = homeRegistry.finishSetup({},
+                { { QStringLiteral("module"), QStringLiteral("fixture.test") }, { QStringLiteral("account"), key },
+                    { QStringLiteral("label"), key },
+                    { QStringLiteral("configuration"), QVariantMap { { QStringLiteral("label"), key } } } });
+            homeRegistry.useAccount(id);
+            return id;
+        };
+        const QString removedAccount = addHomeAccount(QStringLiteral("home-removed"));
+        const QString retainedAccount = addHomeAccount(QStringLiteral("home-retained"));
+        waitUntil([&] { return homeHub.sources().size() == 2; }, "both homepage accounts start");
+        home.refresh(QCoro::waitFor(homeHub.fetchLibraries()));
+        waitUntil([&] { return !home.loading(); }, "multi-account homepage loads");
+        require(home.latestLibraryRows().size() == 2, "homepage initially includes both accounts' latest rows");
+        const auto hasAccount = [&](MovieGridModel *model, const QString& account) {
+            return std::any_of(model->movies().begin(), model->movies().end(),
+                [&](const MovieItem& item) { return homeHub.accountOf(item.id) == account; });
+        };
+        require(hasAccount(home.resumeItems(), removedAccount) && hasAccount(home.resumeItems(), retainedAccount)
+                && hasAccount(home.nextUpItems(), removedAccount) && hasAccount(home.nextUpItems(), retainedAccount),
+            "continue watching and next-up initially contain both accounts");
+        homeRegistry.removeAccount(removedAccount);
+        waitUntil([&] { return !homeHub.source(removedAccount); }, "account removal completes");
+        const auto onlyRetained = [&](MovieGridModel *model) {
+            return model->rowCount() > 0
+                && std::all_of(model->movies().begin(), model->movies().end(),
+                    [&](const MovieItem& item) { return homeHub.accountOf(item.id) == retainedAccount; });
+        };
+        require(onlyRetained(home.resumeItems()) && onlyRetained(home.nextUpItems())
+                && home.latestLibraryRows().size() == 1
+                && homeHub.accountOf(
+                       home.latestLibraryRows().first().toMap().value(QStringLiteral("libraryId")).toString())
+                    == retainedAccount
+                && homeRegistry.sourceRunning(retainedAccount),
+            "removing an account immediately removes only its homepage content before a settled refresh");
+        home.refresh(QCoro::waitFor(homeHub.fetchLibraries()));
+        waitUntil([&] { return !home.loading(); }, "remaining account homepage refreshes");
+        require(onlyRetained(home.resumeItems()) && onlyRetained(home.nextUpItems())
+                && home.latestLibraryRows().size() == 1,
+            "homepage refresh retains only the remaining account's content");
+        homeRegistry.setAccountEnabled(retainedAccount, false);
+        require(home.resumeItems()->rowCount() == 0 && home.nextUpItems()->rowCount() == 0
+                && home.latestLibraryRows().isEmpty(),
+            "removing the final browsed source immediately empties the homepage");
+    }
+
     return 0;
 }

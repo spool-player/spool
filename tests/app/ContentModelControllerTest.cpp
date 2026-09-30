@@ -10,16 +10,23 @@
 #include "TestMain.h"
 
 #include <QCoreApplication>
+#include <QCoroFuture>
 #include <QDebug>
+#include <QElapsedTimer>
 #include <QEventLoop>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QPromise>
+#include <QThread>
 #include <QTimer>
 
 #include <algorithm>
 #include <cstdlib>
+#include <functional>
 #include <iostream>
+#include <memory>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -60,6 +67,13 @@ LibraryItem makeLibrary(const QString& id, const QString& name, const QString& c
 class TestCatalog final : public Catalog, public SearchSource {
 public:
     std::optional<std::vector<MovieItem>> episodeRows;
+    QString scopeKey = QStringLiteral("test-scope");
+    std::vector<MovieItem> resumeRows;
+    std::vector<MovieItem> nextUpRows;
+    QHash<QString, std::vector<MovieItem>> latestRows;
+    std::shared_ptr<QPromise<std::vector<MovieItem>>> pendingResume;
+    QHash<QString, std::shared_ptr<QPromise<std::vector<MovieItem>>>> pendingLatest;
+    int completedHomeRequests = 0;
     bool signedIn() const override
     {
         return true;
@@ -67,7 +81,7 @@ public:
 
     QString libraryScopeKey() const override
     {
-        return QStringLiteral("test-scope");
+        return scopeKey;
     }
 
     QCoro::Task<PagedMovieItems> fetchBrowsePage(BrowseDescriptor descriptor, int startIndex, int limit,
@@ -150,18 +164,34 @@ public:
     QCoro::Task<std::vector<MovieItem>> fetchResumeItems(int limit = 24) override
     {
         Q_UNUSED(limit);
-        co_return std::vector<MovieItem> {};
+        if (pendingResume) {
+            auto future = pendingResume->future();
+            auto awaitable = qCoro(future);
+            auto rows = co_await awaitable.takeResult();
+            ++completedHomeRequests;
+            co_return rows;
+        }
+        co_return resumeRows;
     }
 
     QCoro::Task<std::vector<MovieItem>> fetchNextUpEpisodes(int limit = 24) override
     {
         Q_UNUSED(limit);
-        co_return std::vector<MovieItem> {};
+        co_return nextUpRows;
     }
 
     QCoro::Task<std::vector<MovieItem>> fetchLatestItems(QString parentId = {}, int limit = 24) override
     {
         Q_UNUSED(limit);
+        if (const auto pending = pendingLatest.value(parentId)) {
+            auto future = pending->future();
+            auto awaitable = qCoro(future);
+            auto rows = co_await awaitable.takeResult();
+            ++completedHomeRequests;
+            co_return rows;
+        }
+        if (latestRows.contains(parentId))
+            co_return latestRows.value(parentId);
         std::vector<MovieItem> items;
         if (parentId == QStringLiteral("shows-id")) {
             for (int i = 1; i <= 145; ++i) {
@@ -409,6 +439,17 @@ bool waitForSearch(SearchController& search, int timeoutMs)
     if (search.busy())
         loop.exec();
     return !search.busy() && search.resultCount() == 4;
+}
+
+void waitUntil(const std::function<bool()>& condition, const char *message)
+{
+    QElapsedTimer timeout;
+    timeout.start();
+    while (!condition() && timeout.elapsed() < 2000) {
+        QCoreApplication::processEvents();
+        QThread::msleep(1);
+    }
+    require(condition(), message);
 }
 
 bool waitForHomeRows(HomeModelController& home, int timeoutMs)
@@ -696,6 +737,100 @@ SPOOL_TEST_MAIN("content-model-controller")
     require(
         showItems->get(0).title == QStringLiteral("Updated episode"), "home did not update a stable latest-row model");
     require(latestStructureChanges == 0, "home emitted a row-structure change for content-only updates");
+
+    TestCatalog changingCatalog;
+    LibraryPrefetchController changingPrefetch(&changingCatalog);
+    HomeModelController changingHome(nullptr, &changingCatalog, &changingPrefetch);
+    const LibraryItem removedLibrary
+        = makeLibrary(QStringLiteral("removed:movies"), QStringLiteral("Removed"), QStringLiteral("movies"));
+    const LibraryItem retainedLibrary
+        = makeLibrary(QStringLiteral("retained:movies"), QStringLiteral("Retained"), QStringLiteral("movies"));
+    const auto makeHomeItem = [](const QString& id, const QString& title) {
+        MovieItem item;
+        item.id = id;
+        item.title = title;
+        item.itemType = QStringLiteral("Movie");
+        return item;
+    };
+    const MovieItem removedItem = makeHomeItem(QStringLiteral("removed:film"), QStringLiteral("Removed film"));
+    MovieItem retainedItem = makeHomeItem(QStringLiteral("retained:film"), QStringLiteral("Retained film"));
+    changingCatalog.scopeKey = QStringLiteral("removed+retained");
+    changingCatalog.resumeRows = { removedItem, retainedItem };
+    changingCatalog.nextUpRows = { removedItem, retainedItem };
+    changingCatalog.latestRows.insert(removedLibrary.id, { removedItem });
+    changingCatalog.latestRows.insert(retainedLibrary.id, { retainedItem });
+    changingHome.refresh({ removedLibrary, retainedLibrary });
+    waitUntil([&] { return !changingHome.loading(); }, "initial multi-account homepage did not settle");
+    require(changingHome.resumeItems()->get(0).id == removedItem.id
+            && changingHome.nextUpItems()->get(0).id == removedItem.id && changingHome.latestLibraryRows().size() == 2,
+        "initial homepage must expose both accounts before removing one");
+    const auto retainAccount = [](const QString& id) { return id.startsWith(QStringLiteral("retained:")); };
+    changingCatalog.scopeKey = QStringLiteral("retained");
+    changingHome.invalidate(retainAccount);
+    require(changingHome.resumeItems()->rowCount() == 1 && changingHome.resumeItems()->get(0).id == retainedItem.id
+            && changingHome.nextUpItems()->rowCount() == 1 && changingHome.nextUpItems()->get(0).id == retainedItem.id
+            && changingHome.latestLibraryRows().size() == 1
+            && changingHome.latestLibraryRows().first().toMap().value(QStringLiteral("libraryId")).toString()
+                == retainedLibrary.id,
+        "account removal must immediately discard its home rows while preserving the remaining account");
+    retainedItem.title = QStringLiteral("Refreshed retained film");
+    changingCatalog.resumeRows = { retainedItem };
+    changingCatalog.nextUpRows = { retainedItem };
+    changingCatalog.latestRows.insert(retainedLibrary.id, { retainedItem });
+    changingHome.refresh({ retainedLibrary });
+    waitUntil([&] { return !changingHome.loading(); }, "remaining account homepage did not refresh");
+    const auto retainedLatestModel = [&] {
+        return qobject_cast<MovieGridModel *>(
+            changingHome.latestLibraryRows().first().toMap().value(QStringLiteral("model")).value<QObject *>());
+    };
+    require(changingHome.resumeItems()->get(0).title == retainedItem.title
+            && changingHome.nextUpItems()->get(0).title == retainedItem.title
+            && retainedLatestModel()->get(0).title == retainedItem.title,
+        "account removal must refresh remaining content even after the previous homepage finished loading");
+
+    changingHome.invalidate();
+    auto staleResume = std::make_shared<QPromise<std::vector<MovieItem>>>();
+    staleResume->start();
+    changingCatalog.pendingResume = staleResume;
+    changingCatalog.scopeKey = QStringLiteral("removed+retained");
+    changingHome.refresh({ removedLibrary, retainedLibrary });
+    require(changingHome.loading(), "controlled old-account resume request must remain in flight");
+    changingCatalog.scopeKey = QStringLiteral("retained");
+    changingHome.invalidate(retainAccount);
+    changingCatalog.pendingResume.reset();
+    retainedItem.title = QStringLiteral("Newest retained film");
+    changingCatalog.resumeRows = { retainedItem };
+    changingCatalog.nextUpRows = { retainedItem };
+    changingCatalog.latestRows.insert(retainedLibrary.id, { retainedItem });
+    changingHome.refresh({ retainedLibrary });
+    waitUntil([&] { return !changingHome.loading(); }, "replacement homepage did not settle");
+    staleResume->addResult(std::vector<MovieItem> { removedItem });
+    staleResume->finish();
+    waitUntil([&] { return changingCatalog.completedHomeRequests == 1; }, "stale resume response did not complete");
+    require(!changingHome.loading() && changingHome.resumeItems()->get(0).title == retainedItem.title
+            && changingHome.nextUpItems()->get(0).title == retainedItem.title
+            && changingHome.latestLibraryRows().size() == 1
+            && retainedLatestModel()->get(0).title == retainedItem.title,
+        "an old-account resume response must not overwrite the replacement homepage");
+
+    changingHome.invalidate();
+    auto staleLatest = std::make_shared<QPromise<std::vector<MovieItem>>>();
+    staleLatest->start();
+    changingCatalog.pendingLatest.insert(removedLibrary.id, staleLatest);
+    changingCatalog.scopeKey = QStringLiteral("removed+retained");
+    changingHome.refresh({ removedLibrary, retainedLibrary });
+    require(changingHome.loading(), "controlled old-account latest request must remain in flight");
+    changingCatalog.scopeKey = QStringLiteral("retained");
+    changingHome.invalidate(retainAccount);
+    changingCatalog.pendingLatest.clear();
+    changingHome.refresh({ retainedLibrary });
+    waitUntil([&] { return !changingHome.loading(); }, "replacement latest rows did not settle");
+    staleLatest->addResult(std::vector<MovieItem> { removedItem });
+    staleLatest->finish();
+    waitUntil([&] { return changingCatalog.completedHomeRequests == 2; }, "stale latest response did not complete");
+    require(changingHome.latestLibraryRows().size() == 1 && retainedLatestModel()->get(0).id == retainedItem.id
+            && retainedLatestModel()->get(0).title == retainedItem.title,
+        "a delayed latest response must not resurrect a removed account's library");
 
     return EXIT_SUCCESS;
 }

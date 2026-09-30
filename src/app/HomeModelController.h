@@ -11,6 +11,7 @@
 #include <QStringList>
 #include <QVariantList>
 
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -52,6 +53,7 @@ public:
     void updateResumeTicks(const QString& itemId, qint64 positionTicks);
     void updateFavorite(const QString& itemId, bool favorite);
     void updatePlayed(const QString& itemId, bool played);
+    void invalidate(const std::function<bool(const QString&)>& isAvailable = {});
     void reset();
 
 signals:

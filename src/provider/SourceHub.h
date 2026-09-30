@@ -179,6 +179,7 @@ public:
     }
 
 signals:
+    void browseSourcesChanged();
     void accountEvent(const QString& accountId, const QString& type, const QVariantMap& payload);
     void streamingQualityChanged();
     void itemActionsReady(int requestId, const QVariantList& actions, const QString& problem);

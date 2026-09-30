@@ -11,8 +11,11 @@
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QTemporaryDir>
+#include <QUrlQuery>
 
-class ArtworkIntegration final : public Spool::ArtworkSource {
+class ArtworkIntegration final : public QObject, public Spool::ArtworkSource {
+    Q_OBJECT
+    Q_PROPERTY(QStringList requestedItems MEMBER requestedItems NOTIFY requestsChanged)
 public:
     ArtworkIntegration()
         : artwork(directory.path(), 0, 1024 * 1024, 1, nullptr)
@@ -35,6 +38,9 @@ public:
                         return;
                     }
                     socket->setProperty("answered", true);
+                    const auto target = QUrl(QString::fromUtf8(request.split(' ').value(1)));
+                    requestedItems.push_back(QUrlQuery(target).queryItemValue("owner"));
+                    emit requestsChanged();
                     socket->write("HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: "
                         + QByteArray::number(png.size()) + "\r\nConnection: close\r\n\r\n" + png);
                     socket->disconnectFromHost();
@@ -63,18 +69,44 @@ public:
             || (request.imageType == "Thumb" && request.itemId == "01234567:owner" && request.tag == "thumb")
             || (request.imageType == "Backdrop" && request.itemId == "01234567:backdrop-owner"
                 && request.tag == "backdrop")
-            || (request.imageType == "Primary" && request.itemId == "01234567:series"
-                && request.tag == "series-poster"))
+            || (request.imageType == "Primary" && request.itemId == "01234567:series" && request.tag == "series-poster")
+            || (request.imageType == "Primary" && request.itemId.startsWith("01234567:library-")))
             return QStringLiteral("http://127.0.0.1:%1/green.png?kind=%2&owner=%3")
                 .arg(server.serverPort())
                 .arg(request.imageType, request.itemId);
         return {};
     }
+    Q_INVOKABLE void prepareLibrary(QObject *browse, QObject *libraries, QObject *window, QObject *settings)
+    {
+        std::vector<Spool::MovieItem> items;
+        for (int i = 0; i < 300; ++i) {
+            Spool::MovieItem item;
+            item.id = QStringLiteral("01234567:library-%1").arg(i);
+            item.title = QStringLiteral("Movie %1").arg(i);
+            item.itemType = "Movie";
+            item.posterTag = "poster";
+            items.push_back(std::move(item));
+        }
+        model.setMovies(items);
+        requestedItems.clear();
+        engine->rootContext()->setContextProperty("Browse", browse);
+        engine->rootContext()->setContextProperty("Libraries", libraries);
+        engine->rootContext()->setContextProperty("NativeWindow", window);
+        engine->rootContext()->setContextProperty("Settings", settings);
+    }
     void expose(QQmlEngine *engine)
     {
         engine->rootContext()->setContextProperty("ArtworkModel", &model);
+        this->engine = engine;
+        engine->rootContext()->setContextProperty("ArtworkFixture", this);
         engine->addImageProvider("artwork", new Spool::ArtworkImageProvider(&artwork));
     }
+signals:
+    void requestsChanged();
+
+public:
+    QQmlEngine *engine = nullptr;
+    QStringList requestedItems;
     QTemporaryDir directory;
     Spool::MovieGridModel model;
     Spool::ArtworkService artwork;
