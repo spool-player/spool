@@ -234,7 +234,10 @@ QCoro::Task<void> HomeModelController::loadCachedPayloadAsync()
     const QString key = payloadCacheKey();
     if (key.isEmpty())
         co_return;
+    const RequestGeneration::Token generation = m_generation.current();
     const QJsonObject payload = co_await m_database->loadHomePayloadAsync(key, kHomePayloadSchemaVersion);
+    if (!m_generation.isCurrent(generation) || key != payloadCacheKey() || m_loaded)
+        co_return;
     if (applyCachedPayload(payload))
         qInfo() << "home: warm payload cache applied" << key;
 }
@@ -461,6 +464,40 @@ void HomeModelController::updatePlayed(const QString& itemId, bool played)
         if (section.model)
             section.model->updatePlayed(itemId, played);
     }
+}
+
+void HomeModelController::invalidate(const std::function<bool(const QString&)>& isAvailable)
+{
+    m_generation.invalidate();
+    m_refreshInFlight = false;
+    m_loaded = false;
+    m_prefetch->stop();
+    if (isAvailable) {
+        const auto retainItems = [&isAvailable](MovieGridModel& model) {
+            const auto& current = model.movies();
+            if (std::all_of(current.begin(), current.end(),
+                    [&isAvailable](const MovieItem& item) { return isAvailable(item.id); }))
+                return;
+            std::vector<MovieItem> retained;
+            retained.reserve(current.size());
+            for (const MovieItem& item : current) {
+                if (isAvailable(item.id))
+                    retained.push_back(item);
+            }
+            model.setMovies(std::move(retained));
+        };
+        retainItems(m_resumeItems);
+        retainItems(m_nextUpItems);
+        std::erase_if(m_latestLibrarySections,
+            [&isAvailable](const LatestLibrarySection& section) { return !isAvailable(section.library.id); });
+        for (LatestLibrarySection& section : m_latestLibrarySections) {
+            if (section.model)
+                retainItems(*section.model);
+        }
+        m_recentLibraryIds.removeIf([&isAvailable](const QString& id) { return !isAvailable(id); });
+    }
+    emit latestLibraryRowsChanged();
+    emit loadingChanged();
 }
 
 void HomeModelController::reset()

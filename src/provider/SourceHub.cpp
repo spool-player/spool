@@ -367,8 +367,10 @@ void SourceHub::addSource(Provider *provider)
     connect(provider, &Provider::toastRequested, this, &Provider::toastRequested);
     pushPlaybackContext();
     // A set-aside account joining for search changes nothing on screen.
-    if (browse)
+    if (browse) {
+        emit browseSourcesChanged();
         refresh();
+    }
 }
 
 void SourceHub::removeSource(const QString& accountId)
@@ -381,8 +383,10 @@ void SourceHub::removeSource(const QString& accountId)
     if (m_playbackAccount == accountId)
         m_playbackAccount.clear();
     m_access.remove(accountId);
-    if (entry.browse)
+    if (entry.browse) {
+        emit browseSourcesChanged();
         refresh();
+    }
 }
 
 bool SourceHub::accountEnabled(const QString& accountId) const
@@ -408,8 +412,10 @@ void SourceHub::syncBrowse()
             emit extensionSupportChanged(entry.accountId);
         }
     }
-    if (changed)
+    if (changed) {
+        emit browseSourcesChanged();
         refresh();
+    }
 }
 
 void SourceHub::refresh()
@@ -1059,20 +1065,20 @@ QCoro::Task<PersonCredits> SourceHub::fetchItemsByPerson(QString personId, int m
 
 QCoro::Task<std::vector<LibraryItem>> SourceHub::fetchLibraries()
 {
-    std::vector<std::pair<Provider *, QCoro::Task<std::vector<LibraryItem>>>> pending;
+    std::vector<std::pair<QString, QCoro::Task<std::vector<LibraryItem>>>> pending;
     for (Provider *provider : sources())
-        pending.emplace_back(provider, provider->catalog()->fetchLibraries());
+        pending.emplace_back(provider->id(), provider->catalog()->fetchLibraries());
     std::vector<LibraryItem> libraries;
     QHash<QString, int> names;
-    for (auto& [provider, task] : pending) {
+    for (auto& [accountId, task] : pending) {
         try {
             for (LibraryItem library : co_await std::move(task)) {
-                library.id = scoped(provider->id(), library.id);
+                library.id = scoped(accountId, library.id);
                 names[library.name.toCaseFolded()] += 1;
                 libraries.push_back(std::move(library));
             }
         } catch (const std::exception& error) {
-            qWarning() << "hub: libraries unavailable from" << provider->displayName() << error.what();
+            qWarning() << "hub: libraries unavailable from" << accountId.left(kPrefix) << error.what();
         }
     }
     // Two "Movies" rows from two servers read as one; say whose each is.

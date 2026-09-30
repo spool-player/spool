@@ -37,6 +37,11 @@ Local video artwork is extracted on demand through `ArtworkService`'s serial thu
 worker using libmpv software rendering and Qt image encoding.
 Core never includes `src/providers/`; `tools/check-module-seam.sh` (ctest `module-seam`) enforces it.
 
+Library grids request rendered artwork only for tiles intersecting the viewport.
+Buffered and pooled delegates do not occupy the render queue; scrolling cancels
+out-of-view loads so newly visible tiles can load without waiting for earlier rows.
+Speculative artwork prefetch remains separate from visible render requests.
+
 ## Accounts
 
 An account is one sign-in on one provider: its module, a key the provider chose (`user@server`),
@@ -44,6 +49,12 @@ a group, a label, the origins it may reach and its configuration. Metadata lives
 database (`providers/accounts/2`); configuration, which holds tokens, lives in the platform credential
 store and is read off the GUI thread. Accounts in the same group (users of one server) are
 alternatives: using one sets the others aside. Accounts in different groups are shown together.
+
+Changing the browsed account set immediately removes unavailable accounts from the
+library list, Continue Watching, Next Up and Recently Added while retaining the
+remaining accounts' rows. Home content then refreshes with the current libraries.
+Pending home/cache and library-list responses from an older account set cannot
+restore removed content.
 
 Search reaches past that. Once the search page opens, set-aside accounts on a server that is in use
 start too, without joining browsing, home rows or the library cache key. Each search then goes, per

@@ -1387,6 +1387,9 @@ FocusScope {
                         id: gridDelegate
 
                         required property int index
+                        property bool artworkPooled: false
+                        GridView.onPooled: artworkPooled = true
+                        GridView.onReused: artworkPooled = false
 
                         width: grid.cellWidth - Metrics.gapPx
                         height: grid.cellHeight
@@ -1397,11 +1400,11 @@ FocusScope {
                         focused: Metrics.keyboardFocusActive && root.navigationFocusVisible && grid.activeFocus
                                  && gridDelegate.GridView.isCurrentItem
                         artworkVisible: true
-                        // Use the delegate's actual layout coordinates. Model
-                        // resets and list/poster switches can move GridView's
-                        // origin without changing the item's model index.
-                        artworkEnabled: y + height >= grid.contentY - grid.artworkMarginRows * grid.cellHeight && y
-                                        <= grid.contentY + grid.height + grid.artworkMarginRows * grid.cellHeight
+                        // Buffered delegates must not enter the render queue:
+                        // scrolling cancels old requests and loads the viewport
+                        // first. Browse prefetch warms artwork separately.
+                        // Actual coordinates also handle GridView origin shifts.
+                        artworkEnabled: !artworkPooled && y + height > grid.contentY && y < grid.contentY + grid.height
 
                         Component.onCompleted: gridReveal.schedule()
                         onArtworkReadyChanged: gridReveal.schedule()

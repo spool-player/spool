@@ -27,6 +27,7 @@
 
 #include <QDebug>
 #include <QPixmapCache>
+#include <QSet>
 #include <QStringList>
 #include <QTimer>
 #include <QUuid>
@@ -203,6 +204,21 @@ AppController::AppController(
     connect(m_settings, &SettingsController::errorOccurred, this, &AppController::showToast);
     connect(m_provider, &Provider::toastRequested, this, &AppController::showToast);
     connect(m_provider, &Provider::errorOccurred, this, &AppController::setErrorText);
+    connect(m_provider, &SourceHub::browseSourcesChanged, this, [this] {
+        m_libraryListGeneration.invalidate();
+        QSet<QString> accounts;
+        for (Provider *source : m_provider->sources())
+            accounts.insert(source->id());
+        const auto isAvailable
+            = [this, &accounts](const QString& id) { return accounts.contains(m_provider->accountOf(id)); };
+        m_home->invalidate(isAvailable);
+        std::vector<LibraryItem> libraries;
+        for (const LibraryItem& library : m_libraries.libraries()) {
+            if (isAvailable(library.id))
+                libraries.push_back(library);
+        }
+        m_libraries.setLibraries(libraries);
+    });
     connect(m_provider, &Provider::contentChanged, this, [this](const QString& changedItemId) {
         if (!changedItemId.isEmpty() && m_browse->descriptor().id == changedItemId) {
             goHome();
@@ -210,8 +226,10 @@ AppController::AppController(
         }
         // No item: an account came or went, or a whole library changed, so
         // the library list and home rows are rebuilt too.
-        if (changedItemId.isEmpty())
+        if (changedItemId.isEmpty()) {
+            m_home->invalidate();
             loadLibraries();
+        }
         beginBrowse();
     });
     connect(m_provider, &Provider::sessionStarted, this, [this]() {
@@ -398,6 +416,7 @@ void AppController::resetVisibleModels()
     m_content->reset();
     m_search->reset();
     m_libraryLoadGeneration.invalidate();
+    m_libraryListGeneration.invalidate();
     m_browse->reset();
     setBusy(false);
     setErrorText({});
@@ -1241,8 +1260,9 @@ void AppController::showToast(const QString& message)
 void AppController::loadLibraries()
 {
     m_prefetch->stop();
-    Async::runScoped(
-        this, m_catalog->fetchLibraries(),
+    const RequestGeneration::Token generation = m_libraryListGeneration.next();
+    Async::runLatest(
+        this, m_catalog->fetchLibraries(), m_libraryListGeneration, generation,
         [this](const std::vector<LibraryItem>& libraries) {
             m_libraries.setLibraries(libraries);
             setBusy(false);
