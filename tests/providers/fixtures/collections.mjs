@@ -67,7 +67,9 @@ export function createSource(config, sourceHost) {
             };
             return mode === 'slow' ? host.delay(100).then(get) : get();
         },
-        collectionRemove(args) { return mutate(args, false); },
+        collectionRemove(args, host) {
+            return mode === 'slow' ? host.delay(100).then(() => mutate(args, false)) : mutate(args, false);
+        },
         collectionMove(args) { return mutate(args, true); },
         itemActions(args, host) {
             ++actionReads;
