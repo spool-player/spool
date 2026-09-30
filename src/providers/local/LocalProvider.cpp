@@ -1,6 +1,7 @@
 #include "LocalProvider.h"
 
 #include "../../common/AsyncTask.h"
+#include <QCryptographicHash>
 #include <QDir>
 #include <QDirIterator>
 #include <QFileInfo>
@@ -100,15 +101,22 @@ private:
     LocalProvider *m_provider;
 };
 
-LocalProvider::LocalProvider(QString accountId, QString libraryRoot, QObject *parent)
+LocalProvider::LocalProvider(QString accountId, QStringList libraryRoots, QObject *parent)
     : Provider(parent)
     , m_accountId(std::move(accountId))
-    , m_root(QDir(std::move(libraryRoot)).absolutePath())
+    , m_roots(std::move(libraryRoots))
     , m_playback(new Playback(this))
 {
-    m_libraryName = QDir(m_root).dirName();
-    if (m_libraryName.isEmpty())
-        m_libraryName = QStringLiteral("Local files");
+    if (m_roots.isEmpty())
+        throw std::runtime_error("Choose at least one media folder.");
+    for (QString& folder : m_roots) {
+        const QUrl url(folder);
+        folder = QFileInfo(url.isLocalFile() ? url.toLocalFile() : folder).canonicalFilePath();
+        if (folder.isEmpty() || !QFileInfo(folder).isDir())
+            throw std::runtime_error("A selected media folder is unavailable.");
+    }
+    m_roots.removeDuplicates();
+    m_libraryName = m_roots.size() == 1 ? QDir(m_roots.front()).dirName() : QStringLiteral("Local files");
     // A large folder takes a while to walk; do it off the GUI thread and
     // announce the library once it is known.
     auto *watcher = new QFutureWatcher<std::vector<Record>>(this);
@@ -117,7 +125,7 @@ LocalProvider::LocalProvider(QString accountId, QString libraryRoot, QObject *pa
         watcher->deleteLater();
         emit contentChanged({});
     });
-    watcher->setFuture(Async::background([root = m_root] { return LocalProvider::scanFolder(root); }));
+    watcher->setFuture(Async::background([roots = m_roots] { return LocalProvider::scanFolders(roots); }));
 }
 
 LocalProvider::~LocalProvider() = default;
@@ -144,7 +152,7 @@ PlaybackSource *LocalProvider::playback()
 
 void LocalProvider::scan()
 {
-    setRecords(scanFolder(m_root));
+    setRecords(scanFolders(m_roots));
 }
 
 void LocalProvider::setRecords(std::vector<Record> records)
@@ -155,35 +163,46 @@ void LocalProvider::setRecords(std::vector<Record> records)
         m_index.insert(m_records[index].item.id, index);
 }
 
-std::vector<LocalProvider::Record> LocalProvider::scanFolder(const QString& folder)
+std::vector<LocalProvider::Record> LocalProvider::scanFolders(const QStringList& folders)
 {
     std::vector<Record> records;
-    const QDir root(folder);
-    QDirIterator files(folder, QDir::Files | QDir::Readable, QDirIterator::Subdirectories);
-    while (files.hasNext()) {
-        const QFileInfo info(files.next());
-        const QString suffix = info.suffix().toLower();
-        const bool video = videoSuffixes().contains(suffix);
-        if (!video && !audioSuffixes().contains(suffix))
-            continue;
-        Record record;
-        record.path = info.absoluteFilePath();
-        record.modified = info.lastModified();
-        MovieItem& item = record.item;
-        item.id = root.relativeFilePath(record.path);
-        item.title = info.completeBaseName();
-        item.itemType = video ? QStringLiteral("Movie") : QStringLiteral("Audio");
-        item.path = record.path;
-        item.dateCreated = record.modified.toString(Qt::ISODate);
-        MediaSourceInfo source;
-        source.id = item.id;
-        source.name = info.fileName();
-        source.path = record.path;
-        source.container = suffix;
-        source.protocol = QStringLiteral("File");
-        source.size = info.size();
-        item.mediaSources.push_back(source);
-        records.push_back(std::move(record));
+    QSet<QString> seen;
+    for (const QString& folder : folders) {
+        QDirIterator files(folder, QDir::Files | QDir::Readable, QDirIterator::Subdirectories);
+        while (files.hasNext()) {
+            const QFileInfo info(files.next());
+            const QString suffix = info.suffix().toLower();
+            const bool video = videoSuffixes().contains(suffix);
+            if (!video && !audioSuffixes().contains(suffix))
+                continue;
+            Record record;
+            record.path = info.canonicalFilePath();
+            if (record.path.isEmpty() || seen.contains(record.path))
+                continue;
+            seen.insert(record.path);
+            record.modified = info.lastModified();
+            MovieItem& item = record.item;
+            item.id = QString::fromLatin1(
+                QCryptographicHash::hash(record.path.toUtf8(), QCryptographicHash::Sha256).toHex());
+            item.title = info.completeBaseName();
+            item.itemType = video ? QStringLiteral("Movie") : QStringLiteral("Audio");
+            item.path = record.path;
+            item.dateCreated = record.modified.toString(Qt::ISODate);
+            if (video) {
+                item.posterTag = QString::number(info.size()) + QLatin1Char('-')
+                    + QString::number(record.modified.toMSecsSinceEpoch());
+                item.thumbTag = item.posterTag;
+            }
+            MediaSourceInfo source;
+            source.id = item.id;
+            source.name = info.fileName();
+            source.path = record.path;
+            source.container = suffix;
+            source.protocol = QStringLiteral("File");
+            source.size = info.size();
+            item.mediaSources.push_back(source);
+            records.push_back(std::move(record));
+        }
     }
     std::sort(records.begin(), records.end(),
         [](const Record& left, const Record& right) { return titleLess(left.item, right.item); });
@@ -192,7 +211,7 @@ std::vector<LocalProvider::Record> LocalProvider::scanFolder(const QString& fold
 
 QString LocalProvider::libraryScopeKey() const
 {
-    return QStringLiteral("local:") + m_root;
+    return QStringLiteral("local:2:") + m_roots.join(QLatin1Char('\n'));
 }
 
 const LocalProvider::Record *LocalProvider::record(const QString& itemId) const
@@ -367,6 +386,17 @@ QCoro::Task<void> LocalProvider::setItemPlaybackPosition(QString itemId, qint64 
     if (Record *entry = record(itemId))
         entry->item.resumeTicks = std::max<qint64>(0, positionTicks);
     co_return;
+}
+
+QString LocalProvider::imageUrl(const ImageRequest& request) const
+{
+    const Record *entry = record(request.itemId);
+    if (!entry || entry->item.posterTag.isEmpty())
+        return {};
+    QUrl url = QUrl::fromLocalFile(entry->path);
+    url.setScheme(QStringLiteral("spool-thumbnail"));
+    url.setQuery(QStringLiteral("revision=") + entry->item.posterTag);
+    return url.toString(QUrl::FullyEncoded);
 }
 
 PlaybackSession LocalProvider::playbackSession(const QString& itemId) const

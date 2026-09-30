@@ -20,12 +20,8 @@
 
 namespace Spool {
 
-// A deliberately simple media source: every media file under one folder,
-// presented as a single library with no server behind it. It exists to
-// prove that the shell and the pages need nothing a folder cannot give
-// them, and it stays as the contract's permanent test fixture. Favourite,
-// played and resume position are kept in memory for the process; nothing is
-// reported anywhere.
+// Explicitly selected folders form one library. Scanning stays off the GUI
+// thread; overlapping roots produce one record per canonical file.
 class LocalProvider final : public Provider,
                             public Catalog,
                             public SearchSource,
@@ -34,7 +30,7 @@ class LocalProvider final : public Provider,
     Q_OBJECT
 
 public:
-    LocalProvider(QString accountId, QString libraryRoot, QObject *parent = nullptr);
+    LocalProvider(QString accountId, QStringList libraryRoots, QObject *parent = nullptr);
     ~LocalProvider() override;
 
     QString id() const override;
@@ -62,10 +58,6 @@ public:
         return true;
     }
 
-    QString libraryRoot() const
-    {
-        return m_root;
-    }
     // Reads the folder synchronously; construction already does so off the
     // GUI thread, so only tests call this.
     void scan();
@@ -94,11 +86,7 @@ public:
     QCoro::Task<void> setItemFavorite(QString itemId, bool favorite) override;
     QCoro::Task<void> setItemPlayed(QString itemId, bool played) override;
     QCoro::Task<void> setItemPlaybackPosition(QString itemId, qint64 positionTicks) override;
-    // ArtworkSource: a folder has no artwork.
-    QString imageUrl(const ImageRequest&) const override
-    {
-        return {};
-    }
+    QString imageUrl(const ImageRequest& request) const override;
 
     // What the player asks for. Everything is answered from the scan; the
     // report calls complete without doing anything.
@@ -112,14 +100,14 @@ private:
     };
     class Playback;
 
-    static std::vector<Record> scanFolder(const QString& folder);
+    static std::vector<Record> scanFolders(const QStringList& folders);
     void setRecords(std::vector<Record> records);
     const Record *record(const QString& itemId) const;
     Record *record(const QString& itemId);
     std::vector<MovieItem> items(int startIndex, int limit) const;
 
     QString m_accountId;
-    QString m_root;
+    QStringList m_roots;
     QString m_libraryName;
     std::vector<Record> m_records;
     QHash<QString, size_t> m_index;

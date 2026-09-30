@@ -698,17 +698,19 @@ int main(int argc, char **argv)
         Spool::ProviderManifest folder;
         folder.id = QStringLiteral("spool.local");
         folder.name = QStringLiteral("This computer");
-        folder.summary = QStringLiteral("Videos and music in a folder");
+        folder.summary = QStringLiteral("Combine selected video and music folders into a library");
         folder.publisher = QStringLiteral("Spool");
         folder.version = QString::fromLatin1(kAppVersion);
         folder.capabilities = { QStringLiteral("search"), QStringLiteral("userState") };
-        const QString root = optionValue(arguments, QStringLiteral("--library-root"), "SPOOL_LOCAL_LIBRARY",
-            QStandardPaths::writableLocation(QStandardPaths::MoviesLocation));
-        providers.addNativeModule(folder,
-            [root](const QString& accountId, const QVariantMap& configuration, QObject *parent) -> Spool::Provider * {
+        folder.ui = { { QStringLiteral("login"), QStringLiteral("LocalFolders.qml") },
+            { QStringLiteral("settings"), QStringLiteral("LocalFolders.qml") } };
+        providers.addNativeModule(
+            folder,
+            [](const QString& accountId, const QVariantMap& configuration, QObject *parent) -> Spool::Provider * {
                 return new Spool::LocalProvider(
-                    accountId, configuration.value(QStringLiteral("folder"), root).toString(), parent);
-            });
+                    accountId, configuration.value(QStringLiteral("folders")).toStringList(), parent);
+            },
+            QUrl(QStringLiteral("qrc:/qt/qml/Spool/qml/pages/")));
     }
 #endif
     Spool::SourceHub hub(&providers);
@@ -849,7 +851,8 @@ int main(int argc, char **argv)
         QList<QUrl> roots;
         for (const QString& id : providers.moduleIds()) {
             const Spool::ProviderModule *module = providers.module(id);
-            roots.append(module->root);
+            if (!module->native)
+                roots.append(module->root);
         }
         providerQmlCache->setPackages(roots);
     };

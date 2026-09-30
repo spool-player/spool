@@ -28,7 +28,13 @@ update policy; background updates use the same progress display.
 | `ProviderStore` | `official.json` and `index.json` from spool-player/spool-providers (Pages), install by link, update checks and the `providers/updates` policy |
 | `app/GroupPlaybackController` | Watching together over whichever account the group is on: clock, drift, buffering, queue handoff. Providers translate their protocol into `group` events |
 
-`src/providers/local/LocalProvider` is the one native provider (desktop only): a folder of files.
+`src/providers/local/LocalProvider` is the one native provider (desktop only): explicitly
+selected folders combined into a library, with no implicit Movies-folder account.
+Native modules may register a compiled QML root for setup/settings; their drafts do
+not create a JavaScript runtime. Canonical-path item IDs distinguish same-named files
+and deduplicate overlapping roots; the local cache scope is versioned for this cutover.
+Local video artwork is extracted on demand through `ArtworkService`'s serial thumbnail
+worker using libmpv software rendering and Qt image encoding.
 Core never includes `src/providers/`; `tools/check-module-seam.sh` (ctest `module-seam`) enforces it.
 
 ## Accounts
@@ -143,6 +149,18 @@ Jellyfin and Emby populate them from parent-image metadata. Home payload schema
 13 discards older ownerless cached rows; no account migration or data wipe is needed.
 
 ## Screens
+
+Generic provider forms live in the app's precompiled `Spool` module:
+`ServerLogin`, `ServerIdentityRow`, `ProviderLinkScreen`, `ProviderCodePanel`,
+`ProviderActionPicker`, `ProviderRemoteControls`, and `ProviderCompatibilityNotice`.
+Provider QML supplies protocol operation names, labels, capabilities and genuinely
+service-specific flows (such as Connect membership selection and Home activation),
+not duplicate form, list, navigation or PIN layouts. Providers using these forms
+require the matching Spool build; there is no duplicate runtime-QML fallback.
+`ServerLogin` keeps discovery, origin approval and asynchronous sign-in generations
+separate; cancellation invalidates pending password/code results. Its selected
+server name and address stay together above the account fields.
+
 
 Every packaged `*.qml` file from the registry's selected packages (including installed overrides)
 is queued for compilation on the window's own `QQmlEngine`. Warmup starts 2.5 seconds after the
@@ -282,7 +300,8 @@ possible. Plex uses verified Companion identity, exact-origin consent and PMS
 entry IDs. Peer playback receives only a transient delegation token, never
 account/Home/PMS credentials. Missing play support leaves available transport
 controls intact. Ambiguous duplicate selection is not advertised on key-only peers.
-Advanced navigation/text controls remain provider-owned pickers.
+Advanced navigation/text commands remain provider-owned operations; their thin
+picker adapters configure the shared, precompiled `ProviderRemoteControls` surface.
 
 These adapters do not implement Plex watch-together or native SpoolLink peer
 enhancements. Protocol/loopback verification does not imply live-device support

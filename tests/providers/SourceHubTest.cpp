@@ -64,7 +64,7 @@ SPOOL_TEST_MAIN("source-hub")
     local.version = QStringLiteral("1.0.0");
     const QString fixtures = QStringLiteral(TEST_SOURCE_DIR "/tests/media/fixtures");
     registry.addNativeModule(local, [fixtures](const QString& id, const QVariantMap&, QObject *parent) {
-        return new LocalProvider(id, fixtures, parent);
+        return new LocalProvider(id, { fixtures }, parent);
     });
     registry.loadModules();
     SourceHub hub(&registry);

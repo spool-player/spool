@@ -5,9 +5,23 @@ Emby and Plex providers. The API remains 0.2; optional features negotiate exact
 extension versions per account. Local provider builds use the sibling working
 trees. Published provider pins are unchanged until a separately authorized release.
 
-Verified on 2026-09-29: the local-provider release build succeeded, all 94
-non-GPU tests passed, all six provider contract runs passed, and all three
-provider archives passed package validation.
+Verified again on 2026-09-30 after the provider UI/local-library cutover: the
+local-provider release build succeeded, all 97 non-GPU tests passed, all six
+provider contract runs passed, and all three provider archives passed validation.
+
+Additional isolated checks exercised the real Jellyfin password form, Emby Connect
+PIN/membership selection and protected Plex Home flow against scripted provider
+contexts. A loopback server required the generated Jellyfin trickplay URL's account
+token, and Qt fetched and rendered the expected colored pixels. Local-provider tests
+exercise opt-in setup/cancellation, overlapping folders, configuration while disabled,
+re-enabling the changed library, and decoded/cached video thumbnail pixels.
+
+The same three-pass, cold-route offscreen software benchmark measured Settings median
+wall time at 44.0 ms before and 31.1 ms after, and GUI CPU time at 22.8 ms before and
+13.6 ms after. Settings constructed 9 rather than 13 delegates. Other routes' construction
+costs were lower or similar, but presentation waits varied and did not improve uniformly.
+These are isolated empty-library measurements, not a claim about GPU presentation,
+large live-server libraries, or physical input-to-display latency.
 
 ## Reproduce the checks
 

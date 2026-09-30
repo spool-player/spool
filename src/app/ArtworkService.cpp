@@ -2,6 +2,7 @@
 #include "../common/TlsTrust.h"
 #include "../platform/PlatformSettingsPolicy.h"
 #include "ArtworkImageProvider.h"
+#include "LocalThumbnail.h"
 
 #include <QBuffer>
 #include <QDebug>
@@ -427,6 +428,8 @@ ArtworkService::ArtworkService(QString cacheDirectory, qint64 networkCacheBytes,
 {
     m_decodePool.setMaxThreadCount(std::max(1, decodeThreads));
     m_decodePool.setExpiryTimeout(30000);
+    m_thumbnailPool.setMaxThreadCount(1);
+    m_thumbnailPool.setExpiryTimeout(1000);
     m_timingBatchTimer.setSingleShot(true);
     m_timingBatchTimer.setInterval(120);
     connect(&m_timingBatchTimer, &QTimer::timeout, this, &ArtworkService::flushTimingBatch);
@@ -452,6 +455,7 @@ ArtworkService::~ArtworkService()
     m_workerThread.quit();
     m_workerThread.wait();
     m_decodePool.waitForDone();
+    m_thumbnailPool.waitForDone();
 }
 
 QString ArtworkService::url(const QVariant& value, const QString& kind, int width) const
@@ -639,6 +643,10 @@ void ArtworkService::prefetch(const QStringList& urls)
     QStringList uncached;
     uncached.reserve(urls.size());
     for (const QString& url : urls) {
+        // Local extraction is demand-driven; browsing should not decode every
+        // movie merely because its metadata was prefetched.
+        if (QUrl(url).scheme() == QLatin1String("spool-thumbnail"))
+            continue;
         const QString key = cacheKeyForUrl(QUrl(url));
         if (key.isEmpty() || !m_byteCache || !m_byteCache->get(key).isEmpty())
             continue;
@@ -703,6 +711,27 @@ int ArtworkService::requestImage(QUrl url, QSize requestedSize, ArtworkImageResp
     const int requestId = m_nextRequestId++;
     m_responses.insert(requestId, response);
     m_requestStarts.insert(requestId, monotonicNs());
+    if (url.scheme() == QLatin1String("spool-thumbnail")) {
+        const QPointer<ArtworkImageResponse> target(response);
+        const qint64 queued = monotonicNs();
+        m_thumbnailPool.start(QRunnable::create([this, target, requestId, key, url, queued] {
+            if (!target || target->cancelled())
+                return;
+            const qint64 started = monotonicNs();
+            QString error;
+            QByteArray bytes = localThumbnail(url, m_cacheDirectory, error);
+            const qint64 fetched = monotonicNs() - started;
+            QMetaObject::invokeMethod(
+                this,
+                [this, requestId, key, bytes = std::move(bytes), error = std::move(error), queued, started,
+                    fetched]() mutable {
+                    handleRenderFetched(
+                        requestId, key, std::move(bytes), std::move(error), true, started - queued, fetched);
+                },
+                Qt::QueuedConnection);
+        }));
+        return requestId;
+    }
     invokeWorker([requestId, url = std::move(url)](
                      ArtworkFetchWorker *worker) mutable { worker->fetchRender(requestId, std::move(url)); });
     return requestId;
