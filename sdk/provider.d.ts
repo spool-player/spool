@@ -265,7 +265,7 @@ export interface RemoteState {
     commandSequence?: number;
     /** Approved source origin; only numeric {index} substitution is permitted. */
     preview?: { width: number; height: number; columns: number; rows: number;
-        count: number; intervalMs: number; urlTemplate: string };
+        count: number; intervalMs: number; urlTemplate: string; headers?: Record<string, string> };
 }
 export type RemoteTargetCommand =
     | { action: 'play'; itemIds: string[]; index: number; positionTicks: string;

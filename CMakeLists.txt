@@ -821,6 +821,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         provider-media-page tests/providers/ProviderMediaPageTest.cpp
         provider-registry tests/providers/ProviderRegistryTest.cpp
         provider-activation tests/providers/ProviderActivationTest.cpp
+        artwork-authentication tests/providers/ArtworkAuthenticationTest.cpp
         provider-extension-data tests/providers/ProviderExtensionDataTest.cpp
         source-hub tests/providers/SourceHubTest.cpp
         source-hub-speed-test tests/providers/SourceHubSpeedTest.cpp

@@ -112,7 +112,8 @@ function exercise(glue, name, module) {
         }).then(result => {
             playback = result;
             require(result.variantId === 'chosen' && result.playMethod === 'DirectPlay' && result.url.indexOf(base) === 0
-                && result.headers[isPlex ? 'X-Plex-Token' : 'X-Emby-Token'] === token,
+                && (name === 'jellyfin' ? result.headers.Authorization.indexOf('Token="' + token + '"') >= 0
+                    : result.headers[isPlex ? 'X-Plex-Token' : 'X-Emby-Token'] === token),
                 name + ': baseline resolve retains edition and authenticated direct playback');
             let sequence = Promise.resolve();
             for (const event of ['start', 'progress', 'stop'])

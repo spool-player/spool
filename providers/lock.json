@@ -3,9 +3,9 @@
   "providers": [
     {
       "id": "spool.jellyfin",
-      "version": "0.2.3",
-      "archive": "bundled/spool.jellyfin-0.2.3.tar.zst",
-      "sha256": "b7e8849be2cc22c85b9ae655117cdc3571785dd8e74dd3d678ddb2ae2b2ac12d"
+      "version": "0.2.6",
+      "archive": "bundled/spool.jellyfin-0.2.6.tar.zst",
+      "sha256": "c6409460d19b665d3ff2fb25c86871f876ceaaaa54ec78cdfb2a24279329adfd"
     }
   ]
 }

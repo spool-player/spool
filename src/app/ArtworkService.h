@@ -68,7 +68,6 @@ public:
     void prefetch(const QStringList& urls) override;
     void cancelPrefetches() override;
     void releaseMemory(bool aggressive);
-    void setAuthorizationHeader(QString header);
     // How much artwork is still on its way: requests that have not produced an
     // image yet, plus images decoded but not yet handed to the scene graph.
     // Zero means everything asked for has arrived, which is what "wait until

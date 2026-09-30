@@ -5,6 +5,7 @@
 #include "ProviderRegistry.h"
 
 #include <QDebug>
+#include <QUrlQuery>
 
 #include <algorithm>
 #include <limits>
@@ -169,7 +170,12 @@ public:
     QString trickplayTileUrl(const QString& itemId, int width, int tileIndex) const override
     {
         PlaybackSource *playback = sourceFor(itemId);
-        return playback ? playback->trickplayTileUrl(rawId(itemId), width, tileIndex) : QString();
+        const QString url = playback ? playback->trickplayTileUrl(rawId(itemId), width, tileIndex) : QString();
+        if (url.isEmpty())
+            return {};
+        return QStringLiteral("spool-artwork://") + prefixOf(m_hub->accountOf(itemId)) + QLatin1Char('/')
+            + QString::fromLatin1(
+                url.toUtf8().toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals));
     }
 
     QCoro::Task<PlaybackSession> resolvePlayback(MovieItem item, bool forceTranscode) override
@@ -1316,6 +1322,41 @@ QString SourceHub::imageUrl(const ImageRequest& request) const
     ImageRequest local = request;
     local.itemId = rawId(request.itemId);
     return provider->artwork()->imageUrl(local);
+}
+
+ArtworkSource::ImageResource SourceHub::resolveImage(const QUrl& url) const
+{
+    if (url.scheme() != QLatin1String("spool-artwork"))
+        return ArtworkSource::resolveImage(url);
+    const auto entry = m_entries.constFind(url.host());
+    if (entry == m_entries.cend() || !entry->provider)
+        return {};
+    if (url.path().startsWith(QLatin1String("/remote/"))) {
+        const QString target = QString::fromUtf8(QByteArray::fromBase64(
+            url.path().mid(8).toLatin1(), QByteArray::Base64UrlEncoding | QByteArray::AbortOnBase64DecodingErrors));
+        const auto preview = entry->remotePreviews.constFind(target);
+        bool ok = false;
+        const int index = QUrlQuery(url).queryItemValue(QStringLiteral("index")).toInt(&ok);
+        if (preview == entry->remotePreviews.cend() || !ok || index < 0)
+            return {};
+        QString resolved = preview->urlTemplate;
+        resolved.replace(QLatin1String("{index}"), QString::number(index));
+        const QUrl resource(resolved);
+        if (!m_registry->accountOriginAllowed(entry->accountId, resource))
+            return {};
+        return { resource, preview->headers };
+    }
+    const auto *playback = entry->provider->playback();
+    if (!playback)
+        return {};
+    const QByteArray encoded = QByteArray::fromBase64(
+        url.path().mid(1).toLatin1(), QByteArray::Base64UrlEncoding | QByteArray::AbortOnBase64DecodingErrors);
+    const QUrl resource = QUrl::fromEncoded(encoded, QUrl::StrictMode);
+    if (!resource.isValid()
+        || (resource.scheme() != QLatin1String("https") && resource.scheme() != QLatin1String("http"))
+        || resource.adjusted(QUrl::RemovePath | QUrl::RemoveQuery | QUrl::RemoveFragment) != playback->mediaOrigin())
+        return {};
+    return { resource, playback->mediaRequestHeaders() };
 }
 
 } // namespace Spool
