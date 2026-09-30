@@ -1448,8 +1448,14 @@ FocusScope {
                         // Buffered delegates must not enter the render queue:
                         // scrolling cancels old requests and loads the viewport
                         // first. Browse prefetch warms artwork separately.
-                        // Actual coordinates also handle GridView origin shifts.
-                        artworkEnabled: !artworkPooled && y + height > grid.contentY && y < grid.contentY + grid.height
+                        // Delegate y is initially zero while GridView lays out
+                        // buffered/reused cells. Use the model row and origin
+                        // instead so those transient positions cannot start IO.
+                        artworkEnabled: !artworkPooled && grid.cellHeight > 0 && root.columns > 0 && (Math.floor(index
+                                                                                                                 / root.columns)
+                                                                                                      + 1) * grid.cellHeight
+                                        > grid.contentY - grid.originY && Math.floor(index / root.columns)
+                                        * grid.cellHeight < grid.contentY - grid.originY + grid.height
 
                         Component.onCompleted: gridReveal.schedule()
                         onArtworkReadyChanged: gridReveal.schedule()
