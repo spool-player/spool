@@ -388,16 +388,18 @@ FocusScope {
                 Layout.fillWidth: true
                 visible: root.step === "server"
                 text: "Connect"
-                kind: "primary"
+                kind: "blue"
                 enabled: root.validAddress && !root.busy
                 onClicked: root.connect(address.text)
             }
             ActionButton {
+                kind: "blue"
                 visible: root.step === "server" && root.lanAvailable
                 text: root.lanSearching ? "Cancel local search" : "Search local network"
                 onClicked: root.searchLocalNetwork()
             }
             ActionButton {
+                kind: "blue"
                 Layout.fillWidth: true
                 visible: root.step === "server" && !!root.alternateScreen
                 text: root.alternateLabel
@@ -469,11 +471,12 @@ FocusScope {
                 visible: root.step === "account"
                 text: "Sign in"
                 iconName: "login"
-                kind: "primary"
+                kind: "blue"
                 enabled: !root.busy && !!usernameField.text.trim()
                 onClicked: root.signIn(usernameField.text, password.text)
             }
             ActionButton {
+                kind: "blue"
                 Layout.fillWidth: true
                 visible: root.step === "account" && !!root.codeLabel && root.server[root.codeAvailableField] === false
                 text: "Retry " + root.codeLabel + " availability"
@@ -499,6 +502,7 @@ FocusScope {
                 }
             }
             ActionButton {
+                kind: "blue"
                 Layout.fillWidth: true
                 visible: root.step === "account" && !!root.codeLabel && root.server[root.codeEnabledField] === true
                 text: root.code ? "Cancel " + root.codeLabel : "Use " + root.codeLabel

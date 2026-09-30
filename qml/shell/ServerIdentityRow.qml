@@ -32,7 +32,7 @@ Surface {
         }
         ActionButton {
             text: "Change"
-            kind: "flat"
+            kind: "blue"
             onClicked: root.changeRequested()
         }
     }
