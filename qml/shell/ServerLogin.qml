@@ -317,42 +317,31 @@ FocusScope {
         clip: true
         ColumnLayout {
             id: column
-            width: Math.min(parent.width - Metrics.pageMarginPx * 2, Metrics.scaled(560))
+            width: Math.min(parent.width - Metrics.pageMarginPx * 2, Metrics.scaled(680))
             x: (parent.width - width) / 2
             y: Math.max(Metrics.pageMarginPx, (parent.height - implicitHeight) / 2)
-            spacing: Metrics.scaled(10)
-            RowLayout {
-                Layout.fillWidth: true
-                Image {
-                    source: "qrc:/icons/spool.svg"
-                    sourceSize.width: Metrics.scaled(30)
-                    sourceSize.height: width
-                    Layout.preferredWidth: Metrics.scaled(30)
-                    Layout.preferredHeight: Metrics.scaled(30)
-                }
-                AppText {
-                    text: "Spool"
-                    font.pixelSize: Metrics.scaled(23)
-                    font.weight: Font.DemiBold
-                }
-                Item {
-                    Layout.fillWidth: true
-                }
-                SecondaryText {
-                    text: root.serviceName
-                }
-            }
+            spacing: Metrics.scaled(14)
             ProviderCompatibilityNotice {
                 Layout.fillWidth: true
                 provider: root.provider
             }
+            // The page header already names the provider; this says what to do.
             AppText {
                 Layout.fillWidth: true
-                Layout.topMargin: Metrics.scaled(16)
-                Layout.bottomMargin: Metrics.scaled(8)
                 text: root.step === "server" ? "Choose a server" : "Sign in"
-                font.pixelSize: Metrics.titleSizePx
+                font.pixelSize: Metrics.scaled(40)
                 font.weight: Font.DemiBold
+                wrapMode: Text.WordWrap
+            }
+            AppText {
+                Layout.fillWidth: true
+                Layout.bottomMargin: Metrics.scaled(10)
+                text: root.step === "server" ? "Pick a " + (root.serviceName || "media")
+                                               + " server found on your network, or enter its address." :
+                                               "Sign in with your " + (root.serviceName || "server") + " account."
+                color: Theme.textSecondary
+                font.pixelSize: Metrics.scaled(20)
+                wrapMode: Text.WordWrap
             }
             Repeater {
                 model: root.step === "server" ? root.servers : []
@@ -386,15 +375,19 @@ FocusScope {
             }
             ActionButton {
                 Layout.fillWidth: true
+                Layout.preferredHeight: Metrics.scaled(56)
                 visible: root.step === "server"
                 text: "Connect"
+                iconName: "arrow_forward"
                 kind: "blue"
                 enabled: root.validAddress && !root.busy
                 onClicked: root.connect(address.text)
             }
             ActionButton {
                 kind: "blue"
+                Layout.fillWidth: true
                 visible: root.step === "server" && root.lanAvailable
+                iconName: root.lanSearching ? "close" : "search"
                 text: root.lanSearching ? "Cancel local search" : "Search local network"
                 onClicked: root.searchLocalNetwork()
             }

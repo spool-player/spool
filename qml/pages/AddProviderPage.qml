@@ -17,8 +17,7 @@ FocusScope {
     property bool linkEditing: false
     property var menuEntry: null
 
-    // Section headers only once there is more than one section. Community
-    // entries carry their summary; an official one's name says it all.
+    // Section headers only once there is more than one section.
     readonly property var rows: {
         const community = Store.storeAvailable && (Store.community.length > 0 || Store.loading)
         const out = community ? [
@@ -27,9 +26,7 @@ FocusScope {
                                         "title": "By Spool"
                                     }
                                 ] : []
-        out.push(...Store.official.map(entry => Object.assign({}, entry, {
-                                                                  "summary": ""
-                                                              })))
+        out.push(...Store.official)
         if (community) {
             out.push({
                          "kind": "header",
@@ -234,27 +231,40 @@ FocusScope {
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         anchors.horizontalCenter: parent.horizontalCenter
-        width: Math.min(parent.width - Metrics.pageMarginPx * 2, Metrics.scaled(760))
+        width: Math.min(parent.width - Metrics.pageMarginPx * 2, Metrics.scaled(880))
 
-        Row {
+        ColumnLayout {
             id: header
-            y: Metrics.pageMarginPx
-            height: Metrics.touchTargetPx
-            spacing: Metrics.scaled(12)
+            y: Math.max(Metrics.pageMarginPx, Metrics.scaled(56))
+            width: parent.width
+            spacing: Metrics.scaled(10)
 
-            IconButton {
-                anchors.verticalCenter: parent.verticalCenter
-                visible: Providers.hasAccounts
-                iconName: "arrow_back"
-                accessibleName: "Back"
-                onClicked: Router.pop("accounts")
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Metrics.scaled(14)
+
+                IconButton {
+                    visible: Providers.hasAccounts
+                    iconName: "arrow_back"
+                    accessibleName: "Back"
+                    onClicked: Router.pop("accounts")
+                }
+
+                AppText {
+                    Layout.fillWidth: true
+                    text: "Add a provider"
+                    font.pixelSize: Metrics.scaled(44)
+                    font.weight: Font.DemiBold
+                    elide: Text.ElideRight
+                }
             }
 
             AppText {
-                anchors.verticalCenter: parent.verticalCenter
-                text: "Add a provider"
-                font.pixelSize: Metrics.titleSizePx
-                font.weight: Font.DemiBold
+                Layout.fillWidth: true
+                text: "Choose where your media comes from. You can add as many as you like."
+                color: Theme.textSecondary
+                font.pixelSize: Metrics.scaled(20)
+                wrapMode: Text.WordWrap
             }
         }
 
@@ -262,6 +272,7 @@ FocusScope {
             id: compatibilityNotice
             readonly property var selectedModule: Providers.modules.find(module => module.id === root.currentId)
             anchors.top: header.bottom
+            anchors.topMargin: visible ? Metrics.scaled(12) : 0
             width: parent.width
             visible: Boolean(selectedModule && selectedModule.missingHostExtensions
                              && selectedModule.missingHostExtensions.length > 0)
@@ -275,7 +286,7 @@ FocusScope {
         ListView {
             id: list
             anchors.top: compatibilityNotice.bottom
-            anchors.topMargin: Metrics.scaled(16)
+            anchors.topMargin: Metrics.scaled(32)
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom
@@ -288,7 +299,7 @@ FocusScope {
             keyNavigationEnabled: false
             boundsBehavior: Flickable.StopAtBounds
             highlightMoveDuration: 0
-            spacing: Metrics.scaled(6)
+            spacing: Metrics.scaled(14)
             footer: Item {
                 width: list.width
                 height: Metrics.pageMarginPx
@@ -305,7 +316,7 @@ FocusScope {
                 }
 
                 width: list.width
-                height: isHeader ? Metrics.scaled(index === 0 ? 28 : 48) : row.height
+                height: isHeader ? Metrics.scaled(index === 0 ? 32 : 56) : row.height
 
                 AppText {
                     visible: slot.isHeader
@@ -315,7 +326,7 @@ FocusScope {
                     anchors.bottomMargin: Metrics.scaled(4)
                     text: String(slot.modelData.title || "").toUpperCase()
                     color: Theme.textMuted
-                    font.pixelSize: Metrics.metaSizePx
+                    font.pixelSize: Metrics.scaled(15)
                     font.weight: Font.DemiBold
                     font.letterSpacing: Metrics.scaled(1)
                 }
@@ -340,23 +351,23 @@ FocusScope {
                     readonly property bool isLink: modelData.kind === "link"
 
                     width: list.width
-                    height: isLink && root.linkEditing ? linkForm.implicitHeight + Metrics.scaled(24) : Math.max(
-                                                             Metrics.touchTargetPx, Metrics.scaled(64))
-                    radius: Theme.radiusLarge
+                    height: isLink && root.linkEditing ? linkForm.implicitHeight + Metrics.scaled(40) : Math.max(
+                                                             Metrics.touchTargetPx, Metrics.scaled(104))
+                    radius: Theme.radiusPanel
                     color: current ? Theme.focusedFill : hover.hovered ? Theme.bgHover : Theme.bgRaised
                     border.width: current ? Theme.focusBorderWidth : Theme.hoverBorderWidth
                     border.color: current ? Theme.accent : Theme.border
 
                     RowLayout {
                         anchors.fill: parent
-                        anchors.leftMargin: Metrics.scaled(16)
-                        anchors.rightMargin: Metrics.scaled(16)
-                        spacing: Metrics.scaled(16)
+                        anchors.leftMargin: Metrics.scaled(24)
+                        anchors.rightMargin: Metrics.scaled(24)
+                        spacing: Metrics.scaled(22)
                         visible: !(row.isLink && root.linkEditing)
 
                         Loader {
-                            Layout.preferredWidth: Metrics.scaled(44)
-                            Layout.preferredHeight: Metrics.scaled(44)
+                            Layout.preferredWidth: Metrics.scaled(64)
+                            Layout.preferredHeight: Metrics.scaled(64)
                             sourceComponent: row.isLink ? linkIcon : providerIcon
                             Component {
                                 id: providerIcon
@@ -364,6 +375,8 @@ FocusScope {
                                     source: row.modelData.iconUrl || ""
                                     name: row.modelData.name || ""
                                     seed: row.modelData.id || ""
+                                    // The folders provider is built in and has no package icon.
+                                    symbol: row.modelData.id === "spool.local" ? "computer" : ""
                                 }
                             }
                             Component {
@@ -374,7 +387,7 @@ FocusScope {
                                     MaterialIcon {
                                         anchors.centerIn: parent
                                         name: "link"
-                                        iconSize: Metrics.scaled(24)
+                                        iconSize: Metrics.scaled(32)
                                         iconColor: Theme.textSecondary
                                     }
                                 }
@@ -383,12 +396,12 @@ FocusScope {
 
                         ColumnLayout {
                             Layout.fillWidth: true
-                            spacing: Metrics.scaled(2)
+                            spacing: Metrics.scaled(4)
 
                             AppText {
                                 Layout.fillWidth: true
                                 text: row.isLink ? "Add from a link" : row.modelData.name || ""
-                                font.pixelSize: Metrics.bodySizePx + Metrics.scaled(1)
+                                font.pixelSize: Metrics.scaled(24)
                                 font.weight: Font.DemiBold
                                 elide: Text.ElideRight
                                 maximumLineCount: 1
@@ -396,10 +409,12 @@ FocusScope {
 
                             SecondaryText {
                                 Layout.fillWidth: true
-                                text: row.state === "incompatible" ? "Needs a newer Spool" : row.modelData.summary || ""
+                                text: row.state === "incompatible" ? "Needs a newer Spool" : row.isLink
+                                                                     ? "Install a provider someone has shared with you" :
+                                                                       row.modelData.summary || ""
                                 visible: text.length > 0
-                                color: Theme.textMuted
-                                font.pixelSize: Metrics.metaSizePx
+                                color: Theme.textSecondary
+                                font.pixelSize: Metrics.scaled(17)
                                 elide: Text.ElideRight
                                 maximumLineCount: 1
                             }
@@ -407,9 +422,9 @@ FocusScope {
 
                         // One action per row, named for what pressing the row does.
                         Rectangle {
-                            Layout.preferredHeight: Metrics.scaled(32)
-                            Layout.preferredWidth: Math.max(Metrics.scaled(72), chipText.implicitWidth + Metrics.scaled(
-                                                                28))
+                            Layout.preferredHeight: Metrics.scaled(44)
+                            Layout.preferredWidth: Math.max(Metrics.scaled(120), chipText.implicitWidth + Metrics.scaled(
+                                                                40))
                             visible: row.state !== "incompatible" && row.state !== "busy"
                             radius: height / 2
                             color: row.state === "get" || row.state === "update" ? Theme.accentDim : Theme.bgPanel
@@ -420,12 +435,12 @@ FocusScope {
                                 id: chipText
                                 anchors.centerIn: parent
                                 text: ({
-                                           "get": "Get",
+                                           "get": "Install",
                                            "update": "Update",
-                                           "installed": "Add",
-                                           "link": "Paste"
+                                           "installed": "Add account",
+                                           "link": "Paste link"
                                        })[row.state] || ""
-                                font.pixelSize: Metrics.metaSizePx
+                                font.pixelSize: Metrics.scaled(17)
                                 font.weight: Font.DemiBold
                             }
                         }
@@ -443,7 +458,7 @@ FocusScope {
                         anchors.left: parent.left
                         anchors.right: parent.right
                         anchors.verticalCenter: parent.verticalCenter
-                        anchors.margins: Metrics.scaled(12)
+                        anchors.margins: Metrics.scaled(20)
                         visible: row.isLink && root.linkEditing
                         spacing: Metrics.scaled(10)
 
@@ -501,7 +516,7 @@ FocusScope {
             visible: Store.error.length > 0
             text: Store.error
             color: Theme.textMuted
-            font.pixelSize: Metrics.metaSizePx
+            font.pixelSize: Metrics.bodySizePx
         }
     }
 
