@@ -3,6 +3,7 @@ import QtQuick.Dialogs
 
 Item {
     id: root
+    property alias title: dialog.title
 
     signal folderSelected(url folder)
     signal dismissed

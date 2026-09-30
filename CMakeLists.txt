@@ -216,6 +216,8 @@ set(SPOOL_SHELL_SOURCES
     src/app/RemoteTargetsController.h
     src/app/HomeModelController.cpp
     src/app/HomeModelController.h
+    src/app/LocalThumbnail.cpp
+    src/app/LocalThumbnail.h
     src/app/LibraryPrefetchController.cpp
     src/app/LibraryPrefetchController.h
     src/app/SearchController.cpp
@@ -494,6 +496,7 @@ qt_add_qml_module(spool
         qml/pages/HomePage.qml
         qml/pages/ItemDetailsPage.qml
         qml/pages/CollectionEditorPage.qml
+        qml/pages/LocalFolders.qml
         qml/pages/RemoteControlPage.qml
         qml/pages/LibraryGridPage.qml
         qml/pages/LibraryNavigation.js
@@ -573,6 +576,13 @@ qt_add_qml_module(spool
         qml/shell/MediaInfoOverlay.qml
         qml/shell/OverlayDialog.qml
         qml/shell/ProviderSurface.qml
+        qml/shell/ServerLogin.qml
+        qml/shell/ServerIdentityRow.qml
+        qml/shell/ProviderCodePanel.qml
+        qml/shell/ProviderLinkScreen.qml
+        qml/shell/ProviderCompatibilityNotice.qml
+        qml/shell/ProviderActionPicker.qml
+        qml/shell/ProviderRemoteControls.qml
         qml/shell/SettingSyncControl.qml
         qml/shell/RemoteNowPlaying.qml
         qml/shell/ProviderUpdatePrompt.qml
@@ -1084,7 +1094,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         set(SPOOL_TEST_PLATFORM_SOURCES ${SPOOL_APP_SOURCES})
         list(FILTER SPOOL_TEST_PLATFORM_SOURCES INCLUDE REGEX "/[A-Za-z]+PlatformCapabilities\\.cpp$")
         set(SPOOL_TEST_QML_RESOURCES ${SPOOL_APP_SOURCES})
-        list(FILTER SPOOL_TEST_QML_RESOURCES INCLUDE REGEX "/qrc_(qmake_Spool|spool_raw_qml_[0-9]+(_extra_qmldirs)?)\\.cpp$")
+        list(FILTER SPOOL_TEST_QML_RESOURCES INCLUDE REGEX "/qrc_(qmake_Spool|application_icons|spool_raw_qml_[0-9]+(_extra_qmldirs)?)\\.cpp$")
         # Reuse the application's generated resources rather than declaring a
         # second Spool module (which would also overwrite qrc_qmake_Spool.cpp).
         target_sources(spool-qml-tests PRIVATE ${SPOOL_TEST_PLATFORM_SOURCES} ${SPOOL_TEST_QML_RESOURCES})
@@ -1097,6 +1107,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
                 tests/qml/tst_ProviderInstallDialog.qml
                 tests/qml/tst_ProviderShell.qml
                 tests/qml/tst_ExtensionIntegration.qml
+                tests/qml/tst_ProviderForms.qml
         )
 
         get_filename_component(SPOOL_QML_PREFIX "${Qt6Qml_DIR}/../../.." ABSOLUTE)
@@ -1114,6 +1125,9 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
             COMMAND spool-qml-tests -input ":/qt/qml/Spool/tests/qml/tst_ExtensionIntegration.qml")
         set_tests_properties(extension-integration PROPERTIES
             ENVIRONMENT "${SPOOL_QML_TEST_ENV};SPOOL_EXTENSION_INTEGRATION=1" TIMEOUT 90)
+        add_test(NAME provider-forms
+            COMMAND spool-qml-tests -input ":/qt/qml/Spool/tests/qml/tst_ProviderForms.qml")
+        set_tests_properties(provider-forms PROPERTIES ENVIRONMENT "${SPOOL_QML_TEST_ENV}" TIMEOUT 30)
 
         list(LENGTH SPOOL_QML_TESTS SPOOL_QML_TEST_COUNT)
         math(EXPR SPOOL_QML_TEST_LAST "${SPOOL_QML_TEST_COUNT} - 1")

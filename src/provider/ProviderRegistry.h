@@ -92,7 +92,7 @@ public:
     // Registers every package bundled at qrc:/providers/ and every package
     // installed on disk; the newer version of a provider wins.
     void loadModules();
-    void addNativeModule(ProviderManifest manifest, ProviderModule::NativeFactory factory);
+    void addNativeModule(ProviderManifest manifest, ProviderModule::NativeFactory factory, QUrl uiRoot = {});
     const ProviderModule *module(const QString& id) const;
     QStringList moduleIds() const;
 

@@ -36,6 +36,20 @@ on every invocation so sibling edits are included, using separate
 Ordinary native builds continue to default to open provider loading without
 local overrides. Set `SPOOL_REPO` to the app checkout when invoking outside it.
 
+## Local media folders
+
+On desktop, choose **Add provider → This computer**, then add one or more folders
+and confirm **Add library**. No Movies directory or other media source is added
+implicitly. The selected folders and their subfolders form one library; overlapping
+roots are deduplicated by canonical file path. Account settings let you change the
+folder list later, including while the account is disabled.
+
+Video thumbnails are extracted on demand with the bundled libmpv software renderer,
+one file at a time off the UI thread. Qt encodes and caches the bounded thumbnail;
+no external `ffmpeg` installation or visible playback window is needed. Changing a
+file invalidates its thumbnail. Local favourite/resume state remains process-local.
+
+
 ## Episode details
 
 Season details open the episode row at an in-progress episode, or the next
@@ -130,6 +144,13 @@ performance gates.** Record the baseline on the same hardware and rendering
 backend. `tools/compare-render-benchmark.py` supports strict local comparisons;
 CI passes `--warn-only`. Empty or broken measurements still fail rather than
 being mistaken for good performance.
+
+Provider form layouts are precompiled in the host. Settings creates only visible
+rows and opens its native folder chooser on demand; initial viewport readiness is
+checked at the end of the current event-loop turn, with timed retries only when
+delegates are still missing. Playback no longer creates hidden image objects for
+every trickplay sheet: previews load the sheet needed by the current seek position.
+
 
 ## Android development
 

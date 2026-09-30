@@ -1,7 +1,11 @@
 #include "providers/local/LocalProvider.h"
+#include "app/LocalThumbnail.h"
+#include "cache/DatabaseManager.h"
 #include "provider/Catalog.h"
 #include "provider/PlaybackSource.h"
 #include "provider/Provider.h"
+#include "provider/ProviderRegistry.h"
+#include "provider/ProviderUiContext.h"
 #include "provider/SearchSource.h"
 #include "provider/UserItemStateSink.h"
 
@@ -13,8 +17,13 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QFile>
+#include <QImage>
+#include <QSet>
+#include <QTemporaryDir>
 #include <QUrl>
 
+#include <clocale>
 #include <cstdlib>
 #include <iostream>
 #include <stdexcept>
@@ -46,10 +55,12 @@ bool hasTitle(const std::vector<Spool::MovieItem>& items, const QString& title)
 SPOOL_TEST_MAIN("local-provider")
 {
     QCoreApplication app(argc, argv);
+    // Match the application's libmpv startup requirement.
+    std::setlocale(LC_NUMERIC, "C");
     using namespace Spool;
 
     const QString fixtures = QDir(QStringLiteral(TEST_SOURCE_DIR)).filePath(QStringLiteral("tests/media/fixtures"));
-    LocalProvider provider(QStringLiteral("local-account"), fixtures);
+    LocalProvider provider(QStringLiteral("local-account"), { fixtures });
     bool scanned = false;
     QObject::connect(&provider, &Provider::contentChanged, &app, [&scanned] { scanned = true; });
     require(provider.id() == QStringLiteral("local-account"), "the provider is named after its account");
@@ -148,8 +159,100 @@ SPOOL_TEST_MAIN("local-provider")
         "the session URL is the file itself");
     require(session.container == QStringLiteral("mkv"), "the container is the file's suffix");
     require(QCoro::waitFor(playback->fetchMediaSegments(mkv.id)).empty(), "a folder has no segments");
-    require(provider.artwork()->imageUrl({ mkv.id, {}, QStringLiteral("Primary"), 300 }).isEmpty(),
-        "a folder has no artwork");
+
+    QTemporaryDir combined;
+    require(combined.isValid(), "combined-folder fixture exists");
+    QDir(combined.path()).mkpath("one/nested");
+    QDir(combined.path()).mkpath("two");
+    for (const QString& relative :
+        { QString("one/same.mp4"), QString("one/nested/child.mkv"), QString("two/same.mp4") }) {
+        QFile file(combined.filePath(relative));
+        require(file.open(QIODevice::WriteOnly), "folder fixture opens");
+        file.write("fixture");
+    }
+    LocalProvider multi(
+        "combined", { combined.filePath("one"), combined.filePath("two"), combined.filePath("one/nested") });
+    multi.scan();
+    const auto merged = QCoro::waitFor(multi.fetchLatestItems({}, 20));
+    require(merged.size() == 3,
+        "overlapping roots do not duplicate files; same filenames in different folders remain distinct");
+    QSet<QString> identities;
+    for (const auto& entry : merged)
+        identities.insert(entry.id);
+    require(identities.size() == 3, "combined folders cannot alias same-named media");
+    bool emptyRejected = false;
+    try {
+        LocalProvider empty("empty", {});
+    } catch (const std::runtime_error&) {
+        emptyRejected = true;
+    }
+    require(emptyRejected, "no media directory is chosen implicitly");
+
+    QTemporaryDir thumbnails;
+    LocalProvider colored("colored", { QStringLiteral(TEST_SOURCE_DIR "/tests/fixtures") });
+    colored.scan();
+    const auto coloredItems = QCoro::waitFor(colored.searchItems(QStringLiteral("local-thumbnail")));
+    require(coloredItems.size() == 1, "the colored video fixture is indexed");
+    const auto& coloredItem = coloredItems.front();
+    const QUrl thumbnail(
+        colored.artwork()->imageUrl({ coloredItem.id, coloredItem.posterTag, QStringLiteral("Primary"), 300 }));
+    QString thumbnailError;
+    const QByteArray bytes = localThumbnail(thumbnail, thumbnails.path(), thumbnailError);
+    const QImage image = QImage::fromData(bytes);
+    require(!image.isNull() && image.width() <= 640 && image.height() <= 360,
+        "local video produces a bounded decoded thumbnail");
+    const QColor center = image.pixelColor(image.width() / 2, image.height() / 2);
+    require(center.red() > 180 && center.green() < 40 && center.blue() < 40,
+        "thumbnail contains the decoded red video frame, not an initial black render");
+    require(localThumbnail(thumbnail, thumbnails.path(), thumbnailError) == bytes,
+        "repeated thumbnail requests reuse the persisted frame");
+
+    qputenv("SPOOL_CREDENTIAL_STORE_DIR", combined.filePath("credentials").toUtf8());
+    DatabaseManager database;
+    require(database.initialize(combined.filePath("accounts.sqlite")), "local account database opens");
+    ProviderRegistry registry(&database);
+    ProviderManifest module;
+    module.id = "fixture.local";
+    module.name = "Local files";
+    module.version = "1.0.0";
+    module.ui = { { "login", "LocalFolders.qml" }, { "settings", "LocalFolders.qml" } };
+    QPointer<LocalProvider> activeLocal;
+    registry.addNativeModule(
+        module,
+        [&](const QString& id, const QVariantMap& configuration, QObject *parent) {
+            activeLocal = new LocalProvider(id, configuration.value("folders").toStringList(), parent);
+            return activeLocal.data();
+        },
+        QUrl("qrc:/qt/qml/Spool/qml/pages/"));
+    QCoro::waitFor(registry.restore());
+    require(!registry.hasAccounts() && !activeLocal, "restoring a fresh profile never adds local files");
+    auto *cancelled = qobject_cast<ProviderUiContext *>(registry.beginSetup(module.id));
+    require(cancelled && !activeLocal, "opening folder setup neither scans nor creates an account");
+    cancelled->close();
+    require(!registry.hasAccounts(), "cancelling folder setup leaves the profile empty");
+    auto *setup = qobject_cast<ProviderUiContext *>(registry.beginSetup(module.id));
+    require(setup, "native folder setup opens without a script runtime");
+    setup->complete({ { "account", "local-library" }, { "label", "Local files" },
+        { "configuration",
+            QVariantMap { { "folders", QStringList { combined.filePath("one"), combined.filePath("two") } } } } });
+    require(
+        registry.accountList().size() == 1 && activeLocal, "explicit folder confirmation activates one local account");
+    const QString localAccount = registry.accountList().front().id;
+    registry.setAccountEnabled(localAccount, false);
+    auto *settings = qobject_cast<ProviderUiContext *>(registry.openSettings(localAccount));
+    require(
+        settings && settings->arguments().value("configuration").toMap().value("folders").toStringList().size() == 2,
+        "disabled local accounts retain editable folder configuration");
+    settings->complete(
+        { { "configuration", QVariantMap { { "folders", QStringList { combined.filePath("two") } } } } });
+    require(!registry.accountList().front().enabled && !registry.sourceRunning(localAccount),
+        "editing a disabled local library does not silently enable it");
+    registry.setAccountEnabled(localAccount, true);
+    require(registry.sourceRunning(localAccount) && activeLocal, "the configured library can be enabled again");
+    activeLocal->scan();
+    const auto reconfigured = QCoro::waitFor(activeLocal->fetchLatestItems({}, 20));
+    require(reconfigured.size() == 1 && reconfigured.front().path == combined.filePath("two/same.mp4"),
+        "reenabling uses only the newly selected folder set");
 
     std::cout << "local provider ok\n";
     return 0;

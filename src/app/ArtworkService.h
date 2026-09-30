@@ -134,6 +134,7 @@ private:
     mutable QMutex m_decodeTotalsMutex;
     DecodeTotals m_decodeTotals;
     QThreadPool m_decodePool;
+    QThreadPool m_thumbnailPool;
     QThread m_workerThread;
     ArtworkFetchWorker *m_worker = nullptr;
     QHash<int, QPointer<ArtworkImageResponse>> m_responses;

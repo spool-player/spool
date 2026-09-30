@@ -220,11 +220,12 @@ void ProviderRegistry::loadModules()
     emit modulesChanged();
 }
 
-void ProviderRegistry::addNativeModule(ProviderManifest manifest, ProviderModule::NativeFactory factory)
+void ProviderRegistry::addNativeModule(ProviderManifest manifest, ProviderModule::NativeFactory factory, QUrl uiRoot)
 {
     ProviderModule module;
     module.manifest = std::move(manifest);
     module.native = std::move(factory);
+    module.root = std::move(uiRoot);
     module.bundled = true;
     m_modules.insert(module.manifest.id, std::move(module));
     emit modulesChanged();
@@ -473,6 +474,7 @@ QCoro::Task<void> ProviderRegistry::start(
     QVariantMap description;
     QVariant grant;
     bool authorizedFamily = false;
+    std::unique_ptr<Provider> nativeCandidate;
     try {
         if (!native) {
             const auto savedOptions = m_activationOptions.value(familyKey(candidate)).toMap();
@@ -581,6 +583,8 @@ QCoro::Task<void> ProviderRegistry::start(
                     throw std::runtime_error("unsupported_extension");
                 authorizedFamily = hasFamily;
             }
+        } else {
+            nativeCandidate.reset(native(accountId, candidate.configuration, this));
         }
     } catch (const std::exception&) {
         if (!current())
@@ -621,7 +625,7 @@ QCoro::Task<void> ProviderRegistry::start(
     active.pendingConfiguration.clear();
     if (active.activationApproval)
         active.activationApproval->store(true);
-    active.provider = native ? native(accountId, candidate.configuration, this)
+    active.provider = native ? nativeCandidate.release()
                              : new PortableProvider(this, accountId, candidate.label, capabilities, description, this);
     m_running.insert(accountId, std::move(active));
     if (authorizedFamily) {
@@ -1273,14 +1277,16 @@ QObject *ProviderRegistry::beginSetup(const QString& moduleId)
     m_running.insert(draftId, draft);
     m_runtimeSources.insert(draftId, draftId);
     m_running[draftId].hostExtensions = ProviderExtensions::supported(owner->manifest.extensions);
-    Async::runScoped(
-        this, runtimeFor(*owner)->addSource(draftId, {}, origins, m_running[draftId].hostExtensions, true),
-        [](QVariantMap) {},
-        [this, draftId](const std::exception_ptr&) {
-            stop(draftId);
-            emit problem(QStringLiteral("This provider could not start"));
-        },
-        "provider setup");
+    if (!owner->native) {
+        Async::runScoped(
+            this, runtimeFor(*owner)->addSource(draftId, {}, origins, m_running[draftId].hostExtensions, true),
+            [](QVariantMap) {},
+            [this, draftId](const std::exception_ptr&) {
+                stop(draftId);
+                emit problem(QStringLiteral("This provider could not start"));
+            },
+            "provider setup");
+    }
     return createContext(draftId, QStringLiteral("login"), moduleId);
 }
 
@@ -1481,6 +1487,15 @@ void ProviderRegistry::updateConfiguration(const QString& accountId, const QVari
 
 void ProviderRegistry::restartAccount(const QString& accountId, const QVariantMap& changes)
 {
+    if (ProviderAccount *entry = account(accountId); entry && !entry->enabled) {
+        const ProviderModule *owner = module(entry->module);
+        if (owner && owner->native) {
+            entry->configuration.insert(changes);
+            persist(true);
+            emit accountsChanged();
+        }
+        return;
+    }
     if (const ProviderAccount *entry = account(accountId); entry && entry->enabled) {
         ProviderAccount candidate = *entry;
         candidate.configuration.insert(changes);
@@ -1502,9 +1517,13 @@ void ProviderRegistry::endContext(const QString& sourceId)
 QObject *ProviderRegistry::openSettings(const QString& accountId)
 {
     const ProviderAccount *entry = account(accountId);
-    return entry && m_running.value(accountId).provider
-        ? createContext(accountId, QStringLiteral("settings"), entry->module)
-        : nullptr;
+    const ProviderModule *owner = entry ? module(entry->module) : nullptr;
+    if (!entry || (!m_running.value(accountId).provider && !(owner && owner->native)))
+        return nullptr;
+    auto *context = createContext(accountId, QStringLiteral("settings"), entry->module);
+    if (context && owner && owner->native)
+        context->setArguments({ { QStringLiteral("configuration"), entry->configuration } });
+    return context;
 }
 
 QObject *ProviderRegistry::openPicker(const QString& accountId, const QVariantMap& arguments)
