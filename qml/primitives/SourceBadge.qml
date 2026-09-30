@@ -12,6 +12,7 @@ Rectangle {
     // Over artwork the pill needs its own dark ground; on the page it does not.
     property bool overlay: false
     property int iconSize: Metrics.scaled(18)
+    property real maximumWidth: Metrics.scaled(260)
 
     visible: text.length > 0
     implicitWidth: content.implicitWidth + Metrics.scaled(overlay ? 16 : 14)
@@ -43,7 +44,8 @@ Rectangle {
         AppText {
             id: label
             anchors.verticalCenter: parent.verticalCenter
-            width: Math.min(implicitWidth, Metrics.scaled(220))
+            width: Math.max(0, Math.min(implicitWidth, Metrics.scaled(220), root.maximumWidth - Metrics.scaled(
+                                            root.overlay ? 16 : 14) - root.iconSize - content.spacing))
             text: root.text
             color: Theme.textPrimary
             font.pixelSize: Metrics.metaSizePx
