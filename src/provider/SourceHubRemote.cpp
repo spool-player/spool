@@ -1,6 +1,7 @@
 #include "ProviderRegistry.h"
 #include "SourceHub.h"
 
+#include <QByteArrayView>
 #include <QUrl>
 #include <algorithm>
 #include <cmath>
@@ -264,6 +265,9 @@ QCoro::Task<QVariantMap> SourceHub::remoteState(QString targetId, bool connect, 
         }
         state.insert("artwork", imageUrl(image));
     }
+    const QString prefix = targetId.section(QLatin1Char(':'), 0, 0);
+    auto& previews = m_entries[prefix].remotePreviews;
+    previews.remove(rawId(targetId));
     if (present(response, "preview") && state.contains("item")) {
         const auto preview = object(response.value("preview"));
         QVariantMap descriptor;
@@ -293,7 +297,31 @@ QCoro::Task<QVariantMap> SourceHub::remoteState(QString targetId, bool connect, 
         if (url.scheme() != otherUrl.scheme() || url.authority() != otherUrl.authority()
             || !m_registry->accountOriginAllowed(account, url))
             invalid();
-        descriptor.insert("urlTemplate", templateUrl);
+        QByteArray headers;
+        if (present(preview, "headers")) {
+            const auto values = object(preview.value("headers"));
+            if (values.size() > 32)
+                invalid();
+            for (auto it = values.cbegin(); it != values.cend(); ++it) {
+                const QString value = text(it.value(), 16384);
+                const QByteArray name = it.key().toLatin1();
+                if (name.isEmpty() || name.size() > 128
+                    || !std::all_of(name.begin(), name.end(),
+                        [](unsigned char c) {
+                            return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+                                || QByteArrayView("!#$%&'*+-.^_`|~").contains(c);
+                        })
+                    || value.contains('\r') || value.contains('\n'))
+                    invalid();
+                headers += name + ": " + value.toUtf8() + '\n';
+            }
+        }
+        previews.insert(rawId(targetId), { templateUrl, std::move(headers) });
+        descriptor.insert("urlTemplate",
+            QStringLiteral("spool-artwork://") + prefix + QStringLiteral("/remote/")
+                + QString::fromLatin1(
+                    rawId(targetId).toUtf8().toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals))
+                + QStringLiteral("?index={index}"));
         state.insert("preview", descriptor);
     }
     co_return state;

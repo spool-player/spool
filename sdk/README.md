@@ -283,6 +283,15 @@ is verified against count/order and occurrence IDs, with read-back before
 reconciliation after uncertain mutations; fixture success is not a live-server
 compatibility guarantee.
 
+Protected `spool.remote-targets` preview descriptors may include an optional
+`headers` map alongside `urlTemplate`. Use the same account/device authorization
+as media requests; never put account tokens in preview query strings. The host
+keeps headers out of QML, validates the approved HTTP(S) origin and numeric
+`{index}` substitution, and loads only requested sheets through its isolated
+artwork pipeline. Local trickplay sheets use `resolve().headers` from their own
+account. Authenticated sheets bypass the URL-only disk cache and cookies, reject
+foreign-origin redirects, and reuse only their credential-partitioned memory cache.
+
 ### Native preferences and application data
 
 `spool.playback-preferences` exposes the service's own audio/subtitle defaults.

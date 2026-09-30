@@ -311,6 +311,16 @@ controls intact. Ambiguous duplicate selection is not advertised on key-only pee
 Advanced navigation/text commands remain provider-owned operations; their thin
 picker adapters configure the shared, precompiled `ProviderRemoteControls` surface.
 
+Protected playback previews use account-scoped `spool-artwork://` resources,
+resolved by `ArtworkService` on the GUI thread. Local previews use the owning
+account's playback headers, not the currently active player's credentials.
+Remote descriptors may supply `headers`; SourceHub retains them privately and
+exposes only an opaque numeric-index template to QML. Remote previews do not
+require starting local playback. Requests stay on the approved origin, reject
+foreign-origin redirects, disable cookies and bypass Qt's URL-only disk cache.
+The memory cache is partitioned by account, resolved URL and credential hash;
+removed accounts cannot resolve old resources, even from memory.
+
 These adapters do not implement Plex watch-together or native SpoolLink peer
 enhancements. Protocol/loopback verification does not imply live-device support
 for an unadvertised backend command.

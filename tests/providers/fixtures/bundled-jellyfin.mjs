@@ -42,7 +42,7 @@ export function run() {
     }).then(function(playback) {
         require(playback.variantId === 'chosen' && playback.playMethod === 'DirectPlay', 'edition');
         require(playback.url.indexOf('MediaSourceId=chosen') >= 0, 'stream URL');
-        require(playback.headers['X-Emby-Token'] === 'fixture-token', 'stream credentials');
+        require(playback.headers.Authorization.indexOf('Token="fixture-token"') >= 0, 'stream credentials');
         require(playback.container === 'mkv' && playback.segments[0].type === 'Intro', 'details');
         return source.search({query: 'x'}, {device: device, http: function() {
             return Promise.resolve({status: 401, body: ''});

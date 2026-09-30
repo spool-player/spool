@@ -1,6 +1,8 @@
 #pragma once
 
+#include <QByteArray>
 #include <QString>
+#include <QUrl>
 
 namespace Spool {
 
@@ -26,6 +28,18 @@ public:
         QString format;
         int quality = 0;
     };
+
+    struct ImageResource {
+        QUrl url;
+        QByteArray headers;
+    };
+
+    // Public URLs need no credentials. Account-scoped resources are resolved
+    // by SourceHub on the GUI thread, keeping credentials out of QML URLs.
+    virtual ImageResource resolveImage(const QUrl& url) const
+    {
+        return { url, {} };
+    }
 
     virtual ~ArtworkSource() = default;
 

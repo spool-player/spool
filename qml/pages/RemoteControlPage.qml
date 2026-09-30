@@ -467,7 +467,9 @@ FocusScope {
             Layout.alignment: Qt.AlignHCenter
             Layout.preferredWidth: Metrics.scaled(240)
             Layout.preferredHeight: root.preview ? width * root.preview.height / root.preview.width : 0
-            source: visible ? root.preview.urlTemplate.replace("{index}", String(root.previewSheet)) : ""
+            source: visible ? "image://artwork/" + encodeURIComponent(root.preview.urlTemplate.replace("{index}", String(
+                                                                                                           root.previewSheet))) :
+                              ""
             sourceClipRect: root.preview ? Qt.rect((root.previewTile % root.preview.columns) * root.preview.width,
                                                    Math.floor(root.previewTile / root.preview.columns)
                                                    * root.preview.height, root.preview.width, root.preview.height) :

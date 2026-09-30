@@ -160,6 +160,7 @@ public:
     QCoro::Task<void> setItemPlaybackPosition(QString itemId, qint64 positionTicks) override;
 
     QString imageUrl(const ImageRequest& request) const override;
+    ImageResource resolveImage(const QUrl& url) const override;
 
     // StreamQualityControl
     qint64 bitrateOverride() const override
@@ -193,6 +194,11 @@ private:
         SpeedState speedState = SpeedState::Pending;
         qint64 measuredBitrate = 0;
         int parallelRequests = 2;
+        struct RemotePreview {
+            QString urlTemplate;
+            QByteArray headers;
+        };
+        QHash<QString, RemotePreview> remotePreviews; // by raw target ID
     };
     struct SearchRun;
 
