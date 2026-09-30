@@ -24,8 +24,11 @@ QtObject {
     }
 
     function schedule() {
+        // Coalesce model changes at the end of this event-loop turn. Waiting
+        // a full frame before the first layout adds latency even when all
+        // delegates are immediately available; only retries need a timer.
         if (enabled && (!firstDelegateReady || !delegatesReady || !artworkReady))
-            updateTimer.restart()
+            Qt.callLater(root.update)
     }
 
     function update() {

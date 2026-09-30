@@ -526,9 +526,9 @@ FocusScope {
         if (index < 0 || index >= values.length)
             return
         if (row.key === "playback/mpvConfigMode" && values[index] === "custom" && !String(
-                    Settings.values["playback/mpvConfigDirectory"] || "").length && mpvFolderDialog) {
+                    Settings.values["playback/mpvConfigDirectory"] || "").length && !Platform.isTV) {
             pendingCustomMpvMode = true
-            mpvFolderDialog.open()
+            openMpvFolderDialog()
             return
         }
         setRowValue(row, values[index], index)
@@ -875,6 +875,9 @@ FocusScope {
         dismissOnBack: false
         dismissOnHorizontal: false
         spacing: Metrics.scaled(10)
+        // Settings rows are costly composites. Do not construct an extra
+        // viewport of hidden controls while opening the page.
+        cacheBuffer: 0
         onCurrentIndexChanged: {
             if (root.reconcilingSettingsRows)
                 return
@@ -1113,7 +1116,7 @@ FocusScope {
 
             function activate() {
                 if (browseButton.visible && browseButton.activeFocus)
-                    root.mpvFolderDialog.open()
+                    root.openMpvFolderDialog()
                 else
                     pathField.focusField()
             }
@@ -1188,22 +1191,32 @@ FocusScope {
 
                     ActionButton {
                         id: browseButton
-                        visible: root.mpvFolderDialog !== null
+                        visible: !Platform.isTV
                         width: visible ? Metrics.scaled(132) : 0
                         height: pathField.height
                         text: "Browse"
                         iconName: "folder"
-                        onClicked: root.mpvFolderDialog.open()
+                        onClicked: root.openMpvFolderDialog()
                     }
                 }
             }
         }
     }
 
+    function openMpvFolderDialog() {
+        if (Platform.isTV)
+            return
+        if (mpvFolderDialog)
+            mpvFolderDialog.open()
+        else
+            mpvFolderDialogLoader.active = true
+    }
+
     Loader {
         id: mpvFolderDialogLoader
-        active: !Platform.isTV
+        active: false
         source: active ? Qt.resolvedUrl("DesktopFolderDialog.qml") : ""
+        onLoaded: item.open()
     }
 
     Connections {
