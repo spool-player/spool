@@ -89,7 +89,7 @@ SPOOL_TEST_MAIN("collection-editing")
     const auto settled = [&] { waitUntil([&] { return !editor.busy(); }, "collection operation settles"); };
     const auto stats = [&] { return QCoro::waitFor(hub.call(account, QStringLiteral("stats"))); };
 
-    setup();
+    setup(QStringLiteral("slow"));
     open();
     require(entryIds(editor) == QStringList({ "first", "second" }) && editor.hasMore(),
         "first page retains both occurrences of the same media");
