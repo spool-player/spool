@@ -148,6 +148,12 @@ account, and `ArtworkService` selects that owner rather than the child row.
 Jellyfin and Emby populate them from parent-image metadata. Home payload schema
 13 discards older ownerless cached rows; no account migration or data wipe is needed.
 
+The QML artwork boundary accepts native items, JavaScript values and materialized
+item maps without dropping series/album artwork, thumbnails, backdrops, logos,
+banners or their owner IDs. `artwork-integration` renders loopback images through
+the real image provider before and after first population, row recreation and
+card resizing, and checks the rendered pixels as well as inherited ownership.
+
 ## Screens
 
 Generic provider forms live in the app's precompiled `Spool` module:

@@ -6,7 +6,7 @@ extension versions per account. Local provider builds use the sibling working
 trees. Published provider pins are unchanged until a separately authorized release.
 
 Verified again on 2026-09-30 after the provider UI/local-library cutover: the
-local-provider release build succeeded, all 97 non-GPU tests passed, all six
+local-provider release build succeeded, all 98 non-GPU tests passed, all six
 provider contract runs passed, and all three provider archives passed validation.
 
 Additional isolated checks exercised the real Jellyfin password form, Emby Connect
@@ -15,6 +15,11 @@ contexts. A loopback server required the generated Jellyfin trickplay URL's acco
 token, and Qt fetched and rendered the expected colored pixels. Local-provider tests
 exercise opt-in setup/cancellation, overlapping folders, configuration while disabled,
 re-enabling the changed library, and decoded/cached video thumbnail pixels.
+The artwork bridge regression additionally checks inherited image ownership and
+rendered pixels for native/JavaScript-backed rows through first population,
+replacement and resizing. It also passed with the application's compiled QML
+cache objects linked into the isolated runner. Enabled and disabled login button
+fills were checked as blue in an offscreen render.
 
 The same three-pass, cold-route offscreen software benchmark measured Settings median
 wall time at 44.0 ms before and 31.1 ms after, and GUI CPU time at 22.8 ms before and

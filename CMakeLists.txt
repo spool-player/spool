@@ -1081,7 +1081,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         # bypass qt_add_qml_module's singleton qmldirs and are not equivalent
         # to the application's resource imports.
         find_package(Qt6 REQUIRED COMPONENTS QuickTest)
-        qt_add_executable(spool-qml-tests tests/QmlTestRunner.cpp tests/ExtensionIntegration.h)
+        qt_add_executable(spool-qml-tests tests/QmlTestRunner.cpp tests/ExtensionIntegration.h tests/ArtworkIntegration.h)
         target_compile_definitions(spool-qml-tests PRIVATE TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
         target_link_libraries(spool-qml-tests PRIVATE spool-core Qt6::QuickTest)
         if(QT6_IS_SHARED_LIBS_BUILD)
@@ -1108,6 +1108,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
                 tests/qml/tst_ProviderShell.qml
                 tests/qml/tst_ExtensionIntegration.qml
                 tests/qml/tst_ProviderForms.qml
+                tests/qml/tst_ArtworkIntegration.qml
         )
 
         get_filename_component(SPOOL_QML_PREFIX "${Qt6Qml_DIR}/../../.." ABSOLUTE)
@@ -1128,6 +1129,10 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         add_test(NAME provider-forms
             COMMAND spool-qml-tests -input ":/qt/qml/Spool/tests/qml/tst_ProviderForms.qml")
         set_tests_properties(provider-forms PROPERTIES ENVIRONMENT "${SPOOL_QML_TEST_ENV}" TIMEOUT 30)
+        add_test(NAME artwork-integration
+            COMMAND spool-qml-tests -input ":/qt/qml/Spool/tests/qml/tst_ArtworkIntegration.qml")
+        set_tests_properties(artwork-integration PROPERTIES
+            ENVIRONMENT "${SPOOL_QML_TEST_ENV};SPOOL_ARTWORK_INTEGRATION=1" TIMEOUT 30)
 
         list(LENGTH SPOOL_QML_TESTS SPOOL_QML_TEST_COUNT)
         math(EXPR SPOOL_QML_TEST_LAST "${SPOOL_QML_TEST_COUNT} - 1")
