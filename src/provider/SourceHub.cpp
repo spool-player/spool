@@ -5,6 +5,7 @@
 #include "ProviderRegistry.h"
 
 #include <QDebug>
+#include <QRegularExpression>
 #include <QUrlQuery>
 
 #include <algorithm>
@@ -37,6 +38,24 @@ namespace {
                 break;
         }
         return merged;
+    }
+
+    QString sourceDisplayName(const QString& name, const QString& address, const QString& provider)
+    {
+        const QString trimmed = name.trimmed();
+        // Default service names and container/host IDs tell people less than
+        // the address. Keep descriptive user-chosen names unchanged.
+        static const QRegularExpression generic(
+            QStringLiteral("^(?:media|server|media[ _-]*server|jellyfin(?:[ _-]*server)?|"
+                           "emby(?:[ _-]*server)?|plex(?:[ _-]*media)?(?:[ _-]*server)?|localhost|default)$"),
+            QRegularExpression::CaseInsensitiveOption);
+        static const QRegularExpression machine(
+            QStringLiteral("^(?:[0-9a-f]{10,64}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|[0-9]{6,})$"),
+            QRegularExpression::CaseInsensitiveOption);
+        if (!address.isEmpty()
+            && (trimmed.isEmpty() || generic.match(trimmed).hasMatch() || machine.match(trimmed).hasMatch()))
+            return address;
+        return trimmed.isEmpty() ? provider : trimmed;
     }
 
     // Case, accents and punctuation folded away: "Amélie" finds "amelie!".
@@ -101,9 +120,8 @@ struct SourceHub::SearchRun {
     quint64 serial = 0;
     SearchUpdate update;
 
-    // Everything found so far, each item once per server, ranked by how well
-    // its title matches and then by each server's own order, so equally good
-    // answers from different servers interleave.
+    // Rank before merging: the best answer wins deterministically and keeps
+    // its account-scoped activation and artwork identities intact.
     std::vector<MovieItem> merged() const
     {
         struct Ranked {
@@ -127,12 +145,102 @@ struct SourceHub::SearchRun {
         std::stable_sort(ranked.begin(), ranked.end(), [](const Ranked& a, const Ranked& b) {
             return std::tie(a.rank, a.position, a.target) < std::tie(b.rank, b.position, b.target);
         });
+        struct Identity {
+            size_t winner;
+            QString type;
+            QHash<QString, QString> ids;
+            QSet<QString> titles;
+        };
+        const auto normalizeId = [](const QString& name, QString value) {
+            value = value.trimmed();
+            if (name == QStringLiteral("imdb") || name == QStringLiteral("tmdb") || name == QStringLiteral("tvdb")) {
+                value = value.toLower();
+                if (value.startsWith(name + QStringLiteral("://")))
+                    value.remove(0, name.size() + 3);
+                value = value.section(QLatin1Char('?'), 0, 0).section(QLatin1Char('#'), 0, 0);
+                if (value.endsWith(QLatin1Char('/')))
+                    value.chop(1);
+                if (value.startsWith(QStringLiteral("https://")) || value.startsWith(QStringLiteral("http://"))) {
+                    const QUrl url(value);
+                    const QString host = url.host();
+                    const bool recognized
+                        = (name == QStringLiteral("imdb")
+                              && (host == QStringLiteral("imdb.com") || host == QStringLiteral("www.imdb.com")))
+                        || (name == QStringLiteral("tmdb")
+                            && (host == QStringLiteral("themoviedb.org")
+                                || host == QStringLiteral("www.themoviedb.org")))
+                        || (name == QStringLiteral("tvdb")
+                            && (host == QStringLiteral("thetvdb.com") || host == QStringLiteral("www.thetvdb.com")));
+                    if (recognized)
+                        value = url.path().section(QLatin1Char('/'), -1);
+                }
+                static const QRegularExpression imdb(QStringLiteral("^tt[0-9]+$"));
+                static const QRegularExpression numeric(QStringLiteral("^[0-9]+$"));
+                if (name == QStringLiteral("imdb"))
+                    return imdb.match(value).hasMatch() ? value : QString();
+                if (!numeric.match(value).hasMatch())
+                    return QString();
+                while (value.size() > 1 && value.front() == QLatin1Char('0'))
+                    value.remove(0, 1);
+                if (value == QStringLiteral("0"))
+                    return QString();
+            }
+            return value;
+        };
+        std::vector<Identity> identities;
+        identities.reserve(ranked.size());
+        for (size_t index = 0; index < ranked.size(); ++index) {
+            const MovieItem& item = *ranked[index].item;
+            Identity candidate { index, item.itemType.toCaseFolded(), {}, {} };
+            const auto addId = [&](const QString& name, const QString& value) {
+                const QString key = name.trimmed().toCaseFolded();
+                const QString id = normalizeId(key, value);
+                if (!key.isEmpty() && !id.isEmpty())
+                    candidate.ids.insert(key, id);
+            };
+            for (auto id = item.externalIds.cbegin(); id != item.externalIds.cend(); ++id)
+                addId(id.key(), id.value().toString());
+            if (!candidate.ids.contains(QStringLiteral("imdb")))
+                addId(QStringLiteral("imdb"), item.imdbId);
+            if (!candidate.ids.contains(QStringLiteral("tmdb")))
+                addId(QStringLiteral("tmdb"), item.tmdbId);
+            // Episode/season names are not identities ("Pilot", "Season 1").
+            // Unknown years likewise cannot distinguish remakes reliably.
+            if ((candidate.type == QStringLiteral("movie") || candidate.type == QStringLiteral("series"))
+                && item.year > 0 && !item.title.isEmpty())
+                candidate.titles.insert(item.title.toCaseFolded() + QLatin1Char('\n') + QString::number(item.year));
+            for (auto previous = identities.begin(); previous != identities.end();) {
+                bool sharedId = false;
+                bool conflict = candidate.type != previous->type;
+                for (auto id = candidate.ids.cbegin(); !conflict && id != candidate.ids.cend(); ++id) {
+                    const auto known = previous->ids.constFind(id.key());
+                    if (known != previous->ids.cend()) {
+                        conflict = known.value() != id.value();
+                        sharedId |= !conflict;
+                    }
+                }
+                const bool sameTitle = candidate.titles.intersects(previous->titles);
+                if (conflict || (!sharedId && !sameTitle)) {
+                    ++previous;
+                    continue;
+                }
+                candidate.winner = std::min(candidate.winner, previous->winner);
+                candidate.ids.insert(previous->ids);
+                candidate.titles.unite(previous->titles);
+                previous = identities.erase(previous);
+                // IDs contributed by this group can connect an earlier group.
+                previous = identities.begin();
+            }
+            identities.push_back(std::move(candidate));
+        }
+        std::sort(identities.begin(), identities.end(),
+            [](const Identity& a, const Identity& b) { return a.winner < b.winner; });
         std::vector<MovieItem> items;
-        items.reserve(std::min(ranked.size(), size_t(limit)));
-        for (const Ranked& entry : ranked) {
+        items.reserve(std::min(identities.size(), size_t(limit)));
+        for (const Identity& identity : identities) {
             if (items.size() >= size_t(limit))
                 break;
-            items.push_back(*entry.item);
+            items.push_back(*ranked[identity.winner].item);
         }
         return items;
     }
@@ -445,6 +553,32 @@ QString SourceHub::accountOf(const QString& scopedId) const
     if (scopedId.size() <= kPrefix || scopedId.at(kPrefix) != QLatin1Char(':'))
         return {};
     return m_entries.value(scopedId.left(kPrefix)).accountId;
+}
+
+QVariantMap SourceHub::originOf(const QString& scopedId) const
+{
+    const QString accountId = accountOf(scopedId);
+    if (accountId.isEmpty())
+        return {};
+    for (const QVariant& value : m_registry->accounts()) {
+        const QVariantMap account = value.toMap();
+        if (account.value(QStringLiteral("id")).toString() != accountId)
+            continue;
+        const QString provider = account.value(QStringLiteral("providerName")).toString();
+        const QString detail = account.value(QStringLiteral("detail")).toString();
+        const QString address = account.value(QStringLiteral("address")).toString();
+        return { { QStringLiteral("providerName"), provider },
+            { QStringLiteral("iconUrl"), account.value(QStringLiteral("iconUrl")) },
+            { QStringLiteral("serverName"), sourceDisplayName(detail, address, provider) },
+            { QStringLiteral("address"), address },
+            { QStringLiteral("userName"), account.value(QStringLiteral("label")) } };
+    }
+    return {};
+}
+
+bool SourceHub::multipleSources() const
+{
+    return sources().size() > 1;
 }
 
 QString SourceHub::rawId(const QString& scopedId)
@@ -1069,27 +1203,14 @@ QCoro::Task<std::vector<LibraryItem>> SourceHub::fetchLibraries()
     for (Provider *provider : sources())
         pending.emplace_back(provider->id(), provider->catalog()->fetchLibraries());
     std::vector<LibraryItem> libraries;
-    QHash<QString, int> names;
     for (auto& [accountId, task] : pending) {
         try {
             for (LibraryItem library : co_await std::move(task)) {
                 library.id = scoped(accountId, library.id);
-                names[library.name.toCaseFolded()] += 1;
                 libraries.push_back(std::move(library));
             }
         } catch (const std::exception& error) {
             qWarning() << "hub: libraries unavailable from" << accountId.left(kPrefix) << error.what();
-        }
-    }
-    // Two "Movies" rows from two servers read as one; say whose each is.
-    const auto& accounts = m_registry->accountList();
-    for (LibraryItem& library : libraries) {
-        if (names.value(library.name.toCaseFolded()) > 1) {
-            const QString account = accountOf(library.id);
-            const auto found
-                = std::find_if(accounts.begin(), accounts.end(), [&](const auto& a) { return a.id == account; });
-            if (found != accounts.end())
-                library.name += QStringLiteral(" · ") + found->label;
         }
     }
     co_return libraries;

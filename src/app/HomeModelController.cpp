@@ -20,7 +20,7 @@
 namespace Spool {
 
 namespace {
-    constexpr int kHomePayloadSchemaVersion = 13;
+    constexpr int kHomePayloadSchemaVersion = 14;
 
     // Cover art is square; cropping it to a poster or a thumbnail throws away
     // the edges of the artwork the way the album was meant to be seen.

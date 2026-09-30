@@ -642,5 +642,27 @@ export function createSource(config, sourceHost) {
         "restart cancels old operations and negotiates the new generation");
     require(!pendingSucceeded && registry.extensionVersion(extendedAlice, "spool.suggestions") == 1,
         "an old result cannot succeed against the restarted account");
+    {
+        const QString upgradeDirectory = directory.filePath(QStringLiteral("bundle-upgrades"));
+        ProviderRegistry upgraded(&database);
+        upgraded.setInstallDirectory(upgradeDirectory);
+        upgraded.loadModules();
+        const QString id = QStringLiteral("spool.jellyfin");
+        const QString bundledVersion = upgraded.module(id)->manifest.version;
+        QCoro::waitFor(upgraded.install(ProviderFixture::package(id, QStringLiteral("999.0.0"))));
+        require(upgraded.module(id)->manifest.version == QStringLiteral("999.0.0")
+                && upgraded.module(id)->root.isLocalFile() && upgraded.module(id)->overridesBundled,
+            "an independently installed update overrides the bundled provider");
+        ProviderRegistry reloaded(&database);
+        reloaded.setInstallDirectory(upgradeDirectory);
+        reloaded.loadModules();
+        require(reloaded.module(id)->manifest.version == QStringLiteral("999.0.0")
+                && reloaded.module(id)->root.isLocalFile(),
+            "the provider upgrade remains selected on next startup");
+        QCoro::waitFor(reloaded.uninstall(id));
+        require(reloaded.module(id) && reloaded.module(id)->manifest.version == bundledVersion
+                && reloaded.module(id)->bundled && reloaded.module(id)->root.scheme() == QStringLiteral("qrc"),
+            "removing the upgrade restores the packaged provider");
+    }
     return 0;
 }

@@ -29,6 +29,7 @@ public:
     QHash<int, QByteArray> roleNames() const override;
 
     Q_INVOKABLE QVariantMap get(int index) const;
+    Q_INVOKABLE bool moveLibrary(int from, int to);
 
     void setLibraries(const std::vector<LibraryItem>& libraries);
     void clear();

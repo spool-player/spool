@@ -60,8 +60,17 @@ Search reaches past that. Once the search page opens, set-aside accounts on a se
 start too, without joining browsing, home rows or the library cache key. Each search then goes, per
 server, through the fewest accounts whose libraries cover everything any of its users can see: one who
 sees more stands in for one who sees less, and of two who see the same the one in use searches. Results
-dedupe per server by item ID (the account in use wins), rank by how closely the title matches and then
-by each server's own order, and a new query cancels the last one's operations.
+dedupe same-server item IDs (the account in use wins), then dedupe across sources using
+database identifiers scoped to the media type. Identifier namespaces are case-insensitive;
+IMDb, TMDb and TVDb values normalize whitespace, supported URL/protocol forms and numeric
+padding. Matching identifiers merge translated titles, but conflicting identifiers in any
+shared database keep items separate. Movies and series without a conflicting identifier
+can also match an identical case-insensitive title and known year; punctuation and accents
+are not removed. Episodes and seasons never merge by title alone, and unknown years do not
+trigger title fallback. Results rank by how closely the title matches and then by each
+server's own order. The best-ranked original item retains its source-scoped activation and
+artwork; its provider icon and server label appear on every search card. A new query cancels
+the last one's operations.
 
 A provider's login screen completes with the account; the registry keeps the origins the viewer
 allowed during setup, never ones the provider claims. `http_401` from any operation marks the account

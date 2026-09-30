@@ -3,10 +3,9 @@ import QtQuick
 import QtQuick.Layouts
 import Spool
 
-// A sign-in code to type on another device. What to do with it is said in
-// full-size text above the code rather than as a caption inside its box, the
-// address to go to can be followed wherever there is a browser, and the code
-// can be copied wherever there is a clipboard.
+// A sign-in code to type on another device. Instructions sit below its box;
+// the address can be followed wherever there is a browser, and the code can
+// be copied wherever there is a clipboard.
 ColumnLayout {
     id: root
     property string code: ""
@@ -20,16 +19,6 @@ ColumnLayout {
 
     onCodeChanged: copied = false
     spacing: Metrics.scaled(14)
-
-    AppText {
-        Layout.fillWidth: true
-        visible: !!root.instructions
-        text: root.instructions
-        wrapMode: Text.WordWrap
-        color: Theme.textSecondary
-        font.pixelSize: Metrics.scaled(22)
-        lineHeight: 1.15
-    }
 
     AppText {
         Layout.fillWidth: true
@@ -71,7 +60,7 @@ ColumnLayout {
         }
 
         ActionButton {
-            Layout.fillHeight: true
+            Layout.alignment: Qt.AlignVCenter
             visible: root.interactive
             iconName: root.copied ? "check" : "content_copy"
             text: root.copied ? "Copied" : "Copy"
@@ -80,6 +69,15 @@ ColumnLayout {
                 root.copied = true
             }
         }
+    }
+    AppText {
+        Layout.fillWidth: true
+        visible: !!root.instructions
+        text: root.instructions
+        wrapMode: Text.WordWrap
+        color: Theme.textSecondary
+        font.pixelSize: Metrics.scaled(22)
+        lineHeight: 1.15
     }
 
     // Qt Quick has no clipboard of its own; a text editor's does.

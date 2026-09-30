@@ -75,10 +75,10 @@ SPOOL_TEST_MAIN("source-hub")
     QCoro::waitFor(registry.restore());
     waitUntil([&] { return announced; }, "with no accounts the hub still announces itself");
 
-    const auto add = [&](const char *module, const char *key, QVariantMap configuration = {}) {
+    const auto add = [&](const char *module, const char *key, QVariantMap configuration = {}, QString detail = {}) {
         const QString id = registry.finishSetup({},
             { { QStringLiteral("module"), QLatin1String(module) }, { QStringLiteral("account"), QLatin1String(key) },
-                { QStringLiteral("label"), QString::fromLatin1(key).toUpper() },
+                { QStringLiteral("label"), QString::fromLatin1(key).toUpper() }, { QStringLiteral("detail"), detail },
                 { QStringLiteral("configuration"), configuration } });
         registry.useAccount(id);
         return id;
@@ -86,7 +86,9 @@ SPOOL_TEST_MAIN("source-hub")
     const QString a = add("spool.local", "a");
     const QString b = add("spool.local", "b");
     const QString remote = add("fixture.test", "remote",
-        { { QStringLiteral("label"), QStringLiteral("Remote") }, { QStringLiteral("inheritedArtwork"), true } });
+        { { QStringLiteral("label"), QStringLiteral("Remote") }, { QStringLiteral("inheritedArtwork"), true },
+            { QStringLiteral("server"), QStringLiteral("https://family.example:8096/private") } },
+        QStringLiteral("Family Media"));
     const QString offline = add("fixture.test", "offline", { { QStringLiteral("failing"), true } });
     waitUntil([&] { return hub.sources().size() == 4; }, "every enabled account joins the hub");
     require(hub.capabilities().testFlag(Provider::Search) && hub.capabilities().testFlag(Provider::UserItemState),
@@ -100,9 +102,8 @@ SPOOL_TEST_MAIN("source-hub")
     for (const LibraryItem& library : libraries)
         names.append(library.name);
     names.sort();
-    require(names
-            == QStringList({ QStringLiteral("Shelf"), QStringLiteral("fixtures · A"), QStringLiteral("fixtures · B") }),
-        "same-named libraries say whose they are");
+    require(names == QStringList({ QStringLiteral("Shelf"), QStringLiteral("fixtures"), QStringLiteral("fixtures") }),
+        "library titles remain plain even when multiple accounts share a name");
     for (const LibraryItem& library : libraries) {
         require(SourceHub::rawId(library.id) == QStringLiteral("local")
                 || SourceHub::rawId(library.id) == QStringLiteral("lib"),
@@ -112,6 +113,10 @@ SPOOL_TEST_MAIN("source-hub")
     require(hub.accountOf(QStringLiteral("unscoped")).isEmpty()
             && SourceHub::rawId(QStringLiteral("unscoped")) == QStringLiteral("unscoped"),
         "unscoped ids belong to nobody");
+    const QVariantMap friendlyOrigin = hub.originOf(hub.scoped(remote, QStringLiteral("lib")));
+    require(friendlyOrigin.value(QStringLiteral("serverName")).toString() == QStringLiteral("Family Media")
+            && friendlyOrigin.value(QStringLiteral("address")).toString() == QStringLiteral("family.example:8096"),
+        "descriptive server names survive while addresses omit private URL paths");
 
     const auto latest = QCoro::waitFor(hub.fetchLatestItems({}, 6));
     require(latest.size() == 6, "a merged row honours its limit");
@@ -227,8 +232,10 @@ SPOOL_TEST_MAIN("source-hub")
     const QString narrow = user("narrow", "s1", { QStringLiteral("m") });
     const QString twin = user("twin", "s2", { QStringLiteral("m") });
     const QString used = user("used", "s2", { QStringLiteral("m") });
-    const QString other = user("other", "s3", { QStringLiteral("m"), QStringLiteral("anime") });
-    const QString mine = user("mine", "s3", { QStringLiteral("m"), QStringLiteral("k") }, true);
+    const QString other
+        = user("other", "s3", { QStringLiteral("m"), QStringLiteral("anime"), QStringLiteral("shared") });
+    const QString mine
+        = user("mine", "s3", { QStringLiteral("m"), QStringLiteral("k"), QStringLiteral("shared") }, true);
     waitUntil([&] { return hub.source(narrow) && hub.source(used) && hub.source(mine); }, "the users in use start");
     const size_t browsed = hub.sources().size();
     const QString scopeKey = hub.libraryScopeKey();
@@ -260,16 +267,114 @@ SPOOL_TEST_MAIN("source-hub")
             s3.append(SourceHub::rawId(item.id));
     }
     s3.sort();
-    require(s3
-            == QStringList(
-                { QStringLiteral("anime-1"), QStringLiteral("exact"), QStringLiteral("k-1"), QStringLiteral("m-1") }),
-        "an item two users of a server can both see is listed once");
+    require(s3 == QStringList({ QStringLiteral("exact"), QStringLiteral("k-1"), QStringLiteral("shared-1") }),
+        "cross-server title/year duplicates disappear without losing unique libraries");
+    require(std::count_if(found.begin(), found.end(),
+                [](const MovieItem& item) { return SourceHub::rawId(item.id) == QStringLiteral("m-1"); })
+            == 1,
+        "the same movie from different servers appears once");
     require(!found.empty() && found.front().title == QStringLiteral("The Film"), "the exact title ranks first");
-    const MovieItem shared = *std::find_if(found.begin(), found.end(), [&](const MovieItem& item) {
-        return SourceHub::rawId(item.id) == QStringLiteral("m-1") && hub.accountOf(item.id) != wide
-            && hub.accountOf(item.id) != used;
-    });
-    require(hub.accountOf(shared.id) == mine, "and it comes from the user in use");
+    const auto shared = std::find_if(found.begin(), found.end(),
+        [&](const MovieItem& item) { return SourceHub::rawId(item.id) == QStringLiteral("shared-1"); });
+    require(shared != found.end() && hub.accountOf(shared->id) == mine,
+        "an overlapping item still comes from the user in use when its server wins");
+    // Cross-server identity is exercised through the real JS page decoder
+    // and public search API, not a replica of the merge predicate.
+    {
+        DatabaseManager identityDatabase;
+        const QString identityDirectory = directory.filePath(QStringLiteral("identity"));
+        require(QDir().mkpath(identityDirectory), "isolated search identity state directory");
+        require(identityDatabase.initialize(identityDirectory + QStringLiteral("/cache.sqlite")),
+            "search identity database opens");
+        ProviderRegistry identityRegistry(&identityDatabase);
+        identityRegistry.setInstallDirectory(installs);
+        identityRegistry.loadModules();
+        SourceHub identityHub(&identityRegistry);
+        QCoro::waitFor(identityRegistry.restore());
+        const auto rows
+            = [](const char *json) { return QJsonDocument::fromJson(QByteArray(json)).array().toVariantList(); };
+        const QVariantList left = rows(R"JSON([
+            {"id":"imdb","title":"Original title","type":"Movie","year":2000,"externalIds":{"IMDb":" TT123 "},"posterTag":"left"},
+            {"id":"tvdb","title":"Original show","type":"Series","year":2001,"externalIds":{"Tvdb":"000456"}},
+            {"id":"fallback","title":"Exact Name!","type":"Movie","year":2002},
+            {"id":"conflict","title":"Conflict","type":"Movie","year":2003,"externalIds":{"Imdb":"tt333","Tmdb":"100"}},
+            {"id":"remake","title":"Remake","type":"Movie","year":2004,"externalIds":{"Imdb":"tt444"}},
+            {"id":"typed","title":"Shared type title","type":"Movie","year":2005,"externalIds":{"Tmdb":"500"}},
+            {"id":"accent","title":"Amélie","type":"Movie","year":2006},
+            {"id":"punctuation","title":"Name!","type":"Movie","year":2007},
+            {"id":"episode","title":"Pilot","type":"Episode","year":2008,"seriesName":"One","season":1,"episode":1},
+            {"id":"identified-episode","title":"One episode","type":"Episode","year":2008,"externalIds":{"Tvdb":"900"}},
+            {"id":"unknown-year","title":"Undated","type":"Movie"},
+            {"id":"bridge-tmdb","title":"First translation","type":"Movie","year":2009,"externalIds":{"Tmdb":"600"}},
+            {"id":"bridge-imdb","title":"Second translation","type":"Movie","year":2009,"externalIds":{"Imdb":"tt600"}}
+        ])JSON");
+        const QVariantList right = rows(R"JSON([
+            {"id":"imdb-copy","title":"Translated title","type":"Movie","year":2000,"externalIds":{"imdb":"imdb://tt123"},"posterTag":"right"},
+            {"id":"tvdb-copy","title":"Translated show","type":"Series","year":2001,"externalIds":{"TVDB":"456"}},
+            {"id":"fallback-copy","title":"EXACT NAME!","type":"Movie","year":2002},
+            {"id":"conflict-other","title":"Conflict","type":"Movie","year":2003,"externalIds":{"Imdb":"tt333","Tmdb":"101"}},
+            {"id":"remake-other","title":"Remake","type":"Movie","year":2004,"externalIds":{"Imdb":"tt445"}},
+            {"id":"typed-series","title":"Shared type title","type":"Series","year":2005,"externalIds":{"Tmdb":"500"}},
+            {"id":"accent-other","title":"Amelie","type":"Movie","year":2006},
+            {"id":"punctuation-other","title":"Name","type":"Movie","year":2007},
+            {"id":"episode-other","title":"Pilot","type":"Episode","year":2008,"seriesName":"Two","season":1,"episode":1},
+            {"id":"identified-episode-copy","title":"Renamed episode","type":"Episode","year":2008,"externalIds":{"Tvdb":"900"}},
+            {"id":"unknown-year-other","title":"Undated","type":"Movie"},
+            {"id":"bridge","title":"Third translation","type":"Movie","year":2009,"externalIds":{"Tmdb":"600","Imdb":"tt600"}}
+        ])JSON");
+        const auto identityAccount = [&](const QString& key, const QString& detail, const QVariantList& items) {
+            const QString account = identityRegistry.finishSetup({},
+                { { QStringLiteral("module"), QStringLiteral("fixture.test") }, { QStringLiteral("account"), key },
+                    { QStringLiteral("group"), key }, { QStringLiteral("label"), QStringLiteral("Private username") },
+                    { QStringLiteral("detail"), detail },
+                    { QStringLiteral("configuration"),
+                        QVariantMap { { QStringLiteral("searchItems"), items },
+                            { QStringLiteral("server"),
+                                QStringLiteral("https://media.example:32400/private?token=secret") } } } });
+            identityRegistry.useAccount(account);
+            waitUntil([&] { return identityHub.source(account) != nullptr; }, "identity source joins");
+            return account;
+        };
+        const QString first = identityAccount(QStringLiteral("identity-a"), QStringLiteral("d3fb29df803f"), left);
+        const QString second = identityAccount(QStringLiteral("identity-b"), QStringLiteral("media"), right);
+        for (const QString& account : { first, second }) {
+            const QVariantMap origin = identityHub.originOf(identityHub.scoped(account, QStringLiteral("lib")));
+            require(origin.value(QStringLiteral("serverName")).toString() == QStringLiteral("media.example:32400"),
+                "machine IDs and generic names display the usable host and port, never username or secrets");
+        }
+        std::vector<MovieItem> results;
+        QCoro::waitFor(identityHub.searchProgressively(
+            QStringLiteral("zz"), 80, [&](std::vector<MovieItem> items) { results = std::move(items); }));
+        QSet<QString> actual;
+        for (const MovieItem& item : results)
+            actual.insert(SourceHub::rawId(item.id));
+        require(actual
+                == QSet<QString> { QStringLiteral("imdb"), QStringLiteral("tvdb"), QStringLiteral("fallback"),
+                    QStringLiteral("conflict"), QStringLiteral("conflict-other"), QStringLiteral("remake"),
+                    QStringLiteral("remake-other"), QStringLiteral("typed"), QStringLiteral("typed-series"),
+                    QStringLiteral("accent"), QStringLiteral("accent-other"), QStringLiteral("punctuation"),
+                    QStringLiteral("punctuation-other"), QStringLiteral("episode"), QStringLiteral("episode-other"),
+                    QStringLiteral("identified-episode"), QStringLiteral("unknown-year"),
+                    QStringLiteral("unknown-year-other"), QStringLiteral("bridge-tmdb") },
+            "database identities merge across servers, conflicts/types/remakes stay separate, and fallback is exact");
+        const auto winner = std::find_if(results.begin(), results.end(),
+            [](const MovieItem& item) { return SourceHub::rawId(item.id) == QStringLiteral("imdb"); });
+        require(winner != results.end() && identityHub.accountOf(winner->id) == first
+                && winner->posterTag == QStringLiteral("left"),
+            "the stable search-plan winner retains its owning account and artwork");
+        ArtworkSource::ImageRequest request;
+        request.itemId = winner->id;
+        request.imageType = QStringLiteral("Primary");
+        request.tag = winner->posterTag;
+        request.maxWidth = 300;
+        require(identityHub.imageUrl(request) == QStringLiteral("https://img.invalid/imdb/Primary?w=300")
+                && QCoro::waitFor(identityHub.fetchItemDetails(winner->id)).id == winner->id,
+            "deduplicated results still activate and request artwork through the winning provider");
+        const auto limited = QCoro::waitFor(identityHub.searchItems(QStringLiteral("zz"), 2));
+        require(limited.size() == 2 && SourceHub::rawId(limited[0].id) == QStringLiteral("imdb")
+                && SourceHub::rawId(limited[1].id) == QStringLiteral("tvdb"),
+            "duplicate rows do not consume the final ranked result limit");
+    }
 
     registry.useAccount(wide);
     waitUntil([&] { return !hub.source(narrow); }, "choosing another user sets the last one aside");

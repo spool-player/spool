@@ -1205,7 +1205,15 @@ QVariantList ProviderRegistry::accounts() const
     QVariantList list;
     for (const ProviderAccount& account : m_accounts) {
         const ProviderModule *owner = module(account.module);
+        // Where the account's server is, for telling servers apart: the host
+        // and port of its configured address, never the rest of the URL.
+        const QUrl server(account.configuration.value(QStringLiteral("server")).toString(), QUrl::StrictMode);
+        const QString address = server.isValid()
+                && (server.scheme() == QLatin1String("http") || server.scheme() == QLatin1String("https"))
+            ? server.host() + (server.port() > 0 ? QLatin1Char(':') + QString::number(server.port()) : QString())
+            : QString();
         list.append(QVariantMap { { QStringLiteral("id"), account.id }, { QStringLiteral("moduleId"), account.module },
+            { QStringLiteral("address"), address },
             { QStringLiteral("providerName"), owner ? owner->manifest.name : account.module },
             { QStringLiteral("iconUrl"), owner ? owner->file(owner->manifest.icon) : QUrl() },
             { QStringLiteral("label"), account.label }, { QStringLiteral("detail"), account.detail },

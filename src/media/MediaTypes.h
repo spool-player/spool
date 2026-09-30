@@ -196,6 +196,7 @@ struct MovieItem {
     Q_PROPERTY(QString itemType MEMBER itemType)
     Q_PROPERTY(QString imdbId MEMBER imdbId)
     Q_PROPERTY(QString tmdbId MEMBER tmdbId)
+    Q_PROPERTY(QVariantMap externalIds MEMBER externalIds)
     Q_PROPERTY(QString playlistItemId MEMBER playlistItemId)
     Q_PROPERTY(QString locationType MEMBER locationType)
     Q_PROPERTY(bool isVirtualItem MEMBER isVirtualItem)
@@ -251,6 +252,7 @@ public:
     QString itemType;
     QString imdbId;
     QString tmdbId;
+    QVariantMap externalIds;
     QString playlistItemId;
     QString locationType;
     bool isVirtualItem = false;

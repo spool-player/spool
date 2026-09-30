@@ -8,6 +8,10 @@ FocusScope {
     id: root
 
     property string title: ""
+    // Where the row, or each of its cards, comes from, when the page says so:
+    // a map of iconUrl, text and (for a card) an optional detail line.
+    property var headerBadge: null
+    property var cardBadge: null
     property var model
     property var shell
     property string cardKind: "poster" // poster, square, landscape, library, or person
@@ -27,6 +31,18 @@ FocusScope {
     property bool focusVisible: true
     property bool keyboardFocusActive: Metrics.keyboardFocusActive
     property int pointerPressedIndex: -1
+    // Reordering is opt-in; the host owns the model and persistence.
+    property var moveItem: null
+    readonly property bool reorderEnabled: typeof moveItem === "function"
+    property bool moveMode: false
+    property bool dragActive: false
+    property int dragSourceIndex: -1
+    property int dragTargetIndex: -1
+    property real dragPointerX: 0
+    property real dragPointerY: 0
+    property real dragOffsetX: 0
+    property real dragOffsetY: 0
+    property var dragCardData: ({})
     // Lets even the final card be positioned at the start of the viewport.
     property bool allowTrailingSpace: false
     property int modelRevision: 0
@@ -56,17 +72,23 @@ FocusScope {
     onAtomicPopulateChanged: Qt.callLater(resetPresentation)
     onModelChanged: {
         ++modelRevision
+        if (moveMode || dragActive)
+            finishMove()
         Qt.callLater(resetPresentation)
     }
     onCountChanged: {
         ++modelRevision
         currentIndex = count > 0 ? Math.max(0, Math.min(currentIndex, count - 1)) : -1
+        if (moveMode || dragActive)
+            finishMove()
         // The view rewrites its currentIndex internally on model changes;
         // re-assert ours once it has processed them.
         Qt.callLater(syncViewCurrentIndex)
         Qt.callLater(resetPresentation)
     }
     onCurrentIndexChanged: syncViewCurrentIndex()
+    onReorderEnabledChanged: if (!reorderEnabled && (moveMode || dragActive))
+                                 finishMove()
 
     // listView.currentIndex must never be a declarative binding: the view
     // writes the property itself (model resets, item removal), after which a
@@ -88,6 +110,7 @@ FocusScope {
         }
         function onModelReset() {
             ++root.modelRevision
+            root.finishMove()
         }
         function onRowsInserted() {
             ++root.modelRevision
@@ -160,6 +183,20 @@ FocusScope {
     }
 
     function routeKey(key, phase, repeat) {
+        if (moveMode) {
+            if (InputKeys.isBack(key, false)) {
+                if (phase !== "release")
+                    finishMove()
+                return true
+            }
+            if (phase !== "release") {
+                if (key === Qt.Key_Left)
+                    moveSelected(-1)
+                else if (key === Qt.Key_Right)
+                    moveSelected(1)
+            }
+            return true
+        }
         if (phase === "release")
             return true
         if (key === Qt.Key_Left)
@@ -170,6 +207,10 @@ FocusScope {
     }
 
     function activateIndex(index) {
+        if (moveMode) {
+            finishMove()
+            return
+        }
         if (index < 0 || index >= count)
             return
         currentIndex = index
@@ -195,6 +236,8 @@ FocusScope {
     }
 
     function longPress() {
+        if (reorderEnabled)
+            return beginMove(currentIndex)
         if (cardKind === "library" || cardKind === "person" || currentIndex < 0 || !shell)
             return false
         return openItemContext(currentIndex, currentCard(), true)
@@ -210,6 +253,77 @@ FocusScope {
                                               "returnRoute": itemContextReturnRoute,
                                               "deferBackdropDismissal": Boolean(deferBackdropDismissal)
                                           }))
+    }
+    function beginMove(index) {
+        if (!reorderEnabled || index < 0 || index >= count)
+            return false
+        pointerPressedIndex = -1
+        pointerSelected()
+        currentIndex = index
+        moveMode = true
+        focusList()
+        return true
+    }
+
+    function finishMove() {
+        moveMode = false
+        dragActive = false
+        dragSourceIndex = -1
+        dragTargetIndex = -1
+        pointerPressedIndex = -1
+        syncViewCurrentIndex()
+    }
+
+    function moveTo(from, to) {
+        if (!reorderEnabled || from < 0 || to < 0 || from >= count || to >= count)
+            return false
+        if (from !== to && !moveItem(from, to))
+            return false
+        currentIndex = to
+        syncViewCurrentIndex()
+        listView.forceLayout()
+        listView.positionViewAtIndex(to, ListView.Contain)
+        focusList()
+        return true
+    }
+
+    function moveSelected(direction) {
+        return moveTo(currentIndex, Math.max(0, Math.min(count - 1, currentIndex + direction)))
+    }
+
+    function beginDrag(index, x, y, pressX, pressY) {
+        if (!reorderEnabled || index < 0 || index >= count)
+            return false
+        listView.cancelFlick()
+        pointerSelected()
+        currentIndex = index
+        dragSourceIndex = index
+        dragTargetIndex = index
+        dragCardData = itemAt(index)
+        const card = listView.itemAtIndex(index)
+        dragOffsetX = card ? pressX + listView.contentX - card.x : cardWidth / 2
+        dragOffsetY = pressY
+        dragActive = true
+        updateDrag(x, y)
+        return true
+    }
+
+    function updateDrag(x, y) {
+        dragPointerX = x
+        dragPointerY = y
+        // The nearest card stays a valid target even over gaps or an edge.
+        const contentPosition = Math.max(0, Math.min(listView.width, x)) + listView.contentX - listView.originX
+        dragTargetIndex = Math.max(0, Math.min(count - 1, Math.floor(contentPosition / (cardWidth + cardGap))))
+    }
+
+    function dropDrag() {
+        const from = dragSourceIndex
+        const to = dragTargetIndex
+        dragActive = false
+        dragSourceIndex = -1
+        dragTargetIndex = -1
+        pointerPressedIndex = -1
+        moveTo(from, to)
     }
 
     function resetPresentation() {
@@ -242,6 +356,7 @@ FocusScope {
             readonly property var cardItem: root.cardKind === "library" ? (cardData.item || ({})) : cardData
             readonly property bool libraryCard: root.cardKind === "library"
             readonly property bool personCard: root.cardKind === "person"
+            readonly property var badge: root.cardBadge ? root.cardBadge(cardData) : null
 
             width: root.cardWidth
             height: listView.height
@@ -249,10 +364,11 @@ FocusScope {
             kind: libraryCard ? "landscape" : personCard ? "poster" : root.cardKind
             item: cardItem || ({})
             titleOverride: libraryCard ? String(cardData.name || "") : personCard ? String(cardData.name || "") : ""
-            subtitleOverride: libraryCard ? String(cardData.collectionType || "") : personCard ? String(cardData.role
-                                                                                                        || cardData.type
-                                                                                                        || "") : ""
-            showSubtitle: !libraryCard
+            subtitleOverride: libraryCard ? String(badge && badge.detail || cardData.collectionType || "") : personCard
+                                            ? String(cardData.role || cardData.type || "") : ""
+            showSubtitle: !libraryCard || Boolean(badge && badge.detail)
+            badgeIcon: badge ? badge.iconUrl : ""
+            badgeText: badge ? String(badge.text || "") : ""
             emphasizedTitle: libraryCard
             imageOverride: libraryCard ? Art.url(cardItem, "landscape") : personCard ? Art.url(cardItem, "poster") : ""
             fallbackIcon: libraryCard ? Theme.libraryIcon(cardData.collectionType) : personCard ? "person" : ""
@@ -260,6 +376,9 @@ FocusScope {
             useSeriesPoster: root.useSeriesPoster
             preferEpisodeTitle: root.preferEpisodeTitle
             focused: root.keyboardFocusActive && root.focusVisible && card.index === listView.currentIndex
+            moving: (root.moveMode && card.index === root.currentIndex) || (root.dragActive && card.index
+                                                                            === root.dragTargetIndex)
+            opacity: root.dragActive && card.index === root.dragSourceIndex ? 0.3 : 1
             artworkVisible: true
 
             Component.onCompleted: root.schedulePresentation()
@@ -270,10 +389,14 @@ FocusScope {
     SectionHeader {
         id: rowHeader
         anchors.left: parent.left
-        anchors.right: carouselButtons.visible ? carouselButtons.left : parent.right
+        anchors.right: moveButtons.visible ? moveButtons.left : carouselButtons.visible ? carouselButtons.left :
+                                                                                          parent.right
+
         anchors.top: parent.top
         height: root.headerHeight
-        title: root.title
+        title: root.moveMode ? "Move · Left/Right · OK or Back to finish" : root.title
+        badgeIcon: root.headerBadge ? root.headerBadge.iconUrl : ""
+        badgeText: root.headerBadge ? String(root.headerBadge.text || "") : ""
     }
 
     Row {
@@ -282,7 +405,7 @@ FocusScope {
         anchors.right: parent.right
         height: root.headerHeight
         spacing: Metrics.scaled(4)
-        visible: root.count > root.pageStep
+        visible: !root.moveMode && root.count > root.pageStep
 
         IconButton {
             width: root.headerHeight
@@ -304,6 +427,78 @@ FocusScope {
             enabled: root.currentIndex < root.count - 1
             opacity: enabled ? 1 : 0.35
             onClicked: root.pageBy(1)
+        }
+    }
+    Row {
+        id: moveButtons
+        anchors.top: parent.top
+        anchors.right: parent.right
+        height: root.headerHeight
+        spacing: Metrics.scaled(4)
+        visible: root.moveMode
+
+        IconButton {
+            width: root.headerHeight
+            height: width
+            iconName: "chevron_left"
+            accessibleName: "Move selected library left"
+            focusOnClick: false
+            Accessible.role: Accessible.Button
+            Accessible.name: accessibleName
+            Accessible.onPressAction: if (enabled)
+                                          root.moveSelected(-1)
+            enabled: root.currentIndex > 0
+            opacity: enabled ? 1 : 0.35
+            onClicked: root.moveSelected(-1)
+        }
+
+        IconButton {
+            width: root.headerHeight
+            height: width
+            iconName: "chevron_right"
+            accessibleName: "Move selected library right"
+            focusOnClick: false
+            enabled: root.currentIndex < root.count - 1
+            Accessible.role: Accessible.Button
+            Accessible.name: accessibleName
+            Accessible.onPressAction: if (enabled)
+                                          root.moveSelected(1)
+            opacity: enabled ? 1 : 0.35
+            onClicked: root.moveSelected(1)
+        }
+
+        ActionButton {
+            width: implicitWidth
+            height: root.headerHeight
+            text: "Done"
+            iconName: "check"
+            Accessible.role: Accessible.Button
+            Accessible.name: "Done moving " + root.title
+            Accessible.onPressAction: {
+                root.finishMove()
+                root.focusList()
+            }
+            onClicked: {
+                root.finishMove()
+                root.focusList()
+            }
+        }
+    }
+
+    Timer {
+        interval: 30
+        repeat: true
+        running: root.dragActive
+        onTriggered: {
+            const edge = Math.min(Metrics.scaled(64), listView.width / 4)
+            const direction = root.dragPointerX < edge ? -1 : root.dragPointerX > listView.width - edge ? 1 : 0
+            if (!direction)
+                return
+            const minimum = listView.originX - listView.leftMargin
+            const maximum = Math.max(minimum, listView.originX + listView.contentWidth - listView.width
+                                     + listView.rightMargin)
+            listView.contentX = Math.max(minimum, Math.min(maximum, listView.contentX + direction * Metrics.scaled(14)))
+            root.updateDrag(root.dragPointerX, root.dragPointerY)
         }
     }
 
@@ -362,41 +557,112 @@ FocusScope {
         }
 
         MouseArea {
+            id: pointerArea
             objectName: "mediaRowPointerArea"
-            property bool longPressed: false
+            property bool gestureConsumed: false
+            property bool menuHeld: false
+            property real pressX: 0
+            property real pressY: 0
             anchors.fill: parent
             z: 3
             acceptedButtons: Qt.LeftButton | Qt.RightButton
             pressAndHoldInterval: 520
+            preventStealing: root.dragActive
             onPressed: mouse => {
-                longPressed = false
+                gestureConsumed = false
+                menuHeld = false
+                pressX = mouse.x
+                pressY = mouse.y
                 root.beginPointerSelection(listView.indexAt(mouse.x + listView.contentX, mouse.y + listView.contentY))
             }
-            onReleased: if (longPressed && root.shell)
-                            root.shell.finishItemMenuOpeningGesture()
+            onPositionChanged: mouse => {
+                if (!(pressedButtons & Qt.LeftButton) || !root.reorderEnabled)
+                    return
+                const dx = Math.abs(mouse.x - pressX)
+                const dy = Math.abs(mouse.y - pressY)
+                if (!root.dragActive && dy >= Qt.styleHints.startDragDistance && dy > dx) {
+                    // Leave vertical swipes to the containing homepage Flickable.
+                    gestureConsumed = true
+                    root.pointerPressedIndex = -1
+                } else if (!root.dragActive && !gestureConsumed && dx >= Qt.styleHints.startDragDistance && dx >= dy) {
+                    gestureConsumed = root.beginDrag(root.pointerPressedIndex, mouse.x, mouse.y, pressX, pressY)
+                } else if (root.dragActive) {
+                    root.updateDrag(mouse.x, mouse.y)
+                }
+            }
+            onReleased: {
+                if (root.dragActive)
+                    root.dropDrag()
+                if (menuHeld && root.shell)
+                    root.shell.finishItemMenuOpeningGesture()
+            }
             onCanceled: {
+                root.dragActive = false
+                root.dragSourceIndex = -1
+                root.dragTargetIndex = -1
                 root.pointerPressedIndex = -1
-                if (longPressed && root.shell)
+                if (menuHeld && root.shell)
                     root.shell.finishItemMenuOpeningGesture()
             }
             onClicked: mouse => {
+                if (gestureConsumed) {
+                    root.pointerPressedIndex = -1
+                    return
+                }
                 const selectedIndex = root.commitPointerSelection()
                 if (selectedIndex < 0)
                     return
-                if (longPressed) {
-                    longPressed = false
-                    return
-                }
-                if (mouse.button === Qt.RightButton && root.shell)
-                    root.openItemContext(selectedIndex, listView.itemAtIndex(selectedIndex))
-                else
+                if (mouse.button === Qt.RightButton) {
+                    if (root.reorderEnabled)
+                        root.beginMove(selectedIndex)
+                    else if (root.shell)
+                        root.openItemContext(selectedIndex, listView.itemAtIndex(selectedIndex))
+                    else
+                        root.activateIndex(selectedIndex)
+                } else {
                     root.activateIndex(selectedIndex)
+                }
             }
-            onPressAndHold: if (root.pointerPressedIndex >= 0 && root.shell) {
-                                longPressed = true
-                                root.openItemContext(root.pointerPressedIndex, listView.itemAtIndex(
-                                                         root.pointerPressedIndex), true)
-                            }
+            onPressAndHold: {
+                if (root.dragActive || root.pointerPressedIndex < 0)
+                    return
+                if (root.reorderEnabled) {
+                    gestureConsumed = root.beginMove(root.pointerPressedIndex)
+                } else if (root.shell) {
+                    menuHeld = root.openItemContext(root.pointerPressedIndex, listView.itemAtIndex(
+                                                        root.pointerPressedIndex), true)
+                    gestureConsumed = menuHeld
+                }
+            }
+        }
+
+        Loader {
+            x: Math.max(0, Math.min(listView.width - width, root.dragPointerX - root.dragOffsetX))
+            y: Math.max(0, Math.min(listView.height - height, root.dragPointerY - root.dragOffsetY))
+            width: root.cardWidth
+            height: root.cardHeight
+            z: 4
+            active: root.dragActive
+
+            sourceComponent: MediaItemCard {
+                readonly property bool libraryCard: root.cardKind === "library"
+                readonly property var previewData: root.dragCardData
+                readonly property var badge: root.cardBadge ? root.cardBadge(previewData) : null
+                kind: libraryCard ? "landscape" : root.cardKind
+                item: libraryCard ? previewData.item || ({}) : previewData
+                titleOverride: libraryCard ? String(previewData.name || "") : ""
+                subtitleOverride: libraryCard ? String(badge && badge.detail || "") : ""
+                showSubtitle: !libraryCard || Boolean(badge && badge.detail)
+                badgeIcon: badge ? badge.iconUrl : ""
+                badgeText: badge ? String(badge.text || "") : ""
+                emphasizedTitle: libraryCard
+                fallbackIcon: libraryCard ? Theme.libraryIcon(previewData.collectionType) : ""
+                fallbackTint: libraryCard ? Theme.libraryTint(previewData.name) : "transparent"
+                useSeriesPoster: root.useSeriesPoster
+                preferEpisodeTitle: root.preferEpisodeTitle
+                moving: true
+                opacity: 0.9
+            }
         }
     }
 
