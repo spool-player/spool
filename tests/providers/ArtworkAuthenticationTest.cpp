@@ -169,6 +169,10 @@ export function createSource(config) {
         bool finished = false;
         QObject::connect(response.get(), &QQuickImageResponse::finished, &app, [&] { finished = true; });
         waitUntil([&] { return finished; }, "preview completes");
+        if (response->errorString().isEmpty() != success)
+            std::cerr << "preview request " << QUrl(url).scheme().toStdString() << " expected=" << success
+                      << " error=" << response->errorString().toStdString() << " requests=" << requests
+                      << " unauthorized=" << unauthorized << '\n';
         require(response->errorString().isEmpty() == success, "preview authentication result is explicit");
         if (!success)
             return QImage();
