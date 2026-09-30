@@ -78,6 +78,8 @@ struct Server {
         const auto installs = directory.filePath("providers");
         require(ProviderPackage::install(package, installs).has_value(), "fixture installs");
         registry = std::make_unique<ProviderRegistry>(&database);
+        QObject::connect(registry.get(), &ProviderRegistry::problem,
+            [](const QString& message) { std::cerr << "provider startup: " << message.toStdString() << '\n'; });
         registry->setInstallDirectory(installs);
         registry->loadModules();
         QCoro::waitFor(registry->restore());

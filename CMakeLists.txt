@@ -872,7 +872,10 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     if(NOT SPOOL_QT_CORE_LOCATION)
         get_target_property(SPOOL_QT_CORE_LOCATION Qt6::Core IMPORTED_LOCATION)
     endif()
-    set(SPOOL_TEST_ENV)
+    # Tests load both bundled resources with reproducible timestamps and
+    # mutable fixture packages. Keep every test process independent of the
+    # persistent QML/JavaScript cache, not only the provider test group.
+    set(SPOOL_TEST_ENV "QML_DISABLE_DISK_CACHE=1")
     if(SPOOL_QT_CORE_LOCATION)
         get_filename_component(SPOOL_QT_LIB_DIR "${SPOOL_QT_CORE_LOCATION}" DIRECTORY)
         get_filename_component(SPOOL_QT_PREFIX "${SPOOL_QT_LIB_DIR}" DIRECTORY)
@@ -922,13 +925,6 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     set_tests_properties(provider-legacy-contract-interpreter PROPERTIES
         ENVIRONMENT "${SPOOL_TEST_ENV};QV4_FORCE_INTERPRETER=1;QML_DISABLE_DISK_CACHE=1")
 
-    # Test binaries share one QML disk cache across builds whose bundled
-    # provider resources all carry the same reproducible timestamp.
-    foreach(test_name IN LISTS SPOOL_TESTS_providers)
-        if(NOT test_name MATCHES "/")
-            set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT "QML_DISABLE_DISK_CACHE=1")
-        endif()
-    endforeach()
     add_test(NAME provider-media-page-interpreter COMMAND providers-tests provider-media-page)
     set_tests_properties(provider-media-page-interpreter PROPERTIES ENVIRONMENT "QV4_FORCE_INTERPRETER=1;${SPOOL_TEST_ENV}")
     target_sources(providers-tests PRIVATE ${SPOOL_PROVIDER_BUNDLE_SOURCES})

@@ -63,6 +63,8 @@ SPOOL_TEST_MAIN("collection-editing")
     const auto installs = directory.filePath(QStringLiteral("providers"));
     require(ProviderPackage::install(package, installs).has_value(), "collection fixture installs");
     ProviderRegistry registry(&database);
+    QObject::connect(&registry, &ProviderRegistry::problem,
+        [](const QString& message) { std::cerr << "provider startup: " << message.toStdString() << '\n'; });
     registry.setInstallDirectory(installs);
     registry.loadModules();
     SourceHub hub(&registry);
