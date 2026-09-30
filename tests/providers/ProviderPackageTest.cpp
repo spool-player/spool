@@ -6,6 +6,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTemporaryDir>
@@ -138,13 +139,24 @@ SPOOL_TEST_MAIN("provider-package-unpack")
     require(multiBlock && multiBlock->files.value(QStringLiteral("assets/noise.txt")) == noise,
         "multi-block frames decompress exactly");
 
-    // The real bundled package: compressed blocks from the zstd CLI.
-    QFile bundled(QStringLiteral(TEST_SOURCE_DIR "/providers/bundled/spool.jellyfin-0.2.1.tar.zst"));
-    if (bundled.open(QIODevice::ReadOnly)) {
-        const auto jellyfin = ProviderPackage::read(bundled.readAll(), &error);
-        require(jellyfin && jellyfin->manifest.id == QStringLiteral("spool.jellyfin"),
-            "the bundled Jellyfin package decompresses and validates");
-    }
+    // The pinned package: compressed blocks from the zstd CLI, which the raw
+    // blocks makeZstd writes never reach. Found through the lock so a new pin
+    // cannot leave this reading a file that is no longer there.
+    QFile lock(QStringLiteral(TEST_SOURCE_DIR "/providers/lock.json"));
+    require(lock.open(QIODevice::ReadOnly), "providers/lock.json is readable");
+    const QString archive = QJsonDocument::fromJson(lock.readAll())
+                                .object()
+                                .value(QStringLiteral("providers"))
+                                .toArray()
+                                .at(0)
+                                .toObject()
+                                .value(QStringLiteral("archive"))
+                                .toString();
+    QFile bundled(QStringLiteral(TEST_SOURCE_DIR "/providers/") + archive);
+    require(!archive.isEmpty() && bundled.open(QIODevice::ReadOnly), "the pinned provider archive is present");
+    const auto pinned = ProviderPackage::read(bundled.readAll(), &error);
+    require(pinned && pinned->manifest.id == QStringLiteral("spool.jellyfin"),
+        "the pinned Jellyfin package decompresses and validates");
 
     require(rejects(QByteArrayLiteral("PK\x03\x04not zstd"), "not a valid .tar.zst"), "zip archives are refused");
     QByteArray truncated = makeZstd(makeTar(validEntries()));
