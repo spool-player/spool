@@ -239,6 +239,30 @@ AppController::AppController(
     connect(m_provider, &Provider::sessionEnded, this, &AppController::resetApplicationState);
 
     connect(m_player, &PlayerController::playbackStopped, this, &AppController::handlePlaybackStopped);
+    // A dropped connection used to look like the end of the episode: it was
+    // marked played and the next one started. Pick up where the stream broke
+    // instead, holding the surface as a queue advance would.
+    connect(m_player, &PlayerController::playbackInterrupted, this,
+        [this](const QString& itemId, qint64 positionTicks, bool resumable) {
+            if (itemId.isEmpty() || itemId != m_activePlaybackItem.id)
+                return;
+            if (!resumable || inGroup()) {
+                showToast(QStringLiteral("Playback was interrupted."));
+                return;
+            }
+            const MovieItem resumeItem = PlaybackFailurePolicy::retryItem(m_activePlaybackItem, positionTicks);
+            setPlaybackTransition(true);
+            setBusy(true, QStringLiteral("Reconnecting…"));
+            Async::runScoped(
+                this, startPlayback(resumeItem, false, false, m_activeAudioStreamIndex, m_activeSubtitleStreamIndex),
+                []() {},
+                [this](const std::exception_ptr& error) {
+                    setPlaybackTransition(false);
+                    setBusy(false);
+                    showToast(exceptionMessage(error));
+                },
+                "interrupted playback resume");
+        });
     // The device has just shown it cannot sustain the picture it was asked
     // for. Move down one rung and say so plainly; the setting persists, so
     // the next thing that plays starts where this one ended up rather than
