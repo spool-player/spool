@@ -53,6 +53,7 @@ extern "C" {
     X(mpv_get_audio_decode_cpu_time_ns)                                                                                \
     X(mpv_render_context_create)                                                                                       \
     X(mpv_render_context_free)                                                                                         \
+    X(mpv_render_context_get_info)                                                                                     \
     X(mpv_render_context_render)                                                                                       \
     X(mpv_render_context_report_swap)                                                                                  \
     X(mpv_render_context_set_update_callback)                                                                          \
@@ -465,6 +466,13 @@ void mpv_render_context_free(mpv_render_context *ctx)
 {
     if (ctx && Spool::WebOSMpvRuntime::ensureLoaded())
         g_api.mpv_render_context_free(ctx);
+}
+
+int mpv_render_context_get_info(mpv_render_context *ctx, mpv_render_param param)
+{
+    if (!ctx || !Spool::WebOSMpvRuntime::ensureLoaded())
+        return MPV_ERROR_GENERIC;
+    return g_api.mpv_render_context_get_info(ctx, param);
 }
 
 int mpv_render_context_render(mpv_render_context *ctx, mpv_render_param *params)
