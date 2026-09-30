@@ -325,7 +325,23 @@ FocusScope {
                      })
     }
 
+    // A provider may say which filters a library honours; one that does not
+    // is offered everything but HDR, which no server answered before.
+    function filterSupported(key, value) {
+        const supported = filterOptions ? filterOptions.supported : undefined
+        if (!supported || supported.length === undefined)
+            return key !== "isHdr"
+        for (let i = 0; i < supported.length; ++i) {
+            const entry = String(supported[i])
+            if (entry === key || (value !== undefined && entry === key + ":" + value))
+                return true
+        }
+        return false
+    }
+
     function addListFilter(entries, section, label, key, value) {
+        if (!filterSupported(key, String(value)))
+            return
         entries.push({
                          section: false,
                          sectionName: section,
@@ -338,6 +354,8 @@ FocusScope {
     }
 
     function addBoolFilter(entries, section, label, key) {
+        if (!filterSupported(key))
+            return
         entries.push({
                          section: false,
                          sectionName: section,
@@ -349,6 +367,8 @@ FocusScope {
     }
 
     function addNullableBoolFilter(entries, section, label, key, value) {
+        if (!filterSupported(key))
+            return
         entries.push({
                          section: false,
                          sectionName: section,
@@ -375,6 +395,7 @@ FocusScope {
             addNullableBoolFilter(entries, "Video", "HD", "isHd", true)
             addNullableBoolFilter(entries, "Video", "SD", "isHd", false)
             addBoolFilter(entries, "Video", "4K", "is4K")
+            addBoolFilter(entries, "Video", "HDR", "isHdr")
             addBoolFilter(entries, "Video", "3D", "is3D")
             addListFilter(entries, "Video", "DVD", "videoTypes", "Dvd")
             addListFilter(entries, "Video", "Blu-ray", "videoTypes", "BluRay")
@@ -441,6 +462,8 @@ FocusScope {
                     ++selected;
                 ++index
             }
+            if (options.length === 0)
+                continue
             grouped.push({
                              label: sectionName,
                              detail: selected > 0 ? selected + " selected" : "",
@@ -1594,14 +1617,14 @@ FocusScope {
         anchors.right: parent.right
         anchors.topMargin: root.contentTopMargin + 52
         anchors.rightMargin: Metrics.pageMarginPx
-        width: Metrics.menuPanelWidth(root.width, 380)
+        width: Metrics.menuPanelWidth(root.width, 440)
         open: root.filtersOpen
-        maximumHeight: Math.min(root.height - Metrics.pageMarginPx * 2 - 70, 620)
+        maximumHeight: Math.min(root.height - Metrics.pageMarginPx * 2 - 70, 760)
         z: 21
         model: root.filterEntries
         currentIndex: root.filterIndex
         edgeEscapeItem: filterButton
-        title: "Filters"
+        title: root.activeFilterCount > 0 ? "Filters · " + root.activeFilterCount + " on" : "Filters"
         selectionStyle: "check"
         resetVisible: true
         resetEnabled: root.activeFilterCount > 0

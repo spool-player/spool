@@ -103,6 +103,7 @@ int activeLibraryFilterCount(const QVariantMap& query)
         QStringLiteral("isHd"),
         QStringLiteral("is4K"),
         QStringLiteral("is3D"),
+        QStringLiteral("isHdr"),
         QStringLiteral("hasSubtitles"),
         QStringLiteral("hasTrailer"),
         QStringLiteral("hasSpecialFeature"),

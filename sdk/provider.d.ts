@@ -126,7 +126,7 @@ export interface BrowseFilters {
     filters?: ('IsPlayed' | 'IsUnplayed' | 'IsFavorite' | 'IsResumable')[];
     genres?: string[]; years?: string[]; officialRatings?: string[]; tags?: string[]; studioIds?: string[];
     seriesStatus?: string[]; videoTypes?: string[]; includeItemTypes?: string[];
-    isHd?: boolean; is4K?: boolean; is3D?: boolean; hasSubtitles?: boolean; hasTrailer?: boolean;
+    isHd?: boolean; is4K?: boolean; is3D?: boolean; isHdr?: boolean; hasSubtitles?: boolean; hasTrailer?: boolean;
     hasSpecialFeature?: boolean; hasThemeSong?: boolean; hasThemeVideo?: boolean; specialEpisode?: boolean;
     isMissing?: boolean; isUnaired?: boolean;
     /** Titles starting with this letter, or '#' for anything before A. */
@@ -321,8 +321,11 @@ export interface Source extends CatalogueExtensions, PreferenceExtensions, Appli
     latest?: Operation<PageArgs & { parentId?: string }, Page>;
     similar?: Operation<PageArgs & { itemId: string }, Page>;
     personItems?: Operation<PageArgs & { personId: string }, Page>;
+    /** `supported` names the BrowseFilters this library honours, as a key or `key:value`
+     *  (`filters:IsPlayed`). When present Spool offers only those; when absent it offers
+     *  every filter except `isHdr`, which is offered only where declared. */
     filterOptions?: Operation<{ parentId: string; collectionType?: string },
-        { genres?: string[]; years?: number[]; officialRatings?: string[]; tags?: string[] }>;
+        { genres?: string[]; years?: number[]; officialRatings?: string[]; tags?: string[]; supported?: string[] }>;
 
     resolve?: Operation<PlaybackContext & { itemId: string; variantId?: string; positionTicks: string; forceTranscode: boolean }, Resolved | PickRequest>;
     segments?: Operation<{ itemId: string }, { segments: Segment[] }>;
