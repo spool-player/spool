@@ -160,6 +160,8 @@ require the matching Spool build; there is no duplicate runtime-QML fallback.
 `ServerLogin` keeps discovery, origin approval and asynchronous sign-in generations
 separate; cancellation invalidates pending password/code results. Its selected
 server name and address stay together above the account fields.
+Login action buttons use a blue fill, including a darker blue disabled state,
+so actions remain visually distinct from charcoal username/password fields.
 
 
 Every packaged `*.qml` file from the registry's selected packages (including installed overrides)

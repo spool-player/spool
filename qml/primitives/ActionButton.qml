@@ -9,9 +9,8 @@ T.Control {
     property bool pointerHovered: hover.hovered
     property string text: ""
     signal clicked
-    readonly property color foreground: !enabled ? Theme.textMuted : kind === "primary" ? Theme.accentText : kind
-                                                                                          === "danger"
-                                                                                          ? Theme.errorText :
+    readonly property color foreground: !enabled ? Theme.textMuted : kind === "primary" || kind === "blue"
+                                                   ? Theme.accentText : kind === "danger" ? Theme.errorText :
                                                                                             Theme.textPrimary
 
     implicitWidth: Math.max(Metrics.scaled(132), buttonContent.implicitWidth + Metrics.scaled(34))
@@ -20,24 +19,29 @@ T.Control {
 
     background: Rectangle {
         radius: Theme.radiusMedium
-        color: !root.enabled ? Theme.bgPanel : root.kind === "primary" ? Theme.accent : root.kind === "danger"
-                                                                         ? Theme.errorPanel : tap.pressed
-                                                                           ? Theme.bgRaised : root.kind === "flat"
-                                                                             ? "transparent" : Theme.bgPanel
+        color: root.kind === "blue" ? Qt.darker(Theme.paletteBlue, !root.enabled ? 2.8 : tap.pressed ? 1.25 : 1) :
+                                      !root.enabled ? Theme.bgPanel : root.kind === "primary" ? Theme.accent :
+                                                                                                root.kind === "danger"
+                                                                                                ? Theme.errorPanel :
+                                                                                                  tap.pressed
+                                                                                                  ? Theme.bgRaised :
+                                                                                                    root.kind
+                                                                                                    === "flat"
+                                                                                                    ? "transparent" :
+                                                                                                      Theme.bgPanel
         border.width: Metrics.keyboardFocusActive && root.activeFocus ? Theme.focusBorderWidth : root.pointerHovered ? Theme.hoverBorderWidth :
                                                                                                                        root.kind
                                                                                                                        === "flat"
                                                                                                                        ? 0 : Theme.hoverBorderWidth
-        border.color: !root.enabled ? Theme.border : Metrics.keyboardFocusActive && root.activeFocus ? Theme.textPrimary :
-                                                                                                       root.pointerHovered
-                                                                                                       ? Theme.borderStrong :
-                                                                                                         root.kind
-                                                                                                         === "primary"
-                                                                                                         ? Theme.accentDim :
-                                                                                                           root.kind
-                                                                                                           === "danger"
-                                                                                                           ? Theme.errorText :
-                                                                                                             Theme.border
+        border.color: root.kind === "blue" ? (Metrics.keyboardFocusActive && root.activeFocus ? Theme.textPrimary : Qt.darker(Theme.paletteBlue,
+                                                                                                                              1.4)) : !root.enabled
+                                             ? Theme.border : Metrics.keyboardFocusActive && root.activeFocus
+                                               ? Theme.textPrimary : root.pointerHovered ? Theme.borderStrong :
+                                                                                           root.kind === "primary"
+                                                                                           ? Theme.accentDim :
+                                                                                             root.kind === "danger"
+                                                                                             ? Theme.errorText :
+                                                                                               Theme.border
         antialiasing: true
     }
 
@@ -62,7 +66,8 @@ T.Control {
                 color: root.foreground
 
                 font.pixelSize: Metrics.bodySizePx
-                font.weight: root.kind === "primary" || root.kind === "danger" ? Font.DemiBold : Font.Medium
+                font.weight: root.kind === "primary" || root.kind === "blue" || root.kind === "danger" ? Font.DemiBold :
+                                                                                                         Font.Medium
                 elide: Text.ElideRight
                 maximumLineCount: 1
             }
