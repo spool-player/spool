@@ -44,10 +44,16 @@ namespace Spool {
 class MpvVideoItem : public SPOOL_MPV_ITEM_BASE {
     Q_OBJECT
     QML_NAMED_ELEMENT(MpvVideoItem)
+    Q_PROPERTY(bool hdrOutput READ hdrOutput WRITE setHdrOutput NOTIFY hdrOutputChanged)
 
 public:
     explicit MpvVideoItem(QQuickItem *parent = nullptr);
     ~MpvVideoItem() override;
+    bool hdrOutput() const
+    {
+        return m_hdrOutput;
+    }
+    void setHdrOutput(bool enabled);
 
     // Schedule render-context creation on Qt's scene-graph thread.
     void setMpvHandle(mpv_handle *handle);
@@ -93,9 +99,11 @@ public:
 signals:
     void renderError(const QString& message);
     void renderContextHandoffCompleted();
+    void hdrOutputChanged();
 
 private:
     static MpvVideoItem *s_instance;
+    bool m_hdrOutput = false;
 
     QMutex m_handleMutex;
     mpv_handle *m_pendingHandle = nullptr;

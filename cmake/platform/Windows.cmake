@@ -58,5 +58,5 @@ function(spool_configure_windows_targets native_target core_target)
         @ONLY
     )
     target_sources(${native_target} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/spool-version.rc")
-    target_link_libraries(${core_target} PUBLIC MPV::MPV Advapi32 PRIVATE User32)
+    target_link_libraries(${core_target} PUBLIC MPV::MPV Advapi32 PRIVATE User32 dxgi)
 endfunction()

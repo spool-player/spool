@@ -20,6 +20,8 @@ function(spool_configure_macos_targets native_target core_target)
         src/platform/macos/MacOSCredentialStore.cpp
         src/platform/macos/MacOSSystemProbes.cpp
         src/platform/macos/MacOSTitlebar.mm
+        src/platform/macos/MacOSDisplayOutput.mm
+        src/platform/macos/MacOSDisplayOutput.h
         src/platform/desktop/UnsupportedPerformanceSampler.cpp
     )
     target_compile_definitions(${core_target} PRIVATE

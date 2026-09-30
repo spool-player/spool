@@ -85,13 +85,14 @@ QByteArray GraphicsStartup::prepareBeforeWindow(QSGRendererInterface::GraphicsAp
     allowHdrRequest = allowHdrRequest && QGuiApplication::platformName().startsWith(QLatin1String("wayland"));
     automaticHdr = allowHdrRequest;
 #elif defined(Q_OS_WIN)
-    // Qt checks the window's output and Windows' Use HDR state before choosing
-    // FP16. The live probe verifies the actual buffer and native signaling.
-    // Vulkan requests the same scRGB encoding through swapchain colorspace.
+    // Check Windows' current desktop HDR mode before asking Qt for FP16.
+    // Backend support alone also exists on SDR desktops.
     automaticHdr = allowHdrRequest;
 #endif
+    const bool desktopHdr
+        = allowHdrRequest && PlatformDisplayOutput::desktopHdrEnabled(QGuiApplication::primaryScreen());
     const QByteArray hdrRequest
-        = allowHdrRequest ? RenderTargetPolicy::startupSwapChainRequest(automaticHdr) : QByteArray();
+        = allowHdrRequest ? RenderTargetPolicy::startupSwapChainRequest(desktopHdr, automaticHdr) : QByteArray();
 #if !defined(Q_OS_ANDROID) && !defined(SPOOL_WEBOS)
     if (!hdrRequest.isEmpty()) {
         qputenv("QSG_RHI_HDR", hdrRequest);
@@ -149,8 +150,8 @@ void GraphicsStartup::probeSwapchain()
             // Native display queries, Wayland protocol ownership and QML
             // notifications belong to the GUI thread, never the render thread.
             PlatformDisplayOutput::updateDisplayLuminance(display, &m_window);
-            bool scrgb
-                = display.hdrAvailable && display.preferredFormat == RenderTargetProfile::Format::ExtendedSrgbLinear;
+            bool scrgb = display.desktopHdrEnabled && display.hdrAvailable
+                && display.preferredFormat == RenderTargetProfile::Format::ExtendedSrgbLinear;
 #if defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID) && !defined(SPOOL_WEBOS)
             if (!m_waylandHdrSurface->setEnabled(scrgb && display.needsWaylandDescription))
                 scrgb = false;

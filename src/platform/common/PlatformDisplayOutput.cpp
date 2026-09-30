@@ -4,6 +4,7 @@
 
 #include <QQuickWindow>
 #include <QSGRendererInterface>
+#include <QScreen>
 #include <QtGlobal>
 
 // Which base class the video item was built against, and so whether there is
@@ -28,11 +29,29 @@
 #if defined(Q_OS_WIN)
 #include "platform/windows/WindowsDisplayOutput.h"
 #endif
+#if defined(Q_OS_MACOS)
+#include "platform/macos/MacOSDisplayOutput.h"
+#endif
 
 #include <algorithm>
 #include <vector>
 
 namespace Spool::PlatformDisplayOutput {
+
+bool desktopHdrEnabled(QScreen *screen)
+{
+#if defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID) && !defined(SPOOL_WEBOS)
+    const WaylandColorInfo info = waylandColorInfo(screen);
+    return info.valid && info.hdrEnabled;
+#elif defined(Q_OS_WIN)
+    return windowsDesktopHdrEnabled(screen);
+#elif defined(Q_OS_MACOS)
+    return macosDesktopHdrEnabled(screen);
+#else
+    Q_UNUSED(screen);
+    return false;
+#endif
+}
 
 DisplayOutputCapabilities probe(QQuickWindow *window)
 {
@@ -138,19 +157,26 @@ DisplayOutputCapabilities probe(QQuickWindow *window)
 void updateDisplayLuminance(DisplayOutputCapabilities& display, QQuickWindow *window)
 {
 #if defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID) && !defined(SPOOL_WEBOS)
-    if (!display.hdrAvailable)
+    if (!window)
         return;
     // The compositor does know, and on Wayland it will say. This is the number
     // somebody set in their display settings, which nothing reads out of EDID
     // and Qt never asks for, so it replaces the guess above rather than
     // supplementing it.
-    if (const WaylandColorInfo wayland = waylandColorInfo(window); wayland.valid) {
+    if (const WaylandColorInfo wayland = waylandColorInfo(window->screen()); wayland.valid) {
+        display.desktopHdrEnabled = wayland.hdrEnabled;
         display.maxLuminanceNits = wayland.maxLuminanceNits;
         display.minLuminanceNits = wayland.minLuminanceNits;
         if (wayland.referenceLuminanceNits > 0.0f)
             display.sdrWhiteNits = wayland.referenceLuminanceNits;
         display.luminanceMeasured = true;
     }
+#elif defined(Q_OS_WIN)
+    // The D3D11 probe already queried the actual containing DXGI output.
+    if (window && window->rendererInterface()->graphicsApi() != QSGRendererInterface::Direct3D11)
+        display.desktopHdrEnabled = desktopHdrEnabled(window->screen());
+#elif defined(Q_OS_MACOS)
+    display.desktopHdrEnabled = window && desktopHdrEnabled(window->screen());
 #else
     Q_UNUSED(display);
     Q_UNUSED(window);
