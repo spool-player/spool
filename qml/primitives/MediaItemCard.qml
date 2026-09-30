@@ -131,6 +131,7 @@ Item {
         anchors.top: art.top
         anchors.margins: Metrics.scaled(8)
         overlay: true
+        maximumWidth: Math.max(0, art.width - Metrics.scaled(16))
         iconUrl: root.badgeIcon
         text: root.badgeText
     }
