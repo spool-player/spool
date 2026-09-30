@@ -27,7 +27,6 @@ public:
     double activeSegmentEndSeconds() const;
 
     bool trickplayAvailable() const;
-    int trickplaySheetCount() const;
     TrickplayFrame trickplayFrameAt(double seconds) const;
     int trickplayWidth() const;
 

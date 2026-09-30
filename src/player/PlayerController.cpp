@@ -1190,7 +1190,6 @@ void PlayerController::play(const PlaybackSession& session, bool startPaused)
 
     m_session = session;
     m_timeline.setSession(session);
-    rebuildTrickplaySheetUrls();
     m_title = session.title;
     m_mediaKind = nextMediaKind;
     m_statusText = platformPreparingStatus(needsVideoSurface, embeddedVideo);
@@ -2051,7 +2050,6 @@ void PlayerController::resetPlaybackUiState()
     m_debugOsdVisible = false;
     resetRenderStrain();
     m_timeline.clear();
-    rebuildTrickplaySheetUrls();
     m_statusText = QStringLiteral("Ready");
     m_mediaKind = QStringLiteral("none");
     if (m_tracks.clearChapters()) {
@@ -2566,24 +2564,6 @@ double PlayerController::activeSegmentEndSeconds() const
 bool PlayerController::trickplayAvailable() const
 {
     return m_timeline.trickplayAvailable();
-}
-
-QStringList PlayerController::trickplaySheetUrls() const
-{
-    return m_trickplaySheetUrls;
-}
-
-void PlayerController::rebuildTrickplaySheetUrls()
-{
-    m_trickplaySheetUrls.clear();
-    if (!trickplayAvailable() || !m_api)
-        return;
-
-    const int sheetCount = m_timeline.trickplaySheetCount();
-    m_trickplaySheetUrls.reserve(sheetCount);
-    for (int i = 0; i < sheetCount; ++i) {
-        m_trickplaySheetUrls.push_back(m_api->trickplayTileUrl(m_session.itemId, m_timeline.trickplayWidth(), i));
-    }
 }
 
 void PlayerController::skipActiveSegment()
