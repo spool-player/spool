@@ -2177,6 +2177,13 @@ void PlayerController::handleMpvEvent(mpv_event *event)
             // quality change, should not take their stats away with it.
             if (m_debugOsdVisible && m_mediaKind == QStringLiteral("video"))
                 mpvCommand({ QByteArrayLiteral("script-binding"), QByteArrayLiteral("stats/display-stats-toggle") });
+            // Subtitle files beside the media: added, not selected, so the
+            // viewer's or the saved choice decides as for any other track.
+            for (const MediaStreamInfo& stream : std::as_const(m_session.mediaStreams)) {
+                if (stream.isExternal && !stream.deliveryUrl.isEmpty())
+                    mpvCommand({ QByteArrayLiteral("sub-add"), stream.deliveryUrl.toUtf8(), QByteArrayLiteral("auto"),
+                        stream.title.toUtf8(), stream.language.toUtf8() });
+            }
             notifyPlaybackStateChanged();
             startProgressReporting();
         });

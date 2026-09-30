@@ -57,6 +57,7 @@ namespace {
         info.isDefault = s.value(QStringLiteral("default")).toBool();
         info.isForced = s.value(QStringLiteral("forced")).toBool();
         info.isExternal = s.value(QStringLiteral("external")).toBool();
+        info.deliveryUrl = s.value(QStringLiteral("url")).toString();
         info.isInterlaced = s.value(QStringLiteral("interlaced")).toBool();
         return info;
     }
@@ -160,8 +161,26 @@ public:
         session.container = result.value(QStringLiteral("container")).toString();
         session.startTimeTicks = item.resumeTicks;
         session.runtimeTicks = item.runtimeTicks;
-        for (const QVariant& stream : result.value(QStringLiteral("streams")).toList())
-            session.mediaStreams.append(streamFrom(stream.toMap()));
+        // mpv lists a file's own tracks first and subtitle files after them,
+        // in the order they are added, so the streams are kept in that order.
+        // A subtitle file mpv cannot fetch is left out rather than shifting
+        // every track after it; one on another origin would take this
+        // stream's credentials with it.
+        const QUrl streamOrigin
+            = QUrl(session.url).adjusted(QUrl::RemovePath | QUrl::RemoveQuery | QUrl::RemoveFragment);
+        QList<MediaStreamInfo> externalSubtitles;
+        for (const QVariant& stream : result.value(QStringLiteral("streams")).toList()) {
+            MediaStreamInfo info = streamFrom(stream.toMap());
+            if (!info.isExternal) {
+                session.mediaStreams.append(info);
+                continue;
+            }
+            const QUrl url(info.deliveryUrl, QUrl::StrictMode);
+            if (info.type == QStringLiteral("Subtitle") && url.isValid()
+                && url.adjusted(QUrl::RemovePath | QUrl::RemoveQuery | QUrl::RemoveFragment) == streamOrigin)
+                externalSubtitles.append(info);
+        }
+        session.mediaStreams.append(externalSubtitles);
         session.segments = segmentsFrom(result.value(QStringLiteral("segments")).toList());
         const QVariantMap trickplay = result.value(QStringLiteral("trickplay")).toMap();
         session.trickplay = { trickplay.value(QStringLiteral("width")).toInt(),

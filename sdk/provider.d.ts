@@ -170,6 +170,9 @@ export interface Stream {
     title?: string; width?: number; height?: number; frameRate?: number; bitrate?: number; bitDepth?: number;
     channels?: number; sampleRate?: number; range?: string; rangeType?: string;
     default?: boolean; forced?: boolean; external?: boolean; interlaced?: boolean;
+    /** An external subtitle file on the stream's own origin, fetched with its headers.
+     *  External subtitles without one cannot be shown and are left out of the player. */
+    url?: string;
 }
 
 /** Merged into every resolve call by Spool. */
