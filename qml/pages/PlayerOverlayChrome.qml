@@ -55,13 +55,6 @@ Item {
             overlay.showControlsFromPointer()
     }
 
-    function artworkSource(url) {
-        if (!url)
-            return ""
-        return url.indexOf("http://") === 0 || url.indexOf("https://") === 0 ? "image://artwork/" + encodeURIComponent(
-                                                                                   url) : url
-    }
-
     function resetMenu(index) {
         Qt.callLater(function () {
             menuList.currentIndex = menuList.count > 0 ? Math.min(index, menuList.count - 1) : -1
@@ -102,19 +95,6 @@ Item {
 
     function activateMenu() {
         menuList.activate()
-    }
-
-    Item {
-        visible: false
-        Repeater {
-            model: root.overlay.visible && root.overlay.hasPlayer ? root.overlay.player.trickplaySheetUrls : []
-            delegate: Image {
-                required property string modelData
-                source: root.artworkSource(modelData)
-                asynchronous: true
-                cache: true
-            }
-        }
     }
 
     TapHandler {

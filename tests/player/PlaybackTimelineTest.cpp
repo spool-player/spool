@@ -55,7 +55,6 @@ void testTrickplay()
     PlaybackTimeline timeline;
     timeline.setSession(session);
     expect(timeline.trickplayAvailable(), "valid trickplay metadata is available");
-    expect(timeline.trickplaySheetCount() == 3, "sheet count rounds up");
 
     const auto first = timeline.trickplayFrameAt(-1.0);
     expect(first.available && first.sheetIndex == 0 && first.offsetX == 0 && first.offsetY == 0,

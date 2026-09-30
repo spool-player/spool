@@ -76,7 +76,6 @@ class PlayerController final : public QObject {
     Q_PROPERTY(QString activeSegmentType READ activeSegmentType NOTIFY segmentsChanged)
     Q_PROPERTY(double activeSegmentEndSeconds READ activeSegmentEndSeconds NOTIFY segmentsChanged)
     Q_PROPERTY(bool trickplayAvailable READ trickplayAvailable NOTIFY trickplayChanged)
-    Q_PROPERTY(QStringList trickplaySheetUrls READ trickplaySheetUrls NOTIFY trickplayChanged)
 
 public:
     PlayerController(NativeAppWindow *window, PlaybackSource *api, TlsTrustController *tlsTrust,
@@ -137,7 +136,6 @@ public:
     QString activeSegmentType() const;
     double activeSegmentEndSeconds() const;
     bool trickplayAvailable() const;
-    QStringList trickplaySheetUrls() const;
     Q_INVOKABLE void skipActiveSegment();
     Q_INVOKABLE QVariantMap trickplayForSeconds(double seconds) const;
 
@@ -299,7 +297,6 @@ private:
     double seekAnchorPosition();
     void resetPlaybackUiState();
     void resetRenderStrain();
-    void rebuildTrickplaySheetUrls();
     bool applyMpvRuntimeOption(MpvRuntimeOption option, MpvOptionApplyMode mode, mpv_handle *handle);
     bool applyMpvSubtitleOptions(MpvOptionApplyMode mode, mpv_handle *handle, bool preserveTrackSelection = false,
         const SubtitlePreferences *previousPreferences = nullptr);
@@ -406,7 +403,6 @@ private:
     QByteArray m_targetTransfer;
     PlaybackPositionTracker m_positionTracker;
     PlaybackTimeline m_timeline;
-    QStringList m_trickplaySheetUrls;
 };
 
 } // namespace Spool

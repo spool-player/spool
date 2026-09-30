@@ -70,19 +70,6 @@ bool PlaybackTimeline::trickplayAvailable() const
         && m_trickplay.width > 0 && m_trickplay.height > 0;
 }
 
-int PlaybackTimeline::trickplaySheetCount() const
-{
-    if (!trickplayAvailable())
-        return 0;
-
-    const int tileCount = m_trickplay.tileWidth * m_trickplay.tileHeight;
-    if (tileCount <= 0)
-        return 0;
-
-    const int thumbnailCount = m_trickplay.thumbnailCount > 0 ? m_trickplay.thumbnailCount : 1;
-    return std::max(1, (thumbnailCount + tileCount - 1) / tileCount);
-}
-
 PlaybackTimeline::TrickplayFrame PlaybackTimeline::trickplayFrameAt(double seconds) const
 {
     TrickplayFrame frame;
