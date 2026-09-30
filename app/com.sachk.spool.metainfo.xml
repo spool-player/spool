@@ -21,7 +21,7 @@
     <name>Spool</name>
   </developer>
   <releases>
-    <release version="0.8.9" date="2026-10-01">
+    <release version="0.8.10" date="2026-10-01">
       <description><p>Rearrange homepage libraries by dragging or with TV-remote move controls. Improve PIN, password and Quick Connect screens. Show clearer server labels and source icons, and deduplicate search results across servers. Bundle updated Jellyfin, Emby and Plex providers, which remain independently upgradable.</p></description>
     </release>
     <release version="0.8.3" date="2026-09-29">
