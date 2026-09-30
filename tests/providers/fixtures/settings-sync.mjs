@@ -10,8 +10,17 @@ export function createSource(config, sourceHost) {
     let options = {};
     let storageReads = 0, preferenceReads = 0;
     let writes = [], preferenceWrites = [];
+    const pendingResponses = {};
     const extensions = config.extensions || {'spool.playback-preferences': 1, 'spool.settings-storage': 1};
     const delay = (host, ms, result) => ms ? host.delay(ms).then(() => result) : result;
+    const respond = (operation, host, ms, result) => {
+        if ((options.blockedOperations || []).indexOf(operation) < 0)
+            return delay(host, ms, result);
+        return new Promise(resolve => {
+            if (!pendingResponses[operation]) pendingResponses[operation] = [];
+            pendingResponses[operation].push(() => resolve(delay(host, ms, result)));
+        });
+    };
     const fail = () => { if (options.offline) throw new Error('network_offline'); };
     return {
         describe(args, host) { return delay(host, config.describeDelay || 0, {extensions}); },
@@ -21,14 +30,25 @@ export function createSource(config, sourceHost) {
             if (args.native !== undefined) native = clone(args.native);
             if (args.writable !== undefined) writable = clone(args.writable);
             options = Object.assign(options, args.options || {});
+            for (const operation of Object.keys(pendingResponses)) {
+                if ((options.blockedOperations || []).indexOf(operation) >= 0) continue;
+                const responses = pendingResponses[operation];
+                delete pendingResponses[operation];
+                for (const release of responses) release();
+            }
             return {};
         },
-        stats() { return {document: doc, native, writes, preferenceWrites, storageReads, preferenceReads, revision}; },
+        stats() {
+            const blockedResponses = {};
+            for (const operation of Object.keys(pendingResponses))
+                blockedResponses[operation] = pendingResponses[operation].length;
+            return {document: doc, native, writes, preferenceWrites, storageReads, preferenceReads, revision, blockedResponses};
+        },
         dataInfo() { return {maxBytes: config.maxBytes || 65536, conditionalWrites: !!config.cas}; },
         dataRead(args, host) {
             fail(); ++storageReads;
             const snapshot = found ? {found: true, value: clone(doc), revision: String(revision)} : {found: false};
-            return delay(host, options.readDelay || 0, snapshot);
+            return respond('dataRead', host, options.readDelay || 0, snapshot);
         },
         dataWrite(args, host) {
             fail();
@@ -48,7 +68,7 @@ export function createSource(config, sourceHost) {
                 doc = clone(options.concurrentDocument || {format: 1, entries: {}});
                 ++revision;
             }
-            return delay(host, options.writeDelay || 0, config.cas ? {revision: String(revision)} : {});
+            return respond('dataWrite', host, options.writeDelay || 0, config.cas ? {revision: String(revision)} : {});
         },
         preferencesRead(args, host) {
             if (options.preferencesUnavailable) throw new Error('preferences_unavailable');
@@ -61,7 +81,7 @@ export function createSource(config, sourceHost) {
                 if (writable.indexOf(key) < 0) throw new Error('permission_denied');
             preferenceWrites.push(clone(args.values));
             native = Object.assign({}, native, clone(args.values));
-            return delay(host, options.nativeWriteDelay || 0, {});
+            return respond('preferencesWrite', host, options.nativeWriteDelay || 0, {});
         },
         dropExtensions() { sourceHost.emit('extensionsChanged', {extensions: {}}); return {}; }
     };

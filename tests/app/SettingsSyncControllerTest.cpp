@@ -220,10 +220,11 @@ void provisionalAndReadbackRaces()
     Server server;
     const auto account
         = server.add("races", { { "document", document({ { "theme/reducedMotion", entry(true, "100") } }) } });
-    server.configure(account, { { "options", QVariantMap { { "readDelay", 180 } } } });
+    server.configure(account, { { "options", QVariantMap { { "blockedOperations", QVariantList { "dataRead" } } } } });
     Replica replica(server, "races");
     replica.load();
-    waitUntil([&] { return server.stats(account).value("storageReads").toInt() > 0; }, "bootstrap read starts");
+    waitUntil([&] { return server.stats(account).value("blockedResponses").toMap().value("dataRead").toInt() == 1; },
+        "bootstrap read awaits an explicit release");
     replica.edit("theme/reducedMotion", true);
     replica.edit("theme/reducedMotion", false);
     require(replica.ledger()
@@ -236,19 +237,22 @@ void provisionalAndReadbackRaces()
                 .value("provisional")
                 .toBool(),
         "in-flight bootstrap edits are durably provisional, not prematurely clocked");
+    server.configure(account, { { "options", QVariantMap { { "blockedOperations", QVariantList {} } } } });
     waitUntil([&] { return replica.cycles > 0 && !replica.sync->busy(); }, "provisional bootstrap finishes");
     replica.cycle();
     const auto saved = records(server.stats(account)).value("theme/reducedMotion").toMap();
     require(!saved.value("value").toBool() && Doc::compareClocks(saved.value("clock").toString(), "100") > 0,
         "a provisional edit is stamped above the remote clock observed after it was committed");
 
-    server.configure(account, { { "options", QVariantMap { { "readDelay", 0 }, { "nativeWriteDelay", 180 } } } });
+    server.configure(
+        account, { { "options", QVariantMap { { "blockedOperations", QVariantList { "preferencesWrite" } } } } });
     replica.edit("audio/language", "fra");
-    const int nativeBefore = server.stats(account).value("preferenceWrites").toList().size();
     replica.sync->retry();
-    waitUntil([&] { return server.stats(account).value("preferenceWrites").toList().size() > nativeBefore; },
-        "native write begins");
+    waitUntil(
+        [&] { return server.stats(account).value("blockedResponses").toMap().value("preferencesWrite").toInt() == 1; },
+        "native write awaits an explicit release");
     replica.edit("audio/language", "deu");
+    server.configure(account, { { "options", QVariantMap { { "blockedOperations", QVariantList {} } } } });
     waitUntil([&] { return !replica.sync->busy(); }, "older native readback settles");
     require(replica.ledger().value("keys").toMap().value("audio/language").toMap().contains("intent"),
         "an old native write cannot acknowledge a later generation");
@@ -257,12 +261,13 @@ void provisionalAndReadbackRaces()
             == QLocale::German,
         "later native edit survives the earlier readback");
 
-    server.configure(account, { { "options", QVariantMap { { "nativeWriteDelay", 0 }, { "writeDelay", 180 } } } });
+    server.configure(account, { { "options", QVariantMap { { "blockedOperations", QVariantList { "dataWrite" } } } } });
     replica.edit("theme/reducedMotion", true);
-    const int before = server.stats(account).value("writes").toList().size();
     replica.sync->retry();
-    waitUntil([&] { return server.stats(account).value("writes").toList().size() > before; }, "document write begins");
+    waitUntil([&] { return server.stats(account).value("blockedResponses").toMap().value("dataWrite").toInt() == 1; },
+        "document write awaits an explicit release");
     replica.edit("theme/reducedMotion", false);
+    server.configure(account, { { "options", QVariantMap { { "blockedOperations", QVariantList {} } } } });
     waitUntil([&] { return !replica.sync->busy(); }, "older document cycle settles");
     replica.cycle();
     require(!remoteValue(server.stats(account), "theme/reducedMotion").toBool(),
