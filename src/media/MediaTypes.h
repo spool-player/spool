@@ -129,6 +129,8 @@ public:
     QString colorTransfer;
     QString colorSpace;
     QString aspectRatio;
+    // An external subtitle file, fetched from the stream's own origin.
+    QString deliveryUrl;
     int width = 0;
     int height = 0;
     double frameRate = 0.0;

@@ -127,6 +127,10 @@ export function createSource(config) {
                 headers:{Authorization:'MediaBrowser Token="' + config.token + '"'}}}; },
         resolve: function(args) { return {url: config.origin + '/video', variantId: 'edition',
             headers: {Authorization: 'MediaBrowser Token="' + config.token + '"'},
+            streams: [{index: 0, type: 'Video'},
+                {index: 10000, type: 'Subtitle', external: true, url: config.origin + '/subs/1.srt'},
+                {index: 10001, type: 'Subtitle', external: true, url: 'https://elsewhere.invalid/2.srt'},
+                {index: 2, type: 'Subtitle'}, {index: 10002, type: 'Subtitle', external: true}],
             trickplay: {width:16, height:16, columns:1, rows:1, count:1, intervalMs:1000}}; }
     };
 }
@@ -144,7 +148,13 @@ export function createSource(config) {
         waitUntil([&] { return registry.sourceRunning(id); }, "source activates");
         MovieItem item;
         item.id = hub.scoped(id, "movie");
-        QCoro::waitFor(hub.playback()->resolvePlayback(item, false));
+        const PlaybackSession session = QCoro::waitFor(hub.playback()->resolvePlayback(item, false));
+        QList<int> order;
+        for (const MediaStreamInfo& stream : session.mediaStreams)
+            order.append(stream.index);
+        require(
+            order == QList<int> { 0, 2, 10000 } && session.mediaStreams.last().deliveryUrl == origin + "/subs/1.srt",
+            "subtitle files follow the file's own tracks, and only those on the stream's origin are kept");
         return std::pair(id, hub.playback()->trickplayTileUrl(item.id, 16, 0));
     };
     const auto alice = add("alice-secret");
