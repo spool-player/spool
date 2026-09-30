@@ -2432,9 +2432,15 @@ void PlayerController::handleMpvEvent(mpv_event *event)
         // both success and failure; otherwise a failed manifest stays stuck in
         // the preparing state forever.
         m_mpvLifecycle.cancelFileLoad();
-        const bool completed = !failed && endFileReason == MPV_END_FILE_REASON_EOF;
-        QMetaObject::invokeMethod(this, [this, failed, failedBeforeLoad, completed, endFileReason, endFileError]() {
+        QMetaObject::invokeMethod(this, [this, failed, failedBeforeLoad, endFileReason, endFileError]() {
+            const double positionSeconds = m_positionTracker.position();
+            const double durationSeconds = m_positionTracker.duration();
+            const auto fileEnd
+                = PlaybackFailurePolicy::classifyFileEnd(failed, endFileReason, positionSeconds, durationSeconds);
+            const bool completed = fileEnd == PlaybackFailurePolicy::FileEnd::Completed;
+            const bool interrupted = fileEnd == PlaybackFailurePolicy::FileEnd::Interrupted;
             qInfo() << "player: end file (main thread) failed=" << failed << "completed=" << completed
+                    << "interrupted=" << interrupted << "position=" << positionSeconds << "duration=" << durationSeconds
                     << "sessionActive=" << m_sessionActive << "reason=" << endFileReason
                     << endFileReasonName(endFileReason) << "error=" << endFileError
                     << (endFileError < 0 ? mpv_error_string(endFileError) : "");
@@ -2453,7 +2459,12 @@ void PlayerController::handleMpvEvent(mpv_event *event)
             const int subtitleStreamIndex = m_session.subtitleStreamIndex;
             const bool retryableCodecFailure
                 = PlaybackFailurePolicy::isRetryableCodecFailure(m_session.playMethod, failedBeforeLoad, endFileError);
+            const double startSeconds = static_cast<double>(m_session.startTimeTicks) / 10000000.0;
             stopProgressReporting(failed, completed);
+            if (interrupted) {
+                emit playbackInterrupted(failedItemId, failedPositionTicks,
+                    PlaybackFailurePolicy::shouldResumeInterrupted(startSeconds, positionSeconds));
+            }
             if (failedBeforeLoad) {
                 emit playbackLoadFailed(failedItemId, failedPositionTicks, failureMessage, retryableCodecFailure,
                     audioStreamIndex, subtitleStreamIndex);

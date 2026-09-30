@@ -227,6 +227,9 @@ signals:
     void trickplayChanged();
     void chaptersChanged();
     void playbackStopped(const QString& itemId, qint64 positionTicks, bool completed);
+    // The stream ended before the item did. Emitted after playbackStopped,
+    // which has already recorded the position as a resume point.
+    void playbackInterrupted(const QString& itemId, qint64 positionTicks, bool resumable);
     void playbackLoadFailed(const QString& itemId, qint64 positionTicks, const QString& message,
         bool retryableCodecFailure, int audioStreamIndex, int subtitleStreamIndex);
     void streamSelectionChanged(int audioStreamIndex, int subtitleStreamIndex);
