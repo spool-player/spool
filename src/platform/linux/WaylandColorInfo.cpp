@@ -87,10 +87,8 @@ namespace {
         reader->info.valid = maxLum > 0;
     }
 
-    // Everything else the compositor volunteers about the image description.
-    // Ignored deliberately: primaries and the transfer function are Spool's to
-    // choose through the swapchain format, and only the luminances are a fact
-    // about the display that cannot be found any other way.
+    // The output's active transfer function distinguishes desktop HDR from
+    // a compositor that merely supports HDR client surfaces.
     void infoDone(void *, wp_image_description_info_v1 *) { }
     void infoIccFile(void *, wp_image_description_info_v1 *, int32_t fd, uint32_t)
     {
@@ -103,7 +101,12 @@ namespace {
     }
     void infoPrimariesNamed(void *, wp_image_description_info_v1 *, uint32_t) { }
     void infoTfPower(void *, wp_image_description_info_v1 *, uint32_t) { }
-    void infoTfNamed(void *, wp_image_description_info_v1 *, uint32_t) { }
+    void infoTfNamed(void *data, wp_image_description_info_v1 *, uint32_t transfer)
+    {
+        auto& info = static_cast<Reader *>(data)->info;
+        info.hdrEnabled = transfer == WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_ST2084_PQ
+            || transfer == WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_HLG;
+    }
     void infoTargetPrimaries(
         void *, wp_image_description_info_v1 *, int32_t, int32_t, int32_t, int32_t, int32_t, int32_t, int32_t, int32_t)
     {
@@ -136,17 +139,17 @@ namespace {
 
 } // namespace
 
-WaylandColorInfo waylandColorInfo(QWindow *window)
+WaylandColorInfo waylandColorInfo(QScreen *screen)
 {
     WaylandColorInfo result;
-    if (!window || !window->screen())
+    if (!screen || !QGuiApplication::platformName().startsWith(QLatin1String("wayland")))
         return result;
     QPlatformNativeInterface *native = QGuiApplication::platformNativeInterface();
     if (!native)
         return result;
 
     auto *display = static_cast<wl_display *>(native->nativeResourceForIntegration("wl_display"));
-    auto *output = static_cast<wl_output *>(native->nativeResourceForScreen("output", window->screen()));
+    auto *output = static_cast<wl_output *>(native->nativeResourceForScreen("output", screen));
     if (!display || !output)
         return result;
 

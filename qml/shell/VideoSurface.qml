@@ -84,6 +84,7 @@ FocusScope {
     // Registered dynamically by main.cpp, so no static .qmltypes entry exists.
     MpvVideoItem {
         anchors.fill: parent
+        hdrOutput: NativeWindow.hdrOutput
         visible: root.active && Player.embeddedVideoOutput
         opacity: 1.0
         z: 0

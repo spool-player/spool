@@ -9,6 +9,7 @@
 #include <QOpenGLFramebufferObjectFormat>
 #include <QOpenGLFunctions>
 #include <QPointer>
+#include <QQuickOpenGLUtils>
 #include <QQuickWindow>
 #include <QTimer>
 #include <QtDebug>
@@ -417,18 +418,22 @@ namespace {
             if (!m_lifecycle.item())
                 return;
 
-            // libplacebo initialization and destruction also touch the D3D11
-            // immediate context (destruction clears its state). Execute Qt's
-            // pending commands first and invalidate its state cache afterwards.
-            const bool d3d11Handoff = m_lifecycle.hasPendingHandle() && cb && rhi() && rhi()->backend() == QRhi::D3D11;
-            if (d3d11Handoff)
+            // Creating or destroying either an OpenGL or D3D11 renderer changes
+            // shared native state, not just drawing a frame. Flush Qt's commands
+            // before the handover and invalidate its cached bindings afterwards.
+            const bool nativeStateHandoff = m_lifecycle.hasPendingHandle() && cb && rhi()
+                && (rhi()->backend() == QRhi::OpenGLES2 || rhi()->backend() == QRhi::D3D11);
+            if (nativeStateHandoff) {
                 cb->beginExternal();
+                if (rhi()->backend() == QRhi::OpenGLES2)
+                    QQuickOpenGLUtils::resetOpenGLState();
+            }
             if (m_lifecycle.hasPendingHandle()) {
                 m_renderFailed = false;
                 m_lifecycle.releaseContext();
                 if (auto *next = m_lifecycle.nextHandle())
                     createRenderContext(next);
-                if (d3d11Handoff)
+                if (nativeStateHandoff)
                     cb->endExternal();
                 m_lifecycle.completeHandoff();
             }
@@ -466,6 +471,10 @@ namespace {
             // immediate context; endExternal() invalidates Qt's state cache.
             // Vulkan uses the render API's semaphore handover on the shared queue.
             cb->beginExternal();
+            // Qt's external boundary does not restore all GL raster state.
+            // libmpv requires default blend/depth/scissor/color-mask state.
+            if (rhi()->backend() == QRhi::OpenGLES2)
+                QQuickOpenGLUtils::resetOpenGLState();
             const bool drew = renderInto(ctx, target);
             cb->endExternal();
             if (!drew)
@@ -719,6 +728,8 @@ namespace {
                 attempt.push_back({ MPV_RENDER_PARAM_INVALID, nullptr });
 
                 newCtx = nullptr;
+                if (rhi->backend() == QRhi::OpenGLES2)
+                    QQuickOpenGLUtils::resetOpenGLState();
                 err = mpv_render_context_create(&newCtx, next, attempt.data());
                 if (err >= 0) {
                     qInfo() << "player: render backend" << backend << "on" << graphicsApiName();
@@ -847,10 +858,9 @@ MpvVideoItem::MpvVideoItem(QQuickItem *parent)
     : SPOOL_MPV_ITEM_BASE(parent)
 {
 #if SPOOL_MPV_ITEM_RHI
-    // A floating-point target is what an HDR swapchain can be handed, and it
-    // costs little when the swapchain is SDR: the extra precision is discarded
-    // once at the end rather than at every step before it.
-    setColorBufferFormat(TextureFormat::RGBA16F);
+    // SDR stays in an 8-bit target. FP16 is reserved for a verified HDR
+    // presentation surface, not selected from the video's metadata.
+    setColorBufferFormat(TextureFormat::RGBA8);
     setAlphaBlending(false);
 #endif
     if (s_instance)
@@ -862,6 +872,18 @@ MpvVideoItem::~MpvVideoItem()
 {
     if (s_instance == this)
         s_instance = nullptr;
+}
+
+void MpvVideoItem::setHdrOutput(bool enabled)
+{
+    if (m_hdrOutput == enabled)
+        return;
+    m_hdrOutput = enabled;
+#if SPOOL_MPV_ITEM_RHI
+    setColorBufferFormat(enabled ? TextureFormat::RGBA16F : TextureFormat::RGBA8);
+#endif
+    emit hdrOutputChanged();
+    update();
 }
 
 MpvVideoItem *MpvVideoItem::instance()

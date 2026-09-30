@@ -100,6 +100,17 @@ native-window commands, renderer replacement and standalone mpv playlist
 management are unsupported. Config errors and embedding ownership are reported
 in player/mpv diagnostics.
 
+Desktop SDR/HDR selection follows the **current OS output mode**, not merely
+the monitor's capabilities. SDR uses an RGBA8 video target with BT.709/BT.1886
+output; mpv tone-maps HDR video into that SDR target, and the UI does not enter
+the HDR conversion layer. FP16/scRGB is reserved for an HDR-enabled output.
+Wayland uses the output's active transfer function, Windows its desktop DXGI
+color space, and macOS its current EDR headroom. Unknown output state stays SDR.
+Even the **Always** preference cannot force HDR into an SDR desktop.
+The window's encoding is selected at startup: restart Spool after changing the
+desktop HDR mode.
+
+
 On webOS, supported codecs still use Starfish. For software-decoded codecs,
 **Software video renderer** in advanced playback settings offers Automatic
 (the established OpenGL `gpu` path), `gpu`, or experimental OpenGL `gpu-next`.

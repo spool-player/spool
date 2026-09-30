@@ -684,6 +684,7 @@ void PlayerController::updateRenderTarget()
     DisplayOutputCapabilities display;
     if (m_window) {
         display.hdrAvailable = m_window->hdrOutput();
+        display.desktopHdrEnabled = m_window->hdrOutput();
         display.preferredFormat
             = display.hdrAvailable ? RenderTargetProfile::Format::ExtendedSrgbLinear : RenderTargetProfile::Format::Sdr;
         display.sdrWhiteNits = m_window->hdrSdrWhiteNits();
@@ -729,8 +730,9 @@ void PlayerController::updateHdrOutput(bool applySubtitleOptions)
     // On an embedded target the transfer function mpv reports is the one Spool
     // asked for, so the profile is the more direct answer and the only one
     // available before the first frame.
-    const bool hdrOutput
-        = m_renderTarget.isHdr() || MpvOptionProfile::isHdrOutput(m_starfishVideoOutput, m_hdrInput, m_targetTransfer);
+    const bool hdrOutput = platformMpvOptionProfile() == MpvOptionProfile::Platform::Desktop
+        ? m_renderTarget.isHdr()
+        : MpvOptionProfile::isHdrOutput(m_starfishVideoOutput, m_hdrInput, m_targetTransfer);
     if (m_hdrPlayback == hdrOutput)
         return;
     m_hdrPlayback = hdrOutput;
