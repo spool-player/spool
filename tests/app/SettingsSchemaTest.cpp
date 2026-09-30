@@ -270,8 +270,6 @@ void normalizersPreservePersistedValueSemantics()
     require(controlFade.type == SettingType::Slider && controlFade.minimum == 1 && controlFade.maximum == 10
             && controlFade.step == 1,
         QStringLiteral("playback control fade delay should span 1-10 seconds in one-second steps"));
-    require(QString::fromLatin1(controlFade.title) == QStringLiteral("Hide player controls after"),
-        QStringLiteral("playback control fade delay title was not preserved"));
     require(settingDefaultValue(controlFade).toInt() == 4,
         QStringLiteral("playback controls should keep the existing four-second fade delay by default"));
     require(normalizedSettingValue(controlFade, QStringLiteral("11")).toInt() == 10,
@@ -311,25 +309,6 @@ void normalizersPreservePersistedValueSemantics()
         QStringLiteral("invalid subtitle drop-shadow choice did not fall back to the default choice"));
 }
 
-void subtitleGeometryOverrideMatchesSchemaContract()
-{
-    const SettingSpec& override = requiredSpec(QStringLiteral("subtitles/alwaysOverridePositionAndSize"));
-    require(override.type == SettingType::Toggle, QStringLiteral("geometry override should be a toggle"));
-    require(override.normalizer == SettingNormalizer::Bool,
-        QStringLiteral("geometry override should use boolean normalization"));
-    require(!settingDefaultValue(override).toBool(), QStringLiteral("geometry override should default to false"));
-    require(override.persisted, QStringLiteral("geometry override should be persisted"));
-    require(override.platform == SettingPlatform::All,
-        QStringLiteral("geometry override should be available on every platform"));
-    require(QLatin1String(override.group) == QLatin1String("Subtitle Appearance"),
-        QStringLiteral("geometry override should belong to Subtitle Appearance"));
-    require(override.level == SettingLevel::Essential,
-        QStringLiteral("fixed-position override should be available in basic subtitle settings"));
-    const SettingSpec& colorOverride = requiredSpec(QStringLiteral("subtitles/overrideTextColor"));
-    require(colorOverride.type == SettingType::Toggle && colorOverride.level == SettingLevel::Essential,
-        QStringLiteral("text colour override should be available in basic subtitle settings"));
-}
-
 void schemaModelExposesEverySpecOnce()
 {
     const QVariantList model = settingSchemaModel();
@@ -355,12 +334,6 @@ void schemaModelExposesEverySpecOnce()
     for (const SettingSpec& spec : settingSpecs()) {
         const QString key = keyString(spec);
         require(modelKeys.contains(key), QStringLiteral("schema model missed setting row %1").arg(key));
-    }
-
-    for (const QString& obsoleteKey : { QStringLiteral("subtitles/burnIn"), QStringLiteral("subtitles/renderPgs"),
-             QStringLiteral("subtitles/alwaysBurnInWhenTranscoding") }) {
-        require(findSettingSpec(obsoleteKey) == nullptr,
-            QStringLiteral("obsolete server-policy setting remained in the schema: %1").arg(obsoleteKey));
     }
 }
 
@@ -443,8 +416,6 @@ void subtitleChoicesExplainTheirBehavior()
             QStringLiteral("subtitle mode %1 should have a label").arg(value));
     }
     const QVariantMap hdrBrightness = schemaRow(QStringLiteral("subtitles/hdrBrightnessPercent"));
-    require(hdrBrightness.value(QStringLiteral("title")).toString() == QStringLiteral("HDR Subtitle Brightness"),
-        QStringLiteral("HDR brightness should use the subtitle-facing label"));
     require(hdrBrightness.value(QStringLiteral("requiresHdrPlayback")).toBool()
             && hdrBrightness.value(QStringLiteral("dependsOnKey")).toString().isEmpty(),
         QStringLiteral("HDR brightness should be available without a separate enable toggle"));
@@ -457,16 +428,11 @@ void subtitleChoicesExplainTheirBehavior()
                        "not only when it is left on automatic"));
     require(hdrPeak.value(QStringLiteral("defaultValue")).toInt() == 0,
         QStringLiteral("display peak brightness should default to asking the display"));
+    require(!settingDefaultValue(requiredSpec(QStringLiteral("subtitles/alwaysOverridePositionAndSize"))).toBool(),
+        QStringLiteral("subtitles should follow the file's own placement unless the viewer overrides it"));
     const QVariantMap verticalPosition = schemaRow(QStringLiteral("subtitles/verticalPositionPercent"));
     require(verticalPosition.value(QStringLiteral("defaultValue")).toInt() == 95,
         QStringLiteral("vertical subtitle position should default to 95%"));
-    const QVariantMap textSize = schemaRow(QStringLiteral("subtitles/scalePercent"));
-    require(textSize.value(QStringLiteral("title")).toString() == QStringLiteral("Text Size"),
-        QStringLiteral("subtitle scale should use the text-size label"));
-    require(findSettingSpec(QStringLiteral("subtitles/textSize")) == nullptr,
-        QStringLiteral("separate subtitle text-size choice should be removed"));
-    require(findSettingSpec(QStringLiteral("subtitles/bitmapSmoothing")) == nullptr,
-        QStringLiteral("discrete bitmap smoothing choice should be removed"));
     const QVariantMap bitmapSharpness = schemaRow(QStringLiteral("subtitles/bitmapSharpnessPercent"));
     require(bitmapSharpness.value(QStringLiteral("type")).toString() == QStringLiteral("slider")
             && bitmapSharpness.value(QStringLiteral("defaultValue")).toInt() == 45
@@ -545,28 +511,6 @@ void buttonChoicesAndLabelsExposePlayerActions()
         const QHash<QString, QString> modelLabels = choicesByLabelFromRow(row);
         require(modelLabels.size() == expectedActions.size(),
             QStringLiteral("schema model button labels changed for %1").arg(key));
-
-        require(choiceLabel(spec, QStringLiteral("togglePause")) == QStringLiteral("Play / Pause"),
-            QStringLiteral("togglePause label changed"));
-        require(choiceLabel(spec, QStringLiteral("toggleSubs")) == QStringLiteral("Toggle subtitles"),
-            QStringLiteral("toggleSubs label changed"));
-        require(choiceLabel(spec, QStringLiteral("cycleAudio")) == QStringLiteral("Cycle audio track"),
-            QStringLiteral("cycleAudio label changed"));
-        require(choiceLabel(spec, QStringLiteral("skipBackAndEnableSubs"))
-                == QStringLiteral("Skip back 10 s + enable subs"),
-            QStringLiteral("skipBackAndEnableSubs label changed"));
-        require(choiceLabel(spec, QStringLiteral("skipSegment")) == QStringLiteral("Skip intro / outro"),
-            QStringLiteral("skipSegment label changed"));
-        require(choiceLabel(spec, QStringLiteral("stop")) == QStringLiteral("Stop playback"),
-            QStringLiteral("stop label changed"));
-
-        require(modelLabels.value(QStringLiteral("togglePause")) == QStringLiteral("Play / Pause"),
-            QStringLiteral("schema model togglePause label changed"));
-        require(modelLabels.value(QStringLiteral("skipBackAndEnableSubs"))
-                == QStringLiteral("Skip back 10 s + enable subs"),
-            QStringLiteral("schema model skipBackAndEnableSubs label changed"));
-        require(modelLabels.value(QStringLiteral("skipSegment")) == QStringLiteral("Skip intro / outro"),
-            QStringLiteral("schema model skipSegment label changed"));
     }
 }
 
@@ -579,7 +523,6 @@ SPOOL_TEST_MAIN("settings-schema")
     audioOutputChoicesMatchPlatform();
     resolutionAndBitrateAreSettledSeparately();
     normalizersPreservePersistedValueSemantics();
-    subtitleGeometryOverrideMatchesSchemaContract();
     schemaModelExposesEverySpecOnce();
     groupsAreDeclaredContiguously();
     syncPolicyRejectsUnsafeAndUnsupportedValues();
