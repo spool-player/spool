@@ -63,7 +63,7 @@ no Node or browser globals, and Qt's engine lacks some newer built-ins such as `
 
 | Limit | |
 | --- | --- |
-| Uninterrupted script | 500 ms; exceeding it turns the module off until restarted |
+| Uninterrupted script | 500 ms (worker CPU time on Windows, excluding loader I/O and descheduling); exceeding it turns the module off until restarted |
 | Operation | settles within 15 s; eight in flight per account |
 | HTTP | four at once per operation, 1 MiB bodies, 8 MiB responses, redirects returned not followed, no cookies |
 | Sockets | `host.socket` on the source host, four per account |
