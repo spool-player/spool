@@ -281,7 +281,7 @@ public:
         const QString url = playback ? playback->trickplayTileUrl(rawId(itemId), width, tileIndex) : QString();
         if (url.isEmpty())
             return {};
-        return QStringLiteral("spool-artwork://") + prefixOf(m_hub->accountOf(itemId)) + QLatin1Char('/')
+        return QStringLiteral("spool-artwork://account-") + prefixOf(m_hub->accountOf(itemId)) + QLatin1Char('/')
             + QString::fromLatin1(
                 url.toUtf8().toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals));
     }
@@ -1455,7 +1455,10 @@ ArtworkSource::ImageResource SourceHub::resolveImage(const QUrl& url) const
 {
     if (url.scheme() != QLatin1String("spool-artwork"))
         return ArtworkSource::resolveImage(url);
-    const auto entry = m_entries.constFind(url.host());
+    const QString host = url.host();
+    if (!host.startsWith(QLatin1String("account-")))
+        return {};
+    const auto entry = m_entries.constFind(host.mid(8));
     if (entry == m_entries.cend() || !entry->provider)
         return {};
     if (url.path().startsWith(QLatin1String("/remote/"))) {

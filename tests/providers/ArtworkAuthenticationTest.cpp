@@ -140,6 +140,11 @@ export function createSource(config) {
     registry.setInstallDirectory(directory.filePath("providers"));
     registry.loadModules();
     SourceHub hub(&registry);
+    // A digit-only scope is a valid UUID prefix, but a bare URL hostname is
+    // interpreted by Qt as an IPv4 address. Exercise that boundary every run.
+    QCoro::waitFor(database.saveSettings(
+        { { "providers/accounts/2", QStringLiteral(R"JSON({"accounts":[{"id":"01234567-89ab-4cde-8fab-0123456789ab",
+        "module":"fixture.test","key":"alice-secret","label":"Fixture","enabled":false}]})JSON") } }));
     QCoro::waitFor(registry.restore());
     const auto add = [&](const QString& token) {
         const QString id = registry.finishSetup({},

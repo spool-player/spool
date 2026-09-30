@@ -318,7 +318,7 @@ QCoro::Task<QVariantMap> SourceHub::remoteState(QString targetId, bool connect, 
         }
         previews.insert(rawId(targetId), { templateUrl, std::move(headers) });
         descriptor.insert("urlTemplate",
-            QStringLiteral("spool-artwork://") + prefix + QStringLiteral("/remote/")
+            QStringLiteral("spool-artwork://account-") + prefix + QStringLiteral("/remote/")
                 + QString::fromLatin1(
                     rawId(targetId).toUtf8().toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals))
                 + QStringLiteral("?index={index}"));
