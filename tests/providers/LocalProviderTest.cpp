@@ -18,6 +18,7 @@
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
+#include <QFileInfo>
 #include <QImage>
 #include <QSet>
 #include <QTemporaryDir>
@@ -251,7 +252,8 @@ SPOOL_TEST_MAIN("local-provider")
     require(registry.sourceRunning(localAccount) && activeLocal, "the configured library can be enabled again");
     activeLocal->scan();
     const auto reconfigured = QCoro::waitFor(activeLocal->fetchLatestItems({}, 20));
-    require(reconfigured.size() == 1 && reconfigured.front().path == combined.filePath("two/same.mp4"),
+    require(reconfigured.size() == 1
+            && reconfigured.front().path == QFileInfo(combined.filePath("two/same.mp4")).canonicalFilePath(),
         "reenabling uses only the newly selected folder set");
 
     std::cout << "local provider ok\n";
