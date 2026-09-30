@@ -1,6 +1,6 @@
 pkgbase = spool-bin
 	pkgdesc = Fast media player for desktop and TV, built on Qt Quick and mpv
-	pkgver = 0.8.8
+	pkgver = 0.8.9
 	pkgrel = 1
 	url = https://github.com/spool-player/spool
 	arch = x86_64
@@ -9,12 +9,12 @@ pkgbase = spool-bin
 	depends = glibc
 	depends = libglvnd
 	depends = mesa
-	provides = spool=0.8.8
+	provides = spool=0.8.9
 	conflicts = spool
 	options = !strip
 	options = !debug
 	options = !lto
-	source = https://github.com/spool-player/spool/releases/download/v0.8.8/Spool-0.8.8-linux-x86_64.tar.zst
+	source = https://github.com/spool-player/spool/releases/download/v0.8.9/Spool-0.8.9-linux-x86_64.tar.zst
 	sha256sums = SKIP
 
 pkgname = spool-bin
