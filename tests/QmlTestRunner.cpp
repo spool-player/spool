@@ -1,6 +1,7 @@
 #include "diagnostics/InputLatencyMonitor.h"
 #include "platform/PlatformCapabilities.h"
 
+#include "ArtworkIntegration.h"
 #include "ExtensionIntegration.h"
 
 #include <QDir>
@@ -21,6 +22,8 @@ public slots:
             m_integration = new ExtensionIntegration(this);
             m_integration->expose(engine);
         }
+        if (m_artwork)
+            m_artwork->expose(engine);
     }
 
     void applicationAvailable()
@@ -45,10 +48,13 @@ public slots:
         m_platform->insert(QStringLiteral("supportsMpvConfig"), capabilities.supportsMpvConfig);
         m_platform->insert(QStringLiteral("usesPerOutputAudioDelay"), capabilities.usesPerOutputAudioDelay);
         qmlRegisterSingletonInstance("Spool", 1, 0, "Platform", m_platform);
+        if (qEnvironmentVariableIsSet("SPOOL_ARTWORK_INTEGRATION"))
+            m_artwork = std::make_unique<ArtworkIntegration>();
     }
 
 private:
     ExtensionIntegration *m_integration = nullptr;
+    std::unique_ptr<ArtworkIntegration> m_artwork;
     QQmlPropertyMap *m_platform = QQmlPropertyMap::create(this);
     QTemporaryDir m_settings;
     Spool::InputLatencyMonitor *m_latency = nullptr;

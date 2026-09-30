@@ -8,6 +8,7 @@
 #include <QDebug>
 #include <QDir>
 #include <QImageReader>
+#include <QJSValue>
 #include <QMutexLocker>
 #include <QNetworkAccessManager>
 #include <QNetworkDiskCache>
@@ -460,6 +461,8 @@ ArtworkService::~ArtworkService()
 
 QString ArtworkService::url(const QVariant& value, const QString& kind, int width) const
 {
+    if (value.metaType() == QMetaType::fromType<QJSValue>())
+        return url(value.value<QJSValue>().toVariant(), kind, width);
     if (value.canConvert<MovieItem>())
         return movieUrl(value.value<MovieItem>(), kind, width);
     if (value.metaType().id() == QMetaType::QVariantMap) {
@@ -469,6 +472,14 @@ QString ArtworkService::url(const QVariant& value, const QString& kind, int widt
         item.posterTag = map.value(QStringLiteral("posterTag")).toString();
         item.albumId = map.value(QStringLiteral("albumId")).toString();
         item.albumPrimaryImageTag = map.value(QStringLiteral("albumPrimaryImageTag")).toString();
+        item.seriesId = map.value(QStringLiteral("seriesId")).toString();
+        item.seriesPrimaryImageTag = map.value(QStringLiteral("seriesPrimaryImageTag")).toString();
+        item.thumbTag = map.value(QStringLiteral("thumbTag")).toString();
+        item.thumbItemId = map.value(QStringLiteral("thumbItemId")).toString();
+        item.backdropTag = map.value(QStringLiteral("backdropTag")).toString();
+        item.backdropItemId = map.value(QStringLiteral("backdropItemId")).toString();
+        item.logoTag = map.value(QStringLiteral("logoTag")).toString();
+        item.bannerTag = map.value(QStringLiteral("bannerTag")).toString();
         return movieUrl(item, kind, width);
     }
     if (value.canConvert<LibraryItem>()) {
