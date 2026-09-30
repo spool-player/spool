@@ -164,12 +164,23 @@ FocusScope {
         return count > 0 ? 0 : -1
     }
 
+    // With several servers, the same library name can mean different places.
+    function libraryOrigin(libraryId) {
+        if (!Sources.multipleSources)
+            return null
+        const origin = Sources.originOf(String(libraryId || ""))
+        return origin && origin.serverName ? origin : null
+    }
+
     function buildLibraryEntries() {
         const entries = []
         for (let index = 0; index < libraryCount(); ++index) {
             const library = Libraries.get(index)
+            const origin = libraryOrigin(library && library.libraryId)
             entries.push({
                              "label": String(library && library.name || ""),
+                             "detail": origin ? [origin.serverName, origin.address || origin.providerName].filter(
+                                                    Boolean).join(" · ") : "",
                              "libraryId": String(library && library.libraryId || ""),
                              "index": index
                          })
@@ -942,6 +953,7 @@ FocusScope {
                     }
 
                     MaterialIcon {
+                        id: libraryChevron
                         anchors.verticalCenter: parent.verticalCenter
                         visible: !root.isFixedBrowseView
                         name: root.libraryOpen ? "expand_less" : "expand_more"
@@ -949,6 +961,16 @@ FocusScope {
                         iconColor: root.libraryOpen || libraryButton.activeFocus ? Theme.textPrimary :
                                                                                    Theme.textSecondary
                     }
+                }
+
+                SourceBadge {
+                    readonly property var origin: root.libraryOrigin(Browse.libraryId)
+                    anchors.left: titleRow.right
+                    anchors.leftMargin: Metrics.scaled(10)
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: !!origin && titleRow.x + titleRow.width + width + Metrics.scaled(20) < headerDetailText.x
+                    iconUrl: origin ? origin.iconUrl : ""
+                    text: origin ? origin.serverName : ""
                 }
 
                 SecondaryText {

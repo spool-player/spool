@@ -36,6 +36,33 @@ on every invocation so sibling edits are included, using separate
 Ordinary native builds continue to default to open provider loading without
 local overrides. Set `SPOOL_REPO` to the app checkout when invoking outside it.
 
+## Sign-in controls
+
+Passwords and account PINs start hidden. Select the eye beside the input to show
+or hide its contents; it also supports mouse/touch, Tab, and **OK/Enter**. On a
+TV, **Right** from the input row focuses the eye and **Left** returns to the row.
+Submitting or leaving the form hides the input again.
+
+Device-link and Quick Connect codes have their instructions below the code box.
+On desktop and mobile, **Copy** copies the code; TVs show it for entry on another
+device without a clipboard control.
+
+## Homepage library order
+
+Drag a library card to another position on the homepage. Hold the pointer near
+the left or right edge of the library row while dragging to scroll to libraries
+that are offscreen, then release to drop it.
+
+Alternatively, hold **OK/Enter** on a focused library, long-press its card, or
+right-click it to enter move mode. The selected card shows **↔ Move**. Use
+**Left/Right** on the remote or keyboard, or the visible arrow buttons, to move
+that library. Press **OK/Enter**, **Back/Escape**, or **Done** to finish without
+opening it. Moves are saved as they happen; Back does not undo them. Library
+ordering does not reorder the recently added shelves.
+Library badges use a descriptive server name when available. Default or
+machine-generated server names are shown as the server's host and port instead;
+usernames are not appended to library names.
+
 ## Local media folders
 
 On desktop, choose **Add provider → This computer**, then add one or more folders

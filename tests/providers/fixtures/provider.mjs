@@ -70,8 +70,10 @@ export function createSource(config, sourceHost) {
         // One film per library the account sees, and one exact title on request.
         search: function(args) {
             failing();
+            if (config.searchItems)
+                return {items: config.searchItems.slice(0, args.limit), cursor: null, exhausted: true};
             const rows = (config.libraries || ['lib']).map(function(id) {
-                return {id: id + '-1', title: 'Film in ' + id, type: 'Movie'};
+                return {id: id + '-1', title: 'Film in ' + id, type: 'Movie', year: 2020};
             });
             if (config.exact)
                 rows.push({id: 'exact', title: 'The Film', type: 'Movie'});

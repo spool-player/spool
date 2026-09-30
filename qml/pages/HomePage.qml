@@ -15,13 +15,29 @@ FocusScope {
 
     focus: true
 
+    // With one server every library is obviously its; with several, each
+    // says whose it is: the provider's mark, the server, and where it is.
+    function sourceBadge(scopedId, withDetail) {
+        const origin = Sources.originOf(String(scopedId || ""))
+        if (!origin || !origin.serverName)
+            return null
+        return {
+            "iconUrl": origin.iconUrl,
+            "text": origin.serverName,
+            "detail": withDetail ? (origin.address || origin.providerName) : ""
+        }
+    }
+
     function buildSections() {
+        const multiple = Sources.multipleSources
         const sections = [
                   {
                       "key": "libraries",
                       "title": "Libraries",
                       "model": Libraries,
-                      "kind": "library"
+                      "kind": "library",
+                      "moveItem": (from, to) => Libraries.moveLibrary(from, to),
+                      "cardBadge": multiple ? (library => root.sourceBadge(library.libraryId, true)) : null
                   }
               ]
         sections.push({
@@ -48,6 +64,7 @@ FocusScope {
                               "model": row && row.model ? row.model : null,
                               "kind": row && row.kind ? row.kind : "poster",
                               "reserveWhenEmpty": Home.loading,
+                              "headerBadge": multiple && row ? root.sourceBadge(row.libraryId, false) : null,
                               "useSeriesPoster": true,
                               "preferEpisodeTitle": true,
                               // The row's position is part of its identity for

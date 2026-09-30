@@ -22,24 +22,28 @@ FocusScope {
         {
             "key": "movies",
             "title": "Movies",
-            "model": search ? search.movieResults : null
+            "model": search ? search.movieResults : null,
+            "cardBadge": item => root.sourceBadge(item)
         },
         {
             "key": "series",
             "title": "Series",
-            "model": search ? search.seriesResults : null
+            "model": search ? search.seriesResults : null,
+            "cardBadge": item => root.sourceBadge(item)
         },
         {
             "key": "episodes",
             "title": "Episodes",
             "model": search ? search.episodeResults : null,
             "useSeriesPoster": true,
-            "preferEpisodeTitle": true
+            "preferEpisodeTitle": true,
+            "cardBadge": item => root.sourceBadge(item)
         },
         {
             "key": "other",
             "title": "More",
-            "model": search ? search.otherResults : null
+            "model": search ? search.otherResults : null,
+            "cardBadge": item => root.sourceBadge(item)
         }
     ]
     // Result kind the user last interacted with; picks the row to focus
@@ -70,6 +74,14 @@ FocusScope {
     function repairResultFocus() {
         if (!results.repair() && results.activeFocus)
             field.focusField()
+    }
+
+    function sourceBadge(item) {
+        const origin = Sources.originOf(String(item.movieId || ""))
+        return origin && origin.serverName ? {
+                                                 "iconUrl": origin.iconUrl,
+                                                 "text": origin.serverName
+                                             } : null
     }
 
     function activateResult(section, index, item) {
@@ -212,6 +224,7 @@ FocusScope {
             title: "Suggestions"
             model: root.search ? root.search.suggestions : null
             shell: root.shell
+            cardBadge: item => root.sourceBadge(item)
             cardWidth: Metrics.cardWidth(root.width)
             cardGap: Metrics.gapPx
             enabledRow: root.query.length < 2

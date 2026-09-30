@@ -555,6 +555,7 @@ qt_add_qml_module(spool
         qml/primitives/ProfileTile.qml
         qml/primitives/ProviderIcon.qml
         qml/primitives/SectionHeader.qml
+        qml/primitives/SourceBadge.qml
         qml/primitives/ServerCard.qml
         qml/primitives/SelectRow.qml
         qml/primitives/SettingRow.qml
@@ -779,6 +780,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         settings-sync-document tests/app/SettingsSyncDocumentTest.cpp
         router-controller tests/app/RouterControllerTest.cpp
         library-query tests/app/LibraryQueryTest.cpp
+        library-list-model tests/app/LibraryListModelTest.cpp
         content-model-controller tests/app/ContentModelControllerTest.cpp
         collection-editing tests/app/CollectionEditingControllerTest.cpp
         remote-targets tests/app/RemoteTargetsControllerTest.cpp

@@ -234,6 +234,8 @@ namespace {
                         invalid();
                     const QString key = iterator.name().trimmed().toLower();
                     const QString id = text(iterator.value(), 1024);
+                    if (!key.isEmpty() && !id.trimmed().isEmpty())
+                        media.externalIds.insert(key, id.trimmed());
                     if (key == QStringLiteral("imdb"))
                         media.imdbId = id;
                     else if (key == QStringLiteral("tmdb"))

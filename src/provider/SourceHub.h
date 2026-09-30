@@ -40,6 +40,7 @@ class SourceHub final : public Provider,
                         public ArtworkSource,
                         public StreamQualityControl {
     Q_OBJECT
+    Q_PROPERTY(bool multipleSources READ multipleSources NOTIFY browseSourcesChanged)
 
 public:
     explicit SourceHub(ProviderRegistry *registry, QObject *parent = nullptr);
@@ -76,6 +77,11 @@ public:
         return this;
     }
     bool ready() const override;
+
+    // Where a scoped item comes from, for telling libraries on different
+    // servers apart: provider name and icon, server name and address.
+    Q_INVOKABLE QVariantMap originOf(const QString& scopedId) const;
+    bool multipleSources() const;
 
     // Scoping. `accountOf` answers for any scoped ID, empty when unscoped.
     QString scoped(const QString& accountId, const QString& rawId) const;

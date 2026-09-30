@@ -59,8 +59,11 @@ FocusScope {
                                                                                   confirm))
     }
     ColumnLayout {
-        anchors.fill: parent
-        anchors.margins: Metrics.pageMarginPx
+        anchors.fill: root.kind === "homePin" ? undefined : parent
+        anchors.centerIn: root.kind === "homePin" ? parent : undefined
+        anchors.margins: root.kind === "homePin" ? 0 : Metrics.pageMarginPx
+        width: Math.min(parent.width - Metrics.pageMarginPx * 2, Metrics.scaled(520))
+        height: root.kind === "homePin" ? implicitHeight : parent.height - Metrics.pageMarginPx * 2
         spacing: Metrics.scaled(12)
         ProviderCompatibilityNotice {
             Layout.fillWidth: true
@@ -80,6 +83,7 @@ FocusScope {
                    })[root.kind] || ""
             font.pixelSize: Metrics.titleSizePx
             font.weight: Font.DemiBold
+            wrapMode: Text.WordWrap
         }
         SecondaryText {
             Layout.fillWidth: true
@@ -109,11 +113,6 @@ FocusScope {
             visible: root.kind === "homePin"
             text: root.pinExplanation
             wrapMode: Text.WordWrap
-        }
-        ActionButton {
-            visible: root.kind === "homePin"
-            text: "Unlock"
-            onClicked: root.submitPin()
         }
         ListView {
             id: list
@@ -175,6 +174,12 @@ FocusScope {
                 text: root.kind === "remoteControls" ? "Close" : "Cancel"
                 kind: "flat"
                 onClicked: root.provider.close()
+            }
+            ActionButton {
+                visible: root.kind === "homePin"
+                text: "Unlock"
+                kind: "primary"
+                onClicked: root.submitPin()
             }
             ActionButton {
                 id: confirm

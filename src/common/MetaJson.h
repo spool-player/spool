@@ -129,6 +129,8 @@ namespace MetaJsonDetail {
             return value.toDouble();
         case QMetaType::QStringList:
             return stringListToJson(value.toStringList());
+        case QMetaType::QVariantMap:
+            return QJsonObject::fromVariantMap(value.toMap());
         default:
             break;
         }
@@ -161,6 +163,8 @@ namespace MetaJsonDetail {
             return value.toDouble();
         case QMetaType::QStringList:
             return stringListFromJson(value);
+        case QMetaType::QVariantMap:
+            return value.toObject().toVariantMap();
         default:
             break;
         }
