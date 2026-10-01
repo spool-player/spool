@@ -19,7 +19,7 @@ void require(bool condition, const char *message)
 }
 
 bool sendMouseButton(
-    JellyfinNative::NativeAppWindow& window, QEvent::Type type, Qt::MouseButton button, Qt::MouseEventSource source)
+    Spool::NativeAppWindow& window, QEvent::Type type, Qt::MouseButton button, Qt::MouseEventSource source)
 {
     const Qt::MouseButtons buttons = type == QEvent::MouseButtonPress ? Qt::MouseButtons(button) : Qt::NoButton;
     QMouseEvent event(type, QPointF(4, 4), QPointF(4, 4), QPointF(4, 4), button, buttons, Qt::NoModifier, source);
@@ -27,18 +27,17 @@ bool sendMouseButton(
 }
 } // namespace
 
-JELLYFIN_TEST_MAIN("native-window-input")
+SPOOL_TEST_MAIN("native-window-input")
 {
     qputenv("QT_QPA_PLATFORM", QByteArrayLiteral("offscreen"));
     QGuiApplication app(argc, argv);
-    JellyfinNative::NativeAppWindow window(QStringLiteral("input-test"));
+    Spool::NativeAppWindow window(QStringLiteral("input-test"));
 
     int backRequests = 0;
     int forwardRequests = 0;
+    QObject::connect(&window, &Spool::NativeAppWindow::pointerBackRequested, [&backRequests] { ++backRequests; });
     QObject::connect(
-        &window, &JellyfinNative::NativeAppWindow::pointerBackRequested, [&backRequests] { ++backRequests; });
-    QObject::connect(
-        &window, &JellyfinNative::NativeAppWindow::pointerForwardRequested, [&forwardRequests] { ++forwardRequests; });
+        &window, &Spool::NativeAppWindow::pointerForwardRequested, [&forwardRequests] { ++forwardRequests; });
 
     require(sendMouseButton(window, QEvent::MouseButtonPress, Qt::BackButton, Qt::MouseEventNotSynthesized),
         "physical Back press is consumed");

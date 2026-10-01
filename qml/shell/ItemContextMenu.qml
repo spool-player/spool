@@ -17,10 +17,20 @@ FocusScope {
     property bool playedState: Boolean(item && item.played)
     property bool opened: false
     property bool backdropDismissArmed: false
+    property int actionsRequest: -1
+    property var providerActions: []
+    property bool actionsLoading: false
+    property string actionsProblem: ""
+    readonly property string containerId: String(context && context.containerId || "")
+    readonly property string entryId: String(context && context.entryId || item && (item.playlistItemId || item.entryId)
+                                             || "")
+    readonly property string editorContainerId: itemType === "Playlist" || itemType === "BoxSet" ? itemId : containerId
     signal closed
     readonly property int windowWidth: root.Window.window ? root.Window.window.width : 1920
     readonly property int menuEdgeMargin: Math.max(12, Metrics.gapPx)
-    readonly property int menuRowHeight: Math.max(Metrics.touchTargetPx, Metrics.scaled(36))
+    readonly property int menuRowHeight: Math.max(Metrics.touchTargetPx, Metrics.scaled(menuOptions.some(option => Boolean(
+                                                                                                                       option.reason))
+                                                                                        ? 54 : 36))
     readonly property int menuPanelWidth: Math.min(windowWidth - menuEdgeMargin * 2, Math.max(280, Math.min(320,
                                                                                                             Math.round(
                                                                                                                 windowWidth
@@ -42,10 +52,6 @@ FocusScope {
     readonly property bool inCollection: currentViewKind === "boxset" || currentViewKind === "collection"
     readonly property bool collectionEligible: actionable && (itemType === "Movie" || itemType === "Series" || itemType
                                                               === "Episode")
-    readonly property bool canManagePlaylists: Management.currentUserCanManagePlaylists
-    readonly property bool canManageCollections: Management.currentUserCanManageCollections
-    readonly property bool canRenameItem: Management.currentUserCanRenameItems
-    readonly property bool canDeleteItem: Management.currentUserCanDeleteItems
 
     visible: opened
     focus: opened
@@ -61,6 +67,34 @@ FocusScope {
             if (root.itemId === changedItemId)
                 root.playedState = played
         }
+    }
+
+    Connections {
+        target: Sources
+        function onItemActionsReady(requestId, actions, problem) {
+            if (!root.opened || requestId !== root.actionsRequest)
+                return
+            const selected = root.menuOptions[root.menuIndex]
+            root.providerActions = actions
+            root.actionsLoading = false
+            root.actionsProblem = problem
+            root.rebuildMenu()
+            const index = selected ? root.menuOptions.findIndex(option => option.action === selected.action) : -1
+            root.menuIndex = Math.max(0, index)
+            Qt.callLater(root.positionMenu)
+        }
+        function onExtensionSupportChanged(accountId) {
+            if (root.opened)
+                root.loadProviderActions()
+        }
+    }
+
+    function loadProviderActions() {
+        providerActions = []
+        actionsProblem = ""
+        actionsLoading = true
+        actionsRequest = Sources.requestItemActions(itemId, itemType, containerId, entryId)
+        rebuildMenu()
     }
 
     function clamp(value, minimum, maximum) {
@@ -143,60 +177,28 @@ FocusScope {
                              label: favoriteState ? "Remove favourite" : "Add favourite",
                              checked: favoriteState
                          })
-            if (canManagePlaylists && queueable)
+            if (editorContainerId && Sources.collectionEditingAvailable(editorContainerId))
                 options.push({
-                                 action: "playlist",
-                                 icon: "playlist_add",
-                                 label: "Add to playlist",
+                                 action: "collectionEditor",
+                                 icon: "edit",
+                                 label: "Manage entries",
                                  checked: false
                              })
-            if (canManageCollections && collectionEligible)
+            for (const action of providerActions)
                 options.push({
-                                 action: "collection",
-                                 icon: "library_add",
-                                 label: "Add to collection",
+                                 action: "provider:" + action.id,
+                                 icon: action.icon || "more_horiz",
+                                 label: action.label,
+                                 enabled: action.enabled !== false,
+                                 reason: action.reason || "",
                                  checked: false
                              })
-            if (inPlaylist && item.playlistItemId) {
+            if (actionsLoading || actionsProblem)
                 options.push({
-                                 action: "moveUp",
-                                 icon: "keyboard_arrow_up",
-                                 label: "Move up",
-                                 checked: false
-                             })
-                options.push({
-                                 action: "moveDown",
-                                 icon: "keyboard_arrow_down",
-                                 label: "Move down",
-                                 checked: false
-                             })
-                options.push({
-                                 action: "removeParent",
-                                 icon: "remove_circle",
-                                 label: "Remove from playlist",
-                                 checked: false
-                             })
-            } else if (inCollection && canManageCollections) {
-                options.push({
-                                 action: "removeParent",
-                                 icon: "remove_circle",
-                                 label: "Remove from collection",
-                                 checked: false
-                             })
-            }
-            if ((itemType === "Playlist" && canManagePlaylists) || canRenameItem)
-                options.push({
-                                 action: "rename",
-                                 icon: "drive_file_rename_outline",
-                                 label: "Rename",
-                                 checked: false
-                             })
-            if (canDeleteItem)
-                options.push({
-                                 action: "delete",
-                                 icon: "delete",
-                                 label: "Delete",
-                                 checked: false
+                                 action: "providerStatus",
+                                 icon: "more_horiz",
+                                 label: actionsLoading ? "Loading provider actions…" : actionsProblem,
+                                 enabled: false
                              })
         }
         if (itemType !== "Series" && itemType !== "Season" && item && (item.movieId || item.id || item.title || item.displayTitle
@@ -229,6 +231,9 @@ FocusScope {
         item = nextItem || ({})
         anchorItem = anchor || null
         context = nextContext || ({})
+        providerActions = []
+        actionsProblem = ""
+        actionsLoading = true
         syncItemState()
         if (!rebuildMenu())
             return false
@@ -240,6 +245,7 @@ FocusScope {
             backdropArmTimer.restart()
         }
         opened = true
+        loadProviderActions()
         InputKeys.focus(menuList)
         Qt.callLater(positionMenu)
         return true
@@ -258,6 +264,9 @@ FocusScope {
         backdropArmTimer.stop()
         backdropDismissArmed = false
         opened = false
+        Sources.cancelItemActions()
+        actionsRequest = -1
+        providerActions = []
         item = ({})
         anchorItem = null
         context = ({})
@@ -267,6 +276,8 @@ FocusScope {
 
     function activateMenuIndex(index) {
         if (index < 0 || index >= menuOptions.length)
+            return
+        if (menuOptions[index].enabled === false)
             return
         const action = menuOptions[index].action
         if (action === "details") {
@@ -300,14 +311,15 @@ FocusScope {
         } else if (action === "favorite") {
             favoriteState = !favoriteState
             ItemState.setFavorite(itemId, favoriteState)
-        } else if (action === "playlist" || action === "collection") {
-            shell.openManagement(action, item)
-        } else if (action === "removeParent") {
-            shell.openManagement("remove", item)
-        } else if (action === "moveUp" || action === "moveDown") {
-            Management.movePlaylistItemInCurrent(item, action === "moveUp" ? -1 : 1)
-        } else if (action === "rename" || action === "delete") {
-            shell.openManagement(action, item)
+        } else if (action === "collectionEditor") {
+            shell.openCollectionEditor(editorContainerId, itemType === "Playlist" || itemType === "BoxSet" ? String(
+                                                                                                                 item.title
+                                                                                                                 || "") : String(
+                                                                                                                 context.containerTitle
+                                                                                                                 || Browse.title
+                                                                                                                 || ""))
+        } else if (action.startsWith("provider:")) {
+            Sources.runItemAction(action.slice(9), itemId, itemType, containerId, entryId)
         } else if (action === "info") {
             shell.openMediaInfo(item)
         }
@@ -367,6 +379,8 @@ FocusScope {
                 label: modelData.label || ""
                 iconName: modelData.icon || "more_horiz"
                 checked: Boolean(modelData.checked)
+                actionable: modelData.enabled !== false
+                detail: modelData.reason || ""
                 highlighted: ListView.isCurrentItem
                 rowHeight: root.menuRowHeight
                 compact: true

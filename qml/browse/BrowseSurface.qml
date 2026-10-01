@@ -1,7 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
-import JellyfinWebOS
+import Spool
 import "../theme"
 import "../primitives"
 import "../primitives/ModelAccess.js" as ModelAccess
@@ -43,26 +43,26 @@ FocusScope {
     // which is the row the home page gives them too.
     readonly property var destinations: {
         const places = [
-            {
-                "key": "resume",
-                "title": "Continue Watching",
-                "icon": "play_circle",
-                "model": Home.resumeItems,
-                "kind": "landscape"
-            },
-            {
-                "key": "nextUp",
-                "title": "Next Up",
-                "icon": "skip_next",
-                "model": Home.nextUpItems,
-                "kind": "landscape"
-            }
-        ]
+                  {
+                      "key": "resume",
+                      "title": "Continue Watching",
+                      "icon": "play_circle",
+                      "model": Home.resumeItems,
+                      "kind": "landscape"
+                  },
+                  {
+                      "key": "nextUp",
+                      "title": "Next Up",
+                      "icon": "skip_next",
+                      "model": Home.nextUpItems,
+                      "kind": "landscape"
+                  }
+              ]
         const latest = Home.latestLibraryRows || []
         for (let index = 0; index < latest.length; ++index) {
             const row = latest[index]
             if (!row || !row.model)
-            continue
+                continue
             places.push({
                             "key": "latest" + index,
                             "title": String(row.title || "Recently Added"),

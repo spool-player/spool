@@ -7,9 +7,9 @@
 
 #include <cmath>
 
-using JellyfinNative::MediaSegment;
-using JellyfinNative::PlaybackSession;
-using JellyfinNative::PlaybackTimeline;
+using Spool::MediaSegment;
+using Spool::PlaybackSession;
+using Spool::PlaybackTimeline;
 
 namespace {
 
@@ -55,7 +55,6 @@ void testTrickplay()
     PlaybackTimeline timeline;
     timeline.setSession(session);
     expect(timeline.trickplayAvailable(), "valid trickplay metadata is available");
-    expect(timeline.trickplaySheetCount() == 3, "sheet count rounds up");
 
     const auto first = timeline.trickplayFrameAt(-1.0);
     expect(first.available && first.sheetIndex == 0 && first.offsetX == 0 && first.offsetY == 0,
@@ -71,7 +70,7 @@ void testTrickplay()
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("playback-timeline")
+SPOOL_TEST_MAIN("playback-timeline")
 {
     QCoreApplication application(argc, argv);
     testSegments();

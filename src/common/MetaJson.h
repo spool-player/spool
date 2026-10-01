@@ -1,6 +1,6 @@
 #pragma once
 
-#include "JellyfinTypes.h"
+#include "../media/MediaTypes.h"
 
 #include <QJsonArray>
 #include <QJsonObject>
@@ -11,7 +11,7 @@
 #include <QStringList>
 #include <QVariant>
 
-namespace JellyfinNative {
+namespace Spool {
 
 enum class MetaJsonKeyPolicy {
     CamelCase,
@@ -50,7 +50,7 @@ namespace MetaJsonDetail {
             return object.value(QStringLiteral("ProviderIds")).toObject().value(QStringLiteral("Tmdb"));
         if (policy == MetaJsonKeyPolicy::PascalCase && key == QStringLiteral("Year"))
             return object.value(QStringLiteral("ProductionYear"));
-        return { };
+        return {};
     }
 
     inline QJsonArray stringListToJson(const QStringList& items)
@@ -129,6 +129,8 @@ namespace MetaJsonDetail {
             return value.toDouble();
         case QMetaType::QStringList:
             return stringListToJson(value.toStringList());
+        case QMetaType::QVariantMap:
+            return QJsonObject::fromVariantMap(value.toMap());
         default:
             break;
         }
@@ -143,7 +145,7 @@ namespace MetaJsonDetail {
             return listToJson(qvariant_cast<QList<ExternalUrlInfo>>(value), policy);
 
         qFatal("Unsupported MetaJson property type: %s", type.name());
-        return { };
+        return {};
     }
 
     inline QVariant variantFromJson(const QJsonValue& value, QMetaType type, MetaJsonKeyPolicy policy)
@@ -161,6 +163,8 @@ namespace MetaJsonDetail {
             return value.toDouble();
         case QMetaType::QStringList:
             return stringListFromJson(value);
+        case QMetaType::QVariantMap:
+            return value.toObject().toVariantMap();
         default:
             break;
         }
@@ -175,7 +179,7 @@ namespace MetaJsonDetail {
             return QVariant::fromValue(listFromJson<ExternalUrlInfo>(value, policy));
 
         qFatal("Unsupported MetaJson property type: %s", type.name());
-        return { };
+        return {};
     }
 
     template <typename T> QJsonObject metaToJson(const T& value, MetaJsonKeyPolicy policy)
@@ -241,4 +245,4 @@ QList<T> metaListFromJson(const QJsonArray& array, MetaJsonKeyPolicy policy = Me
     return MetaJsonDetail::listFromJson<T>(array, policy);
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

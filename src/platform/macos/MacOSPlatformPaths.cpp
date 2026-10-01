@@ -6,7 +6,7 @@
 
 #include <mach-o/dyld.h>
 
-namespace JellyfinNative {
+namespace Spool {
 
 QString resolveAppRoot(const char *argv0)
 {
@@ -30,7 +30,7 @@ QString bundledFontsPath(const QString& appRootPath)
 
 QString startupCacheRoot(const QString&)
 {
-    const QByteArray configured = qgetenv("JELLYFIN_NATIVE_CACHE_HOME");
+    const QByteArray configured = qgetenv("SPOOL_CACHE_HOME");
     if (!configured.isEmpty())
         return QString::fromLocal8Bit(configured);
     return QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
@@ -53,4 +53,4 @@ QString appLogFileName()
     return QStringLiteral("spool.log");
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

@@ -4,7 +4,7 @@
 
 #include <utility>
 
-namespace JellyfinNative {
+namespace Spool {
 
 SystemPerformanceMonitor::SystemPerformanceMonitor(QObject *parent)
     : QObject(parent)
@@ -60,4 +60,4 @@ void SystemPerformanceMonitor::sample()
     emit metricsChanged();
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

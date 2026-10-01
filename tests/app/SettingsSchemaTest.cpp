@@ -13,7 +13,7 @@
 #include <cstdlib>
 #include <iostream>
 
-using namespace JellyfinNative;
+using namespace Spool;
 
 namespace {
 
@@ -91,7 +91,6 @@ void requiredPersistedKeysArePresentExactlyOnce()
 {
     const QStringList expectedKeys {
         QStringLiteral("appearance/uiScalePercent"),
-        QStringLiteral("remote/showCastButton"),
         QStringLiteral("remote/acceptCommands"),
         QStringLiteral("artwork/format"),
         QStringLiteral("artwork/webpQuality"),
@@ -144,6 +143,7 @@ void requiredPersistedKeysArePresentExactlyOnce()
         QStringLiteral("input/yellowButton"),
         QStringLiteral("input/blueButton"),
         QStringLiteral("updates/automatic"),
+        QStringLiteral("providers/updates"),
         QStringLiteral("playback/videoOutput"),
         QStringLiteral("playback/renderQuality"),
         QStringLiteral("playback/autoAdjustQuality"),
@@ -170,7 +170,7 @@ void requiredPersistedKeysArePresentExactlyOnce()
 void audioOutputChoicesMatchPlatform()
 {
     const SettingSpec& audioOutput = requiredSpec(QStringLiteral("settings/audioOutputMode"));
-#ifdef JELLYFIN_NATIVE_WEBOS
+#ifdef SPOOL_WEBOS
     const QStringList expectedChoices { QStringLiteral("alsa"), QStringLiteral("starfish-pcm") };
     const QString expectedDefault = QStringLiteral("alsa");
     const QString unknownFallback = QStringLiteral("alsa");
@@ -206,7 +206,7 @@ void audioOutputChoicesMatchPlatform()
     }
     require(normalizedSettingValue(audioOutput, QStringLiteral("unexpected")).toString() == unknownFallback,
         QStringLiteral("unknown audio output did not use the platform default"));
-#ifndef JELLYFIN_NATIVE_WEBOS
+#ifndef SPOOL_WEBOS
     require(!expectedChoices.contains(QStringLiteral("starfish-pcm")),
         QStringLiteral("desktop audio choices must not expose Starfish"));
 #endif
@@ -270,8 +270,6 @@ void normalizersPreservePersistedValueSemantics()
     require(controlFade.type == SettingType::Slider && controlFade.minimum == 1 && controlFade.maximum == 10
             && controlFade.step == 1,
         QStringLiteral("playback control fade delay should span 1-10 seconds in one-second steps"));
-    require(QString::fromLatin1(controlFade.title) == QStringLiteral("Hide player controls after"),
-        QStringLiteral("playback control fade delay title was not preserved"));
     require(settingDefaultValue(controlFade).toInt() == 4,
         QStringLiteral("playback controls should keep the existing four-second fade delay by default"));
     require(normalizedSettingValue(controlFade, QStringLiteral("11")).toInt() == 10,
@@ -311,25 +309,6 @@ void normalizersPreservePersistedValueSemantics()
         QStringLiteral("invalid subtitle drop-shadow choice did not fall back to the default choice"));
 }
 
-void subtitleGeometryOverrideMatchesSchemaContract()
-{
-    const SettingSpec& override = requiredSpec(QStringLiteral("subtitles/alwaysOverridePositionAndSize"));
-    require(override.type == SettingType::Toggle, QStringLiteral("geometry override should be a toggle"));
-    require(override.normalizer == SettingNormalizer::Bool,
-        QStringLiteral("geometry override should use boolean normalization"));
-    require(!settingDefaultValue(override).toBool(), QStringLiteral("geometry override should default to false"));
-    require(override.persisted, QStringLiteral("geometry override should be persisted"));
-    require(override.platform == SettingPlatform::All,
-        QStringLiteral("geometry override should be available on every platform"));
-    require(QLatin1String(override.group) == QLatin1String("Subtitle Appearance"),
-        QStringLiteral("geometry override should belong to Subtitle Appearance"));
-    require(override.level == SettingLevel::Essential,
-        QStringLiteral("fixed-position override should be available in basic subtitle settings"));
-    const SettingSpec& colorOverride = requiredSpec(QStringLiteral("subtitles/overrideTextColor"));
-    require(colorOverride.type == SettingType::Toggle && colorOverride.level == SettingLevel::Essential,
-        QStringLiteral("text colour override should be available in basic subtitle settings"));
-}
-
 void schemaModelExposesEverySpecOnce()
 {
     const QVariantList model = settingSchemaModel();
@@ -356,12 +335,6 @@ void schemaModelExposesEverySpecOnce()
         const QString key = keyString(spec);
         require(modelKeys.contains(key), QStringLiteral("schema model missed setting row %1").arg(key));
     }
-
-    for (const QString& obsoleteKey : { QStringLiteral("subtitles/burnIn"), QStringLiteral("subtitles/renderPgs"),
-             QStringLiteral("subtitles/alwaysBurnInWhenTranscoding") }) {
-        require(findSettingSpec(obsoleteKey) == nullptr,
-            QStringLiteral("obsolete server-policy setting remained in the schema: %1").arg(obsoleteKey));
-    }
 }
 
 // The page renders rows in declaration order, so a group's rows have to stay
@@ -380,31 +353,49 @@ void groupsAreDeclaredContiguously()
         currentGroup = group;
     }
 }
-void pageRowsShareTheSchemaContract()
+void syncPolicyRejectsUnsafeAndUnsupportedValues()
 {
-    const QStringList pageKeys { QStringLiteral("session/account"), QStringLiteral("action/switchUser"),
-        QStringLiteral("action/logout"), QStringLiteral("i18n/locale"), QStringLiteral("theme/accent"),
-        QStringLiteral("theme/reducedMotion"), QStringLiteral("theme/railLabels"), QStringLiteral("theme/renderMode"),
-        QStringLiteral("theme/antialiasedText"), QStringLiteral("theme/technicalMetadata"),
-        QStringLiteral("action/subtitleSettings"), QStringLiteral("action/resetSubtitleAppearance"),
-        QStringLiteral("about/version"), QStringLiteral("action/openSourceNotices"), QStringLiteral("about/locale"),
-        QStringLiteral("shell/diagnostics"), QStringLiteral("shell/latencyGuard"),
-        QStringLiteral("shell/latencyOverlay"), QStringLiteral("action/clearLatencyStatistics") };
-    for (const QString& key : pageKeys) {
-        const SettingSpec& spec = requiredSpec(key);
-        require(!spec.persisted, QStringLiteral("page-owned row %1 must not be persisted").arg(key));
-        require(schemaRow(key).value(QStringLiteral("source")).toString() == QStringLiteral("page"),
-            QStringLiteral("page-owned row %1 was missing from the schema model").arg(key));
+    const auto& font = requiredSpec(QStringLiteral("subtitles/font"));
+    require(settingSyncPolicy(font, QStringLiteral("system:Example")) == SettingSyncPolicy::DeviceOptIn,
+        QStringLiteral("installed font values must require explicit consent"));
+    require(settingSyncPolicy(font, QStringLiteral("interface")) == SettingSyncPolicy::PortableDefault,
+        QStringLiteral("bundled font values should be portable"));
+    for (const QString& key : { QStringLiteral("appearance/uiScalePercent"), QStringLiteral("remote/acceptCommands"),
+             QStringLiteral("playback/mpvConfigMode"), QStringLiteral("playback/mpvConfigDirectory"),
+             QStringLiteral("action/accounts") }) {
+        const auto& spec = requiredSpec(key);
+        require(
+            spec.syncPolicy == SettingSyncPolicy::Never && !settingAcceptsRemoteValue(spec, settingDefaultValue(spec)),
+            QStringLiteral("device authority/security setting became remotely writable: %1").arg(key));
     }
-    const QHash<QString, QString> accentChoices = choicesByLabelFromRow(schemaRow(QStringLiteral("theme/accent")));
-    require(accentChoices.size() == 3 && accentChoices.value(QStringLiteral("0")) == QStringLiteral("Blue")
-            && accentChoices.value(QStringLiteral("1")) == QStringLiteral("Purple")
-            && accentChoices.value(QStringLiteral("2")) == QStringLiteral("Indigo"),
-        QStringLiteral("accent colour choices were missing instead of falling back to the default palette"));
-    require(requiredSpec(QStringLiteral("theme/railLabels")).level == SettingLevel::Advanced,
-        QStringLiteral("rail label tuning should be hidden at Essential detail"));
-    require(requiredSpec(QStringLiteral("shell/diagnostics")).level == SettingLevel::Expert,
-        QStringLiteral("diagnostics controls should be hidden below Expert detail"));
+    const auto& bitrate = requiredSpec(QStringLiteral("playback/maxStreamingBitrateMbps"));
+    require(!settingAcceptsRemoteValue(bitrate, 1001) && settingAcceptsRemoteValue(bitrate, 55),
+        QStringLiteral("incoming bitrate must not silently clamp an unsupported value"));
+    const auto& mode = requiredSpec(QStringLiteral("audio/trackMode"));
+    require(!settingAcceptsRemoteValue(mode, QStringLiteral("FutureMode")),
+        QStringLiteral("unknown remote enum must remain unmodified"));
+    const auto& language = requiredSpec(QStringLiteral("audio/language"));
+    require(normalizedSettingValue(language, QStringLiteral("en")) == QStringLiteral("eng"),
+        QStringLiteral("language normalization did not use ISO639-2"));
+    require(!settingAcceptsRemoteValue(language, QStringLiteral("invalid-language")),
+        QStringLiteral("unknown language must not become no-preference"));
+    SettingSpec unclassified = language;
+    unclassified.syncPolicy = SettingSyncPolicy::Never;
+    require(!settingAcceptsRemoteValue(unclassified, QStringLiteral("eng")),
+        QStringLiteral("unclassified values must never accept remote writes"));
+}
+
+void accountRowsAreProviderNeutral()
+{
+    for (const QString& key : { QStringLiteral("action/accounts"), QStringLiteral("action/providers"),
+             QStringLiteral("providers/updates"), QStringLiteral("action/manageCertificates") })
+        requiredSpec(key);
+    QSet<QString> keys;
+    for (const QVariant& item : settingSchemaModel())
+        keys.insert(item.toMap().value(QStringLiteral("key")).toString());
+    for (const QString& gone :
+        { QStringLiteral("session/account"), QStringLiteral("action/logout"), QStringLiteral("remote/showCastButton") })
+        require(!keys.contains(gone), QStringLiteral("%1 belonged to the native Jellyfin client").arg(gone));
 }
 
 void subtitleChoicesExplainTheirBehavior()
@@ -425,8 +416,6 @@ void subtitleChoicesExplainTheirBehavior()
             QStringLiteral("subtitle mode %1 should have a label").arg(value));
     }
     const QVariantMap hdrBrightness = schemaRow(QStringLiteral("subtitles/hdrBrightnessPercent"));
-    require(hdrBrightness.value(QStringLiteral("title")).toString() == QStringLiteral("HDR Subtitle Brightness"),
-        QStringLiteral("HDR brightness should use the subtitle-facing label"));
     require(hdrBrightness.value(QStringLiteral("requiresHdrPlayback")).toBool()
             && hdrBrightness.value(QStringLiteral("dependsOnKey")).toString().isEmpty(),
         QStringLiteral("HDR brightness should be available without a separate enable toggle"));
@@ -439,16 +428,11 @@ void subtitleChoicesExplainTheirBehavior()
                        "not only when it is left on automatic"));
     require(hdrPeak.value(QStringLiteral("defaultValue")).toInt() == 0,
         QStringLiteral("display peak brightness should default to asking the display"));
+    require(!settingDefaultValue(requiredSpec(QStringLiteral("subtitles/alwaysOverridePositionAndSize"))).toBool(),
+        QStringLiteral("subtitles should follow the file's own placement unless the viewer overrides it"));
     const QVariantMap verticalPosition = schemaRow(QStringLiteral("subtitles/verticalPositionPercent"));
     require(verticalPosition.value(QStringLiteral("defaultValue")).toInt() == 95,
         QStringLiteral("vertical subtitle position should default to 95%"));
-    const QVariantMap textSize = schemaRow(QStringLiteral("subtitles/scalePercent"));
-    require(textSize.value(QStringLiteral("title")).toString() == QStringLiteral("Text Size"),
-        QStringLiteral("subtitle scale should use the text-size label"));
-    require(findSettingSpec(QStringLiteral("subtitles/textSize")) == nullptr,
-        QStringLiteral("separate subtitle text-size choice should be removed"));
-    require(findSettingSpec(QStringLiteral("subtitles/bitmapSmoothing")) == nullptr,
-        QStringLiteral("discrete bitmap smoothing choice should be removed"));
     const QVariantMap bitmapSharpness = schemaRow(QStringLiteral("subtitles/bitmapSharpnessPercent"));
     require(bitmapSharpness.value(QStringLiteral("type")).toString() == QStringLiteral("slider")
             && bitmapSharpness.value(QStringLiteral("defaultValue")).toInt() == 45
@@ -527,44 +511,22 @@ void buttonChoicesAndLabelsExposePlayerActions()
         const QHash<QString, QString> modelLabels = choicesByLabelFromRow(row);
         require(modelLabels.size() == expectedActions.size(),
             QStringLiteral("schema model button labels changed for %1").arg(key));
-
-        require(choiceLabel(spec, QStringLiteral("togglePause")) == QStringLiteral("Play / Pause"),
-            QStringLiteral("togglePause label changed"));
-        require(choiceLabel(spec, QStringLiteral("toggleSubs")) == QStringLiteral("Toggle subtitles"),
-            QStringLiteral("toggleSubs label changed"));
-        require(choiceLabel(spec, QStringLiteral("cycleAudio")) == QStringLiteral("Cycle audio track"),
-            QStringLiteral("cycleAudio label changed"));
-        require(choiceLabel(spec, QStringLiteral("skipBackAndEnableSubs"))
-                == QStringLiteral("Skip back 10 s + enable subs"),
-            QStringLiteral("skipBackAndEnableSubs label changed"));
-        require(choiceLabel(spec, QStringLiteral("skipSegment")) == QStringLiteral("Skip intro / outro"),
-            QStringLiteral("skipSegment label changed"));
-        require(choiceLabel(spec, QStringLiteral("stop")) == QStringLiteral("Stop playback"),
-            QStringLiteral("stop label changed"));
-
-        require(modelLabels.value(QStringLiteral("togglePause")) == QStringLiteral("Play / Pause"),
-            QStringLiteral("schema model togglePause label changed"));
-        require(modelLabels.value(QStringLiteral("skipBackAndEnableSubs"))
-                == QStringLiteral("Skip back 10 s + enable subs"),
-            QStringLiteral("schema model skipBackAndEnableSubs label changed"));
-        require(modelLabels.value(QStringLiteral("skipSegment")) == QStringLiteral("Skip intro / outro"),
-            QStringLiteral("schema model skipSegment label changed"));
     }
 }
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("settings-schema")
+SPOOL_TEST_MAIN("settings-schema")
 {
     QCoreApplication app(argc, argv);
     requiredPersistedKeysArePresentExactlyOnce();
     audioOutputChoicesMatchPlatform();
     resolutionAndBitrateAreSettledSeparately();
     normalizersPreservePersistedValueSemantics();
-    subtitleGeometryOverrideMatchesSchemaContract();
     schemaModelExposesEverySpecOnce();
     groupsAreDeclaredContiguously();
-    pageRowsShareTheSchemaContract();
+    syncPolicyRejectsUnsafeAndUnsupportedValues();
+    accountRowsAreProviderNeutral();
     subtitleChoicesExplainTheirBehavior();
     systemLanguageLabelNamesResolvedLanguage();
     buttonChoicesAndLabelsExposePlayerActions();

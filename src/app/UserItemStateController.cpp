@@ -1,6 +1,5 @@
 #include "UserItemStateController.h"
 
-#include "../api/JellyfinApiFacade.h"
 #include "../common/AsyncTask.h"
 
 #include "BrowseSessionController.h"
@@ -8,12 +7,12 @@
 #include "HomeModelController.h"
 #include "SearchController.h"
 
-namespace JellyfinNative {
+namespace Spool {
 
-UserItemStateController::UserItemStateController(JellyfinApiFacade *api, BrowseSessionController *currentItems,
+UserItemStateController::UserItemStateController(UserItemStateSink *sink, BrowseSessionController *currentItems,
     HomeModelController *home, ContentModelController *content, SearchController *search, QObject *parent)
     : QObject(parent)
-    , m_api(api)
+    , m_api(sink)
     , m_browse(currentItems)
     , m_home(home)
     , m_content(content)
@@ -78,7 +77,7 @@ void UserItemStateController::recordPlaybackStopped(
         return;
     }
     applyPlayed(itemId, true);
-    if (!m_api || m_api->session().accessToken.isEmpty())
+    if (!m_api || !m_api->signedIn())
         return;
     Async::runScoped(
         this, m_api->setItemPlayed(itemId, true), []() {},
@@ -87,7 +86,7 @@ void UserItemStateController::recordPlaybackStopped(
 
 void UserItemStateController::setFavorite(const QString& itemId, bool favorite)
 {
-    if (itemId.isEmpty() || !m_api || m_api->session().accessToken.isEmpty())
+    if (itemId.isEmpty() || !m_api || !m_api->signedIn())
         return;
     applyFavorite(itemId, favorite);
     Async::runScoped(
@@ -100,7 +99,7 @@ void UserItemStateController::setFavorite(const QString& itemId, bool favorite)
 
 void UserItemStateController::setPlayed(const QString& itemId, bool played)
 {
-    if (itemId.isEmpty() || !m_api || m_api->session().accessToken.isEmpty())
+    if (itemId.isEmpty() || !m_api || !m_api->signedIn())
         return;
     applyPlayed(itemId, played);
     Async::runScoped(
@@ -113,7 +112,7 @@ void UserItemStateController::setPlayed(const QString& itemId, bool played)
 
 void UserItemStateController::clearProgress(const QString& itemId)
 {
-    if (itemId.isEmpty() || !m_api || m_api->session().accessToken.isEmpty())
+    if (itemId.isEmpty() || !m_api || !m_api->signedIn())
         return;
     applyResumeTicks(itemId, 0);
     applyPlayed(itemId, false);
@@ -122,4 +121,4 @@ void UserItemStateController::clearProgress(const QString& itemId)
         [this](const std::exception_ptr& error) { emit errorOccurred(exceptionMessage(error)); });
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

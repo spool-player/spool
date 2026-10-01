@@ -6,7 +6,7 @@
 
 class QProcess;
 
-namespace JellyfinNative {
+namespace Spool {
 
 class WebOSUpdateInstaller final : public QObject {
     Q_OBJECT
@@ -34,4 +34,4 @@ private:
     QByteArray m_errorOutput;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

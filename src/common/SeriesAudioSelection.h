@@ -1,8 +1,8 @@
 #pragma once
 
-#include "JellyfinTypes.h"
+#include "../media/MediaTypes.h"
 
-namespace JellyfinNative {
+namespace Spool {
 
 struct SeriesAudioPreference {
     QString language;
@@ -19,4 +19,4 @@ struct SeriesAudioPreference {
 SeriesAudioPreference seriesAudioPreferenceForSelection(const QList<MediaStreamInfo>& streams, int selectedStreamIndex);
 int matchingSeriesAudioStreamIndex(const QList<MediaStreamInfo>& streams, const SeriesAudioPreference& preference);
 
-} // namespace JellyfinNative
+} // namespace Spool

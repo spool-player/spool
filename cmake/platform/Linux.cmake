@@ -1,4 +1,4 @@
-function(jellyfin_resolve_linux_dependencies)
+function(spool_resolve_linux_dependencies)
     pkg_check_modules(MPV REQUIRED IMPORTED_TARGET mpv)
     find_package(OpenGL REQUIRED)
     # The compositor is the only thing on Linux that knows what the display can
@@ -9,7 +9,7 @@ function(jellyfin_resolve_linux_dependencies)
         REQUIRED NO_CMAKE_FIND_ROOT_PATH)
 endfunction()
 
-function(jellyfin_configure_linux_targets native_target core_target)
+function(spool_configure_linux_targets native_target core_target)
     # Keep the pinned upstream XML in source; scanner output belongs to the
     # build tree. Provenance and its retained license live beside the XML.
     set(color_management_xml

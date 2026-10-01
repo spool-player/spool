@@ -21,7 +21,7 @@
 
 #include <algorithm>
 
-namespace JellyfinNative {
+namespace Spool {
 namespace {
     constexpr SettingChoice kAndroidAudioChoices[] = { { "auto", "Automatic" } };
 
@@ -208,9 +208,8 @@ QStringList platformSystemSubtitleFonts()
 
 int platformDefaultUiScalePercent()
 {
-    // Handset dp calibration belongs to Metrics, so the user-facing default
-    // is 100%. Keep the existing remote-oriented TV default.
-    return platformCapabilities().isTV ? 80 : 100;
+    // Viewport/dp calibration belongs to Metrics; saved percentages are unchanged.
+    return 100;
 }
 
 const char *platformDefaultArtworkFormat()
@@ -244,10 +243,6 @@ const char *platformDefaultVideoOutput()
 bool platformUsesPerOutputAudioDelay()
 {
     return false;
-}
-bool platformDefaultCastButtonEnabled()
-{
-    return !platformCapabilities().isTV;
 }
 bool platformDefaultRemoteControlTargetEnabled()
 {
@@ -334,9 +329,9 @@ namespace CredentialStore {
     namespace {
         void ensureCredentialRoot()
         {
-            if (qEnvironmentVariableIsEmpty("JELLYFIN_CREDENTIAL_STORE_DIR")) {
+            if (qEnvironmentVariableIsEmpty("SPOOL_CREDENTIAL_STORE_DIR")) {
                 const QString root = QDir(persistentDataRoot()).filePath(QStringLiteral("credentials"));
-                qputenv("JELLYFIN_CREDENTIAL_STORE_DIR", root.toUtf8());
+                qputenv("SPOOL_CREDENTIAL_STORE_DIR", root.toUtf8());
             }
         }
     }
@@ -363,4 +358,4 @@ namespace CredentialStore {
     }
 } // namespace CredentialStore
 
-} // namespace JellyfinNative
+} // namespace Spool

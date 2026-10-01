@@ -4,677 +4,540 @@ import QtQuick
 import QtQuick.Layouts
 import "../theme"
 import "../primitives"
+import "../shell"
 
 FocusScope {
     id: root
-
+    property bool compact: false
+    readonly property real preferredMenuHeight: customContext ? Metrics.scaled(600) : Math.min(Metrics.scaled(680), Metrics.scaled(
+                                                                                                   150) + list.contentHeight)
+    property var customContext: null
     property var shell
-    property real shownPositionTicks: RemoteControl.positionTicks
+    property var remote: RemoteTargets
+    property var app: App
+    property var localPlayer: Player
     readonly property bool contentReady: true
-    readonly property var item: RemoteControl.nowPlayingItem || ({})
-    readonly property bool hasMedia: Boolean(item.movieId || item.title)
-    readonly property real remoteButtonSize: Math.max(Metrics.touchTargetPx, Math.min(Metrics.scaled(96), (width - 2
-                                                                                                           * Metrics.pageMarginPx
-                                                                                                           - Metrics.scaled(
-                                                                                                               52)) / 3.17))
-    readonly property real primaryRemoteButtonSize: Math.min(Metrics.scaled(112), remoteButtonSize * 1.17)
-    readonly property var seekPreviewData: positionSlider.dragging && RemoteControl.trickplayAvailable
-                                           ? RemoteControl.trickplayForTicks(shownPositionTicks) : ({})
-    readonly property bool seekPreviewReady: seekPreviewData && seekPreviewData.available === true
+    property bool choosing: true
+    property bool queueOpen: false
+    property string focusedKey: compact ? "target:" : "chooser"
+    property string editingKey: ""
+    property real editedValue: 0
+    readonly property var snapshot: remote.state || ({})
+    readonly property var selected: remote.selectedTarget || ({})
+    readonly property bool attached: remote.selectedTargetId.length > 0
+    readonly property var commands: snapshot.commands || []
+    // Position notifications update only the reading, not the row/queue model.
+    readonly property bool seekKnown: remote.positionTicks !== "" && remote.runtimeTicks !== "" && Number(
+                                          remote.runtimeTicks) > 0
+    readonly property var rows: buildRows()
+    readonly property int focusedIndex: rows.findIndex(row => row.key === focusedKey)
+    property int lastFocusedIndex: 0
+    onFocusedIndexChanged: if (focusedIndex >= 0)
+                               lastFocusedIndex = focusedIndex
+    readonly property var preview: snapshot.preview || null
+    readonly property int previewFrame: preview ? Math.min(preview.count - 1, Math.max(0, Math.floor(editedValue * 1000
+                                                                                                     / preview.intervalMs))) :
+                                                  0
+    readonly property int previewSheet: preview ? Math.floor(previewFrame / (preview.columns * preview.rows)) : 0
+    readonly property int previewTile: preview ? previewFrame % (preview.columns * preview.rows) : 0
 
-    focus: true
-
-    function formatTicks(ticks) {
-        const total = Math.max(0, Math.floor(Number(ticks || 0) / 10000000))
-        const hours = Math.floor(total / 3600)
-        const minutes = Math.floor((total % 3600) / 60)
-        const seconds = total % 60
-        const minuteText = hours > 0 && minutes < 10 ? "0" + minutes : String(minutes)
-        const secondText = seconds < 10 ? "0" + seconds : String(seconds)
-        return hours > 0 ? hours + ":" + minuteText + ":" + secondText : minuteText + ":" + secondText
+    function supports(action) {
+        return attached && commands.indexOf(action) >= 0
     }
-
-    function selectedTrackLabel(tracks, fallback) {
-        for (let index = 0; index < tracks.length; ++index)
-            if (tracks[index].selected)
-                return tracks[index].label
-        return fallback
+    function row(key, label, icon, extra) {
+        return Object.assign({
+                                 key: key,
+                                 label: label,
+                                 icon: icon || "",
+                                 enabled: true
+                             }, extra || {})
     }
-
-    function cycleTrack(tracks, select) {
-        if (!tracks || tracks.length === 0)
+    function buildRows() {
+        const result = compact ? [] : [row("chooser", choosing ? "Hide device chooser" : "Choose playback device",
+                                           "devices")]
+        if (choosing) {
+            // Local is always first, independent of progressive discovery order.
+            result.push(row("target:", "This device", "tv", {
+                                targetId: "",
+                                checked: !attached
+                            }))
+            for (const target of remote.targets || []) {
+                if (!target.id)
+                    continue
+                result.push(row("target:" + target.id, target.name, "cast", {
+                                    targetId: target.id,
+                                    detail: target.detail || "",
+                                    checked: target.id === remote.selectedTargetId
+                                }))
+            }
+            result.push(row("refresh", "Refresh devices", "refresh", {
+                                enabled: !remote.busy
+                            }))
+        }
+        if (!attached) {
+            result.push(row("local", "Browse and play on this device", "home"))
+            return result
+        }
+        if (localPlayer.sessionActive && supports("play"))
+            result.push(row("transfer", "Transfer this device’s playback here", "cast", {
+                                enabled: !remote.busy
+                            }))
+        const transport = [["previous", "Previous", "skip_previous"], ["pause", "Pause", "pause"], ["unpause", "Play",
+                                                                                                    "play_arrow"],
+                           ["stop", "Stop", "stop"], ["next", "Next", "skip_next"]]
+        for (const item of transport) {
+            if (!supports(item[0]))
+                continue
+            if (item[0] === "pause" && snapshot.state === "paused")
+                continue
+            if (item[0] === "unpause" && snapshot.state !== "paused" && snapshot.state !== "stopped")
+                continue
+            result.push(row(item[0], item[1], item[2], {
+                                command: {
+                                    action: item[0]
+                                },
+                                enabled: !remote.busy
+                            }))
+        }
+        if (supports("seek") && seekKnown)
+            result.push(row("seek", "Position", "schedule", {
+                                adjustable: true
+                            }))
+        if (supports("volume") && snapshot.volume !== undefined)
+            result.push(row("volume", "Volume", "volume_up", {
+                                adjustable: true
+                            }))
+        if (supports("mute") && snapshot.muted !== undefined)
+            result.push(row("mute", snapshot.muted ? "Unmute" : "Mute", "volume_off", {
+                                command: {
+                                    action: "mute",
+                                    value: !snapshot.muted
+                                }
+                            }))
+        if (supports("repeat")) {
+            for (const mode of ["RepeatNone", "RepeatAll", "RepeatOne"])
+                result.push(row("repeat:" + mode, mode === "RepeatNone" ? "Repeat off" : mode === "RepeatAll"
+                                                                          ? "Repeat all" : "Repeat one", "repeat", {
+                                    checked: snapshot.repeatMode === mode,
+                                    command: {
+                                        action: "repeat",
+                                        mode: mode
+                                    }
+                                }))
+        }
+        if (supports("shuffle") && snapshot.shuffled !== undefined)
+            result.push(row("shuffle", snapshot.shuffled ? "Disable shuffle" : "Enable shuffle", "shuffle", {
+                                checked: snapshot.shuffled,
+                                command: {
+                                    action: "shuffle",
+                                    value: !snapshot.shuffled
+                                }
+                            }))
+        for (const kind of ["audio", "subtitle"]) {
+            if (!supports(kind + "Track"))
+                continue
+            const tracks = snapshot[kind + "Tracks"] || []
+            if (kind === "subtitle")
+                result.push(row("subtitle:off", "Subtitles: Off", "subtitles", {
+                                    checked: tracks.length > 0 && !tracks.some(track => track.selected),
+                                    command: {
+                                        action: "subtitleTrack",
+                                        trackId: null
+                                    }
+                                }))
+            for (const track of tracks)
+                result.push(row(kind + ":" + track.id, (kind === "audio" ? "Audio: " : "Subtitles: ") + track.label,
+                                kind === "audio" ? "audiotrack" : "subtitles", {
+                                    checked: track.selected,
+                                    command: {
+                                        action: kind + "Track",
+                                        trackId: track.id
+                                    }
+                                }))
+        }
+        result.push(row("queue", queueOpen ? "Hide queue" : "Show queue", "queue_music"))
+        if (queueOpen) {
+            const entries = remote.queue || []
+            for (let i = 0; i < entries.length; ++i) {
+                const entry = entries[i]
+                const prefix = "entry:" + entry.entryId
+                result.push(row(prefix, String(i + 1) + ". " + entry.title, "play_arrow", {
+                                    entryId: entry.entryId,
+                                    checked: snapshot.currentEntryId === entry.entryId,
+                                    enabled: supports("queuePlay"),
+                                    command: {
+                                        action: "queuePlay",
+                                        entryId: entry.entryId
+                                    }
+                                }))
+                if (supports("queueRemove") && selected.queueEditing !== "none")
+                    result.push(row(prefix + ":remove", "Remove “" + entry.title + "”", "remove_circle_outline", {
+                                        entryId: entry.entryId,
+                                        command: {
+                                            action: "queueRemove",
+                                            entryId: entry.entryId
+                                        }
+                                    }))
+                if (supports("queueMove") && selected.queueEditing !== "none") {
+                    if (i > 0)
+                        result.push(row(prefix + ":up", "Move up", "arrow_upward", {
+                                            entryId: entry.entryId,
+                                            command: {
+                                                action: "queueMove",
+                                                entryId: entry.entryId,
+                                                index: i - 1,
+                                                afterEntryId: i > 1 ? entries[i - 2].entryId : null
+                                            }
+                                        }))
+                    if (i + 1 < entries.length)
+                        result.push(row(prefix + ":down", "Move down", "arrow_downward", {
+                                            entryId: entry.entryId,
+                                            command: {
+                                                action: "queueMove",
+                                                entryId: entry.entryId,
+                                                index: i + 1,
+                                                afterEntryId: entries[i + 1].entryId
+                                            }
+                                        }))
+                    else if (remote.queueHasMore)
+                        result.push(row(prefix + ":down", "Load next queue page to move down", "expand_more", {
+                                            entryId: entry.entryId,
+                                            loadAdjacent: true,
+                                            enabled: !remote.queueBusy
+                                        }))
+                }
+            }
+            if (remote.queueHasMore)
+                result.push(row("more", "Load more queue entries", "expand_more", {
+                                    enabled: !remote.queueBusy
+                                }))
+            result.push(row("queueRefresh", "Refresh queue", "refresh", {
+                                enabled: !remote.queueBusy
+                            }))
+        }
+        if (selected.customControls)
+            result.push(row("advanced", "Advanced device controls", "settings_remote"))
+        result.push(row("disconnect", "Control this device instead", "tv"))
+        return result
+    }
+    function syncVisibility() {
+        remote.setChooserVisible(visible && choosing)
+        remote.setQueueVisible(visible && attached && queueOpen)
+    }
+    onVisibleChanged: syncVisibility()
+    onChoosingChanged: syncVisibility()
+    onQueueOpenChanged: syncVisibility()
+    onAttachedChanged: {
+        editingKey = ""
+        if (!attached) {
+            choosing = true
+            queueOpen = false
+        }
+        syncVisibility()
+    }
+    Connections {
+        target: root.remote
+        function onSelectionChanged() {
+            root.editingKey = ""
+            root.customContext = null
+            root.syncVisibility()
+        }
+    }
+    Component.onCompleted: syncVisibility()
+    Component.onDestruction: {
+        if (customContext)
+            customContext.close()
+        remote.setChooserVisible(false)
+        remote.setQueueVisible(false)
+    }
+    onRowsChanged: {
+        if (!rows.some(entry => entry.key === focusedKey)) {
+            focusedKey = rows.length ? rows[Math.min(lastFocusedIndex, rows.length - 1)].key : ""
+            editingKey = ""
+        }
+        Qt.callLater(revealFocusedRow)
+    }
+    function revealFocusedRow() {
+        if (visible && Metrics.keyboardFocusActive && focusedIndex >= 0) {
+            list.forceLayout()
+            list.positionViewAtIndex(focusedIndex, ListView.Contain)
+        }
+    }
+    function actionable(entry) {
+        if (!entry || !entry.enabled)
+            return false
+        if (entry.entryId && remote.queueBusy)
+            return false
+        return !remote.busy || (!entry.command && !entry.adjustable && entry.key !== "transfer" && !entry.targetId)
+    }
+    function timeLabel(seconds) {
+        if (!isFinite(seconds))
+            return "Unknown"
+        const whole = Math.max(0, Math.floor(seconds))
+        return Math.floor(whole / 60) + ":" + (whole % 60 < 10 ? "0" : "") + whole % 60
+    }
+    function adjustmentValue(key) {
+        return key === editingKey ? editedValue : key === "seek" ? Number(remote.positionTicks) / 10000000 : Number(
+                                                                       snapshot.volume)
+    }
+    function stepperLabel(key) {
+        return key === "seek" ? timeLabel(adjustmentValue(key)) + " / " + timeLabel(Number(remote.runtimeTicks)
+                                                                                    / 10000000) : Math.round(
+                                    adjustmentValue(key)) + "%"
+    }
+    function beginEditing(key) {
+        if (editingKey === key)
             return
-        let selected = -1
-        for (let index = 0; index < tracks.length; ++index)
-            if (tracks[index].selected)
-                selected = index
-        const next = tracks[(selected + 1) % tracks.length]
-        select(Number(next.index))
+        editingKey = ""
+        editedValue = adjustmentValue(key)
+        editingKey = key
     }
-    function openTargetKeyboard() {
-        remoteKeyboard.text = ""
-        InputKeys.focus(remoteKeyboard)
-        Qt.inputMethod.show()
+    function adjust(key, direction) {
+        beginEditing(key)
+        const maximum = key === "seek" ? Math.floor(Number(remote.runtimeTicks) / 10000000) : 100
+        editedValue = Math.max(0, Math.min(maximum, editedValue + direction * (key === "seek" ? 10 : 5)))
     }
-
-    function commitTargetKeyboard() {
-        const text = remoteKeyboard.text
-        remoteKeyboard.text = ""
-        if (text.length > 0)
-            RemoteControl.sendGeneralCommand("SendString", {
-                                                 "String": text
-                                             })
-        Qt.inputMethod.hide()
-        Qt.callLater(function () {
-            InputKeys.focus(keyboardButton)
-        })
+    function commitEditing() {
+        if (!editingKey)
+            return
+        const seconds = Math.floor(editedValue)
+        const command = editingKey === "seek" ? {
+                                                    action: "seek",
+                                                    positionTicks: seconds === 0 ? "0" : String(seconds) + "0000000"
+                                                } : {
+            action: "volume",
+            value: Math.round(editedValue)
+        }
+        editingKey = ""
+        remote.send(command)
     }
-
+    function perform(entry) {
+        if (!actionable(entry))
+            return
+        focusedKey = entry.key
+        if (entry.adjustable) {
+            if (editingKey === entry.key)
+                commitEditing()
+            else
+                beginEditing(entry.key)
+        } else if (entry.targetId !== undefined) {
+            remote.selectTarget(entry.targetId)
+        } else if (entry.command)
+            remote.send(entry.command)
+        else if (entry.loadAdjacent)
+            remote.requestQueuePage(false)
+        else if (entry.key === "chooser")
+            choosing = !choosing
+        else if (entry.key === "refresh")
+            remote.refreshTargets()
+        else if (entry.key === "transfer")
+            app.transferPlaybackToRemote()
+        else if (entry.key === "queue")
+            queueOpen = !queueOpen
+        else if (entry.key === "more")
+            remote.requestQueuePage(false)
+        else if (entry.key === "queueRefresh")
+            remote.requestQueuePage(true)
+        else if (entry.key === "advanced") {
+            if (compact && remote.createAdvancedControls)
+                customContext = remote.createAdvancedControls()
+            else
+                remote.openAdvancedControls()
+        } else if (entry.key === "disconnect" || entry.key === "local") {
+            remote.disconnectTarget()
+            if (entry.key === "local" && shell)
+                shell.goHome()
+        }
+    }
+    function activate() {
+        if (customContext)
+            customSurface.activate()
+        else
+            perform(rows[focusedIndex])
+    }
+    function back() {
+        if (customContext) {
+            customContext.close()
+            customContext = null
+            return true
+        }
+        if (editingKey) {
+            editingKey = ""
+            return true
+        }
+        if (queueOpen) {
+            queueOpen = false
+            focusedKey = "queue"
+            return true
+        }
+        return false
+    }
     function routeKey(key, phase, repeat) {
-        if (phase !== "press" || repeat || !InputKeys.isDirection(key))
-            return InputKeys.isDirection(key)
-        const window = root.Window.window
-        const current = window ? window.activeFocusItem : null
-        const backwards = key === Qt.Key_Left || key === Qt.Key_Up
-        const next = current && current.nextItemInFocusChain ? current.nextItemInFocusChain(backwards) :
-                                                               disconnectButton
-        InputKeys.focus(next)
-        if (next && next.mapToItem) {
-            const point = next.mapToItem(content, 0, 0)
-            flick.contentY = Math.max(0, Math.min(flick.contentHeight - flick.height, point.y - Metrics.scaled(80)))
+        if (customContext)
+            return customSurface.routeKey(key, phase, repeat)
+        if (!InputKeys.isDirection(key))
+            return false
+        if (phase === "release")
+            return true
+        if (InputKeys.isHorizontal(key)) {
+            const entry = rows[focusedIndex]
+            if (entry && entry.adjustable && editingKey === entry.key)
+                adjust(entry.key, key === Qt.Key_Right ? 1 : -1)
+            return true
+        }
+        if (editingKey)
+            commitEditing()
+        const next = focusedIndex + (key === Qt.Key_Down ? 1 : -1)
+        if (next < 0 && shell)
+            shell.focusNavBar()
+        else if (rows.length) {
+            focusedKey = rows[Math.max(0, Math.min(rows.length - 1, next))].key
+            list.positionViewAtIndex(focusedIndex, ListView.Contain)
         }
         return true
     }
 
-    function activate() {
-        const window = root.Window.window
-        const current = window ? window.activeFocusItem : null
-        if (current && current.clicked)
-            current.clicked()
-    }
-
-    onActiveFocusChanged: if (activeFocus)
-    InputKeys.focus(RemoteControl.targetSelected ? disconnectButton : refreshButton)
-
-    Connections {
-        target: RemoteControl
-        function onStateChanged() {
-            if (!positionSlider.dragging)
-                root.shownPositionTicks = RemoteControl.predictedPositionTicks()
-        }
-        function onTargetChanged() {
-            if (RemoteControl.targetSelected)
-                RemoteControl.refreshTargets()
-        }
-    }
-    Connections {
-        target: Qt.inputMethod
-        function onVisibleChanged() {
-            if (!Qt.inputMethod.visible && remoteKeyboard.activeFocus)
-                root.commitTargetKeyboard()
-        }
-    }
-
-    Timer {
-        interval: 1000
-        repeat: true
-        running: root.visible && RemoteControl.targetSelected && !RemoteControl.paused
-        onTriggered: if (!positionSlider.dragging)
-        root.shownPositionTicks = RemoteControl.predictedPositionTicks()
-    }
-
-    Flickable {
-        id: flick
+    Rectangle {
         anchors.fill: parent
-        anchors.leftMargin: Metrics.pageMarginPx
-        anchors.rightMargin: Metrics.pageMarginPx
-        contentWidth: width
-        contentHeight: content.implicitHeight + Metrics.pageMarginPx * 2
-        boundsBehavior: Flickable.StopAtBounds
-        flickDeceleration: Metrics.flickDecelerationPx
-        maximumFlickVelocity: Metrics.maximumFlickVelocityPx
-        clip: true
-
-        ColumnLayout {
-            id: content
-            width: flick.width
-            spacing: Metrics.scaled(18)
-
-            RowLayout {
-                Layout.fillWidth: true
-                Layout.topMargin: Metrics.pageMarginPx
-                spacing: Metrics.scaled(12)
-
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: Metrics.scaled(2)
-
-                    AppText {
-                        Layout.fillWidth: true
-                        text: RemoteControl.targetSelected ? RemoteControl.selectedTargetName : "Remote Control"
-                        color: Theme.textPrimary
-                        font.pixelSize: Metrics.titleSizePx
-                        font.weight: Font.DemiBold
-                    }
-
-                    SecondaryText {
-                        Layout.fillWidth: true
-                        text: RemoteControl.targetSelected ? RemoteControl.selectedTargetDetail :
-                                                             "Choose a Jellyfin client"
-                        color: Theme.textMuted
-                        font.pixelSize: Metrics.metaSizePx
-                    }
-                }
-
-                ActionButton {
-                    id: refreshButton
-                    text: "Refresh"
-                    iconName: "refresh"
-                    onClicked: RemoteControl.refreshTargets()
-                }
-
-                ActionButton {
-                    id: disconnectButton
-                    visible: RemoteControl.targetSelected
-                    text: "Disconnect"
-                    iconName: "cast"
-                    onClicked: RemoteControl.clearTarget()
-                }
+        color: root.compact ? Theme.bgRaised : Theme.bg
+        radius: root.compact ? Theme.radiusPanel : 0
+        border.width: root.compact ? Theme.hoverBorderWidth : 0
+        border.color: Theme.borderStrong
+        MouseArea {
+            anchors.fill: parent
+            enabled: root.compact
+            acceptedButtons: Qt.AllButtons
+            onWheel: wheel => wheel.accepted = true
+        }
+    }
+    ColumnLayout {
+        visible: !root.customContext
+        anchors.fill: parent
+        anchors.margins: root.compact ? Metrics.scaled(16) : Metrics.pageMarginPx
+        spacing: Metrics.gapPx
+        RowLayout {
+            Layout.fillWidth: true
+            Image {
+                visible: source.toString().length > 0
+                source: root.snapshot.artwork || ""
+                Layout.preferredWidth: Metrics.scaled(90)
+                Layout.preferredHeight: Metrics.scaled(90)
+                fillMode: Image.PreserveAspectFit
+                asynchronous: true
             }
-
             ColumnLayout {
                 Layout.fillWidth: true
-                visible: !RemoteControl.targetSelected
-                EmptyPlaceholder {
+                AppText {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: Metrics.scaled(120)
-                    title: RemoteControl.busy ? "Looking for clients…" : "No client selected"
-                    detail: RemoteControl.busy ? "Checking active Jellyfin sessions" :
-                                                 "Use the Cast button or choose below"
+                    text: root.attached ? root.selected.name || "Remote playback" : "Playback devices"
+                    font.pixelSize: root.compact ? Metrics.bodySizePx + Metrics.scaled(2) : Metrics.titleSizePx
+                    elide: Text.ElideRight
                 }
-
-                Repeater {
-                    model: RemoteControl.targets
-
-                    delegate: ActionButton {
-                        required property var modelData
-                        Layout.fillWidth: true
-                        text: (modelData.deviceName || modelData.client || "Jellyfin client") + (modelData.userName
-                                                                                                 ? " — " + modelData.userName :
-                                                                                                   "")
-                        iconName: modelData.deviceType === "TV" ? "tv" : "devices"
-                        onClicked: RemoteControl.selectTarget(modelData.sessionId)
-                    }
-                }
-            }
-
-            Surface {
-                Layout.fillWidth: true
-                Layout.preferredHeight: nowPlayingLayout.implicitHeight + Metrics.scaled(32)
-                visible: RemoteControl.targetSelected
-                elevated: true
-                baseColor: Theme.bgRaised
-
-                RowLayout {
-                    id: nowPlayingLayout
-                    anchors.fill: parent
-                    anchors.margins: Metrics.scaled(16)
-                    spacing: Metrics.scaled(16)
-
-                    ImageCard {
-                        Layout.preferredWidth: Metrics.scaled(root.hasMedia ? 128 : 84)
-                        Layout.preferredHeight: width * 9 / 16
-                        imageUrl: root.hasMedia ? Art.url(root.item, "landscape") : ""
-                        fallbackText: root.hasMedia ? String(root.item.itemType || "Media") : "Idle"
-                        fallbackIcon: root.hasMedia ? "movie" : "cast_connected"
-                    }
-
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        spacing: Metrics.scaled(4)
-
-                        AppText {
-                            Layout.fillWidth: true
-                            text: RemoteControl.playbackPending ? "Starting " + (RemoteControl.pendingTitle
-                                                                                 || "playback") : root.hasMedia ? String(
-                                                                                                                      root.item.title
-                                                                                                                      || "Playing") :
-                                                                                                                  "Nothing playing"
-                            color: Theme.textPrimary
-                            font.pixelSize: Metrics.bodySizePx + Metrics.scaled(5)
-                            font.weight: Font.DemiBold
-                            maximumLineCount: 2
-                            elide: Text.ElideRight
-                        }
-
-                        SecondaryText {
-                            Layout.fillWidth: true
-                            text: RemoteControl.playbackPending ? "Waiting for " + RemoteControl.selectedTargetName :
-                                                                  String(root.item.seriesName || root.item.albumArtist
-                                                                         || root.item.album || "")
-                            font.pixelSize: Metrics.bodySizePx
-                            visible: text.length > 0
-                        }
-                    }
-                }
-            }
-
-            Surface {
-                Layout.fillWidth: true
-                Layout.preferredHeight: playbackColumn.implicitHeight + Metrics.scaled(32)
-                visible: RemoteControl.targetSelected && root.hasMedia
-                elevated: true
-                baseColor: Theme.bgRaised
-
-                ColumnLayout {
-                    id: playbackColumn
-                    anchors.fill: parent
-                    anchors.margins: Metrics.scaled(16)
-                    spacing: Metrics.scaled(12)
-
-                    SectionHeader {
-                        Layout.fillWidth: true
-                        title: "Playback"
-                    }
-
-                    Item {
-                        Layout.alignment: Qt.AlignHCenter
-                        Layout.preferredWidth: Math.min(content.width - Metrics.scaled(16), Metrics.scaled(320))
-                        Layout.preferredHeight: 0
-                        visible: root.seekPreviewReady
-                        z: 10
-
-                        Column {
-                            anchors.bottom: parent.top
-                            anchors.bottomMargin: Metrics.scaled(8)
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            width: parent.width
-                            spacing: Metrics.scaled(4)
-
-                            Rectangle {
-                                id: previewFrame
-                                readonly property real imageScale: root.seekPreviewReady && root.seekPreviewData.width
-                                                                   > 0 ? width / root.seekPreviewData.width : 1
-                                width: parent.width
-                                height: root.seekPreviewReady && root.seekPreviewData.width > 0 ? width
-                                                                                                  * root.seekPreviewData.height
-                                                                                                  / root.seekPreviewData.width :
-                                                                                                  0
-                                radius: Theme.radiusLarge
-                                color: "black"
-                                border.width: 1
-                                border.color: Theme.borderStrong
-                                clip: true
-
-                                Image {
-                                    source: root.seekPreviewReady ? "image://artwork/" + encodeURIComponent(
-                                                                        root.seekPreviewData.url) : ""
-                                    x: root.seekPreviewReady ? root.seekPreviewData.offsetX * previewFrame.imageScale :
-                                                               0
-                                    y: root.seekPreviewReady ? root.seekPreviewData.offsetY * previewFrame.imageScale :
-                                                               0
-                                    width: root.seekPreviewReady ? root.seekPreviewData.sheetWidth
-                                                                   * previewFrame.imageScale : 0
-                                    height: root.seekPreviewReady ? root.seekPreviewData.sheetHeight
-                                                                    * previewFrame.imageScale : 0
-                                    fillMode: Image.Stretch
-                                    cache: true
-                                    asynchronous: true
-                                }
-                            }
-
-                            AppText {
-                                id: previewClock
-                                anchors.horizontalCenter: parent.horizontalCenter
-                                text: root.formatTicks(root.shownPositionTicks)
-                                color: Theme.textPrimary
-                                font.pixelSize: Metrics.bodySizePx
-                                font.weight: Font.Medium
-                            }
-                        }
-                    }
-
-                    InlineSlider {
-                        id: positionSlider
-                        Layout.leftMargin: Metrics.scaled(8)
-                        Layout.rightMargin: Metrics.scaled(8)
-                        from: 0
-                        to: Math.max(1, RemoteControl.runtimeTicks)
-                        value: root.shownPositionTicks
-                        interactionMargin: Metrics.scaled(16)
-                        barHeight: Metrics.scaled(8)
-                        handleSize: Metrics.scaled(22)
-                        accented: true
-                        onMoved: newValue => {
-                            root.shownPositionTicks = newValue
-                            if (dragging)
-                                RemoteControl.previewSeek(Math.round(newValue), true)
-                        }
-                        onCommitted: newValue => {
-                            RemoteControl.cancelSeekPreview()
-                            RemoteControl.seek(Math.round(newValue))
-                        }
-                    }
-
-                    RowLayout {
-
-                        SecondaryText {
-                            text: root.formatTicks(root.shownPositionTicks)
-                        }
-                        Item {}
-                        SecondaryText {
-                            text: root.formatTicks(RemoteControl.runtimeTicks)
-                        }
-                    }
-
-                    RowLayout {
-                        Layout.alignment: Qt.AlignHCenter
-                        spacing: Metrics.scaled(8)
-
-                        IconButton {
-                            iconName: "skip_previous"
-                            accessibleName: "Previous"
-                            onClicked: RemoteControl.previousTrack()
-                        }
-                        IconButton {
-                            iconName: "replay_10"
-                            accessibleName: "Back 10 seconds"
-                            onClicked: RemoteControl.seekRelative(-100000000)
-                        }
-                        IconButton {
-                            width: Math.max(Metrics.touchTargetPx, Metrics.scaled(62))
-                            height: width
-                            iconName: RemoteControl.paused ? "play_arrow" : "pause"
-                            accessibleName: RemoteControl.paused ? "Play" : "Pause"
-                            selected: true
-                            onClicked: RemoteControl.togglePause()
-                        }
-                        IconButton {
-                            iconName: "forward_10"
-                            accessibleName: "Forward 10 seconds"
-                            onClicked: RemoteControl.seekRelative(100000000)
-                        }
-                        IconButton {
-                            iconName: "skip_next"
-                            accessibleName: "Next"
-                            onClicked: RemoteControl.nextTrack()
-                        }
-                        IconButton {
-                            iconName: "stop"
-                            accessibleName: "Stop"
-                            onClicked: RemoteControl.stopPlayback()
-                        }
-                    }
-
-                    RowLayout {
-                        spacing: Metrics.scaled(12)
-
-                        IconButton {
-                            iconName: RemoteControl.muted ? "volume_off" : "volume_up"
-                            accessibleName: RemoteControl.muted ? "Unmute" : "Mute"
-                            onClicked: RemoteControl.toggleMute()
-                        }
-
-                        InlineSlider {
-                            id: volumeSlider
-                            from: 0
-                            to: 100
-                            value: RemoteControl.volume
-                            stepSize: 1
-                            interactionMargin: Metrics.scaled(16)
-                            onCommitted: newValue => RemoteControl.setVolume(Math.round(newValue))
-                        }
-
-                        SecondaryText {
-                            text: RemoteControl.volume + "%"
-                            color: Theme.textSecondary
-                        }
-                    }
-
-                    RowLayout {
-                        spacing: Metrics.scaled(8)
-
-                        ActionButton {
-                            visible: RemoteControl.audioTracks.length > 1
-                            text: "Audio: " + root.selectedTrackLabel(RemoteControl.audioTracks, "Default")
-                            iconName: "audiotrack"
-                            onClicked: root.cycleTrack(RemoteControl.audioTracks, function (index) {
-                                RemoteControl.selectAudioTrack(index)
-                            })
-                        }
-                        ActionButton {
-                            visible: RemoteControl.subtitleTracks.length > 0
-                            text: "Subtitles: " + root.selectedTrackLabel(RemoteControl.subtitleTracks, "Off")
-                            iconName: "subtitles"
-                            onClicked: root.cycleTrack(RemoteControl.subtitleTracks, function (index) {
-                                RemoteControl.selectSubtitleTrack(index)
-                            })
-                        }
-                        ActionButton {
-                            text: RemoteControl.repeatMode === "RepeatNone" ? "Repeat off" : RemoteControl.repeatMode
-                            iconName: "repeat"
-                            onClicked: RemoteControl.setRepeatMode(RemoteControl.repeatMode === "RepeatNone"
-                                                                   ? "RepeatAll" : RemoteControl.repeatMode
-                                                                     === "RepeatAll" ? "RepeatOne" : "RepeatNone")
-                        }
-                        ActionButton {
-                            text: RemoteControl.shuffled ? "Shuffled" : "Shuffle"
-                            iconName: "shuffle"
-                            onClicked: RemoteControl.setShuffled(!RemoteControl.shuffled)
-                        }
-                    }
-                }
-            }
-
-            Surface {
-                Layout.fillWidth: true
-                Layout.preferredHeight: navigationColumn.implicitHeight + Metrics.scaled(32)
-                visible: RemoteControl.targetSelected
-                elevated: true
-                baseColor: Theme.bgRaised
-
-                ColumnLayout {
-                    id: navigationColumn
-                    anchors.fill: parent
-                    anchors.margins: Metrics.scaled(16)
-                    spacing: Metrics.scaled(14)
-
-                    SectionHeader {
-                        Layout.fillWidth: true
-                        title: "Navigation"
-                    }
-
-                    SecondaryText {
-                        Layout.fillWidth: true
-                        text: "Control the screen on " + RemoteControl.selectedTargetName
-                    }
-
-                    GridLayout {
-                        Layout.alignment: Qt.AlignHCenter
-                        columns: 3
-                        rowSpacing: Metrics.scaled(10)
-                        columnSpacing: Metrics.scaled(10)
-
-                        Item {
-                            Layout.preferredWidth: root.remoteButtonSize
-                            Layout.preferredHeight: root.remoteButtonSize
-                        }
-                        IconButton {
-                            width: root.remoteButtonSize
-                            height: width
-                            iconName: "keyboard_arrow_up"
-                            accessibleName: "Up"
-                            onClicked: RemoteControl.sendGeneralCommand("MoveUp")
-                        }
-                        Item {
-                            Layout.preferredWidth: root.remoteButtonSize
-                            Layout.preferredHeight: root.remoteButtonSize
-                        }
-                        IconButton {
-                            width: root.remoteButtonSize
-                            height: width
-                            iconName: "keyboard_arrow_left"
-                            accessibleName: "Left"
-                            onClicked: RemoteControl.sendGeneralCommand("MoveLeft")
-                        }
-                        IconButton {
-                            width: root.primaryRemoteButtonSize
-                            height: width
-                            iconName: "radio_button_checked"
-                            accessibleName: "Select"
-                            selected: true
-                            onClicked: RemoteControl.sendGeneralCommand("Select")
-                        }
-                        IconButton {
-                            width: root.remoteButtonSize
-                            height: width
-                            iconName: "keyboard_arrow_right"
-                            accessibleName: "Right"
-                            onClicked: RemoteControl.sendGeneralCommand("MoveRight")
-                        }
-                        IconButton {
-                            width: root.remoteButtonSize
-                            height: width
-                            iconName: "arrow_back"
-                            accessibleName: "Back"
-                            onClicked: RemoteControl.sendGeneralCommand("Back")
-                        }
-                        IconButton {
-                            width: root.remoteButtonSize
-                            height: width
-                            iconName: "keyboard_arrow_down"
-                            accessibleName: "Down"
-                            onClicked: RemoteControl.sendGeneralCommand("MoveDown")
-                        }
-                        IconButton {
-                            width: root.remoteButtonSize
-                            height: width
-                            iconName: "menu"
-                            accessibleName: "Menu"
-                            onClicked: RemoteControl.sendGeneralCommand("ToggleContextMenu")
-                        }
-                    }
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: Metrics.scaled(8)
-
-                        ActionButton {
-                            Layout.fillWidth: true
-                            text: "Home"
-                            iconName: "home"
-                            onClicked: RemoteControl.sendGeneralCommand("GoHome")
-                        }
-                        ActionButton {
-                            Layout.fillWidth: true
-                            text: "Search"
-                            iconName: "search"
-                            onClicked: RemoteControl.sendGeneralCommand("GoToSearch")
-                        }
-                        ActionButton {
-                            id: keyboardButton
-                            Layout.fillWidth: true
-                            visible: !Platform.isTV
-                            text: "Keyboard"
-                            iconName: "keyboard"
-                            onClicked: root.openTargetKeyboard()
-                        }
-                    }
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: Metrics.scaled(8)
-
-                        ActionButton {
-                            Layout.fillWidth: true
-                            text: "Settings"
-                            iconName: "settings"
-                            onClicked: RemoteControl.sendGeneralCommand("GoToSettings")
-                        }
-                        ActionButton {
-                            Layout.fillWidth: true
-                            text: "Player overlay"
-                            iconName: "picture_in_picture_alt"
-                            onClicked: RemoteControl.sendGeneralCommand("ToggleOsd")
-                        }
-                    }
-
-                    TextInput {
-                        id: remoteKeyboard
-                        Layout.preferredWidth: 1
-                        Layout.preferredHeight: 1
-                        opacity: 0
-                        inputMethodHints: Qt.ImhNoPredictiveText
-                        onAccepted: root.commitTargetKeyboard()
-                    }
-                }
-            }
-
-            ColumnLayout {
-                Layout.fillWidth: true
-                visible: RemoteControl.targetSelected && RemoteControl.queue.length > 0
-                spacing: Metrics.scaled(6)
-
-                SectionHeader {
+                AppText {
                     Layout.fillWidth: true
-                    title: "Playback queue"
-                }
-
-                Repeater {
-                    model: RemoteControl.queue
-
-                    delegate: Surface {
-                        required property int index
-                        required property var modelData
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: Metrics.controlHeightPx + Metrics.scaled(10)
-                        baseColor: modelData.current ? Theme.accentPanel : Theme.bgPanel
-
-                        RowLayout {
-                            anchors.fill: parent
-                            anchors.leftMargin: Metrics.scaled(14)
-                            anchors.rightMargin: Metrics.scaled(8)
-                            spacing: Metrics.scaled(6)
-
-                            AppText {
-                                Layout.fillWidth: true
-                                text: (modelData.current ? "Now playing · " : "") + (modelData.title
-                                                                                     || modelData.seriesName
-                                                                                     || "Queue item " + (index + 1))
-                                color: Theme.textPrimary
-                                font.pixelSize: Metrics.bodySizePx
-                                elide: Text.ElideRight
-                            }
-                            IconButton {
-                                iconName: "play_arrow"
-                                accessibleName: "Play queue item"
-                                onClicked: RemoteControl.playQueueItem(index)
-                            }
-                            IconButton {
-                                enabled: index > 0
-                                iconName: "keyboard_arrow_up"
-                                accessibleName: "Move up"
-                                onClicked: RemoteControl.moveQueueItem(index, index - 1)
-                            }
-                            IconButton {
-                                enabled: index + 1 < RemoteControl.queue.length
-                                iconName: "keyboard_arrow_down"
-                                accessibleName: "Move down"
-                                onClicked: RemoteControl.moveQueueItem(index, index + 1)
-                            }
-                            IconButton {
-                                iconName: "delete"
-                                accessibleName: "Remove"
-                                onClicked: RemoteControl.removeQueueItem(index)
-                            }
-                        }
-                    }
+                    text: root.attached ? (root.snapshot.title || (root.snapshot.state === "stopped" ? "Nothing playing" :
+                                                                                                       "Remote media"))
+                                          + " · " + (root.snapshot.state || "Connecting") :
+                                          "Choosing a device does not start or transfer playback."
+                    wrapMode: Text.WordWrap
+                    font.pixelSize: Metrics.bodySizePx
                 }
             }
-
-            Item {
-                Layout.fillWidth: true
-                Layout.preferredHeight: Metrics.pageMarginPx
+        }
+        AppText {
+            Layout.fillWidth: true
+            visible: !root.compact || root.remote.problem.length > 0 || root.remote.busy || root.editingKey.length > 0
+            text: root.remote.problem || (root.remote.busy ? "Working…" : root.editingKey
+                                                             ? "Left and Right adjust. OK saves; Back cancels." :
+                                                               "Up and Down choose a control. OK activates or edits.")
+            color: root.remote.problem ? Theme.errorText : Theme.textSecondary
+            font.pixelSize: Metrics.bodySizePx
+            wrapMode: Text.WordWrap
+        }
+        AppText {
+            visible: root.queueOpen && root.selected.queueEditing === "replace"
+            Layout.fillWidth: true
+            text: "Queue changes restart remote playback. The current position is preserved when its entry remains."
+            font.pixelSize: Metrics.bodySizePx
+            color: Theme.textSecondary
+            wrapMode: Text.WordWrap
+        }
+        Image {
+            visible: root.editingKey === "seek" && root.preview !== null
+            Layout.alignment: Qt.AlignHCenter
+            Layout.preferredWidth: Metrics.scaled(240)
+            Layout.preferredHeight: root.preview ? width * root.preview.height / root.preview.width : 0
+            source: visible ? "image://artwork/" + encodeURIComponent(root.preview.urlTemplate.replace("{index}", String(
+                                                                                                           root.previewSheet))) :
+                              ""
+            sourceClipRect: root.preview ? Qt.rect((root.previewTile % root.preview.columns) * root.preview.width,
+                                                   Math.floor(root.previewTile / root.preview.columns)
+                                                   * root.preview.height, root.preview.width, root.preview.height) :
+                                           Qt.rect(0, 0, 0, 0)
+            fillMode: Image.PreserveAspectFit
+            asynchronous: true
+        }
+        ListView {
+            id: list
+            objectName: "remoteControlsList"
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            clip: true
+            model: root.rows
+            currentIndex: root.focusedIndex
+            boundsBehavior: Flickable.StopAtBounds
+            delegate: MenuRow {
+                required property var modelData
+                width: list.width
+                label: modelData.label
+                detail: modelData.detail || ""
+                iconName: modelData.icon
+                checked: Boolean(modelData.checked)
+                highlighted: root.focusedKey === modelData.key
+                actionable: root.actionable(modelData)
+                stepperVisible: Boolean(modelData.adjustable)
+                stepperEnabled: actionable
+                stepperText: modelData.adjustable ? root.stepperLabel(modelData.key) : ""
+                onActivated: {
+                    root.perform(modelData)
+                    InputKeys.focus(root)
+                }
+                onDecreaseRequested: {
+                    root.adjust(modelData.key, -1)
+                    root.commitEditing()
+                }
+                onIncreaseRequested: {
+                    root.adjust(modelData.key, 1)
+                    root.commitEditing()
+                }
+                Accessible.name: label
+                Accessible.description: detail
+                Accessible.selected: checked
+            }
+            FastWheelHandler {
+                flickable: list
+            }
+        }
+    }
+    ColumnLayout {
+        anchors.fill: parent
+        anchors.margins: Metrics.scaled(12)
+        visible: root.customContext !== null
+        ActionButton {
+            text: "Back to devices"
+            kind: "flat"
+            iconName: "arrow_back"
+            onClicked: root.back()
+        }
+        ProviderSurface {
+            id: customSurface
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            embedded: true
+            context: root.customContext
+            onFinished: {
+                root.customContext = null
+                InputKeys.focus(root)
             }
         }
     }

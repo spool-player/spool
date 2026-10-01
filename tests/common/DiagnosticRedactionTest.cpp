@@ -1,5 +1,5 @@
-#include "common/JellyfinTypes.h"
 #include "diagnostics/Diagnostics.h"
+#include "media/MediaTypes.h"
 
 #include "TestMain.h"
 
@@ -11,8 +11,8 @@
 #include <cstdlib>
 #include <iostream>
 
-using JellyfinNative::sanitizedDiagnosticUrl;
-using JellyfinNative::sanitizedLogMessage;
+using Spool::sanitizedDiagnosticUrl;
+using Spool::sanitizedLogMessage;
 
 namespace {
 
@@ -26,7 +26,7 @@ void require(bool condition, const char *message)
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("diagnostic-redaction")
+SPOOL_TEST_MAIN("diagnostic-redaction")
 {
     const QString query = sanitizedDiagnosticUrl(
         QStringLiteral("https://server/QuickConnect/Connect?SeCrEt=first%26TOKEN%3Dsecond&api_key=third"));
@@ -53,8 +53,7 @@ JELLYFIN_TEST_MAIN("diagnostic-redaction")
     require(!personal.contains(QStringLiteral("Recognisable")), "media title should be removed");
     require(!personal.contains(QStringLiteral("0123456789abcdef")), "stable item ID should be removed");
     require(!personal.contains(QStringLiteral("192.168.1.25")), "network address should be removed");
-    const QJsonObject report
-        = QJsonDocument::fromJson(JellyfinNative::Diagnostics::supportReportPreview().toUtf8()).object();
+    const QJsonObject report = QJsonDocument::fromJson(Spool::Diagnostics::supportReportPreview().toUtf8()).object();
     QStringList keys = report.keys();
     keys.sort();
     const QStringList expectedKeys { QStringLiteral("appVersion"), QStringLiteral("architecture"),

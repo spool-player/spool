@@ -229,15 +229,15 @@ ares-launch "${ares_args[@]}" "$app_id" | tee "$outdir/ares-launch.log"
 sleep "$launch_wait"
 
 echo "Capturing process snapshot and logs"
-ssh -F /dev/null -o BatchMode=yes "$host" "ps | grep '$app_id\|jellyfin-native' | grep -v grep || true" \
+ssh -F /dev/null -o BatchMode=yes "$host" "ps | grep '$app_id\|spool' | grep -v grep || true" \
   >"$outdir/ps.txt"
 for remote in \
   "/tmp/${app_id}/${app_id}.log" \
-  "/tmp/${app_id}/spool-jellyfin-mpv.log" \
+  "/tmp/${app_id}/spool-mpv.log" \
   "/media/cryptofs/apps/usr/palm/applications/${app_id}/.cache/logs/${app_id}.log" \
-  "/media/cryptofs/apps/usr/palm/applications/${app_id}/.cache/logs/spool-jellyfin-mpv.log" \
+  "/media/cryptofs/apps/usr/palm/applications/${app_id}/.cache/logs/spool-mpv.log" \
   "/tmp/${app_id}.log" \
-  "/tmp/spool-jellyfin-mpv.log" \
+  "/tmp/spool-mpv.log" \
   "/tmp/${app_id}-diagnostics/current-instance.json" \
   "/var/palm/data/${app_id}/diagnostics/current-instance.json"; do
   local_name="${remote#/}"

@@ -10,7 +10,7 @@
 
 #include <mpv/client.h>
 
-namespace JellyfinNative {
+namespace Spool {
 namespace {
     QMetaObject::Connection g_renderErrorConnection;
 
@@ -26,7 +26,7 @@ namespace {
 
 bool platformIdleMpvPreparationEnabled()
 {
-    const bool enabled = qEnvironmentVariable("JELLYFIN_DISABLE_IDLE_MPV") != QLatin1String("1");
+    const bool enabled = qEnvironmentVariable("SPOOL_DISABLE_IDLE_MPV") != QLatin1String("1");
     qInfo() << "player: idle mpv preparation" << (enabled ? "enabled" : "disabled");
     return enabled;
 }
@@ -136,4 +136,4 @@ void platformAudioTrackChanged(int index)
 // there is no surface here for this to reshape.
 void platformVideoSizeChanged(int, int) { }
 
-} // namespace JellyfinNative
+} // namespace Spool

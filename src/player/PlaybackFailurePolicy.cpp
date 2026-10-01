@@ -3,7 +3,33 @@
 #include <algorithm>
 #include <mpv/client.h>
 
-namespace JellyfinNative {
+namespace Spool {
+
+namespace {
+    // Container and playlist durations can disagree with the last decoded
+    // frame by a second or two; a real cut-off lands well before this.
+    constexpr double kEndToleranceSeconds = 10.0;
+    constexpr double kResumeProgressSeconds = 30.0;
+} // namespace
+
+PlaybackFailurePolicy::FileEnd PlaybackFailurePolicy::classifyFileEnd(
+    bool failed, int mpvReason, double positionSeconds, double durationSeconds)
+{
+    if (failed)
+        return FileEnd::Failed;
+    if (mpvReason != MPV_END_FILE_REASON_EOF)
+        return FileEnd::Stopped;
+    // Without a duration there is nothing to measure against, as for a live
+    // stream, so its end is taken at its word.
+    if (durationSeconds <= 0.0 || positionSeconds >= durationSeconds - kEndToleranceSeconds)
+        return FileEnd::Completed;
+    return FileEnd::Interrupted;
+}
+
+bool PlaybackFailurePolicy::shouldResumeInterrupted(double startSeconds, double positionSeconds)
+{
+    return positionSeconds >= startSeconds + kResumeProgressSeconds;
+}
 
 bool PlaybackFailurePolicy::isRetryableCodecFailure(const QString& playMethod, bool failedBeforeLoad, int mpvError)
 {
@@ -40,4 +66,4 @@ void PlaybackFailurePolicy::prepareFallbackSession(PlaybackSession& session,
     session.restoreStreamSelection = true;
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

@@ -25,7 +25,7 @@ TestCase {
         const values = {
             "playback/mpvConfigMode": "custom"
         }
-        const lookup = valueLookup(values);
+        const lookup = valueLookup(values)
         // Stands in for the Platform singleton. webOS and Android TV are both
         // televisions, so isTV alone cannot tell a webOS-only row from an
         // Android one -- which is why each platform is asked about directly.
@@ -181,6 +181,257 @@ TestCase {
         compare(model.get(2).rowKey, "insert-two")
         compare(model.get(3).rowKey, "suffix")
         compare(model.get(3).showHeader, true)
+        model.destroy()
+    }
+
+    function test_syncSubfocusRouting_data() {
+        return [
+                    {
+                        tag: "enter-icon",
+                        mode: "row",
+                        action: "right",
+                        sync: true,
+                        edit: true,
+                        next: "sync-action",
+                        effect: "none"
+                    },
+                    {
+                        tag: "icon-does-not-advance",
+                        mode: "sync-action",
+                        action: "right",
+                        sync: true,
+                        edit: true,
+                        next: "sync-action",
+                        effect: "none"
+                    },
+                    {
+                        tag: "toggle-only-sync",
+                        mode: "sync-action",
+                        action: "activate",
+                        sync: true,
+                        edit: true,
+                        next: "sync-action",
+                        effect: "toggle-sync"
+                    },
+                    {
+                        tag: "leave-icon-left",
+                        mode: "sync-action",
+                        action: "left",
+                        sync: true,
+                        edit: true,
+                        next: "row",
+                        effect: "none"
+                    },
+                    {
+                        tag: "leave-icon-back",
+                        mode: "sync-action",
+                        action: "back",
+                        sync: true,
+                        edit: true,
+                        next: "row",
+                        effect: "none"
+                    },
+                    {
+                        tag: "icon-up-one-row",
+                        mode: "sync-action",
+                        action: "up",
+                        sync: true,
+                        edit: true,
+                        next: "row",
+                        effect: "move-up"
+                    },
+                    {
+                        tag: "icon-down-one-row",
+                        mode: "sync-action",
+                        action: "down",
+                        sync: true,
+                        edit: true,
+                        next: "row",
+                        effect: "move-down"
+                    },
+                    {
+                        tag: "begin-value-edit",
+                        mode: "row",
+                        action: "activate",
+                        sync: true,
+                        edit: true,
+                        next: "value-editing",
+                        effect: "begin-edit"
+                    },
+                    {
+                        tag: "left-requires-edit",
+                        mode: "row",
+                        action: "left",
+                        sync: true,
+                        edit: true,
+                        next: "row",
+                        effect: "none"
+                    },
+                    {
+                        tag: "edit-right-not-sync",
+                        mode: "value-editing",
+                        action: "right",
+                        sync: true,
+                        edit: true,
+                        next: "value-editing",
+                        effect: "value"
+                    },
+                    {
+                        tag: "edit-left-not-sync",
+                        mode: "value-editing",
+                        action: "left",
+                        sync: true,
+                        edit: true,
+                        next: "value-editing",
+                        effect: "value"
+                    },
+                    {
+                        tag: "finish-value-ok",
+                        mode: "value-editing",
+                        action: "activate",
+                        sync: true,
+                        edit: true,
+                        next: "row",
+                        effect: "end-edit"
+                    },
+                    {
+                        tag: "finish-value-back",
+                        mode: "value-editing",
+                        action: "back",
+                        sync: true,
+                        edit: true,
+                        next: "row",
+                        effect: "end-edit"
+                    },
+                    {
+                        tag: "edit-down-one-row",
+                        mode: "value-editing",
+                        action: "down",
+                        sync: true,
+                        edit: true,
+                        next: "row",
+                        effect: "move-down"
+                    },
+                    {
+                        tag: "scale-still-adjusts",
+                        mode: "row",
+                        action: "right",
+                        sync: false,
+                        edit: true,
+                        next: "row",
+                        effect: "value"
+                    },
+                    {
+                        tag: "missing-icon-restores-row",
+                        mode: "sync-action",
+                        action: "activate",
+                        sync: false,
+                        edit: true,
+                        next: "value-editing",
+                        effect: "begin-edit"
+                    },
+                    {
+                        tag: "toggle-value",
+                        mode: "row",
+                        action: "activate",
+                        sync: true,
+                        edit: false,
+                        next: "row",
+                        effect: "activate"
+                    }
+                ]
+    }
+
+    function test_syncSubfocusRouting(data) {
+        const result = SettingsNavigation.syncRoute(data.mode, data.action, data.sync, data.edit)
+        compare(result.mode, data.next)
+        compare(result.effect, data.effect)
+    }
+
+    function test_syncOnlyRowsIncludeHiddenValuesWithoutReachableDuplicates() {
+        const platform = {
+            isTV: false,
+            isWebOS: false,
+            isAndroid: false
+        }
+        const schema = [
+                  {
+                      key: "playback/maxStreamingBitrateMbps",
+                      syncPolicy: "portable",
+                      dependsOnKey: "playback/manualBitrate",
+                      dependsOnValue: true
+                  },
+                  {
+                      key: "subtitles/hdrBrightnessPercent",
+                      syncPolicy: "device",
+                      requiresHdrPlayback: true
+                  },
+                  {
+                      key: "settings/audioDelayMs",
+                      syncPolicy: "device"
+                  },
+                  {
+                      key: "subtitles/scalePercent",
+                      syncPolicy: "portable"
+                  },
+                  {
+                      key: "theme/accent",
+                      syncPolicy: "portable"
+                  },
+                  {
+                      key: "appearance/uiScalePercent",
+                      syncPolicy: "never"
+                  },
+                  {
+                      key: "webos/redButton",
+                      syncPolicy: "device",
+                      platform: "webos"
+                  },
+                  {
+                      key: "future/unclassified"
+                  }
+              ]
+        const subtitleReachable = SettingsNavigation.subtitleReachableKeys(schema, platform, false, valueLookup({
+                                                                                                                    "playback/manualBitrate":
+                                                                                                                    false
+                                                                                                                }))
+        compare(subtitleReachable, ["subtitles/scalePercent"])
+        const extra = SettingsNavigation.extraSyncRows(schema, platform, subtitleReachable.concat(["theme/accent"]))
+        compare(extra.map(function (row) {
+            return row.key
+        }), ["playback/maxStreamingBitrateMbps", "subtitles/hdrBrightnessPercent", "settings/audioDelayMs"])
+        const hdrReachable = SettingsNavigation.subtitleReachableKeys(schema, platform, true, valueLookup({}))
+        const withHdr = SettingsNavigation.extraSyncRows(schema, platform, hdrReachable.concat(["theme/accent",
+                                                                                                "playback/maxStreamingBitrateMbps"]))
+        compare(withHdr.map(function (row) {
+            return row.key
+        }), ["settings/audioDelayMs"])
+    }
+
+    function test_losingSyncSubfocusKeepsStableRowIdentity() {
+        const model = Qt.createQmlObject("import QtQuick; ListModel {}", this)
+        model.append({
+                         rowKey: "audio/language",
+                         sourceIndex: 4
+                     })
+        model.append({
+                         rowKey: "theme/accent",
+                         sourceIndex: 6
+                     })
+        const selectedKey = model.get(1).rowKey
+        const nextMode = SettingsNavigation.normalizeSyncMode("sync-action", false)
+        SettingsNavigation.reconcileRows(model, [
+                                             {
+                                                 rowKey: "audio/language",
+                                                 sourceIndex: 4
+                                             },
+                                             {
+                                                 rowKey: "theme/accent",
+                                                 sourceIndex: 6
+                                             }
+                                         ])
+        compare(nextMode, "row")
+        compare(SettingsNavigation.indexForRowKey(model, selectedKey), 1)
         model.destroy()
     }
 }

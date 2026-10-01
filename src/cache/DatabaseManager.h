@@ -12,21 +12,19 @@
 #include <QThread>
 #include <QVariant>
 
-#include "../app/AccountProfile.h"
-#include "../common/JellyfinTypes.h"
+#include "../media/MediaTypes.h"
 
 #include <optional>
 #include <utility>
 #include <vector>
 
-namespace JellyfinNative {
+namespace Spool {
 
 class DatabaseWorker;
 
 struct StartupState {
     QString deviceId;
     QVariantMap values;
-    std::vector<AccountProfile> profiles;
 };
 
 class DatabaseManager final : public QObject {
@@ -39,29 +37,20 @@ public:
     bool initialize(const QString& databasePath);
     void shutdown();
 
-    QCoro::Task<QString> loadLastServerUrlAsync();
-    QCoro::Task<QString> loadLastUsernameAsync();
-    void saveLoginHints(const QString& serverUrl, const QString& username);
-
-    QCoro::Task<std::vector<AccountProfile>> loadAccountProfilesAsync();
-    QCoro::Task<std::optional<AccountProfile>> activateAccountProfileAsync(const QString& profileId);
-    void upsertAccountProfile(const AccountProfile& profile);
-    void expireAccountProfile(const QString& profileId);
-    void removeAccountProfile(const QString& profileId);
-    void clearAccountProfiles();
+    // Sign-ins saved by the native Jellyfin client, for the one-time move to
+    // provider accounts.
+    QCoro::Task<QVariantList> loadLegacyAccountsAsync();
     QCoro::Task<QString> loadDeviceIdAsync();
     void saveDeviceId(const QString& deviceId);
 
-    QCoro::Task<QJsonArray> loadDiscoveredServersAsync();
-    void saveDiscoveredServers(const QJsonArray& servers);
     QCoro::Task<QJsonObject> loadHomePayloadAsync(const QString& key, int schemaVersion);
     void saveHomePayload(const QString& key, int schemaVersion, const QJsonObject& payload);
-    void invalidateHomePayloads();
 
     QCoro::Task<QString> loadSettingAsync(const QString& key, const QString& defaultValue = {});
     QCoro::Task<QVariantMap> loadValuesAsync(const QStringList& keys);
     QCoro::Task<StartupState> loadStartupStateAsync(const QStringList& keys);
     void saveSetting(const QString& key, const QString& value);
+    QCoro::Task<void> saveSettings(QVariantMap serializedValues);
 
     QCoro::Task<int> schemaVersionAsync();
     QCoro::Task<QByteArray> loadCacheEntryAsync(const QString& nameSpace, const QString& key, qint64 maxAgeMs = -1);
@@ -85,4 +74,4 @@ private:
     QFuture<bool> m_initializationFuture;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

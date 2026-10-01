@@ -1,12 +1,12 @@
 #pragma once
 
-#include "../common/JellyfinTypes.h"
+#include "../media/MediaTypes.h"
 
 #include <QAbstractListModel>
 
 #include <vector>
 
-namespace JellyfinNative {
+namespace Spool {
 
 class LibraryListModel final : public QAbstractListModel {
     Q_OBJECT
@@ -29,6 +29,7 @@ public:
     QHash<int, QByteArray> roleNames() const override;
 
     Q_INVOKABLE QVariantMap get(int index) const;
+    Q_INVOKABLE bool moveLibrary(int from, int to);
 
     void setLibraries(const std::vector<LibraryItem>& libraries);
     void clear();
@@ -42,4 +43,4 @@ private:
     std::vector<LibraryItem> m_libraries;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

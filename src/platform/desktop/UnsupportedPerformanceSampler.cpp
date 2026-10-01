@@ -1,6 +1,6 @@
 #include "platform/PlatformPerformanceSampler.h"
 
-namespace JellyfinNative {
+namespace Spool {
 
 struct PlatformPerformanceSampler::PlatformData { };
 
@@ -16,4 +16,4 @@ bool PlatformPerformanceSampler::sample(qint64, PlatformPerformanceSample&)
     return false;
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

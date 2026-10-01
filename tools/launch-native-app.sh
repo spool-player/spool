@@ -5,7 +5,7 @@ APP_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 usage() {
   cat <<EOF
-usage: $(basename "$0") [path-to-jellyfin-native-or-app-bundle]
+usage: $(basename "$0") [path-to-spool-or-app-bundle]
 
 Runs the native app launch test in an isolated environment and requires a rendered frame.
 
@@ -21,7 +21,7 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
 fi
 
 bundled_app=0
-candidate="${1:-$APP_ROOT/build/linux-release/install/bin/jellyfin-native}"
+candidate="${1:-$APP_ROOT/build/linux-release/install/bin/spool}"
 if [[ -d "$candidate" && "$candidate" == *.app ]]; then
   bundled_app=1
   candidate="$candidate/Contents/MacOS/Spool"
@@ -85,7 +85,7 @@ qt_version_subdirs_from_roots() {
 }
 
 configure_isolated_qt_paths() {
-  [[ "${JELLYFIN_LAUNCH_TEST_INHERIT_QT_PATHS:-0}" != "1" ]] || return 0
+  [[ "${SPOOL_LAUNCH_TEST_INHERIT_QT_PATHS:-0}" != "1" ]] || return 0
   command -v qtpaths6 >/dev/null 2>&1 || return 0
 
   local qt_version qt_plugins qt_qml
@@ -143,8 +143,8 @@ else
   export XDG_DATA_HOME="$work/data"
   export XDG_RUNTIME_DIR="$work/runtime"
 fi
-export JELLYFIN_DIAGNOSTICS_DIR="$work/diagnostics"
-export QT_QPA_PLATFORM="${JELLYFIN_LAUNCH_TEST_QPA_PLATFORM:-offscreen}"
+export SPOOL_DIAGNOSTICS_DIR="$work/diagnostics"
+export QT_QPA_PLATFORM="${SPOOL_LAUNCH_TEST_QPA_PLATFORM:-offscreen}"
 # Software rasterisation is the default because it is the only thing a headless
 # CI runner can do, and the launch test only needs a frame to exist. Measuring
 # what a page costs to paint needs a real GPU, so an explicitly set value wins
@@ -185,7 +185,7 @@ if [[ "$bundled_app" == "1" ]]; then
     XDG_CONFIG_HOME="$XDG_CONFIG_HOME" \
     XDG_DATA_HOME="$XDG_DATA_HOME" \
     XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
-    JELLYFIN_DIAGNOSTICS_DIR="$JELLYFIN_DIAGNOSTICS_DIR" \
+    SPOOL_DIAGNOSTICS_DIR="$SPOOL_DIAGNOSTICS_DIR" \
     QT_QPA_PLATFORM="$QT_QPA_PLATFORM" \
     QT_QUICK_BACKEND="$QT_QUICK_BACKEND" \
     QSG_RHI_BACKEND="$QSG_RHI_BACKEND" \

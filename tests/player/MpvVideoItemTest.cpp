@@ -1,6 +1,7 @@
 #include "player/MpvVideoItem.h"
 
 #include "platform/PlatformDisplayOutput.h"
+#include "player/MpvOptionProfile.h"
 #include "player/RenderTargetProfile.h"
 
 #include "TestMain.h"
@@ -10,9 +11,14 @@
 #include <QGuiApplication>
 #include <QImage>
 #include <QQuickWindow>
+#include <QSGTexture>
+#include <QSGTextureProvider>
 #include <QSurfaceFormat>
 #include <QTemporaryFile>
 #include <QThread>
+#include <algorithm>
+#include <atomic>
+#include <rhi/qrhi.h>
 
 #include <clocale>
 #include <cstdio>
@@ -57,17 +63,28 @@ bool isBlue(const QColor& color)
     return color.blue() > 80 && color.blue() > color.green() * 2 && color.blue() > color.red() * 2;
 }
 
-bool containsVideoPixel(const QImage& image)
+bool containsNeutralOsd(const QImage& image, const QImage& baseline)
 {
-    if (image.isNull())
+    if (image.size() != baseline.size())
         return false;
-    for (int y = 0; y < image.height(); y += 8) {
-        for (int x = 0; x < image.width(); x += 8) {
-            if (isRed(image.pixelColor(x, y)) || isBlue(image.pixelColor(x, y)))
-                return true;
+    int neutral = 0;
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x) {
+            // Check text over the fixture's black letterbox, not antialiased
+            // text blended into the red/blue video or a particular font weight.
+            if (baseline.pixelColor(x, y) != QColor(Qt::black))
+                continue;
+            const QColor color = image.pixelColor(x, y);
+            const int high = std::max({ color.red(), color.green(), color.blue() });
+            const int low = std::min({ color.red(), color.green(), color.blue() });
+            if (high <= 16)
+                continue;
+            if (high - low > 8)
+                return false;
+            ++neutral;
         }
     }
-    return false;
+    return neutral >= 8;
 }
 
 // The video is red over blue, so the frame is the right way up when the top of
@@ -93,12 +110,14 @@ bool isRightWayUp(const QImage& image)
     }
     std::fprintf(stderr, "orientation: redAbove=%d blueAbove=%d redBelow=%d blueBelow=%d\n", redAbove, blueAbove,
         redBelow, blueBelow);
-    return redAbove > blueAbove && blueBelow > redBelow;
+    return redAbove > blueAbove && blueBelow > redBelow
+        && isRed(image.pixelColor(image.width() / 2, image.height() / 4))
+        && isBlue(image.pixelColor(image.width() / 2, 3 * image.height() / 4));
 }
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("mpv-video-item")
+SPOOL_TEST_MAIN("mpv-video-item")
 {
     // The same end-to-end check is worth running against either backend, and
     // the Vulkan one is the whole reason the item moved to the RHI. OpenGL
@@ -115,6 +134,7 @@ JELLYFIN_TEST_MAIN("mpv-video-item")
     QSurfaceFormat format;
     format.setRenderableType(QSurfaceFormat::OpenGL);
     format.setVersion(3, 3);
+    format.setAlphaBufferSize(0);
     QSurfaceFormat::setDefaultFormat(format);
     QGuiApplication app(argc, argv);
 
@@ -124,11 +144,21 @@ JELLYFIN_TEST_MAIN("mpv-video-item")
         return 1;
     }
 
+    std::atomic_int textureFormat { -1 };
     QQuickWindow window;
     window.setColor(Qt::black);
     window.resize(320, 180);
-    JellyfinNative::MpvVideoItem videoItem(window.contentItem());
+    Spool::MpvVideoItem videoItem(window.contentItem());
     videoItem.setSize(QSizeF(window.size()));
+    QObject::connect(
+        &window, &QQuickWindow::afterRendering, &videoItem,
+        [&] {
+            const auto *provider = videoItem.textureProvider();
+            const auto *texture = provider ? provider->texture() : nullptr;
+            if (const auto *target = texture ? texture->rhiTexture() : nullptr)
+                textureFormat.store(int(target->format()));
+        },
+        Qt::DirectConnection);
     window.show();
     app.processEvents();
 
@@ -151,11 +181,20 @@ JELLYFIN_TEST_MAIN("mpv-video-item")
         }
         if (!handle || mpv_set_option_string(handle, "terminal", verbose ? "yes" : "no") < 0
             || mpv_set_option_string(handle, "vo", "libmpv") < 0 || mpv_set_option_string(handle, "hwdec", "no") < 0
-            || mpv_initialize(handle) < 0) {
+            || mpv_set_option_string(handle, "loop-file", "inf") < 0
+            || mpv_set_option_string(handle, "osd-color", "#FFFFFFFF") < 0
+            || mpv_set_option_string(handle, "osd-font-size", "48") < 0 || mpv_initialize(handle) < 0) {
             std::fprintf(stderr, "failed to initialize mpv\n");
             if (handle)
                 mpv_terminate_destroy(handle);
             return 1;
+        }
+        for (const auto& option : Spool::RenderTargetPolicy::targetOptions({})) {
+            if (mpv_set_option_string(handle, option.name.constData(), option.value.constData()) < 0) {
+                std::fprintf(stderr, "failed to set the managed SDR target\n");
+                mpv_terminate_destroy(handle);
+                return 1;
+            }
         }
 
         videoItem.setRenderBackend(qgetenv("SPOOL_TEST_RENDER_BACKEND"));
@@ -180,23 +219,45 @@ JELLYFIN_TEST_MAIN("mpv-video-item")
         timer.start();
         while (!rendered && timer.elapsed() < 5000) {
             app.processEvents(QEventLoop::AllEvents, 20);
-            rendered = containsVideoPixel(window.grabWindow());
+            rendered = isRightWayUp(window.grabWindow());
             QThread::msleep(10);
         }
 
         // Diagnostic, not an assertion: what the swapchain can present depends on
         // the driver, the compositor and whether the display is in HDR mode, none
         // of which a test can require.
-        const JellyfinNative::DisplayOutputCapabilities display = JellyfinNative::PlatformDisplayOutput::probe(&window);
+        const Spool::DisplayOutputCapabilities display = Spool::PlatformDisplayOutput::probe(&window);
         std::fprintf(stderr, "display: hdrAvailable=%d format=%d sdrWhite=%.0f min=%.4f max=%.0f\n",
             int(display.hdrAvailable), int(display.preferredFormat), double(display.sdrWhiteNits),
             double(display.minLuminanceNits), double(display.maxLuminanceNits));
 
         const bool upright = rendered && isRightWayUp(window.grabWindow());
+        char *pixelFormat = mpv_get_property_string(handle, "video-target-params/pixelformat");
+        const QByteArray actualFormat = pixelFormat ? QByteArray(pixelFormat) : QByteArray();
+        mpv_free(pixelFormat);
+        // The legacy OpenGL renderer does not expose video-target-params.
+        // Inspect the actual RHI texture on both APIs, and additionally the
+        // mpv handover descriptor on Vulkan.
+        const bool sdrTarget
+            = textureFormat.load() == int(QRhiTexture::RGBA8) && (api != "vulkan" || actualFormat == "rgba8");
+        std::fprintf(stderr, "rendered SDR target: RHI=%d mpv=%s\n", textureFormat.load(),
+            actualFormat.isEmpty() ? "(legacy renderer)" : actualFormat.constData());
+        const QImage beforeOsd = window.grabWindow();
+        const char *osdCommand[] = { "show-text", "SDR white", "10000", nullptr };
+        bool neutralOsd = false;
+        if (mpv_command(handle, osdCommand) >= 0) {
+            timer.restart();
+            while (!neutralOsd && timer.elapsed() < 5000) {
+                app.processEvents(QEventLoop::AllEvents, 20);
+                neutralOsd = containsNeutralOsd(window.grabWindow(), beforeOsd);
+                QThread::msleep(10);
+            }
+        }
         const bool released = videoItem.releaseMpvHandle();
         mpv_terminate_destroy(handle);
-        if (!rendered || !upright || !released) {
-            std::fprintf(stderr, "video result: rendered=%d upright=%d released=%d\n", rendered, upright, released);
+        if (!rendered || !upright || !released || !sdrTarget || !neutralOsd) {
+            std::fprintf(stderr, "video result: rendered=%d upright=%d released=%d SDR=%d neutralOSD=%d\n", rendered,
+                upright, released, sdrTarget, neutralOsd);
             return 1;
         }
     }
@@ -208,11 +269,11 @@ namespace {
 int vulkanEntry(int argc, char **argv)
 {
     qputenv("SPOOL_TEST_RENDER_API", "vulkan");
-    return jellyfinTestBody(argc, argv);
+    return spoolTestBody(argc, argv);
 }
 
-// Registered by hand rather than with a second JELLYFIN_TEST_MAIN, which names
+// Registered by hand rather than with a second SPOOL_TEST_MAIN, which names
 // its body the same thing every time and so can only appear once per file.
-[[maybe_unused]] const bool vulkanRegistered = ::JellyfinTests::registerTest("mpv-video-item-vulkan", &vulkanEntry);
+[[maybe_unused]] const bool vulkanRegistered = ::SpoolTests::registerTest("mpv-video-item-vulkan", &vulkanEntry);
 
 } // namespace

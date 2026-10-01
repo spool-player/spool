@@ -4,13 +4,13 @@
 
 #include <QByteArray>
 
-namespace JellyfinNative {
+namespace Spool {
 
 bool configurePlatformEnvironment(const QString&)
 {
     if (!qEnvironmentVariableIsSet("QT_QPA_PLATFORM"))
         qputenv("QT_QPA_PLATFORM", QByteArrayLiteral("wayland"));
-    if (qEnvironmentVariableIsSet("JELLYFIN_NATIVE_VERBOSE_QT")) {
+    if (qEnvironmentVariableIsSet("SPOOL_VERBOSE_QT")) {
         qputenv("QT_DEBUG_PLUGINS", QByteArrayLiteral("1"));
         qputenv("QT_LOGGING_RULES",
             QByteArrayLiteral("qt.qml*=true;qt.qpa*=true;qt.scenegraph*=true;qt.quick*=true;qt.plugin*=true"));
@@ -33,4 +33,4 @@ QSurfaceFormat platformSurfaceFormat()
 
 void configurePlatformWindow(NativeAppWindow&) { }
 
-} // namespace JellyfinNative
+} // namespace Spool

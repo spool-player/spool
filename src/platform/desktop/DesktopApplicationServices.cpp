@@ -1,11 +1,11 @@
 #include "platform/PlatformApplicationServices.h"
 
-namespace JellyfinNative {
+namespace Spool {
 
 struct PlatformApplicationServices::PlatformData { };
 
 PlatformApplicationServices::PlatformApplicationServices(
-    QGuiApplication&, NativeAppWindow&, AppController&, RouterController&)
+    QGuiApplication&, NativeAppWindow&, ApplicationHooks&, RouterController&)
     : m_platform(std::make_unique<PlatformData>())
 {
 }
@@ -14,4 +14,4 @@ PlatformApplicationServices::~PlatformApplicationServices() = default;
 
 void PlatformApplicationServices::start() { }
 
-} // namespace JellyfinNative
+} // namespace Spool

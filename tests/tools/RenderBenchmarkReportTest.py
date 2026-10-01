@@ -79,6 +79,21 @@ def main() -> int:
     run(script, report({"home": [200.0] * 4, "search": [200.0] * 4}, cold=True), baseline=baseline)
     run(script, report({"home": [200.0] * 4, "search": [200.0] * 4}, backend="rhi"), baseline=baseline)
 
+    # New timing includes construction: old and new origins are not an A/B pair.
+    for key, value in (("schemaVersion", 2), ("qpaPlatform", "wayland"),
+                       ("framePumpMs", 0), ("windowWidth", 3840), ("library", "Movies")):
+        changed = report({"home": [200.0] * 4, "search": [200.0] * 4})
+        changed[key] = value
+        output = run(script, changed, baseline=baseline)
+        assert "no comparison made" in output, output
+        assert "+900%" not in output, "incompatible reports must not print per-route deltas"
+
+    incomplete = report({"home": [1.0] * 4})
+    incomplete["complete"] = False
+    incomplete["failures"] = [{"reason": "route_timeout"}]
+    run(script, incomplete, warn_only=True, expected=1)
+    run(script, baseline, baseline=incomplete, warn_only=True, expected=1)
+
     # Warning-only must not hide a broken measurement with no samples.
     run(script, report({}), warn_only=True, expected=1)
     return 0

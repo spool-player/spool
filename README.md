@@ -1,4 +1,4 @@
-# Spool for Jellyfin
+# Spool
 
 - libmpv: We've forked this and made it compatible in the directory above. keep libmpv behind a thin PlayerController / PlaybackController facade and do not let Jellyfin/network/UI code know about mpv internals.
 - Qt6.11
@@ -10,6 +10,81 @@
   Models: C++ QAbstractListModel exposed to QML, not ad hoc QML data blobs. QAbstractListModel is the standard one-dimensional model base, and both GridView and ListView are designed to consume C++ models like that efficiently.
   10-foot / remote navigation: build around GridView / ListView + FocusScope + KeyNavigation + Keys. KeyNavigation is specifically for arrow/tab-based focus jumps, and FocusScope exists to keep reusable focus regions sane, which is exactly the problem space for D-pad TV UIs.
   HTTP asset caching: QNetworkDiskCache for posters, backdrops, and image responses. It is basic, but it plugs directly into QNetworkAccessManager; just remember it is basic by design and defaults to a 50 MB limit, so you will probably want to raise that.
+
+## Local sibling providers
+
+Keep the app checkout and provider repositories together, for example
+`~/Documents/spool/spool` and `~/Documents/spool/<provider-repo>`. From the app
+checkout, these commands discover providers in immediate sibling directories
+with valid `manifest.json` files; repository folder names do not matter:
+
+```sh
+nix run .#local-providers -- --dry-run  # Show discovery and paths; no build or launch
+nix run .#local-providers              # Build the checkout and launch natively
+nix run .#local-providers-build        # Build natively without launching
+nix run .#local-providers-ipk          # Full local IPK build; no TV install or launch
+```
+
+The build-only and IPK commands also accept `-- --dry-run`. Discovery refuses
+parents with more than 200 immediate directories and duplicate provider IDs.
+These workflows enforce bundled-only provider loading and use discovered
+checkouts instead of their locked versions; undiscovered locked providers retain
+their pins. Native builds always use the working checkout, even on a clean Git
+revision, rather than an immutable Cachix app package. They rebuild incrementally
+on every invocation so sibling edits are included, using separate
+`build/linux-release-local-providers` or `build/macos-local-providers` outputs.
+Ordinary native builds continue to default to open provider loading without
+local overrides. Set `SPOOL_REPO` to the app checkout when invoking outside it.
+
+## Sign-in controls
+
+Passwords and account PINs start hidden. Select the eye beside the input to show
+or hide its contents; it also supports mouse/touch, Tab, and **OK/Enter**. On a
+TV, **Right** from the input row focuses the eye and **Left** returns to the row.
+Submitting or leaving the form hides the input again.
+
+Device-link and Quick Connect codes have their instructions below the code box.
+On desktop and mobile, **Copy** copies the code; TVs show it for entry on another
+device without a clipboard control.
+
+## Homepage library order
+
+Drag a library card to another position on the homepage. Hold the pointer near
+the left or right edge of the library row while dragging to scroll to libraries
+that are offscreen, then release to drop it.
+
+Alternatively, hold **OK/Enter** on a focused library, long-press its card, or
+right-click it to enter move mode. The selected card shows **↔ Move**. Use
+**Left/Right** on the remote or keyboard, or the visible arrow buttons, to move
+that library. Press **OK/Enter**, **Back/Escape**, or **Done** to finish without
+opening it. Moves are saved as they happen; Back does not undo them. Library
+ordering does not reorder the recently added shelves.
+Library badges use a descriptive server name when available. Default or
+machine-generated server names are shown as the server's host and port instead;
+usernames are not appended to library names.
+
+## Local media folders
+
+On desktop, choose **Add provider → This computer**, then add one or more folders
+and confirm **Add library**. No Movies directory or other media source is added
+implicitly. The selected folders and their subfolders form one library; overlapping
+roots are deduplicated by canonical file path. Account settings let you change the
+folder list later, including while the account is disabled.
+
+Video thumbnails are extracted on demand with the bundled libmpv software renderer,
+one file at a time off the UI thread. Qt encodes and caches the bounded thumbnail;
+no external `ffmpeg` installation or visible playback window is needed. Changing a
+file invalidates its thumbnail. Local favourite/resume state remains process-local.
+
+
+## Episode details
+
+Season details open the episode row at an in-progress episode, or the next
+playable episode after the last watched one. A completed season starts at its
+last watched episode. Episode details instead start at the episode being viewed.
+That episode is aligned to the row's left edge, including at the end of a season;
+earlier episodes remain available by scrolling left. The initial positioning
+does not take focus from the main action or reset subsequent manual navigation.
 
 ## Desktop mpv configuration and keys
 
@@ -51,6 +126,17 @@ backends. Scripts and dynamic profiles must not change the embedding options;
 native-window commands, renderer replacement and standalone mpv playlist
 management are unsupported. Config errors and embedding ownership are reported
 in player/mpv diagnostics.
+
+Desktop SDR/HDR selection follows the **current OS output mode**, not merely
+the monitor's capabilities. SDR uses an RGBA8 video target with BT.709/BT.1886
+output; mpv tone-maps HDR video into that SDR target, and the UI does not enter
+the HDR conversion layer. FP16/scRGB is reserved for an HDR-enabled output.
+Wayland uses the output's active transfer function, Windows its desktop DXGI
+color space, and macOS its current EDR headroom. Unknown output state stays SDR.
+Even the **Always** preference cannot force HDR into an SDR desktop.
+The window's encoding is selected at startup: restart Spool after changing the
+desktop HDR mode.
+
 
 On webOS, supported codecs still use Starfish. For software-decoded codecs,
 **Software video renderer** in advanced playback settings offers Automatic
@@ -96,6 +182,13 @@ performance gates.** Record the baseline on the same hardware and rendering
 backend. `tools/compare-render-benchmark.py` supports strict local comparisons;
 CI passes `--warn-only`. Empty or broken measurements still fail rather than
 being mistaken for good performance.
+
+Provider form layouts are precompiled in the host. Settings creates only visible
+rows and opens its native folder chooser on demand; initial viewport readiness is
+checked at the end of the current event-loop turn, with timed retries only when
+delegates are still missing. Playback no longer creates hidden image objects for
+every trickplay sheet: previews load the sheet needed by the current seek position.
+
 
 ## Android development
 
@@ -144,6 +237,10 @@ and zoom rather than a fixed phone grid. The Android Qt build carries a
 live-density notification patch so fold/configuration changes update the UI
 without requiring an app restart.
 
+New installations start at 100% interface scale on every platform, including
+webOS and Android TV. Existing saved percentages are preserved. Scale always
+stays device-local and is excluded from settings synchronization.
+
 `tools/android/build-universal-apk.sh` merges per-ABI APKs from one build into
 the single `spool-universal.apk` the release page offers, for people who do not
 know their device's architecture. The in-app updater never fetches it: the
@@ -176,7 +273,7 @@ not require ADB or broad storage permissions.
 
 # Name
 
-## Fast Jellyfin client for LG TVs and desktop
+## Fast media player for LG TVs and desktop
 
 // Download link box
 

@@ -1,8 +1,9 @@
 #pragma once
 
-#include "../common/JellyfinTypes.h"
 #include "../common/RequestGeneration.h"
+#include "../media/MediaTypes.h"
 #include "../models/MovieGridModel.h"
+#include "../provider/Catalog.h"
 #include <QCoroTask>
 #include <QJsonObject>
 
@@ -10,25 +11,25 @@
 #include <QStringList>
 #include <QVariantList>
 
+#include <functional>
 #include <memory>
 #include <vector>
 
-namespace JellyfinNative {
+namespace Spool {
 
 class DatabaseManager;
-class JellyfinApiFacade;
 class LibraryPrefetchController;
 
 class HomeModelController final : public QObject {
     Q_OBJECT
-    Q_PROPERTY(JellyfinNative::MovieGridModel *resumeItems READ resumeItems CONSTANT)
-    Q_PROPERTY(JellyfinNative::MovieGridModel *nextUpItems READ nextUpItems CONSTANT)
+    Q_PROPERTY(Spool::MovieGridModel *resumeItems READ resumeItems CONSTANT)
+    Q_PROPERTY(Spool::MovieGridModel *nextUpItems READ nextUpItems CONSTANT)
     Q_PROPERTY(QVariantList latestLibraryRows READ latestLibraryRows NOTIFY latestLibraryRowsChanged)
     Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
 
 public:
-    HomeModelController(DatabaseManager *database, JellyfinApiFacade *api, LibraryPrefetchController *prefetch,
-        QObject *parent = nullptr);
+    HomeModelController(
+        DatabaseManager *database, Catalog *catalog, LibraryPrefetchController *prefetch, QObject *parent = nullptr);
 
     MovieGridModel *resumeItems()
     {
@@ -52,6 +53,7 @@ public:
     void updateResumeTicks(const QString& itemId, qint64 positionTicks);
     void updateFavorite(const QString& itemId, bool favorite);
     void updatePlayed(const QString& itemId, bool played);
+    void invalidate(const std::function<bool(const QString&)>& isAvailable = {});
     void reset();
 
 signals:
@@ -79,7 +81,7 @@ private:
     void saveCachedPayload(const QJsonObject& payload);
 
     DatabaseManager *m_database = nullptr;
-    JellyfinApiFacade *m_api = nullptr;
+    Catalog *m_api = nullptr;
     LibraryPrefetchController *m_prefetch = nullptr;
     MovieGridModel m_resumeItems;
     MovieGridModel m_nextUpItems;
@@ -90,4 +92,4 @@ private:
     QStringList m_recentLibraryIds;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

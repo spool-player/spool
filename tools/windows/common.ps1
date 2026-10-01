@@ -181,9 +181,9 @@ function Initialize-WindowsBuildEnvironment {
         $env:PATH = "$cmakeBin;$env:PATH"
     }
 
-    $qtRoot = if ($env:JELLYFIN_QT_ROOT) { $env:JELLYFIN_QT_ROOT } else { Get-DefaultQtRoot }
-    $qcoroRoot = if ($env:JELLYFIN_QCORO_ROOT) { $env:JELLYFIN_QCORO_ROOT } else { Get-DefaultQCoroRoot }
-    $mpvRoot = if ($env:JELLYFIN_MPV_ROOT) { $env:JELLYFIN_MPV_ROOT } else { Join-Path (Get-RepositoryRoot) 'build\windows-deps\mpv' }
+    $qtRoot = if ($env:SPOOL_QT_ROOT) { $env:SPOOL_QT_ROOT } else { Get-DefaultQtRoot }
+    $qcoroRoot = if ($env:SPOOL_QCORO_ROOT) { $env:SPOOL_QCORO_ROOT } else { Get-DefaultQCoroRoot }
+    $mpvRoot = if ($env:SPOOL_MPV_ROOT) { $env:SPOOL_MPV_ROOT } else { Join-Path (Get-RepositoryRoot) 'build\windows-deps\mpv' }
 
     foreach ($path in @($qtRoot, $qcoroRoot)) {
         if (-not (Test-Path -LiteralPath $path)) {
@@ -191,10 +191,10 @@ function Initialize-WindowsBuildEnvironment {
         }
     }
 
-    $env:JELLYFIN_QT_ROOT = $qtRoot
-    $env:JELLYFIN_QCORO_ROOT = $qcoroRoot
-    $env:JELLYFIN_MPV_ROOT = $mpvRoot
-    $env:JELLYFIN_WINDOWS_PREFIX_PATH = "$qtRoot;$qcoroRoot"
+    $env:SPOOL_QT_ROOT = $qtRoot
+    $env:SPOOL_QCORO_ROOT = $qcoroRoot
+    $env:SPOOL_MPV_ROOT = $mpvRoot
+    $env:SPOOL_WINDOWS_PREFIX_PATH = "$qtRoot;$qcoroRoot"
     $env:PATH = "$qtRoot\bin;$env:PATH"
 }
 

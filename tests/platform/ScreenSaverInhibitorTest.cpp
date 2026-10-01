@@ -9,14 +9,14 @@
 #include <iostream>
 #include <memory>
 
-namespace JellyfinNative {
+namespace Spool {
 
 std::unique_ptr<ScreenSaverBackend> createPlatformScreenSaverBackend()
 {
     return {};
 }
 
-} // namespace JellyfinNative
+} // namespace Spool
 
 namespace {
 
@@ -35,7 +35,7 @@ struct BackendState {
     bool releaseSucceeds = true;
 };
 
-class MockBackend final : public JellyfinNative::ScreenSaverBackend {
+class MockBackend final : public Spool::ScreenSaverBackend {
 public:
     explicit MockBackend(BackendState& state)
         : m_state(state)
@@ -60,9 +60,9 @@ private:
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("screensaver-inhibitor")
+SPOOL_TEST_MAIN("screensaver-inhibitor")
 {
-    using namespace JellyfinNative;
+    using namespace Spool;
 
     require(screenSaverShouldBeInhibited(true, false), "playing video or audio should inhibit idle sleep");
     require(!screenSaverShouldBeInhibited(true, true), "paused playback should release idle inhibition");

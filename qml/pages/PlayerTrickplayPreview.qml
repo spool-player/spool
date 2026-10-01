@@ -29,8 +29,8 @@ Item {
     function artworkSource(url) {
         if (!url)
             return ""
-        return url.indexOf("http://") === 0 || url.indexOf("https://") === 0 ? "image://artwork/" + encodeURIComponent(
-                                                                                   url) : url
+        return url.indexOf("http://") === 0 || url.indexOf("https://") === 0 || url.indexOf("spool-artwork:") === 0
+                ? "image://artwork/" + encodeURIComponent(url) : url
     }
 
     anchors.left: parent.left

@@ -1,21 +1,28 @@
 #include "SettingsController.h"
 
-#include "../api/JellyfinApiFacade.h"
 #include "../cache/DatabaseManager.h"
 #include "../common/AsyncTask.h"
+#include "../diagnostics/InputLatencyMonitor.h"
 #include "../platform/PlatformSettingsPolicy.h"
 #include "../player/PlayerController.h"
 #include "../player/RenderTargetProfile.h"
+#include "../provider/ProviderRegistry.h"
 #include "ArtworkService.h"
+#include "LocalizationManager.h"
 #include "SettingsSchema.h"
+#include "SettingsSyncController.h"
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QSettings>
+#include <stdexcept>
 
 #include <QDebug>
-#include <QJsonArray>
+#include <QLocale>
 #include <QSet>
 
 #include <iterator>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
 
@@ -34,27 +41,150 @@ namespace {
         return *spec;
     }
 
+    bool externalStore(const SettingSpec& spec)
+    {
+        return spec.target == SettingTarget::Locale || spec.target == SettingTarget::LatencyGuard
+            || spec.target == SettingTarget::LatencyOverlay;
+    }
+
+    bool trackDefault(const SettingSpec& spec)
+    {
+        return spec.nativePreference[0] != '\0';
+    }
+
+    QString applicationKey(const QString& key)
+    {
+        return QStringLiteral("settings/application/") + key;
+    }
+
+    QString encodeApplication(const QVariantMap& record)
+    {
+        return QString::fromUtf8(QJsonDocument::fromVariant(record).toJson(QJsonDocument::Compact));
+    }
+
 } // namespace
 
-SettingsController::SettingsController(DatabaseManager *database, JellyfinApiFacade *api, PlayerController *player,
-    ArtworkService *artwork, QObject *parent)
+SettingsController::SettingsController(
+    DatabaseManager *database, PlayerController *player, ArtworkService *artwork, QObject *parent)
     : QObject(parent)
     , m_database(database)
-    , m_api(api)
     , m_player(player)
     , m_artwork(artwork)
     , m_uiScalePercent(platformDefaultUiScalePercent())
 {
+    if (m_player) {
+        connect(m_player, &PlayerController::sessionActiveChanged, this, [this] {
+            if (!m_player->sessionActive())
+                Async::runScoped(
+                    this, applyDeferredTrackDefaults(), [] {},
+                    [this](const std::exception_ptr& error) { emit errorOccurred(exceptionMessage(error)); },
+                    "apply deferred track defaults");
+        });
+    }
 }
 
 QStringList SettingsController::subtitleLanguageOptions() const
 {
+    loadSubtitleLanguages();
     return m_subtitleLanguageLabels;
 }
 int SettingsController::subtitleLanguageIndex() const
 {
+    loadSubtitleLanguages();
     const int index = m_subtitleLanguageCodes.indexOf(m_subtitlePreferences.language);
     return index >= 0 ? index : 0;
+}
+
+int SettingsController::audioLanguageIndex() const
+{
+    loadSubtitleLanguages();
+    return qMax(0, m_subtitleLanguageCodes.indexOf(m_subtitlePreferences.audioLanguage));
+}
+
+void SettingsController::setAudioLanguageIndex(int index)
+{
+    loadSubtitleLanguages();
+    if (index >= 0 && index < m_subtitleLanguageCodes.size())
+        setValue(QStringLiteral("audio/language"), m_subtitleLanguageCodes.at(index));
+}
+
+void SettingsController::attachLocalization(LocalizationManager *localization)
+{
+    if (m_localization)
+        disconnect(m_localization, nullptr, this, nullptr);
+    m_localization = localization;
+    if (!localization)
+        return;
+    const auto mirror = [this] {
+        mirrorExternalValue(QStringLiteral("i18n/locale"),
+            m_localization->useSystemLocale() ? QStringLiteral("system") : m_localization->currentLocale());
+    };
+    connect(localization, &LocalizationManager::localeChanged, this, mirror);
+    mirror();
+}
+
+void SettingsController::attachInputLatency(InputLatencyMonitor *monitor)
+{
+    if (m_inputLatency)
+        disconnect(m_inputLatency, nullptr, this, nullptr);
+    m_inputLatency = monitor;
+    if (!monitor)
+        return;
+    connect(monitor, &InputLatencyMonitor::enabledChanged, this,
+        [this] { mirrorExternalValue(QStringLiteral("shell/latencyGuard"), m_inputLatency->enabled()); });
+    connect(monitor, &InputLatencyMonitor::overlayEnabledChanged, this,
+        [this] { mirrorExternalValue(QStringLiteral("shell/latencyOverlay"), m_inputLatency->overlayEnabled()); });
+    mirrorExternalValue(QStringLiteral("shell/latencyGuard"), monitor->enabled());
+    mirrorExternalValue(QStringLiteral("shell/latencyOverlay"), monitor->overlayEnabled());
+}
+
+void SettingsController::attachSync(SettingsSyncController *sync)
+{
+    m_sync = sync;
+}
+
+void SettingsController::mirrorExternalValue(const QString& key, const QVariant& value)
+{
+    if (m_applyingExternal || m_values.value(key) == value)
+        return;
+    // Internal monitor/locale changes are not committed user edits.
+    m_commitGenerations[key] = ++m_commitGeneration;
+    m_values.insert(key, value);
+    emit settingChanged(key);
+    emit settingsValuesChanged();
+}
+
+void SettingsController::applyExternalValue(const SettingSpec& spec, const QVariant& value)
+{
+    m_applyingExternal = true;
+    if (spec.target == SettingTarget::Locale && m_localization) {
+        if (value.toString().isEmpty())
+            m_localization->useSystemDefault();
+        else
+            m_localization->setLocale(value.toString());
+    } else if (spec.target == SettingTarget::LatencyGuard && m_inputLatency) {
+        m_inputLatency->setEnabled(value.toBool());
+    } else if (spec.target == SettingTarget::LatencyOverlay && m_inputLatency) {
+        m_inputLatency->setOverlayEnabled(value.toBool());
+    }
+    m_applyingExternal = false;
+    QSettings settings;
+    settings.sync();
+    if (settings.status() != QSettings::NoError)
+        throw std::runtime_error("Could not persist external settings");
+}
+
+bool SettingsController::supportsSyncValue(const QString& key, const QVariant& value) const
+{
+    const SettingSpec *spec = findSettingSpec(key);
+    if (!spec || !settingAcceptsRemoteValue(*spec, value))
+        return false;
+    if (spec->target == SettingTarget::Locale)
+        return m_localization
+            && (value.toString().isEmpty() || m_localization->availableLocales().contains(value.toString()));
+    if (spec->target == SettingTarget::SubtitleFont && value.toString().startsWith(QStringLiteral("system:")))
+        return systemSubtitleFonts().contains(value.toString().mid(7));
+    return true;
 }
 
 QStringList SettingsController::systemSubtitleFonts() const
@@ -68,8 +198,11 @@ QStringList SettingsController::systemSubtitleFonts() const
 
 QVariantList SettingsController::settingsSchema() const
 {
-    static const QVariantList schema = settingSchemaModel();
-    return schema;
+    // Cached for the same reason as the fonts above, and because the row set
+    // is fixed once the provider is chosen.
+    if (m_schema.isEmpty())
+        m_schema = settingSchemaModel();
+    return m_schema;
 }
 
 QVariantMap SettingsController::values() const
@@ -98,9 +231,10 @@ QStringList SettingsController::localSettingKeys()
     for (const SettingSpec& spec : settingSpecs()) {
         if (!spec.persisted)
             continue;
-        if (platformUsesPerOutputAudioDelay() && spec.target == SettingTarget::AudioDelay)
-            continue;
-        keys.append(keyString(spec));
+        if (externalStore(spec) || trackDefault(spec))
+            keys.append(applicationKey(keyString(spec)));
+        if (!externalStore(spec) && !(platformUsesPerOutputAudioDelay() && spec.target == SettingTarget::AudioDelay))
+            keys.append(keyString(spec));
     }
     keys.append(QString::fromLatin1(kPlayerControlTooltipSessionsKey));
     return keys;
@@ -131,11 +265,11 @@ QString SettingsController::stepDownRenderQuality()
         // ourselves at all.
         if (m_videoOutputMode == QLatin1String("direct") || !platformSupportsDirectVideoOutput())
             return {};
-        setValue(QStringLiteral("playback/videoOutput"), QStringLiteral("direct"));
+        submitValues({ { QStringLiteral("playback/videoOutput"), QStringLiteral("direct") } }, ChangeOrigin::Automatic);
         return QStringLiteral("direct");
     }
     const QString next = QString::fromLatin1(rungs[current + 1]);
-    setValue(QStringLiteral("playback/renderQuality"), next);
+    submitValues({ { QStringLiteral("playback/renderQuality"), next } }, ChangeOrigin::Automatic);
     return next;
 }
 
@@ -146,6 +280,19 @@ void SettingsController::applyLocalValues(const QVariantMap& storedValues)
         if (!spec.persisted)
             continue;
         const QString key = keyString(spec);
+        if (externalStore(spec) || trackDefault(spec)) {
+            const auto record = QJsonDocument::fromJson(storedValues.value(applicationKey(key)).toString().toUtf8())
+                                    .toVariant()
+                                    .toMap();
+            if (!record.isEmpty()) {
+                m_pendingApplications.insert(key, record);
+                const quint64 generation = record.value(QStringLiteral("generation")).toString().toULongLong();
+                m_commitGeneration = qMax(m_commitGeneration, generation);
+                m_commitGenerations.insert(key, generation);
+            }
+        }
+        if (externalStore(spec))
+            continue;
         if (platformUsesPerOutputAudioDelay() && spec.target == SettingTarget::AudioDelay) {
             const QVariant normalized = normalizedSettingValue(spec, settingDefaultValue(spec));
             m_values.insert(key, normalized);
@@ -154,9 +301,7 @@ void SettingsController::applyLocalValues(const QVariantMap& storedValues)
         }
         const QVariant rawValue = storedValues.value(key);
         QVariant defaultValue = settingDefaultValue(spec);
-        if (spec.target == SettingTarget::CastButtonEnabled)
-            defaultValue = platformDefaultCastButtonEnabled();
-        else if (spec.target == SettingTarget::RemoteControlTargetEnabled)
+        if (spec.target == SettingTarget::RemoteControlTargetEnabled)
             defaultValue = platformDefaultRemoteControlTargetEnabled();
         else if (spec.target == SettingTarget::RenderQuality)
             defaultValue = QString::fromLatin1(platformDefaultRenderQuality());
@@ -219,76 +364,25 @@ void SettingsController::applyLocalValues(const QVariantMap& storedValues)
     emit remoteControlSettingsChanged();
 }
 
-void SettingsController::loadRemote()
+void SettingsController::loadSubtitleLanguages() const
 {
-    if (m_remoteLoadStarted || !m_api || m_api->session().accessToken.isEmpty())
+    if (m_subtitleLanguageCodes.size() > 1)
         return;
-    m_remoteLoadStarted = true;
-
-    Async::runScoped(
-        this, m_api->fetchCultures(),
-        [this](const QJsonArray& cultures) {
-            QStringList codes { QString() };
-            QStringList labels { QStringLiteral("Any language") };
-            QSet<QString> seen { QString() };
-
-            for (const QJsonValue& value : cultures) {
-                const QJsonObject culture = value.toObject();
-                const QString code = culture.value(QStringLiteral("ThreeLetterISOLanguageName")).toString();
-                if (code.isEmpty() || seen.contains(code))
-                    continue;
-                QString label = culture.value(QStringLiteral("DisplayName")).toString();
-                if (label.isEmpty())
-                    label = code.toUpper();
-                seen.insert(code);
-                codes.push_back(code);
-                labels.push_back(label);
-            }
-
-            if (!m_subtitlePreferences.language.isEmpty() && !seen.contains(m_subtitlePreferences.language)) {
-                codes.push_back(m_subtitlePreferences.language);
-                labels.push_back(m_subtitlePreferences.language.toUpper());
-            }
-
-            m_subtitleLanguageCodes = codes;
-            m_subtitleLanguageLabels = labels;
-            emit subtitleSettingsChanged();
-        },
-        [](const std::exception_ptr& error) {
-            qWarning() << "subtitles: culture list failed" << exceptionMessage(error);
-        });
-
-    Async::runScoped(
-        this, m_api->fetchUserConfiguration(),
-        [this](const QJsonObject& configuration) {
-            m_userConfiguration = configuration;
-            m_subtitlePreferences.audioLanguage
-                = configuration.value(QStringLiteral("AudioLanguagePreference")).toString();
-            const SettingSpec& languageSpec = specForKey("subtitles/language");
-            const SettingSpec& modeSpec = specForKey("subtitles/mode");
-            const SettingSpec& audioModeSpec = specForKey("audio/trackMode");
-            setSchemaValue(languageSpec, configuration.value(QStringLiteral("SubtitleLanguagePreference")).toString(),
-                true, false, false);
-            setSchemaValue(modeSpec,
-                configuration.value(QStringLiteral("SubtitleMode")).toString(QStringLiteral("Default")), true, false,
-                false);
-            setSchemaValue(audioModeSpec,
-                configuration.value(QStringLiteral("PlayDefaultAudioTrack")).toBool(true) ? QStringLiteral("Default")
-                                                                                          : QStringLiteral("Smart"),
-                true, false, false);
-            applySubtitlePreferencesToPlayer();
-            emit settingsValuesChanged();
-            emit subtitleSettingsChanged();
-        },
-        [](const std::exception_ptr& error) {
-            qWarning() << "subtitles: user configuration failed" << exceptionMessage(error);
-        });
-}
-
-void SettingsController::clearRemote()
-{
-    m_userConfiguration = {};
-    m_remoteLoadStarted = false;
+    // Every language Qt knows, by display name; the preference is stored as
+    // the ISO 639-2 code players match against.
+    QList<std::pair<QString, QString>> languages;
+    for (int value = QLocale::Abkhazian; value <= QLocale::LastLanguage; ++value) {
+        const auto language = static_cast<QLocale::Language>(value);
+        const QString code = QLocale::languageToCode(language, QLocale::ISO639Part2);
+        if (code.size() == 3)
+            languages.append({ QLocale::languageToString(language), code });
+    }
+    std::sort(languages.begin(), languages.end(),
+        [](const auto& a, const auto& b) { return a.first.localeAwareCompare(b.first) < 0; });
+    for (const auto& [label, code] : std::as_const(languages)) {
+        m_subtitleLanguageCodes.push_back(code);
+        m_subtitleLanguageLabels.push_back(label);
+    }
 }
 
 void SettingsController::completePlayerControlTooltipSession()
@@ -304,39 +398,300 @@ void SettingsController::completePlayerControlTooltipSession()
 
 void SettingsController::setValue(const QString& key, const QVariant& value)
 {
-    const SettingSpec *spec = findSettingSpec(key);
-    if (!spec) {
-        qWarning() << "settings: unknown key" << key;
-        return;
+    submitValues({ { key, value } }, ChangeOrigin::User);
+}
+
+void SettingsController::submitValues(QVariantMap values, ChangeOrigin origin)
+{
+    Async::runScoped(
+        this, applyValues(std::move(values), origin), [] {},
+        [this](const std::exception_ptr& error) { emit errorOccurred(exceptionMessage(error)); }, "save settings");
+}
+
+QCoro::Task<void> SettingsController::applyValues(
+    QVariantMap values, ChangeOrigin origin, QVariantMap additionalSerializedSettings)
+{
+    if (origin == ChangeOrigin::Preview) {
+        for (auto it = values.cbegin(); it != values.cend(); ++it)
+            previewValue(it.key(), it.value());
+        co_return;
     }
-    if (!spec->persisted) {
-        qWarning() << "settings: external row cannot be persisted through SettingsController" << key;
-        return;
-    }
-    if (spec->target == SettingTarget::AudioDelay) {
-        setAudioDelayMs(value.toInt());
-        return;
-    }
-    if (spec->target == SettingTarget::MpvConfigMode) {
-        const QString mode = normalizedSettingValue(*spec, value).toString();
-        const MpvConfigPolicy policy = validatedPlatformMpvConfigPolicy(mode, m_mpvConfigDirectory);
-        if (!policy.valid) {
-            emit errorOccurred(policy.error);
-            return;
+    QVariantMap normalized;
+    for (auto it = values.cbegin(); it != values.cend(); ++it) {
+        const SettingSpec *spec = findSettingSpec(it.key());
+        if (!spec || !spec->persisted)
+            continue;
+        if (origin == ChangeOrigin::RemoteSync && !supportsSyncValue(it.key(), it.value()))
+            continue;
+        if (externalStore(*spec)
+            && ((spec->target == SettingTarget::Locale && !m_localization)
+                || (spec->target != SettingTarget::Locale && !m_inputLatency)))
+            continue;
+        QVariant result = normalizedSettingValue(*spec, it.value());
+        if (spec->target == SettingTarget::MpvConfigDirectory) {
+            const auto policy = validatedPlatformMpvConfigPolicy(QStringLiteral("custom"), result.toString());
+            if (!policy.valid)
+                throw std::runtime_error(policy.error.toStdString());
+            result = policy.directory;
         }
-        setSchemaValue(*spec, mode, true, true, true);
-        return;
+        normalized.insert(it.key(), result);
     }
-    if (spec->target == SettingTarget::MpvConfigDirectory) {
-        const MpvConfigPolicy policy = validatedPlatformMpvConfigPolicy(QStringLiteral("custom"), value.toString());
-        if (!policy.valid) {
-            emit errorOccurred(policy.error);
-            return;
+    if (normalized.contains(QStringLiteral("playback/mpvConfigMode"))) {
+        const auto policy
+            = validatedPlatformMpvConfigPolicy(normalized.value(QStringLiteral("playback/mpvConfigMode")).toString(),
+                normalized.value(QStringLiteral("playback/mpvConfigDirectory"), m_mpvConfigDirectory).toString());
+        if (!policy.valid)
+            throw std::runtime_error(policy.error.toStdString());
+    }
+
+    const quint64 generation = ++m_commitGeneration;
+    QVariantMap changed;
+    QVariantMap external;
+    QVariantMap serialized = std::move(additionalSerializedSettings);
+    for (auto it = normalized.cbegin(); it != normalized.cend(); ++it) {
+        const auto& spec = *findSettingSpec(it.key());
+        const bool hadPending = m_pendingApplications.contains(it.key());
+        if (hadPending && (!externalStore(spec) || origin == ChangeOrigin::User)) {
+            m_pendingApplications.remove(it.key());
+            serialized.insert(applicationKey(it.key()), QString());
         }
-        setSchemaValue(*spec, policy.directory, true, true, true);
-        return;
+        if (value(it.key()) == it.value() && !hadPending)
+            continue;
+        m_commitGenerations.insert(it.key(), generation);
+        changed.insert(it.key(), it.value());
+        const bool deferred
+            = origin == ChangeOrigin::RemoteSync && trackDefault(spec) && m_player && m_player->sessionActive();
+        if (externalStore(spec) || deferred) {
+            const QVariantMap record { { QStringLiteral("value"), it.value() },
+                { QStringLiteral("origin"), static_cast<int>(origin) },
+                { QStringLiteral("generation"), QString::number(generation) },
+                { QStringLiteral("accountId"), m_sync ? m_sync->accountId() : QString() },
+                { QStringLiteral("deferred"), deferred } };
+            m_pendingApplications.insert(it.key(), record);
+            serialized.insert(applicationKey(it.key()), encodeApplication(record));
+            if (!deferred)
+                external.insert(it.key(), it.value());
+        } else {
+            const QString storageKey = spec.target == SettingTarget::AudioDelay && platformUsesPerOutputAudioDelay()
+                ? platformAudioDelayStorageKey(m_currentAudioOutput)
+                : it.key();
+            serialized.insert(storageKey, serializedSettingValue(spec, it.value()));
+            if (spec.target == SettingTarget::AudioDelay)
+                m_audioOutputLoadGeneration.invalidate();
+            m_values.insert(it.key(), it.value());
+        }
     }
-    setSchemaValue(*spec, value, true, true, true);
+    // Mutate all members before applying effects, so each effect observes the
+    // complete normalized batch rather than half of a preference pair.
+    m_batchEffects = true;
+    QVariantMap immediate;
+    for (auto it = changed.cbegin(); it != changed.cend(); ++it) {
+        if (external.contains(it.key()) || m_pendingApplications.contains(it.key()))
+            continue;
+        immediate.insert(it.key(), it.value());
+        applySchemaValue(*findSettingSpec(it.key()), it.value(), false);
+    }
+    for (auto it = immediate.cbegin(); it != immediate.cend(); ++it)
+        applySchemaValue(*findSettingSpec(it.key()), it.value(), true);
+    m_batchEffects = false;
+    bool subtitleEffects = false;
+    bool artworkEffects = false;
+    bool streamingEffects = false;
+    for (auto it = immediate.cbegin(); it != immediate.cend(); ++it) {
+        const auto& spec = *findSettingSpec(it.key());
+        subtitleEffects |= it.key().startsWith(QStringLiteral("subtitles/")) || trackDefault(spec);
+        artworkEffects |= it.key().startsWith(QStringLiteral("artwork/"));
+        streamingEffects |= spec.target == SettingTarget::MaxStreamingHeight
+            || spec.target == SettingTarget::ManualStreamingBitrate || spec.target == SettingTarget::MaxStreamingBitrate
+            || spec.target == SettingTarget::UnlimitedLocalBitrate || spec.target == SettingTarget::PreferRemux;
+    }
+    if (subtitleEffects)
+        applySubtitlePreferencesToPlayer();
+    if (artworkEffects)
+        applyArtworkEncoding();
+    if (streamingEffects)
+        applyPlaybackPreferences();
+
+    const bool userCommit = origin == ChangeOrigin::User && !changed.isEmpty();
+    if (userCommit && m_sync) {
+        const QVariantMap ledger = m_sync->prepareLocalCommit(changed);
+        for (auto it = ledger.cbegin(); it != ledger.cend(); ++it)
+            serialized.insert(it.key(), it.value());
+    }
+    if (!immediate.isEmpty()) {
+        for (auto it = immediate.cbegin(); it != immediate.cend(); ++it)
+            emit settingChanged(it.key());
+        emitBatchSignals(immediate);
+        // Mixed external/SQLite batches notify after external application.
+        if (external.isEmpty())
+            emit settingsValuesChanged();
+    }
+    QPointer<SettingsController> guard(this);
+    for (auto it = serialized.cbegin(); it != serialized.cend(); ++it)
+        m_serializedGenerations.insert(it.key(), generation);
+    try {
+        if (!serialized.isEmpty())
+            co_await m_database->saveSettings(serialized);
+        if (!guard)
+            co_return;
+        for (auto it = serialized.cbegin(); it != serialized.cend(); ++it) {
+            if (m_serializedGenerations.value(it.key()) == generation)
+                m_failedSerializedSettings.remove(it.key());
+        }
+        QVariantMap cleared;
+        bool externalChanged = false;
+        for (auto it = external.cbegin(); it != external.cend(); ++it) {
+            if (m_commitGenerations.value(it.key()) != generation)
+                continue;
+            applyExternalValue(*findSettingSpec(it.key()), it.value());
+            m_values.insert(it.key(), it.value());
+            m_pendingApplications.remove(it.key());
+            cleared.insert(applicationKey(it.key()), QString());
+            externalChanged = true;
+            emit settingChanged(it.key());
+        }
+        if (externalChanged || (!external.isEmpty() && !immediate.isEmpty()))
+            emit settingsValuesChanged();
+        if (!cleared.isEmpty()) {
+            serialized = cleared;
+            co_await m_database->saveSettings(std::move(cleared));
+        }
+        if (guard && userCommit)
+            emit userValuesCommitted(changed);
+    } catch (...) {
+        if (guard) {
+            for (auto it = serialized.cbegin(); it != serialized.cend(); ++it) {
+                if (m_serializedGenerations.value(it.key()) != generation)
+                    continue;
+                m_failedSerializedSettings.insert(it.key(), it.value());
+                if (it.key().startsWith(QStringLiteral("settings/application/")) && !it.value().toString().isEmpty()) {
+                    const QString key = it.key().mid(21);
+                    if (m_commitGenerations.value(key) == generation)
+                        m_pendingApplications.insert(
+                            key, QJsonDocument::fromJson(it.value().toString().toUtf8()).toVariant().toMap());
+                }
+            }
+        }
+        if (guard && userCommit) {
+            emit userValuesCommitFailed();
+            emit settingsPersistenceFailed(exceptionMessage(std::current_exception()));
+        }
+        throw;
+    }
+}
+
+void SettingsController::cancelRemoteApplications(const QString& key, bool discardSyncLedger)
+{
+    // Control changes persist a new ledger through the sync controller. A
+    // retry of an older failed settings transaction must not resurrect it.
+    for (auto it = m_serializedGenerations.begin(); it != m_serializedGenerations.end(); ++it) {
+        if (discardSyncLedger && it.key().startsWith(QStringLiteral("settingsSync/"))) {
+            it.value() = ++m_commitGeneration;
+            m_failedSerializedSettings.remove(it.key());
+        }
+    }
+    QVariantMap cleared;
+    for (auto it = m_pendingApplications.begin(); it != m_pendingApplications.end();) {
+        const QVariantMap record = it.value().toMap();
+        if ((key.isEmpty() || it.key() == key)
+            && record.value(QStringLiteral("origin")).toInt() == static_cast<int>(ChangeOrigin::RemoteSync)) {
+            m_commitGenerations[it.key()] = ++m_commitGeneration;
+            cleared.insert(applicationKey(it.key()), QString());
+            m_serializedGenerations[applicationKey(it.key())] = m_commitGeneration;
+            m_failedSerializedSettings.remove(applicationKey(it.key()));
+            it = m_pendingApplications.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    if (!cleared.isEmpty())
+        Async::runScoped(
+            this, applyValues({}, ChangeOrigin::Initialization, std::move(cleared)), [] {},
+            [this](const std::exception_ptr& error) { emit settingsPersistenceFailed(exceptionMessage(error)); },
+            "invalidate pending remote application");
+}
+
+QCoro::Task<void> SettingsController::retryPendingPersistence()
+{
+    QPointer<SettingsController> guard(this);
+    const QVariantMap retry = m_failedSerializedSettings;
+    if (!retry.isEmpty())
+        co_await m_database->saveSettings(retry);
+    if (!guard)
+        co_return;
+    for (auto it = retry.cbegin(); it != retry.cend(); ++it) {
+        if (m_failedSerializedSettings.value(it.key()) == it.value())
+            m_failedSerializedSettings.remove(it.key());
+    }
+    co_await recoverUnfinishedApplications();
+}
+
+QCoro::Task<void> SettingsController::recoverUnfinishedApplications()
+{
+    QPointer<SettingsController> guard(this);
+    const QVariantMap pending = m_pendingApplications;
+    for (auto it = pending.cbegin(); it != pending.cend(); ++it) {
+        if (!guard)
+            co_return;
+        const SettingSpec *spec = findSettingSpec(it.key());
+        const QVariantMap record = it.value().toMap();
+        const quint64 generation = record.value(QStringLiteral("generation")).toString().toULongLong();
+        if (!spec || m_commitGenerations.value(it.key()) != generation)
+            continue;
+        const bool remote
+            = record.value(QStringLiteral("origin")).toInt() == static_cast<int>(ChangeOrigin::RemoteSync);
+        if (remote
+            && (!m_sync
+                || !m_sync->remoteApplicationAllowed(it.key(), record.value(QStringLiteral("accountId")).toString()))) {
+            cancelRemoteApplications(it.key());
+            continue;
+        }
+        if (remote && !m_sync->remoteApplicationReady())
+            continue;
+        if (record.value(QStringLiteral("deferred")).toBool() && m_player && m_player->sessionActive())
+            continue;
+        if (externalStore(*spec)) {
+            if ((spec->target == SettingTarget::Locale && !m_localization)
+                || (spec->target != SettingTarget::Locale && !m_inputLatency))
+                continue;
+            applyExternalValue(*spec, record.value(QStringLiteral("value")));
+            m_values.insert(it.key(), record.value(QStringLiteral("value")));
+            emit settingChanged(it.key());
+            emit settingsValuesChanged();
+        } else {
+            m_pendingApplications.remove(it.key());
+            co_await applyValues({ { it.key(), record.value(QStringLiteral("value")) } }, ChangeOrigin::Initialization,
+                { { applicationKey(it.key()), QString() } });
+            continue;
+        }
+        if (m_commitGenerations.value(it.key()) != generation && externalStore(*spec))
+            continue;
+        m_pendingApplications.remove(it.key());
+        co_await applyValues({}, ChangeOrigin::Initialization, { { applicationKey(it.key()), QString() } });
+    }
+}
+
+QCoro::Task<void> SettingsController::applyDeferredTrackDefaults()
+{
+    if (!m_sync || !m_sync->remoteApplicationReady())
+        co_return;
+    QVariantMap deferred;
+    for (auto it = m_pendingApplications.cbegin(); it != m_pendingApplications.cend(); ++it) {
+        const QVariantMap record = it.value().toMap();
+        if (record.value(QStringLiteral("deferred")).toBool()
+            && m_sync->remoteApplicationAllowed(it.key(), record.value(QStringLiteral("accountId")).toString()))
+            deferred.insert(it.key(), record.value(QStringLiteral("value")));
+    }
+    if (deferred.isEmpty())
+        co_return;
+    // No suspension until applyValues has captured/invalidated every old
+    // generation. Later local edits therefore win, including during its save.
+    QVariantMap cleared;
+    for (auto it = deferred.cbegin(); it != deferred.cend(); ++it) {
+        m_pendingApplications.remove(it.key());
+        cleared.insert(applicationKey(it.key()), QString());
+    }
+    co_await applyValues(std::move(deferred), ChangeOrigin::Initialization, std::move(cleared));
 }
 
 void SettingsController::previewValue(const QString& key, const QVariant& value)
@@ -396,29 +751,7 @@ void SettingsController::setNightModeEnabled(bool enabled)
 }
 void SettingsController::setAudioDelayMs(int delayMs)
 {
-    const SettingSpec& spec = specForKey("settings/audioDelayMs");
-    if (!platformUsesPerOutputAudioDelay()) {
-        setSchemaValue(spec, delayMs, true, true, true);
-        return;
-    }
-
-    const int normalized = normalizedSettingValue(spec, delayMs).toInt();
-    if (m_audioDelayMs == normalized)
-        return;
-
-    const int previous = m_audioDelayMs;
-    m_audioOutputLoadGeneration.invalidate();
-    m_audioDelayMs = normalized;
-    m_values.insert(keyString(spec), normalized);
-    m_database->saveSetting(
-        platformAudioDelayStorageKey(m_currentAudioOutput), serializedSettingValue(spec, normalized));
-    applyAudioDelayToPlayer();
-    qInfo() << "app: audio delay trim for" << normalizedPlatformAudioRoute(m_currentAudioOutput) << previous << "->"
-            << m_audioDelayMs << "ms; automatic" << m_automaticAudioDelayMs << "ms; effective"
-            << qBound(-2000, m_automaticAudioDelayMs + m_audioDelayMs, 2000) << "ms";
-    emit settingChanged(keyString(spec));
-    emit settingsValuesChanged();
-    emit audioDelayChanged();
+    setValue(QStringLiteral("settings/audioDelayMs"), delayMs);
 }
 void SettingsController::setUiScalePercent(int percent)
 {
@@ -426,46 +759,19 @@ void SettingsController::setUiScalePercent(int percent)
 }
 void SettingsController::setSubtitleLanguageIndex(int index)
 {
+    loadSubtitleLanguages();
     if (index >= 0 && index < m_subtitleLanguageCodes.size())
         setValue(QStringLiteral("subtitles/language"), m_subtitleLanguageCodes.at(index));
 }
 
 void SettingsController::resetSubtitleAppearance()
 {
+    QVariantMap defaults;
     for (const SettingSpec& spec : settingSpecs()) {
         if (spec.persisted && QLatin1String(spec.group) == QLatin1String("Subtitle Appearance"))
-            setValue(keyString(spec), settingDefaultValue(spec));
+            defaults.insert(keyString(spec), settingDefaultValue(spec));
     }
-}
-bool SettingsController::setSchemaValue(
-    const SettingSpec& spec, const QVariant& value, bool persist, bool apply, bool notify)
-{
-    const QString key = keyString(spec);
-    const QVariant normalized = normalizedSettingValue(spec, value);
-    if (m_values.contains(key) && m_values.value(key) == normalized)
-        return false;
-
-    const int previousAudioDelayMs = m_audioDelayMs;
-    const QString previousAudioOutputMode = m_audioOutputMode;
-
-    m_values.insert(key, normalized);
-    applySchemaValue(spec, normalized, apply);
-
-    if (persist)
-        m_database->saveSetting(key, serializedSettingValue(spec, normalized));
-
-    if (apply && spec.target == SettingTarget::AudioDelay) {
-        qInfo() << "app: audio delay changed" << previousAudioDelayMs << "->" << m_audioDelayMs << "ms";
-    } else if (apply && spec.target == SettingTarget::AudioOutput) {
-        qInfo() << "app: audio output mode changed" << previousAudioOutputMode << "->" << m_audioOutputMode;
-    }
-
-    if (notify) {
-        emit settingChanged(key);
-        emit settingsValuesChanged();
-        emitSchemaSignals(spec);
-    }
-    return true;
+    submitValues(std::move(defaults), ChangeOrigin::User);
 }
 
 void SettingsController::applySchemaValue(const SettingSpec& spec, const QVariant& value, bool apply)
@@ -473,18 +779,24 @@ void SettingsController::applySchemaValue(const SettingSpec& spec, const QVarian
     switch (spec.target) {
     case SettingTarget::External:
         break;
+    case SettingTarget::Locale:
+    case SettingTarget::LatencyGuard:
+    case SettingTarget::LatencyOverlay:
+        break;
+    case SettingTarget::AudioLanguage:
+        m_subtitlePreferences.audioLanguage = value.toString();
+        if (apply)
+            applySubtitlePreferencesToPlayer();
+        break;
     case SettingTarget::NightMode:
         m_nightModeEnabled = value.toBool();
         if (apply && m_player)
             m_player->setNightModeEnabled(m_nightModeEnabled);
         break;
-    case SettingTarget::CastButtonEnabled:
-        m_castButtonEnabled = value.toBool();
-        break;
     case SettingTarget::RemoteControlTargetEnabled:
         m_remoteControlTargetEnabled = value.toBool();
-        if (m_api)
-            m_api->setRemoteControlTargetEnabled(m_remoteControlTargetEnabled);
+        if (apply || !m_localSettingsLoaded)
+            emit remoteControlTargetEnabledChanged(m_remoteControlTargetEnabled);
         break;
     case SettingTarget::ToneMappingVisualization:
         m_toneMappingVisualizationEnabled = value.toBool();
@@ -535,11 +847,11 @@ void SettingsController::applySchemaValue(const SettingSpec& spec, const QVarian
         break;
     case SettingTarget::VideoOutputMode:
         m_videoOutputMode = value.toString();
-        if (m_player)
+        if (m_player && (apply || !m_localSettingsLoaded))
             m_player->setDirectVideoOutput(m_videoOutputMode == QLatin1String("direct"));
         break;
     case SettingTarget::SoftwareRenderer:
-        if (m_player)
+        if (m_player && (apply || !m_localSettingsLoaded))
             m_player->setSoftwareRenderer(value.toString().toLatin1());
         break;
     case SettingTarget::AutoAdjustRenderQuality:
@@ -547,29 +859,31 @@ void SettingsController::applySchemaValue(const SettingSpec& spec, const QVarian
         break;
     case SettingTarget::RenderQuality:
         m_renderQuality = value.toString();
-        if (m_player)
+        if (m_player && (apply || !m_localSettingsLoaded))
             m_player->setRenderQuality(MpvOptionProfile::renderQualityFromName(m_renderQuality));
         break;
     case SettingTarget::HardwareDecoding:
-        if (m_player)
+        if (m_player && (apply || !m_localSettingsLoaded))
             m_player->setHardwareDecoding(value.toBool());
         break;
     case SettingTarget::HdrOutputMode:
-        if (m_player)
+        if (m_player && (apply || !m_localSettingsLoaded))
             m_player->setHdrOutputPreference(value.toString());
         // The mpv side of this applies immediately; the swapchain side cannot,
         // because Qt fixes a window's format when the window is created. Keep
         // it somewhere readable before the next window exists.
-        RenderTargetPolicy::rememberPreference(RenderTargetPolicy::preferenceFromName(value.toString()));
+        if (apply || !m_localSettingsLoaded)
+            RenderTargetPolicy::rememberPreference(RenderTargetPolicy::preferenceFromName(value.toString()));
         break;
     case SettingTarget::GraphicsApi:
         // Qt fixes the scene graph's backend for the life of the process, so
         // like the swapchain format this is recorded for the next launch and
         // read back before QGuiApplication exists.
-        RenderTargetPolicy::rememberGraphicsApi(RenderTargetPolicy::graphicsApiFromName(value.toString()));
+        if (apply || !m_localSettingsLoaded)
+            RenderTargetPolicy::rememberGraphicsApi(RenderTargetPolicy::graphicsApiFromName(value.toString()));
         break;
     case SettingTarget::HdrPeakBrightness:
-        if (m_player)
+        if (m_player && (apply || !m_localSettingsLoaded))
             m_player->setHdrPeakNits(value.toInt());
         break;
     case SettingTarget::UiScale:
@@ -578,7 +892,8 @@ void SettingsController::applySchemaValue(const SettingSpec& spec, const QVarian
     case SettingTarget::AutomaticUpdates:
         // Announced even on the initial load, which is what starts the first
         // check: nothing checks for updates until settings have said it may.
-        emit automaticUpdatesChanged(value.toBool());
+        if (apply || !m_localSettingsLoaded)
+            emit automaticUpdatesChanged(value.toBool());
         break;
     case SettingTarget::ArtworkFormat:
         m_artworkFormat = value.toString();
@@ -598,7 +913,6 @@ void SettingsController::applySchemaValue(const SettingSpec& spec, const QVarian
     case SettingTarget::AudioTrackMode:
         m_subtitlePreferences.audioMode = value.toString();
         if (apply) {
-            saveSubtitleUserConfiguration();
             applySubtitlePreferencesToPlayer();
         }
         break;
@@ -607,14 +921,12 @@ void SettingsController::applySchemaValue(const SettingSpec& spec, const QVarian
     case SettingTarget::SubtitleLanguage:
         m_subtitlePreferences.language = value.toString();
         if (apply) {
-            saveSubtitleUserConfiguration();
             applySubtitlePreferencesToPlayer();
         }
         break;
     case SettingTarget::SubtitleMode:
         m_subtitlePreferences.mode = value.toString();
         if (apply) {
-            saveSubtitleUserConfiguration();
             applySubtitlePreferencesToPlayer();
         }
         break;
@@ -766,86 +1078,40 @@ void SettingsController::applySchemaValue(const SettingSpec& spec, const QVarian
     }
 }
 
-void SettingsController::emitSchemaSignals(const SettingSpec& spec)
+void SettingsController::emitBatchSignals(const QVariantMap& values)
 {
-    switch (spec.target) {
-    case SettingTarget::External:
-        break;
-    case SettingTarget::NightMode:
-        emit nightModeChanged();
-        break;
-    case SettingTarget::CastButtonEnabled:
-    case SettingTarget::RemoteControlTargetEnabled:
-        emit remoteControlSettingsChanged();
-        break;
-    case SettingTarget::ToneMappingVisualization:
-    case SettingTarget::MaxStreamingHeight:
-    case SettingTarget::ManualStreamingBitrate:
-    case SettingTarget::MaxStreamingBitrate:
-    case SettingTarget::UnlimitedLocalBitrate:
-    case SettingTarget::PreferRemux:
-    case SettingTarget::ForwardCacheSize:
-    case SettingTarget::PlayerVolumeSlider:
-    case SettingTarget::AudioOutput:
-    case SettingTarget::HardwareDecoding:
-        break;
-    case SettingTarget::AudioDelay:
-        emit audioDelayChanged();
-        break;
-    case SettingTarget::UiScale:
-        emit appearanceChanged();
-        break;
-    case SettingTarget::ArtworkFormat:
-    case SettingTarget::ArtworkWebpQuality:
-    case SettingTarget::ArtworkJpegQuality:
-        break;
-    case SettingTarget::AudioTrackMode:
-    case SettingTarget::RememberSeriesAudioTrack:
-        break;
-    case SettingTarget::SubtitleLanguage:
-    case SettingTarget::SubtitleMode:
-    case SettingTarget::SubtitleStyling:
-    case SettingTarget::SubtitleTextWeight:
-    case SettingTarget::SubtitleFont:
-    case SettingTarget::SubtitleTextColor:
-    case SettingTarget::SubtitleTextColorOverride:
-    case SettingTarget::SubtitleDropShadow:
-    case SettingTarget::SubtitleTextBackground:
-    case SettingTarget::SubtitleVerticalPosition:
-    case SettingTarget::SubtitleScale:
-    case SettingTarget::SubtitlePositionAndSizeOverride:
-    case SettingTarget::SubtitleBitmapSharpness:
-    case SettingTarget::SubtitleRecolorImages:
-    case SettingTarget::SubtitleBitmapShadowEnabled:
-    case SettingTarget::SubtitleBitmapShadowCoreSize:
-    case SettingTarget::SubtitleBitmapShadowCoreGrow:
-    case SettingTarget::SubtitleBitmapShadowCoreOpacity:
-    case SettingTarget::SubtitleBitmapShadowSpreadEnabled:
-    case SettingTarget::SubtitleBitmapShadowSpreadSize:
-    case SettingTarget::SubtitleBitmapShadowSpreadGrow:
-    case SettingTarget::SubtitleBitmapShadowSpreadX:
-    case SettingTarget::SubtitleBitmapShadowSpreadY:
-    case SettingTarget::SubtitleBitmapShadowSpreadOpacity:
-    case SettingTarget::SubtitleBitmapShadowDither:
-    case SettingTarget::SubtitleAllowInBlackBars:
-    case SettingTarget::SubtitleHdrBrightness:
-        emit subtitleSettingsChanged();
-        break;
-    case SettingTarget::RedButton:
-    case SettingTarget::GreenButton:
-    case SettingTarget::YellowButton:
-    case SettingTarget::BlueButton:
-        emit buttonRemapChanged();
-        break;
-    case SettingTarget::MpvConfigMode:
-    case SettingTarget::MpvConfigDirectory:
-        break;
+    bool subtitle = false;
+    bool buttons = false;
+    for (auto it = values.cbegin(); it != values.cend(); ++it) {
+        const auto& spec = *findSettingSpec(it.key());
+        switch (spec.target) {
+        case SettingTarget::NightMode:
+            emit nightModeChanged();
+            break;
+        case SettingTarget::RemoteControlTargetEnabled:
+            emit remoteControlSettingsChanged();
+            break;
+        case SettingTarget::AudioDelay:
+            emit audioDelayChanged();
+            break;
+        case SettingTarget::UiScale:
+            emit appearanceChanged();
+            break;
+        default:
+            break;
+        }
+        subtitle |= it.key().startsWith(QStringLiteral("subtitles/"));
+        buttons |= QLatin1String(spec.group) == QLatin1String("Remote buttons");
     }
+    if (subtitle)
+        emit subtitleSettingsChanged();
+    if (buttons)
+        emit buttonRemapChanged();
 }
 
 void SettingsController::applyArtworkEncoding()
 {
-    if (!m_artwork)
+    if (!m_artwork || m_batchEffects)
         return;
     // "auto" is resolved here rather than in the schema so the stored value
     // stays portable: the same profile restored on a TV and on a desktop asks
@@ -858,11 +1124,11 @@ void SettingsController::applyArtworkEncoding()
 
 void SettingsController::applyPlaybackPreferences()
 {
-    if (!m_api)
+    if (m_batchEffects)
         return;
     const qint64 manualBitrate
         = m_manualStreamingBitrate ? static_cast<qint64>(m_maxStreamingBitrateMbps) * 1'000'000 : 0;
-    m_api->setPlaybackPreferences(manualBitrate, m_unlimitedLocalBitrate, m_preferRemux, m_maxStreamingHeight);
+    emit playbackPreferencesChanged(manualBitrate, m_unlimitedLocalBitrate, m_preferRemux, m_maxStreamingHeight);
 }
 
 void SettingsController::applyAudioDelayToPlayer()
@@ -940,23 +1206,6 @@ void SettingsController::applyLoadedAudioDelay(const QString& output, int delayM
     emit audioDelayChanged();
 }
 
-void SettingsController::saveSubtitleUserConfiguration()
-{
-    if (!m_api || m_api->session().accessToken.isEmpty())
-        return;
-
-    QJsonObject configuration = m_userConfiguration;
-    configuration.insert(QStringLiteral("SubtitleLanguagePreference"), m_subtitlePreferences.language);
-    configuration.insert(QStringLiteral("SubtitleMode"), m_subtitlePreferences.mode);
-    const bool smartAudio = m_subtitlePreferences.audioMode == QStringLiteral("Smart");
-    configuration.insert(QStringLiteral("PlayDefaultAudioTrack"), !smartAudio);
-    m_userConfiguration = configuration;
-
-    Async::runScoped(
-        this, m_api->updateUserConfiguration(configuration), []() {},
-        [this](const std::exception_ptr& error) { emit errorOccurred(exceptionMessage(error)); });
-}
-
 void SettingsController::applyMpvConfigPolicy()
 {
     const MpvConfigPolicy policy = validatedPlatformMpvConfigPolicy(m_mpvConfigMode, m_mpvConfigDirectory);
@@ -966,8 +1215,8 @@ void SettingsController::applyMpvConfigPolicy()
 
 void SettingsController::applySubtitlePreferencesToPlayer()
 {
-    if (m_player)
+    if (m_player && !m_batchEffects)
         m_player->setSubtitlePreferences(m_subtitlePreferences);
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

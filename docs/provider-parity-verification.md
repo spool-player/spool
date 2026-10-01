@@ -1,0 +1,72 @@
+# Provider parity verification
+
+The provider parity plan is implemented across Spool and the sibling Jellyfin,
+Emby and Plex providers. The API remains 0.2; optional features negotiate exact
+extension versions per account. Local provider builds use the sibling working
+trees. Published provider pins are unchanged until a separately authorized release.
+
+Verified again on 2026-09-30 after the provider UI/local-library cutover: the
+local-provider release build succeeded, all 98 non-GPU tests passed, all six
+provider contract runs passed, and all three provider archives passed validation.
+
+Additional isolated checks exercised the real Jellyfin password form, Emby Connect
+PIN/membership selection and protected Plex Home flow against scripted provider
+contexts. A loopback server required the generated Jellyfin trickplay URL's account
+token, and Qt fetched and rendered the expected colored pixels. Local-provider tests
+exercise opt-in setup/cancellation, overlapping folders, configuration while disabled,
+re-enabling the changed library, and decoded/cached video thumbnail pixels.
+The artwork bridge regression additionally checks inherited image ownership and
+rendered pixels for native/JavaScript-backed rows through first population,
+replacement and resizing. It also passed with the application's compiled QML
+cache objects linked into the isolated runner. Enabled and disabled login button
+fills were checked as blue in an offscreen render.
+
+The same three-pass, cold-route offscreen software benchmark measured Settings median
+wall time at 44.0 ms before and 31.1 ms after, and GUI CPU time at 22.8 ms before and
+13.6 ms after. Settings constructed 9 rather than 13 delegates. Other routes' construction
+costs were lower or similar, but presentation waits varied and did not improve uniformly.
+These are isolated empty-library measurements, not a claim about GPU presentation,
+large live-server libraries, or physical input-to-display latency.
+
+## Reproduce the checks
+
+From the Spool repository:
+
+```sh
+nix run .#local-providers-build
+nix develop .#native -c ctest --test-dir build/linux-release-local-providers/app \
+  -E '^mpv-video-item' --parallel 8 --output-on-failure
+```
+
+The two excluded mpv rendering tests require a GPU. Provider contracts also run
+against each sibling's `tests/contract.mjs` with `provider-contract-runner`, both
+normally and with `QV4_FORCE_INTERPRETER=1`.
+
+`extension-integration` uses real Settings, SettingsSync, ProviderRegistry,
+SourceHub and RemoteTargets controllers, temporary storage, a stateful loopback
+HTTP server and actual QML surfaces. It verifies native and Spool document writes,
+confirmed read-back states, keyboard sync opt-out, stale responses after an account
+change, remote target selection without playback, removal of the second duplicate
+queue entry, and rejected/successful PIN submission through a provider surface.
+Existing native and provider tests cover service-specific protocols, activation
+families, generation races, old-host compatibility and settings convergence.
+
+For screenshots, supply an output directory:
+
+```sh
+nix develop .#native -c env SPOOL_INTEGRATION_CAPTURES=/tmp/spool-extension-captures \
+  ctest --test-dir build/linux-release-local-providers/app \
+  -R '^extension-integration$' --output-on-failure
+```
+
+The test captures both Settings and Subtitle Appearance at 1280×720, 1920×1080,
+and 3840×2160, at 100% and 150% zoom, in confirmed, pending, error and opted-out
+states: 48 images. It uses the application's bundled fonts and offscreen software
+rendering. It does not open a desktop window or contact a real media server.
+
+## Limits
+
+Loopback and protocol fixtures verify host behavior and request contracts; they do
+not establish support on every server/device version. Live Jellyfin/Emby/Plex,
+Plex Companion devices, two physical devices and TVs were not exercised. No TV
+build/deployment, push, tag or release is part of this completion.

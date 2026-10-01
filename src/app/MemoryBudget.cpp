@@ -3,7 +3,7 @@
 
 #include <algorithm>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
 
@@ -30,4 +30,4 @@ MemoryBudget MemoryBudget::detect()
     return budget;
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

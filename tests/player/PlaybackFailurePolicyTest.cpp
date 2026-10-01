@@ -19,9 +19,9 @@ void require(bool condition, const char *message)
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("playback-failure-policy")
+SPOOL_TEST_MAIN("playback-failure-policy")
 {
-    using JellyfinNative::PlaybackFailurePolicy;
+    using Spool::PlaybackFailurePolicy;
 
     require(
         PlaybackFailurePolicy::isRetryableCodecFailure(QStringLiteral("DirectPlay"), true, MPV_ERROR_UNKNOWN_FORMAT),
@@ -44,16 +44,35 @@ JELLYFIN_TEST_MAIN("playback-failure-policy")
     require(!PlaybackFailurePolicy::shouldStartCodecFallback(true, false, true),
         "a SyncPlay member must not independently schedule a replacement stream");
 
-    JellyfinNative::MovieItem original;
+    using FileEnd = PlaybackFailurePolicy::FileEnd;
+    require(
+        PlaybackFailurePolicy::classifyFileEnd(false, MPV_END_FILE_REASON_EOF, 1200.0, 2640.0) == FileEnd::Interrupted,
+        "a stream cut off mid-episode must not count as finishing it");
+    require(
+        PlaybackFailurePolicy::classifyFileEnd(false, MPV_END_FILE_REASON_EOF, 2638.5, 2640.0) == FileEnd::Completed,
+        "an end within the duration's rounding is the item finishing");
+    require(PlaybackFailurePolicy::classifyFileEnd(false, MPV_END_FILE_REASON_EOF, 95.0, 0.0) == FileEnd::Completed,
+        "a stream with no known duration ends when it says it does");
+    require(PlaybackFailurePolicy::classifyFileEnd(false, MPV_END_FILE_REASON_STOP, 2639.0, 2640.0) == FileEnd::Stopped,
+        "a stop near the end is still a stop");
+    require(PlaybackFailurePolicy::classifyFileEnd(true, MPV_END_FILE_REASON_ERROR, 1200.0, 2640.0) == FileEnd::Failed,
+        "an mpv error stays a failure");
+
+    require(PlaybackFailurePolicy::shouldResumeInterrupted(0.0, 1200.0),
+        "an interruption after real progress resumes where it broke");
+    require(!PlaybackFailurePolicy::shouldResumeInterrupted(1200.0, 1200.0),
+        "a resume that ends where it started must not resume again");
+
+    Spool::MovieItem original;
     original.id = QStringLiteral("item");
     original.resumeTicks = 1;
-    const JellyfinNative::MovieItem retry = PlaybackFailurePolicy::retryItem(original, 42'000'000);
+    const Spool::MovieItem retry = PlaybackFailurePolicy::retryItem(original, 42'000'000);
     require(retry.id == original.id && retry.resumeTicks == 42'000'000,
         "fallback should preserve the item while resuming at the failed position");
 
-    JellyfinNative::PlaybackSession fallback;
+    Spool::PlaybackSession fallback;
     fallback.playMethod = QStringLiteral("Transcode");
-    const std::vector<JellyfinNative::PlaybackQueueItem> queue {
+    const std::vector<Spool::PlaybackQueueItem> queue {
         { QStringLiteral("item"), QStringLiteral("playlist-item") },
         { QStringLiteral("next"), QStringLiteral("playlist-next") },
     };

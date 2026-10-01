@@ -5,7 +5,7 @@
 #include <cstdlib>
 #include <iostream>
 
-using JellyfinNative::RequestGeneration;
+using Spool::RequestGeneration;
 
 namespace {
 
@@ -19,7 +19,7 @@ void require(bool condition, const char *message)
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("request-generation")
+SPOOL_TEST_MAIN("request-generation")
 {
     RequestGeneration generation;
     const RequestGeneration::Token first = generation.next();

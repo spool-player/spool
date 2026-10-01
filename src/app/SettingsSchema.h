@@ -4,7 +4,7 @@
 #include <QVariantList>
 #include <QVector>
 
-namespace JellyfinNative {
+namespace Spool {
 
 enum class SettingType {
     Action,
@@ -28,10 +28,15 @@ enum class SettingPlatform {
     Android,
 };
 
+enum class SettingSyncPolicy { Never, PortableDefault, DeviceOptIn };
+
 enum class SettingTarget {
     External,
+    Locale,
+    LatencyGuard,
+    LatencyOverlay,
+    AudioLanguage,
     NightMode,
-    CastButtonEnabled,
     RemoteControlTargetEnabled,
     ToneMappingVisualization,
     MaxStreamingHeight,
@@ -133,6 +138,8 @@ struct SettingSpec {
     const char *dependsOnValue = "";
     bool persisted = true;
     bool requiresHdrPlayback = false;
+    SettingSyncPolicy syncPolicy = SettingSyncPolicy::Never;
+    const char *nativePreference = "";
 
     // Declaration modifiers. Each returns a copy so specs read as one
     // expression: slider(...).advanced().onDesktop().
@@ -149,7 +156,12 @@ const QVector<SettingSpec>& settingSpecs();
 const SettingSpec *findSettingSpec(const QString& key);
 QVariant settingDefaultValue(const SettingSpec& spec);
 QVariant normalizedSettingValue(const SettingSpec& spec, const QVariant& value);
+SettingSyncPolicy settingSyncPolicy(const SettingSpec& spec, const QVariant& value);
+bool settingSupportedOnPlatform(const SettingSpec& spec);
+// Unlike normalization, this rejects unsupported remote values rather than
+// substituting a local fallback that would destroy the remote preference.
+bool settingAcceptsRemoteValue(const SettingSpec& spec, const QVariant& value);
 QString serializedSettingValue(const SettingSpec& spec, const QVariant& value);
 QVariantList settingSchemaModel();
 
-} // namespace JellyfinNative
+} // namespace Spool

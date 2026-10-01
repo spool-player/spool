@@ -1,6 +1,5 @@
 #include "platform/PlatformApplicationServices.h"
 
-#include "app/AppController.h"
 #include "app/RouterController.h"
 #include "app/SettingsController.h"
 #include "platform/NativeAppWindow.h"
@@ -23,14 +22,14 @@ extern "C" {
 #include <webos-helpers/libhelpers.h>
 }
 
-namespace JellyfinNative {
+namespace Spool {
 
 struct PlatformApplicationServices::PlatformData {
-    PlatformData(QGuiApplication& guiApplication, NativeAppWindow& nativeWindow, AppController& appController,
+    PlatformData(QGuiApplication& guiApplication, NativeAppWindow& nativeWindow, ApplicationHooks& applicationHooks,
         RouterController& routerController)
         : application(&guiApplication)
         , window(&nativeWindow)
-        , controller(&appController)
+        , hooks(&applicationHooks)
         , router(&routerController)
     {
         backgroundTrimTimer.setSingleShot(true);
@@ -108,7 +107,7 @@ struct PlatformApplicationServices::PlatformData {
         auto *platform = fromCallbackContext(data);
         const QByteArray payload(message && LSMessageGetPayload(message) ? LSMessageGetPayload(message) : "");
         const QJsonDocument document = QJsonDocument::fromJson(payload);
-        if (!platform || !platform->controller || !document.isObject())
+        if (!platform || !platform->hooks || !document.isObject())
             return true;
         const QJsonObject object = document.object();
         if (!object.value(QStringLiteral("returnValue")).toBool(true)
@@ -120,7 +119,11 @@ struct PlatformApplicationServices::PlatformData {
         const QString level = object.value(QStringLiteral("level")).toString();
         if (!level.isEmpty()) {
             QMetaObject::invokeMethod(
-                platform->controller, [platform, level] { platform->controller->onMemoryPressure(level); },
+                platform->hooks,
+                [platform, level] {
+                    if (platform->hooks->memoryPressure)
+                        platform->hooks->memoryPressure(level);
+                },
                 Qt::QueuedConnection);
         }
         return true;
@@ -143,7 +146,7 @@ struct PlatformApplicationServices::PlatformData {
 
     QGuiApplication *application = nullptr;
     NativeAppWindow *window = nullptr;
-    AppController *controller = nullptr;
+    ApplicationHooks *hooks = nullptr;
     RouterController *router = nullptr;
     WebOSAudioRoute audioRoute;
     QTimer backgroundTrimTimer;
@@ -155,8 +158,8 @@ struct PlatformApplicationServices::PlatformData {
 };
 
 PlatformApplicationServices::PlatformApplicationServices(
-    QGuiApplication& application, NativeAppWindow& window, AppController& controller, RouterController& router)
-    : m_platform(std::make_unique<PlatformData>(application, window, controller, router))
+    QGuiApplication& application, NativeAppWindow& window, ApplicationHooks& hooks, RouterController& router)
+    : m_platform(std::make_unique<PlatformData>(application, window, hooks, router))
 {
 }
 
@@ -168,17 +171,21 @@ void PlatformApplicationServices::start()
         return;
     m_platform->started = true;
 
-    QObject::connect(&m_platform->audioRoute, &WebOSAudioRoute::routeChanged, m_platform->controller->settings(),
-        [settings = m_platform->controller->settings()](const QString& output, int displayLatencyMs,
-            int outputLatencyMs) { settings->updateAudioOutputRoute(output, displayLatencyMs, outputLatencyMs); });
+    QObject::connect(&m_platform->audioRoute, &WebOSAudioRoute::routeChanged, m_platform->hooks->settings,
+        [settings = m_platform->hooks->settings](const QString& output, int displayLatencyMs, int outputLatencyMs) {
+            settings->updateAudioOutputRoute(output, displayLatencyMs, outputLatencyMs);
+        });
     QObject::connect(
-        m_platform->controller, &AppController::aggressiveMemoryPressure, m_platform->window,
+        m_platform->hooks, &ApplicationHooks::aggressiveMemoryPressure, m_platform->window,
         [window = m_platform->window] { window->releaseResources(); }, Qt::QueuedConnection);
-    QObject::connect(&m_platform->backgroundTrimTimer, &QTimer::timeout, m_platform->controller,
-        [controller = m_platform->controller] { controller->onMemoryPressure(QStringLiteral("critical")); });
+    QObject::connect(
+        &m_platform->backgroundTrimTimer, &QTimer::timeout, m_platform->hooks, [hooks = m_platform->hooks] {
+            if (hooks->memoryPressure)
+                hooks->memoryPressure(QStringLiteral("critical"));
+        });
     QObject::connect(m_platform->application, &QGuiApplication::applicationStateChanged, m_platform->application,
         [platform = m_platform.get()](Qt::ApplicationState state) {
-            PlayerController *player = platform->controller->player();
+            PlayerController *player = platform->hooks->player;
             if (state == Qt::ApplicationHidden || state == Qt::ApplicationSuspended)
                 player->teardownForBackground();
             else if (state == Qt::ApplicationInactive)
@@ -195,7 +202,7 @@ void PlatformApplicationServices::start()
         });
     QObject::connect(m_platform->window, &NativeAppWindow::platformSurfaceStateChanged, m_platform->application,
         [platform = m_platform.get()](int state) {
-            PlayerController *player = platform->controller->player();
+            PlayerController *player = platform->hooks->player;
             if (state == WL_WEBOS_SHELL_SURFACE_STATE_MINIMIZED) {
                 if (player->sessionActive() && !player->paused()) {
                     qInfo() << "webOS shell minimized: pausing playback";
@@ -211,7 +218,7 @@ void PlatformApplicationServices::start()
         });
     QObject::connect(m_platform->window, &NativeAppWindow::platformSurfaceExposed, &m_platform->backgroundTrimTimer,
         [platform = m_platform.get()](bool exposed) {
-            PlayerController *player = platform->controller->player();
+            PlayerController *player = platform->hooks->player;
             if (exposed) {
                 platform->backgroundTrimTimer.stop();
                 player->resyncForForeground();
@@ -246,4 +253,4 @@ void PlatformApplicationServices::start()
         "{\"subscribe\":true}", &PlatformData::soundOutput);
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

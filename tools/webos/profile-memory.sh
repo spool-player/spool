@@ -61,8 +61,8 @@ mkdir -p "$OUTDIR"
 
 SSH=(ssh -F /dev/null -o BatchMode=yes)
 SSH_TTY=(ssh -F /dev/null -tt)
-MARKER=/tmp/jellyfin-heaptrack.on
-CRUMB=/tmp/jellyfin-heaptrack.last
+MARKER=/tmp/spool-heaptrack.on
+CRUMB=/tmp/spool-heaptrack.last
 
 echo "Resolving desktop heaptrack tools from nixpkgs..."
 HP="$(nix build nixpkgs#heaptrack --no-link --print-out-paths)"
@@ -88,7 +88,7 @@ done
 # Enforce one-shot from here (the app user can't delete the root-owned marker in
 # sticky /tmp, so the shim's own rm may fail -- we clear it as root instead).
 "${SSH[@]}" "$HOST" "rm -f '$MARKER'" 2>/dev/null || true
-PID="$("${SSH[@]}" "$HOST" "pidof jellyfin-native.real 2>/dev/null || pgrep -f jellyfin-native.real | head -1" || true)"
+PID="$("${SSH[@]}" "$HOST" "pidof spool.real 2>/dev/null || pgrep -f spool.real | head -1" || true)"
 echo "Profiling live: trace=$RAW_REMOTE pid=${PID:-?}"
 
 # 2b. The +memory-on-stream-start happens at playback start, not app launch.
@@ -148,9 +148,9 @@ fi
 
 # 7. Symbolise on the desktop. --sysroot resolves modules by recorded path;
 #    --extra-paths recovers the stripped app binary by build-id.
-INTERPRETED="$OUTDIR/heaptrack.jellyfin.gz"
+INTERPRETED="$OUTDIR/heaptrack.spool.gz"
 EXTRA=()
-[[ -f "$ROOT/build/jellyfin-native.unstripped" ]] && EXTRA+=(--extra-paths "$ROOT/build")
+[[ -f "$ROOT/build/spool.unstripped" ]] && EXTRA+=(--extra-paths "$ROOT/build")
 [[ -d "$ROOT/app/lib" ]] && EXTRA+=(--extra-paths "$ROOT/app/lib")
 echo "Interpreting trace ..."
 # The preload writes an uncompressed raw stream when pointed at a file, but be

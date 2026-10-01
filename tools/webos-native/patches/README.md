@@ -7,6 +7,13 @@ references them via `$QT_SERIES`, so a 6.11.x point bump (e.g. 6.11.0 ->
 6.11.1) needs no rename — only `QT_VERSION` changes. Bump to a new series only
 if a patch stops applying.
 
+The source cache records each module's patch-set hash after all patches apply.
+An absent or changed hash causes re-extraction from the verified archive before
+patching, so revised patches cannot accumulate on top of older versions.
+The target qtbase cache also requires the `SPOOL_QT_NO_CURSOR_SURFACE` marker
+in its installed Wayland client library. A stale install is rebuilt by the
+normal `./build-ipk.sh` pipeline; no manual shared-Qt build is needed.
+
 `qtbase-6.11-webos-qstorageinfo-linux.patch`
 - Fixes `QStorageInfo` on the webOS ARM sysroot, whose glibc `struct statfs64`
   does not expose `f_flags`.
@@ -26,7 +33,7 @@ if a patch stops applying.
   `QT_CONFIG(opengl)` guard so the non-OpenGL webOS Wayland build compiles.
 
 `qtbase-6.11-webos-no-cursor-set.patch`
-- Adds a `JELLYFIN_QT_NO_CURSOR_SURFACE=1` opt-out that skips client-side
+- Adds a `SPOOL_QT_NO_CURSOR_SURFACE=1` opt-out that skips client-side
   `set_cursor` in the Wayland QPA, so the app never displaces or hides the
   LSM-owned magic-remote pointer (mirrors xbmc's no-op `SetCursor`).
 

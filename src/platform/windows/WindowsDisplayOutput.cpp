@@ -3,6 +3,7 @@
 #include "player/RenderTargetProfile.h"
 
 #include <QDebug>
+#include <QScreen>
 #include <QWindow>
 
 #include <d3d11_1.h>
@@ -19,7 +20,7 @@
 #include <optional>
 #include <vector>
 
-namespace JellyfinNative {
+namespace Spool {
 namespace {
 
     using Microsoft::WRL::ComPtr;
@@ -72,6 +73,33 @@ namespace {
     }
 
 } // namespace
+
+bool windowsDesktopHdrEnabled(QScreen *screen)
+{
+    if (!screen)
+        return false;
+    ComPtr<IDXGIFactory1> factory;
+    if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(factory.GetAddressOf()))))
+        return false;
+    const QString name = screen->name();
+    for (UINT adapterIndex = 0;; ++adapterIndex) {
+        ComPtr<IDXGIAdapter1> adapter;
+        if (factory->EnumAdapters1(adapterIndex, adapter.GetAddressOf()) != S_OK)
+            break;
+        for (UINT outputIndex = 0;; ++outputIndex) {
+            ComPtr<IDXGIOutput> output;
+            if (adapter->EnumOutputs(outputIndex, output.GetAddressOf()) != S_OK)
+                break;
+            ComPtr<IDXGIOutput6> output6;
+            DXGI_OUTPUT_DESC1 description {};
+            if (FAILED(output.As(&output6)) || FAILED(output6->GetDesc1(&description)))
+                continue;
+            if (name.compare(QStringView(description.DeviceName), Qt::CaseInsensitive) == 0)
+                return description.ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
+        }
+    }
+    return false;
+}
 
 DisplayOutputCapabilities windowsD3D11DisplayOutput(QRhiSwapChain *swapchain)
 {
@@ -152,6 +180,7 @@ DisplayOutputCapabilities windowsD3D11DisplayOutput(QRhiSwapChain *swapchain)
     // This describes Windows' current Advanced Color output, not the app's
     // buffer encoding: Windows composites our scRGB into its HDR/PQ desktop.
     const bool desktopHdr = outputReported && outputDesc.ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
+    display.desktopHdrEnabled = desktopHdr;
     if (desktopHdr)
         display.supportedFormat = RenderTargetProfile::Format::ExtendedSrgbLinear;
     HMONITOR monitor
@@ -181,4 +210,4 @@ DisplayOutputCapabilities windowsD3D11DisplayOutput(QRhiSwapChain *swapchain)
     return display;
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

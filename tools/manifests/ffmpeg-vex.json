@@ -1,0 +1,27 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://github.com/spool-player/spool/blob/refactor/provider-seam/tools/manifests/ffmpeg-vex.json",
+  "author": "https://github.com/spool-player/spool",
+  "timestamp": "2026-10-01T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": { "name": "CVE-2026-75146" },
+      "products": [{ "@id": "pkg:generic/ffmpeg@9.0.2" }],
+      "status": "fixed",
+      "action_statement": "The SHA-256-pinned official FFmpeg 9.0.2 archive contains upstream fix 65b0dab903e5975e036b30ecc58f5935d4f151e0: libavformat/dashdec.c clamps negative cur_seq_no and checks cur_seq_no >= 0 before fragments indexing. https://github.com/FFmpeg/FFmpeg/commit/65b0dab903e5975e036b30ecc58f5935d4f151e0"
+    },
+    {
+      "vulnerability": { "name": "CVE-2026-75142" },
+      "products": [{ "@id": "pkg:generic/ffmpeg@9.0.2" }],
+      "status": "fixed",
+      "action_statement": "The SHA-256-pinned official FFmpeg 9.0.2 archive contains upstream fix 9d786e4b5e9b8482651928574de33772aeee7be1: libavformat/mpegenc.c rejects get_system_header_size(ctx) > 128 - 14 during mpeg_mux_init. https://github.com/FFmpeg/FFmpeg/commit/9d786e4b5e9b8482651928574de33772aeee7be1"
+    },
+    {
+      "vulnerability": { "name": "CVE-2026-75147" },
+      "products": [{ "@id": "pkg:generic/ffmpeg@9.0.2" }],
+      "status": "fixed",
+      "action_statement": "The SHA-256-pinned official FFmpeg 9.0.2 archive contains upstream fix 983dae9c19f46c87d597598c0fd2f2fcee0ad2f8: libavformat/rtpenc_av1.c consumes LEB bytes then rejects obu_size > (uint32_t) rem_size before advancing the payload pointer. https://github.com/FFmpeg/FFmpeg/commit/983dae9c19f46c87d597598c0fd2f2fcee0ad2f8"
+    }
+  ]
+}

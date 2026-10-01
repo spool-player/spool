@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../common/JellyfinTypes.h"
+#include "../media/MediaTypes.h"
 #include "../platform/MpvConfigPolicy.h"
 
 #include <QByteArray>
@@ -9,7 +9,7 @@
 
 #include <vector>
 
-namespace JellyfinNative {
+namespace Spool {
 
 struct MpvOption {
     QByteArray name;
@@ -67,4 +67,4 @@ public:
         const SubtitlePreferences& preferences, bool subtitlesEnabled, bool hdrPlayback = false);
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

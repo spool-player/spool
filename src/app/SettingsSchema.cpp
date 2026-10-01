@@ -1,15 +1,16 @@
 #include "SettingsSchema.h"
 
-#include "../common/JellyfinTypes.h"
+#include "../media/MediaTypes.h"
 #include "../platform/PlatformSettingsPolicy.h"
 
+#include <QLocale>
 #include <QVariantMap>
 #include <QtGlobal>
 
 #include <algorithm>
 #include <cmath>
 
-namespace JellyfinNative {
+namespace Spool {
 namespace {
 
     // Enhanced puts every frame through libplacebo, which is where the
@@ -61,6 +62,8 @@ namespace {
     constexpr SettingChoice kRailLabelChoices[]
         = { { "Never", "Never" }, { "On focus", "On focus" }, { "Always", "Always" } };
     constexpr SettingChoice kTextRenderModeChoices[] = { { "0", "Standard" }, { "1", "Curve" } };
+    constexpr SettingChoice kProviderUpdateChoices[]
+        = { { "auto", "Automatic" }, { "ask", "Ask first" }, { "manual", "Only when I check" } };
     constexpr SettingChoice kArtworkFormatChoices[]
         = { { "auto", "Automatic" }, { "webp", "WebP (smaller downloads)" }, { "jpeg", "JPEG (faster to decode)" } };
     constexpr SettingChoice kTechnicalMetadataChoices[]
@@ -152,28 +155,13 @@ namespace {
 
     // Rows the settings page owns end to end: the schema only describes how to
     // draw them, and SettingsController never stores their value.
-    SettingSpec pageSpec(const char *key, const char *group, const char *title, const char *description,
-        SettingType type, const SettingChoice *choices, qsizetype choiceCount)
-    {
-        SettingSpec spec { key, group, title, description, type, "", SettingTarget::External,
-            type == SettingType::Select ? SettingNormalizer::Choice : SettingNormalizer::String };
-        spec.choices = choices;
-        spec.choiceCount = choiceCount;
-        spec.persisted = false;
-        return spec;
-    }
-
     SettingSpec pageSpec(
         const char *key, const char *group, const char *title, const char *description, SettingType type)
     {
-        return pageSpec(key, group, title, description, type, nullptr, 0);
-    }
-
-    template <size_t N>
-    SettingSpec pageSpec(const char *key, const char *group, const char *title, const char *description,
-        SettingType type, const SettingChoice (&choices)[N])
-    {
-        return pageSpec(key, group, title, description, type, choices, static_cast<qsizetype>(N));
+        SettingSpec spec { key, group, title, description, type, "", SettingTarget::External,
+            SettingNormalizer::String };
+        spec.persisted = false;
+        return spec;
     }
 
     QString typeName(SettingType type)
@@ -301,278 +289,346 @@ SettingSpec SettingSpec::duringHdrPlayback() const
 const QVector<SettingSpec>& settingSpecs()
 {
     const PlatformAudioOutputPolicy& audioOutput = platformAudioOutputPolicy();
-    static const QVector<SettingSpec> specs {
+    static const QVector<SettingSpec> specs = [&] {
+        QVector<SettingSpec> rows {
 
-        sliderSpec("appearance/uiScalePercent", "Appearance", "Interface scale", "", "100", 50, 180, 5, "%",
-            SettingTarget::UiScale),
-        pageSpec("theme/accent", "Appearance", "Accent colour", "", SettingType::Select, kAccentChoices),
-        pageSpec("theme/reducedMotion", "Appearance", "Reduced motion", "Turns off focus and page animation",
-            SettingType::Toggle),
-        pageSpec(
-            "i18n/locale", "Appearance", "Language", "Some text only changes after a restart", SettingType::Select),
-        pageSpec("theme/technicalMetadata", "Appearance", "Technical details", "Codec, resolution, and audio format",
-            SettingType::Select, kTechnicalMetadataChoices)
-            .advanced(),
-        pageSpec("theme/railLabels", "Appearance", "Navigation labels", "", SettingType::Select, kRailLabelChoices)
-            .advanced(),
-        pageSpec("theme/antialiasedText", "Appearance", "Smooth text", "", SettingType::Toggle).advanced(),
-        pageSpec("theme/renderMode", "Appearance", "Text rendering", "Curve stays sharp at any scale",
-            SettingType::Select, kTextRenderModeChoices)
-            .advanced(),
-        selectSpec("artwork/format", "Appearance", "Artwork format",
-            "Automatic picks JPEG on TVs, where decoding costs more than downloading", "auto", kArtworkFormatChoices,
-            SettingTarget::ArtworkFormat)
-            .advanced(),
-        sliderSpec("artwork/webpQuality", "Appearance", "WebP quality", "Applies to artwork fetched as WebP", "75", 40,
-            100, 1, "", SettingTarget::ArtworkWebpQuality)
-            .advanced(),
-        sliderSpec("artwork/jpegQuality", "Appearance", "JPEG quality",
-            "JPEG needs a higher number than WebP to look the same", "82", 40, 100, 1, "",
-            SettingTarget::ArtworkJpegQuality)
-            .advanced(),
-        toggleSpec("remote/showCastButton", "Remote Control", "Show Cast button",
-            "Choose and control another Jellyfin client", true, SettingTarget::CastButtonEnabled),
-        toggleSpec("remote/acceptCommands", "Remote Control", "Allow remote control",
-            "Let other Jellyfin clients play and control media on this device", true,
-            SettingTarget::RemoteControlTargetEnabled),
-        selectSpec("audio/trackMode", "Playback", "Audio track", "Which track plays when a video starts", "Default",
-            kAudioTrackModeChoices, SettingTarget::AudioTrackMode),
-        toggleSpec("playback/rememberSeriesAudioTrack", "Playback", "Remember audio track per series",
-            "Keeps your choice for the rest of the episodes", true, SettingTarget::RememberSeriesAudioTrack),
-        toggleSpec("settings/nightMode", "Playback", "Night mode", "Lifts quiet dialogue and tames loud scenes", false,
-            SettingTarget::NightMode),
-        sliderSpec("settings/audioDelayMs", "Playback", "Audio sync", "Nudge the audio earlier or later", "0", -2000,
-            2000, 10, "ms", SettingTarget::AudioDelay),
-        toggleSpec("playback/showVolumeSlider", "Playback", "Volume slider in the player", "", true,
-            SettingTarget::PlayerVolumeSlider)
-            .onDesktop(),
-        sliderSpec("playback/controlFadeDelaySeconds", "Playback", "Hide player controls after", "", "4", 1, 10, 1, "s",
-            SettingTarget::External),
-        selectSpec("playback/videoOutput", "Playback", "Video output",
-            "Enhanced processes each frame on the GPU. Direct sends it straight to the display", "enhanced",
-            kVideoOutputChoices, SettingTarget::VideoOutputMode)
-            .onAndroid()
-            .advanced(),
-        selectSpec("playback/softwareRenderer", "Playback", "Software video renderer",
-            "For codecs Starfish cannot decode. Automatic uses gpu; gpu-next is experimental. "
-            "Keeps lightweight rendering settings. Applies to the next playback",
-            "auto", kSoftwareRendererChoices, SettingTarget::SoftwareRenderer)
-            .onWebOS()
-            .advanced(),
-        toggleSpec("playback/hardwareDecoding", "Playback", "Hardware decoding",
-            "Use the GPU to decode video when supported. Turn off to use the CPU. Applies to the next playback", true,
-            SettingTarget::HardwareDecoding)
-            .onDesktop(),
-        selectSpec("playback/renderQuality", "Playback", "Picture quality",
-            "How much work the GPU does on each frame. Lowered automatically if playback drops frames", "balanced",
-            kRenderQualityChoices, SettingTarget::RenderQuality)
-            .advanced(),
-        toggleSpec("playback/autoAdjustQuality", "Playback", "Adjust quality automatically",
-            "Step down a rung when playback drops frames on this device", true, SettingTarget::AutoAdjustRenderQuality)
-            .advanced(),
-        selectSpec("playback/graphicsApi", "Playback", "Graphics backend",
-            "Applies when Spool next starts. Automatic picks the backend this platform presents HDR through. "
-            "OpenGL is the SDR compatibility choice",
-            "auto", kGraphicsApiChoices, SettingTarget::GraphicsApi)
-            .onDesktop()
-            .advanced(),
-        selectSpec("playback/hdrOutput", "Playback", "HDR output",
-            "Applies when Spool next starts. Automatic enables HDR on supported Linux Wayland Vulkan and Windows "
-            "Direct3D 11 displays with OS HDR enabled. Unsupported outputs stay SDR",
-            "auto", kHdrOutputChoices, SettingTarget::HdrOutputMode)
-            .onDesktop()
-            .expert(),
-        sliderSpec("playback/hdrPeakNits", "Playback", "Display peak brightness",
-            "What the display can actually reach. Zero uses OS or compositor-reported luminance when available", "0", 0,
-            4000, 50, " nits", SettingTarget::HdrPeakBrightness)
-            .onDesktop()
-            .expert(),
-        selectSpec("settings/audioOutputMode", "Playback", "Audio output", "Applies the next time something plays",
-            audioOutput.defaultValue, audioOutput.choices, audioOutput.choiceCount, SettingTarget::AudioOutput,
-            SettingNormalizer::AudioOutput)
-            .advanced(),
-        selectSpec("playback/mpvConfigMode", "Playback", "mpv configuration",
-            "Your own mpv config can change or break playback", "disabled", kMpvConfigModeChoices,
-            SettingTarget::MpvConfigMode)
-            .expert()
-            .onDesktop(),
-        textSpec("playback/mpvConfigDirectory", "Playback", "mpv directory",
-            "Must hold mpv.conf and any scripts you want", SettingTarget::MpvConfigDirectory)
-            .expert()
-            .onDesktop()
-            .whenSetTo("playback/mpvConfigMode", "custom"),
+            sliderSpec("appearance/uiScalePercent", "Appearance", "Interface scale", "", "100", 50, 180, 5, "%",
+                SettingTarget::UiScale),
+            selectSpec("i18n/locale", "Appearance", "Language", "Some text only changes after a restart", "system",
+                nullptr, 0, SettingTarget::Locale),
+            selectSpec("theme/accent", "Appearance", "Accent colour", "", "0", kAccentChoices, SettingTarget::External),
+            toggleSpec("theme/reducedMotion", "Appearance", "Reduced motion", "", false, SettingTarget::External),
+            selectSpec("theme/technicalMetadata", "Appearance", "Technical details",
+                "Codec, resolution, and audio format", "Always", kTechnicalMetadataChoices, SettingTarget::External)
+                .advanced(),
+            selectSpec("theme/railLabels", "Appearance", "Navigation labels", "", "On focus", kRailLabelChoices,
+                SettingTarget::External)
+                .advanced(),
+            toggleSpec("theme/antialiasedText", "Appearance", "Smooth text", "", true, SettingTarget::External)
+                .advanced(),
+            selectSpec("theme/renderMode", "Appearance", "Text rendering", "", "0", kTextRenderModeChoices,
+                SettingTarget::External)
+                .advanced(),
+            selectSpec("artwork/format", "Appearance", "Artwork format",
+                "Automatic picks JPEG on TVs, where decoding costs more than downloading", "auto",
+                kArtworkFormatChoices, SettingTarget::ArtworkFormat)
+                .advanced(),
+            sliderSpec("artwork/webpQuality", "Appearance", "WebP quality", "", "75", 40, 100, 1, "",
+                SettingTarget::ArtworkWebpQuality)
+                .advanced(),
+            sliderSpec("artwork/jpegQuality", "Appearance", "JPEG quality",
+                "JPEG needs a higher number than WebP to look the same", "82", 40, 100, 1, "",
+                SettingTarget::ArtworkJpegQuality)
+                .advanced(),
+            toggleSpec("remote/acceptCommands", "Remote Control", "Allow remote control", "", true,
+                SettingTarget::RemoteControlTargetEnabled),
+            selectSpec("audio/language", "Playback", "Preferred audio language", "", "", nullptr, 0,
+                SettingTarget::AudioLanguage),
+            selectSpec("audio/trackMode", "Playback", "Audio track", "", "Default", kAudioTrackModeChoices,
+                SettingTarget::AudioTrackMode),
+            toggleSpec("playback/rememberSeriesAudioTrack", "Playback", "Remember audio track per series", "", true,
+                SettingTarget::RememberSeriesAudioTrack),
+            toggleSpec("settings/nightMode", "Playback", "Night mode", "Lifts quiet dialogue and tames loud scenes",
+                false, SettingTarget::NightMode),
+            sliderSpec("settings/audioDelayMs", "Playback", "Audio sync", "", "0", -2000, 2000, 10, "ms",
+                SettingTarget::AudioDelay),
+            toggleSpec("playback/showVolumeSlider", "Playback", "Volume slider in the player", "", true,
+                SettingTarget::PlayerVolumeSlider)
+                .onDesktop(),
+            sliderSpec("playback/controlFadeDelaySeconds", "Playback", "Hide player controls after", "", "4", 1, 10, 1,
+                "s", SettingTarget::External),
+            selectSpec("playback/videoOutput", "Playback", "Video output",
+                "Enhanced processes each frame on the GPU. Direct sends it straight to the display", "enhanced",
+                kVideoOutputChoices, SettingTarget::VideoOutputMode)
+                .onAndroid()
+                .advanced(),
+            selectSpec("playback/softwareRenderer", "Playback", "Software video renderer",
+                "For codecs Starfish cannot decode. Automatic uses gpu; gpu-next is experimental. "
+                "Keeps lightweight rendering settings. Applies to the next playback",
+                "auto", kSoftwareRendererChoices, SettingTarget::SoftwareRenderer)
+                .onWebOS()
+                .advanced(),
+            toggleSpec("playback/hardwareDecoding", "Playback", "Hardware decoding",
+                "Use the GPU to decode video when supported. Turn off to use the CPU. Applies to the next playback",
+                true, SettingTarget::HardwareDecoding)
+                .onDesktop(),
+            selectSpec("playback/renderQuality", "Playback", "Picture quality",
+                "How much work the GPU does on each frame. Lowered automatically if playback drops frames", "balanced",
+                kRenderQualityChoices, SettingTarget::RenderQuality)
+                .advanced(),
+            toggleSpec("playback/autoAdjustQuality", "Playback", "Adjust quality automatically",
+                "Step down a rung when playback drops frames on this device", true,
+                SettingTarget::AutoAdjustRenderQuality)
+                .advanced(),
+            selectSpec("playback/graphicsApi", "Playback", "Graphics backend",
+                "Applies when Spool next starts. Automatic picks the backend this platform presents HDR through. "
+                "OpenGL is the SDR compatibility choice",
+                "auto", kGraphicsApiChoices, SettingTarget::GraphicsApi)
+                .onDesktop()
+                .advanced(),
+            selectSpec("playback/hdrOutput", "Playback", "HDR output",
+                "Applies when Spool next starts. Automatic enables HDR on supported Linux Wayland Vulkan and Windows "
+                "Direct3D 11 displays with OS HDR enabled. Unsupported outputs stay SDR",
+                "auto", kHdrOutputChoices, SettingTarget::HdrOutputMode)
+                .onDesktop()
+                .expert(),
+            sliderSpec("playback/hdrPeakNits", "Playback", "Display peak brightness",
+                "What the display can actually reach. Zero uses OS or compositor-reported luminance when available",
+                "0", 0, 4000, 50, " nits", SettingTarget::HdrPeakBrightness)
+                .onDesktop()
+                .expert(),
+            selectSpec("settings/audioOutputMode", "Playback", "Audio output", "Applies the next time something plays",
+                audioOutput.defaultValue, audioOutput.choices, audioOutput.choiceCount, SettingTarget::AudioOutput,
+                SettingNormalizer::AudioOutput)
+                .advanced(),
+            selectSpec("playback/mpvConfigMode", "Playback", "mpv configuration",
+                "Your own mpv config can change or break playback", "disabled", kMpvConfigModeChoices,
+                SettingTarget::MpvConfigMode)
+                .expert()
+                .onDesktop(),
+            textSpec("playback/mpvConfigDirectory", "Playback", "mpv directory",
+                "Must hold mpv.conf and any scripts you want", SettingTarget::MpvConfigDirectory)
+                .expert()
+                .onDesktop()
+                .whenSetTo("playback/mpvConfigMode", "custom"),
 
-        selectSpec("playback/maxStreamingHeight", "Streaming", "Resolution limit",
-            "Anything larger is scaled down by the server", "0", kMaxStreamingHeightChoices,
-            SettingTarget::MaxStreamingHeight),
-        toggleSpec("playback/manualStreamingBitrate", "Streaming", "Set my own bitrate limit",
-            "Otherwise the limit is measured for you", false, SettingTarget::ManualStreamingBitrate),
-        sliderSpec("playback/maxStreamingBitrateMbps", "Streaming", "Bitrate limit",
-            "Anything higher is transcoded by the server", "120", 5, 1000, 5, "Mbps",
-            SettingTarget::MaxStreamingBitrate)
-            .whenSetTo("playback/manualStreamingBitrate", "true"),
-        toggleSpec("playback/unlimitedLocalBitrate", "Streaming", "No limit on the local network",
-            "Applies when the server sees you as local", false, SettingTarget::UnlimitedLocalBitrate)
-            .advanced(),
-        toggleSpec("playback/preferRemux", "Streaming", "Prefer remuxing",
-            "Repackages instead of re-encoding where it can", true, SettingTarget::PreferRemux)
-            .advanced(),
-        sliderSpec("playback/forwardCacheSizeMiB", "Streaming", "Read-ahead buffer",
-            "Applies the next time something plays", "32", 16, 2048, 1, "MB", SettingTarget::ForwardCacheSize,
-            SettingNormalizer::PowerOfTwoRange)
-            .advanced(),
+            selectSpec("playback/maxStreamingHeight", "Streaming", "Resolution limit",
+                "Anything larger is scaled down by the server", "0", kMaxStreamingHeightChoices,
+                SettingTarget::MaxStreamingHeight),
+            toggleSpec("playback/manualStreamingBitrate", "Streaming", "Set my own bitrate limit",
+                "Otherwise the limit is measured for you", false, SettingTarget::ManualStreamingBitrate),
+            pageSpec("action/connectionSpeed", "Streaming", "Connection speed", "", SettingType::Action),
+            sliderSpec("playback/maxStreamingBitrateMbps", "Streaming", "Bitrate limit",
+                "Anything higher is transcoded by the server", "120", 5, 1000, 5, "Mbps",
+                SettingTarget::MaxStreamingBitrate)
+                .whenSetTo("playback/manualStreamingBitrate", "true"),
+            toggleSpec("playback/unlimitedLocalBitrate", "Streaming", "No limit on the local network",
+                "Applies when the server sees you as local", false, SettingTarget::UnlimitedLocalBitrate)
+                .advanced(),
+            toggleSpec("playback/preferRemux", "Streaming", "Prefer remuxing",
+                "Repackages instead of re-encoding where it can", true, SettingTarget::PreferRemux)
+                .advanced(),
+            sliderSpec("playback/forwardCacheSizeMiB", "Streaming", "Read-ahead buffer",
+                "Applies the next time something plays", "32", 16, 2048, 1, "MB", SettingTarget::ForwardCacheSize,
+                SettingNormalizer::PowerOfTwoRange)
+                .advanced(),
 
-        selectSpec("subtitles/language", "Subtitles", "Preferred language", "Used when subtitles are picked for you",
-            "", nullptr, 0, SettingTarget::SubtitleLanguage),
-        selectSpec("subtitles/mode", "Subtitles", "When to show subtitles", "", "Default", kSubtitleModeChoices,
-            SettingTarget::SubtitleMode),
-        pageSpec("action/subtitleSettings", "Subtitles", "Subtitle appearance", "Size, position, colour, and font",
-            SettingType::Action),
+            selectSpec("subtitles/language", "Subtitles", "Preferred language",
+                "Used when subtitles are picked for you", "", nullptr, 0, SettingTarget::SubtitleLanguage),
+            selectSpec("subtitles/mode", "Subtitles", "When to show subtitles", "", "Default", kSubtitleModeChoices,
+                SettingTarget::SubtitleMode),
+            pageSpec("action/subtitleSettings", "Subtitles", "Subtitle appearance", "", SettingType::Action),
 
-        // Shown by the subtitle appearance panel, which can sit over live video.
-        selectSpec("subtitles/styling", "Subtitle Appearance", "Style",
-            "Automatic styles plain text and leaves authored subtitles alone", "Auto", kSubtitleStylingChoices,
-            SettingTarget::SubtitleStyling)
-            .advanced(),
-        sliderSpec("subtitles/scalePercent", "Subtitle Appearance", "Text Size", "Matches text and image subtitle size",
-            "100", 50, 200, 5, "%", SettingTarget::SubtitleScale),
-        sliderSpec("subtitles/verticalPositionPercent", "Subtitle Appearance", "Vertical position",
-            "Higher values move subtitles up the screen", "95", 0, 100, 1, "%",
-            SettingTarget::SubtitleVerticalPosition),
-        toggleSpec("subtitles/alwaysOverridePositionAndSize", "Subtitle Appearance",
-            "Always override size and position", "Also moves subtitles that place themselves", false,
-            SettingTarget::SubtitlePositionAndSizeOverride),
-        toggleSpec("subtitles/allowInBlackBars", "Subtitle Appearance", "Allow in black bars", "", true,
-            SettingTarget::SubtitleAllowInBlackBars)
-            .advanced(),
-        toggleSpec("subtitles/overrideTextColor", "Subtitle Appearance", "Override text colour",
-            "Use the selected colour instead of authored text colours", false,
-            SettingTarget::SubtitleTextColorOverride),
-        selectSpec("subtitles/textColor", "Subtitle Appearance", "Text colour", "", "#ffffff",
-            kSubtitleTextColorChoices, SettingTarget::SubtitleTextColor, SettingNormalizer::SubtitleColor)
-            .advanced(),
-        selectSpec("subtitles/textWeight", "Subtitle Appearance", "Text weight", "Bold reads better on busy scenes",
-            "normal", kSubtitleTextWeightChoices, SettingTarget::SubtitleTextWeight)
-            .advanced(),
-        selectSpec("subtitles/font", "Subtitle Appearance", "Font", "", "", kSubtitleFontChoices,
-            SettingTarget::SubtitleFont, SettingNormalizer::SubtitleFont)
-            .advanced(),
-        selectSpec("subtitles/dropShadow", "Subtitle Appearance", "Outline", "", "", kSubtitleDropShadowChoices,
-            SettingTarget::SubtitleDropShadow)
-            .advanced(),
-        selectSpec("subtitles/textBackground", "Subtitle Appearance", "Background", "", "transparent",
-            kSubtitleBackgroundChoices, SettingTarget::SubtitleTextBackground)
-            .advanced(),
-        toggleSpec("subtitles/recolorImageSubtitles", "Subtitle Appearance", "Use text colour for images", "", false,
-            SettingTarget::SubtitleRecolorImages)
-            .advanced(),
-        sliderSpec("subtitles/bitmapSharpnessPercent", "Subtitle Appearance", "Sharpness", "0% smoother · 100% sharper",
-            "45", 0, 100, 5, "%", SettingTarget::SubtitleBitmapSharpness)
-            .advanced(),
-        toggleSpec("subtitles/bitmapShadowEnabled", "Subtitle Appearance", "Image shadow",
-            "Add a two-layer contrast shadow to image subtitles", true, SettingTarget::SubtitleBitmapShadowEnabled)
-            .advanced(),
-        sliderSpec("subtitles/bitmapShadowCoreSize", "Subtitle Appearance", "Edge shadow softness",
-            "Softness of the tight edge-protection layer", "1", 1, 4, 1, "px",
-            SettingTarget::SubtitleBitmapShadowCoreSize)
-            .advanced()
-            .whenSetTo("subtitles/bitmapShadowEnabled", "true"),
-        sliderSpec("subtitles/bitmapShadowCoreGrow", "Subtitle Appearance", "Edge shadow grow",
-            "Expand the tight shadow beyond the subtitle edge", "1", 0, 4, 1, "px",
-            SettingTarget::SubtitleBitmapShadowCoreGrow)
-            .advanced()
-            .whenSetTo("subtitles/bitmapShadowEnabled", "true"),
-        sliderSpec("subtitles/bitmapShadowCoreOpacityPercent", "Subtitle Appearance", "Edge shadow strength", "", "70",
-            0, 100, 5, "%", SettingTarget::SubtitleBitmapShadowCoreOpacity)
-            .advanced()
-            .whenSetTo("subtitles/bitmapShadowEnabled", "true"),
-        toggleSpec("subtitles/bitmapShadowSpreadEnabled", "Subtitle Appearance", "Wide shadow",
-            "Add a soft offset layer behind the edge shadow", true, SettingTarget::SubtitleBitmapShadowSpreadEnabled)
-            .advanced()
-            .whenSetTo("subtitles/bitmapShadowEnabled", "true"),
-        sliderSpec("subtitles/bitmapShadowSpreadSize", "Subtitle Appearance", "Wide shadow softness", "", "6", 1, 16, 1,
-            "px", SettingTarget::SubtitleBitmapShadowSpreadSize)
-            .advanced()
-            .whenSetTo("subtitles/bitmapShadowEnabled", "true"),
-        sliderSpec("subtitles/bitmapShadowSpreadGrow", "Subtitle Appearance", "Wide shadow grow", "", "0", 0, 8, 1,
-            "px", SettingTarget::SubtitleBitmapShadowSpreadGrow)
-            .advanced()
-            .whenSetTo("subtitles/bitmapShadowEnabled", "true"),
-        sliderSpec("subtitles/bitmapShadowSpreadX", "Subtitle Appearance", "Wide shadow horizontal offset", "", "2",
-            -16, 16, 1, "px", SettingTarget::SubtitleBitmapShadowSpreadX)
-            .advanced()
-            .whenSetTo("subtitles/bitmapShadowEnabled", "true"),
-        sliderSpec("subtitles/bitmapShadowSpreadY", "Subtitle Appearance", "Wide shadow vertical offset", "", "3", -16,
-            16, 1, "px", SettingTarget::SubtitleBitmapShadowSpreadY)
-            .advanced()
-            .whenSetTo("subtitles/bitmapShadowEnabled", "true"),
-        sliderSpec("subtitles/bitmapShadowSpreadOpacityPercent", "Subtitle Appearance", "Wide shadow strength", "",
-            "30", 0, 100, 5, "%", SettingTarget::SubtitleBitmapShadowSpreadOpacity)
-            .advanced()
-            .whenSetTo("subtitles/bitmapShadowEnabled", "true"),
-        toggleSpec("subtitles/bitmapShadowDither", "Subtitle Appearance", "Shadow dithering",
-            "Reduce banding in wide shadow gradients", true, SettingTarget::SubtitleBitmapShadowDither)
-            .advanced()
-            .whenSetTo("subtitles/bitmapShadowEnabled", "true"),
-        sliderSpec("subtitles/hdrBrightnessPercent", "Subtitle Appearance", "HDR Subtitle Brightness",
-            "100% keeps the original brightness", "50", 5, 100, 5, "%", SettingTarget::SubtitleHdrBrightness)
-            .advanced()
-            .duringHdrPlayback(),
-        pageSpec("action/resetSubtitleAppearance", "Subtitle Appearance", "Reset appearance", "", SettingType::Action)
-            .advanced(),
+            // Shown by the subtitle appearance panel, which can sit over live video.
+            selectSpec("subtitles/styling", "Subtitle Appearance", "Style",
+                "Automatic styles plain text and leaves authored subtitles alone", "Auto", kSubtitleStylingChoices,
+                SettingTarget::SubtitleStyling)
+                .advanced(),
+            sliderSpec("subtitles/scalePercent", "Subtitle Appearance", "Text Size",
+                "Matches text and image subtitle size", "100", 50, 200, 5, "%", SettingTarget::SubtitleScale),
+            sliderSpec("subtitles/verticalPositionPercent", "Subtitle Appearance", "Vertical position",
+                "Higher values move subtitles up the screen", "95", 0, 100, 1, "%",
+                SettingTarget::SubtitleVerticalPosition),
+            toggleSpec("subtitles/alwaysOverridePositionAndSize", "Subtitle Appearance",
+                "Always override size and position", "Also moves subtitles that place themselves", false,
+                SettingTarget::SubtitlePositionAndSizeOverride),
+            toggleSpec("subtitles/allowInBlackBars", "Subtitle Appearance", "Allow in black bars", "", true,
+                SettingTarget::SubtitleAllowInBlackBars)
+                .advanced(),
+            toggleSpec("subtitles/overrideTextColor", "Subtitle Appearance", "Override text colour",
+                "Use the selected colour instead of authored text colours", false,
+                SettingTarget::SubtitleTextColorOverride),
+            selectSpec("subtitles/textColor", "Subtitle Appearance", "Text colour", "", "#ffffff",
+                kSubtitleTextColorChoices, SettingTarget::SubtitleTextColor, SettingNormalizer::SubtitleColor)
+                .advanced(),
+            selectSpec("subtitles/textWeight", "Subtitle Appearance", "Text weight", "Bold reads better on busy scenes",
+                "normal", kSubtitleTextWeightChoices, SettingTarget::SubtitleTextWeight)
+                .advanced(),
+            selectSpec("subtitles/font", "Subtitle Appearance", "Font", "", "", kSubtitleFontChoices,
+                SettingTarget::SubtitleFont, SettingNormalizer::SubtitleFont)
+                .advanced(),
+            selectSpec("subtitles/dropShadow", "Subtitle Appearance", "Outline", "", "", kSubtitleDropShadowChoices,
+                SettingTarget::SubtitleDropShadow)
+                .advanced(),
+            selectSpec("subtitles/textBackground", "Subtitle Appearance", "Background", "", "transparent",
+                kSubtitleBackgroundChoices, SettingTarget::SubtitleTextBackground)
+                .advanced(),
+            toggleSpec("subtitles/recolorImageSubtitles", "Subtitle Appearance", "Use text colour for images", "",
+                false, SettingTarget::SubtitleRecolorImages)
+                .advanced(),
+            sliderSpec("subtitles/bitmapSharpnessPercent", "Subtitle Appearance", "Sharpness",
+                "0% smoother · 100% sharper", "45", 0, 100, 5, "%", SettingTarget::SubtitleBitmapSharpness)
+                .advanced(),
+            toggleSpec("subtitles/bitmapShadowEnabled", "Subtitle Appearance", "Image shadow",
+                "Add a two-layer contrast shadow to image subtitles", true, SettingTarget::SubtitleBitmapShadowEnabled)
+                .advanced(),
+            sliderSpec("subtitles/bitmapShadowCoreSize", "Subtitle Appearance", "Edge shadow softness",
+                "Softness of the tight edge-protection layer", "1", 1, 4, 1, "px",
+                SettingTarget::SubtitleBitmapShadowCoreSize)
+                .advanced()
+                .whenSetTo("subtitles/bitmapShadowEnabled", "true"),
+            sliderSpec("subtitles/bitmapShadowCoreGrow", "Subtitle Appearance", "Edge shadow grow",
+                "Expand the tight shadow beyond the subtitle edge", "1", 0, 4, 1, "px",
+                SettingTarget::SubtitleBitmapShadowCoreGrow)
+                .advanced()
+                .whenSetTo("subtitles/bitmapShadowEnabled", "true"),
+            sliderSpec("subtitles/bitmapShadowCoreOpacityPercent", "Subtitle Appearance", "Edge shadow strength", "",
+                "70", 0, 100, 5, "%", SettingTarget::SubtitleBitmapShadowCoreOpacity)
+                .advanced()
+                .whenSetTo("subtitles/bitmapShadowEnabled", "true"),
+            toggleSpec("subtitles/bitmapShadowSpreadEnabled", "Subtitle Appearance", "Wide shadow",
+                "Add a soft offset layer behind the edge shadow", true,
+                SettingTarget::SubtitleBitmapShadowSpreadEnabled)
+                .advanced()
+                .whenSetTo("subtitles/bitmapShadowEnabled", "true"),
+            sliderSpec("subtitles/bitmapShadowSpreadSize", "Subtitle Appearance", "Wide shadow softness", "", "6", 1,
+                16, 1, "px", SettingTarget::SubtitleBitmapShadowSpreadSize)
+                .advanced()
+                .whenSetTo("subtitles/bitmapShadowEnabled", "true"),
+            sliderSpec("subtitles/bitmapShadowSpreadGrow", "Subtitle Appearance", "Wide shadow grow", "", "0", 0, 8, 1,
+                "px", SettingTarget::SubtitleBitmapShadowSpreadGrow)
+                .advanced()
+                .whenSetTo("subtitles/bitmapShadowEnabled", "true"),
+            sliderSpec("subtitles/bitmapShadowSpreadX", "Subtitle Appearance", "Wide shadow horizontal offset", "", "2",
+                -16, 16, 1, "px", SettingTarget::SubtitleBitmapShadowSpreadX)
+                .advanced()
+                .whenSetTo("subtitles/bitmapShadowEnabled", "true"),
+            sliderSpec("subtitles/bitmapShadowSpreadY", "Subtitle Appearance", "Wide shadow vertical offset", "", "3",
+                -16, 16, 1, "px", SettingTarget::SubtitleBitmapShadowSpreadY)
+                .advanced()
+                .whenSetTo("subtitles/bitmapShadowEnabled", "true"),
+            sliderSpec("subtitles/bitmapShadowSpreadOpacityPercent", "Subtitle Appearance", "Wide shadow strength", "",
+                "30", 0, 100, 5, "%", SettingTarget::SubtitleBitmapShadowSpreadOpacity)
+                .advanced()
+                .whenSetTo("subtitles/bitmapShadowEnabled", "true"),
+            toggleSpec("subtitles/bitmapShadowDither", "Subtitle Appearance", "Shadow dithering",
+                "Reduce banding in wide shadow gradients", true, SettingTarget::SubtitleBitmapShadowDither)
+                .advanced()
+                .whenSetTo("subtitles/bitmapShadowEnabled", "true"),
+            sliderSpec("subtitles/hdrBrightnessPercent", "Subtitle Appearance", "HDR Subtitle Brightness",
+                "100% keeps the original brightness", "50", 5, 100, 5, "%", SettingTarget::SubtitleHdrBrightness)
+                .advanced()
+                .duringHdrPlayback(),
+            pageSpec(
+                "action/resetSubtitleAppearance", "Subtitle Appearance", "Reset appearance", "", SettingType::Action)
+                .advanced(),
 
-        selectSpec(
-            "input/redButton", "Remote buttons", "Red", "", "none", kButtonActionChoices, SettingTarget::RedButton)
-            .expert()
-            .onWebOS(),
-        selectSpec("input/greenButton", "Remote buttons", "Green", "", "skipBackAndEnableSubs", kButtonActionChoices,
-            SettingTarget::GreenButton)
-            .expert()
-            .onWebOS(),
-        selectSpec("input/yellowButton", "Remote buttons", "Yellow", "", "none", kButtonActionChoices,
-            SettingTarget::YellowButton)
-            .expert()
-            .onWebOS(),
-        selectSpec(
-            "input/blueButton", "Remote buttons", "Blue", "", "none", kButtonActionChoices, SettingTarget::BlueButton)
-            .expert()
-            .onWebOS(),
+            selectSpec(
+                "input/redButton", "Remote buttons", "Red", "", "none", kButtonActionChoices, SettingTarget::RedButton)
+                .expert()
+                .onWebOS(),
+            selectSpec("input/greenButton", "Remote buttons", "Green", "", "skipBackAndEnableSubs",
+                kButtonActionChoices, SettingTarget::GreenButton)
+                .expert()
+                .onWebOS(),
+            selectSpec("input/yellowButton", "Remote buttons", "Yellow", "", "none", kButtonActionChoices,
+                SettingTarget::YellowButton)
+                .expert()
+                .onWebOS(),
+            selectSpec("input/blueButton", "Remote buttons", "Blue", "", "none", kButtonActionChoices,
+                SettingTarget::BlueButton)
+                .expert()
+                .onWebOS(),
 
-        // Only platforms with an in-app installer expose this preference.
-        toggleSpec("updates/automatic", "Updates", "Automatic updates", "Check for new versions", true,
-            SettingTarget::AutomaticUpdates)
-#if defined(JELLYFIN_NATIVE_WEBOS)
-            .onWebOS(),
+            // Only platforms with an in-app installer expose this preference.
+            toggleSpec("updates/automatic", "Updates", "Automatic updates", "", true, SettingTarget::AutomaticUpdates)
+#if defined(SPOOL_WEBOS)
+                .onWebOS(),
 #else
-            .onAndroid(),
+                .onAndroid(),
 #endif
 
-        pageSpec("session/account", "Account", "Signed in as", "", SettingType::ReadOnly),
-        pageSpec("action/switchUser", "Account", "Switch profile", "", SettingType::Action),
-        pageSpec("action/logout", "Account", "Sign out", "Keeps this profile on the device", SettingType::Action),
-        pageSpec("action/manageCertificates", "Account", "Remembered certificates",
-            "Server certificates you chose to trust", SettingType::Action),
+            pageSpec("action/accounts", "Accounts", "Accounts", "", SettingType::Action),
+            pageSpec("action/providers", "Accounts", "Providers", "", SettingType::Action),
+            selectSpec("providers/updates", "Accounts", "Provider updates", "", "ask", kProviderUpdateChoices,
+                SettingTarget::External),
+            pageSpec("action/manageCertificates", "Accounts", "Remembered certificates", "", SettingType::Action),
 
-        pageSpec("action/exportDiagnostics", "Diagnostics", "Export diagnostics",
-            "Collects support information for you to review and send", SettingType::Action),
-        pageSpec("action/clearLogs", "Diagnostics", "Clear logs", "", SettingType::Action),
-        pageSpec("shell/diagnostics", "Diagnostics", "Diagnostics overlay", "Live playback and performance figures",
-            SettingType::Toggle)
-            .expert(),
-        toggleSpec("settings/toneMappingVisualization", "Diagnostics", "Tone mapping overlay",
-            "False-colour view of how HDR is mapped", false, SettingTarget::ToneMappingVisualization)
-            .expert()
-            .onDesktop(),
-        pageSpec("shell/latencyGuard", "Diagnostics", "Record input latency", "", SettingType::Toggle).expert(),
-        pageSpec("shell/latencyOverlay", "Diagnostics", "Warn about slow input", "", SettingType::Toggle).expert(),
-        pageSpec("action/clearLatencyStatistics", "Diagnostics", "Clear latency samples", "", SettingType::Action)
-            .expert(),
+            pageSpec("action/exportDiagnostics", "Diagnostics", "Export diagnostics", "", SettingType::Action),
+            pageSpec("action/clearLogs", "Diagnostics", "Clear logs", "", SettingType::Action),
+            toggleSpec("shell/diagnostics", "Diagnostics", "Diagnostics overlay", "", false, SettingTarget::External)
+                .expert(),
+            toggleSpec("settings/toneMappingVisualization", "Diagnostics", "Tone mapping overlay",
+                "False-colour view of how HDR is mapped", false, SettingTarget::ToneMappingVisualization)
+                .expert()
+                .onDesktop(),
+            toggleSpec(
+                "shell/latencyGuard", "Diagnostics", "Record input latency", "", true, SettingTarget::LatencyGuard)
+                .expert(),
+            toggleSpec("shell/latencyOverlay", "Diagnostics", "Warn about slow input", "", false,
+                SettingTarget::LatencyOverlay)
+                .expert(),
+            pageSpec("action/clearLatencyStatistics", "Diagnostics", "Clear latency samples", "", SettingType::Action)
+                .expert(),
 
-        pageSpec("about/version", "About", "Spool for Jellyfin", "", SettingType::ReadOnly),
-        pageSpec("about/locale", "About", "Active language", "", SettingType::ReadOnly),
-        pageSpec("action/openSourceNotices", "About", "Open-source notices",
-            "Licences and source for the bundled software", SettingType::Action),
-    };
+            pageSpec("about/version", "About", "Spool", "", SettingType::ReadOnly),
+            pageSpec("about/locale", "About", "Active language", "", SettingType::ReadOnly),
+            pageSpec("action/openSourceNotices", "About", "Open-source notices", "", SettingType::Action),
+        };
+        // Deliberate classification of today's rows. New rows remain Never until
+        // explicitly classified here; platform visibility does not confer consent.
+        const QStringList portable { QStringLiteral("i18n/locale"), QStringLiteral("theme/accent"),
+            QStringLiteral("theme/reducedMotion"), QStringLiteral("theme/technicalMetadata"),
+            QStringLiteral("theme/railLabels"), QStringLiteral("audio/language"), QStringLiteral("audio/trackMode"),
+            QStringLiteral("playback/rememberSeriesAudioTrack"), QStringLiteral("settings/nightMode"),
+            QStringLiteral("playback/maxStreamingHeight"), QStringLiteral("playback/manualStreamingBitrate"),
+            QStringLiteral("playback/maxStreamingBitrateMbps"), QStringLiteral("playback/unlimitedLocalBitrate"),
+            QStringLiteral("playback/preferRemux"), QStringLiteral("subtitles/language"),
+            QStringLiteral("subtitles/mode"), QStringLiteral("subtitles/styling"),
+            QStringLiteral("subtitles/scalePercent"), QStringLiteral("subtitles/verticalPositionPercent"),
+            QStringLiteral("subtitles/alwaysOverridePositionAndSize"), QStringLiteral("subtitles/allowInBlackBars"),
+            QStringLiteral("subtitles/overrideTextColor"), QStringLiteral("subtitles/textColor"),
+            QStringLiteral("subtitles/textWeight"), QStringLiteral("subtitles/font"),
+            QStringLiteral("subtitles/dropShadow"), QStringLiteral("subtitles/textBackground"),
+            QStringLiteral("subtitles/recolorImageSubtitles"), QStringLiteral("subtitles/bitmapSharpnessPercent"),
+            QStringLiteral("subtitles/bitmapShadowEnabled"), QStringLiteral("subtitles/bitmapShadowCoreSize"),
+            QStringLiteral("subtitles/bitmapShadowCoreGrow"),
+            QStringLiteral("subtitles/bitmapShadowCoreOpacityPercent"),
+            QStringLiteral("subtitles/bitmapShadowSpreadEnabled"), QStringLiteral("subtitles/bitmapShadowSpreadSize"),
+            QStringLiteral("subtitles/bitmapShadowSpreadGrow"), QStringLiteral("subtitles/bitmapShadowSpreadX"),
+            QStringLiteral("subtitles/bitmapShadowSpreadY"),
+            QStringLiteral("subtitles/bitmapShadowSpreadOpacityPercent"),
+            QStringLiteral("subtitles/bitmapShadowDither") };
+        const QStringList device { QStringLiteral("artwork/format"), QStringLiteral("artwork/webpQuality"),
+            QStringLiteral("artwork/jpegQuality"), QStringLiteral("settings/audioDelayMs"),
+            QStringLiteral("playback/showVolumeSlider"), QStringLiteral("playback/controlFadeDelaySeconds"),
+            QStringLiteral("playback/videoOutput"), QStringLiteral("playback/softwareRenderer"),
+            QStringLiteral("playback/hardwareDecoding"), QStringLiteral("playback/renderQuality"),
+            QStringLiteral("playback/autoAdjustQuality"), QStringLiteral("playback/graphicsApi"),
+            QStringLiteral("playback/hdrOutput"), QStringLiteral("playback/hdrPeakNits"),
+            QStringLiteral("settings/audioOutputMode"), QStringLiteral("playback/forwardCacheSizeMiB"),
+            QStringLiteral("subtitles/hdrBrightnessPercent"), QStringLiteral("input/redButton"),
+            QStringLiteral("input/greenButton"), QStringLiteral("input/yellowButton"),
+            QStringLiteral("input/blueButton"), QStringLiteral("updates/automatic"),
+            QStringLiteral("providers/updates"), QStringLiteral("shell/diagnostics"),
+            QStringLiteral("settings/toneMappingVisualization"), QStringLiteral("shell/latencyGuard"),
+            QStringLiteral("shell/latencyOverlay"), QStringLiteral("theme/antialiasedText"),
+            QStringLiteral("theme/renderMode") };
+        for (SettingSpec& spec : rows) {
+            const QString key = QString::fromLatin1(spec.key);
+            if (portable.contains(key))
+                spec.syncPolicy = SettingSyncPolicy::PortableDefault;
+            else if (device.contains(key))
+                spec.syncPolicy = SettingSyncPolicy::DeviceOptIn;
+            switch (spec.target) {
+            case SettingTarget::AudioLanguage:
+                spec.nativePreference = "audioLanguage";
+                break;
+            case SettingTarget::AudioTrackMode:
+                spec.nativePreference = "audioMode";
+                break;
+            case SettingTarget::SubtitleLanguage:
+                spec.nativePreference = "subtitleLanguage";
+                break;
+            case SettingTarget::SubtitleMode:
+                spec.nativePreference = "subtitleMode";
+                break;
+            default:
+                break;
+            }
+        }
+        return rows;
+    }();
     return specs;
 }
 
@@ -605,6 +661,13 @@ QVariant settingDefaultValue(const SettingSpec& spec)
 
 QVariant normalizedSettingValue(const SettingSpec& spec, const QVariant& value)
 {
+    if (spec.target == SettingTarget::AudioLanguage || spec.target == SettingTarget::SubtitleLanguage) {
+        const QString code = value.toString().trimmed().toLower();
+        if (code.isEmpty())
+            return QString();
+        const auto language = QLocale::codeToLanguage(code);
+        return language == QLocale::AnyLanguage ? QString() : QLocale::languageToCode(language, QLocale::ISO639Part2);
+    }
     switch (spec.normalizer) {
     case SettingNormalizer::Bool:
         return boolValue(value);
@@ -643,6 +706,44 @@ QString serializedSettingValue(const SettingSpec& spec, const QVariant& value)
     return normalized.toString();
 }
 
+SettingSyncPolicy settingSyncPolicy(const SettingSpec& spec, const QVariant& value)
+{
+    if (spec.target == SettingTarget::SubtitleFont && value.toString().startsWith(QStringLiteral("system:")))
+        return SettingSyncPolicy::DeviceOptIn;
+    return spec.syncPolicy;
+}
+
+bool settingSupportedOnPlatform(const SettingSpec& spec)
+{
+    if (spec.platform == SettingPlatform::All)
+        return true;
+#if defined(SPOOL_WEBOS)
+    return spec.platform == SettingPlatform::WebOS;
+#elif defined(Q_OS_ANDROID)
+    return spec.platform == SettingPlatform::Android;
+#else
+    return spec.platform == SettingPlatform::Desktop;
+#endif
+}
+
+bool settingAcceptsRemoteValue(const SettingSpec& spec, const QVariant& value)
+{
+    if (!spec.persisted || spec.syncPolicy == SettingSyncPolicy::Never || !settingSupportedOnPlatform(spec))
+        return false;
+    if (spec.type == SettingType::Toggle)
+        return value.metaType().id() == QMetaType::Bool;
+    if (spec.type == SettingType::Slider) {
+        if (value.metaType().id() == QMetaType::Bool || value.metaType().id() == QMetaType::QString)
+            return false;
+        bool ok = false;
+        const double number = value.toDouble(&ok);
+        return ok && std::isfinite(number) && number == normalizedSettingValue(spec, value).toInt();
+    }
+    if (value.metaType().id() != QMetaType::QString)
+        return false;
+    return normalizedSettingValue(spec, value).toString() == value.toString();
+}
+
 QVariantList settingSchemaModel()
 {
     QVariantList model;
@@ -660,6 +761,11 @@ QVariantList settingSchemaModel()
             { QStringLiteral("dependsOnKey"), QLatin1String(spec.dependsOnKey) },
             { QStringLiteral("dependsOnValue"), QLatin1String(spec.dependsOnValue) },
             { QStringLiteral("requiresHdrPlayback"), spec.requiresHdrPlayback },
+            { QStringLiteral("syncPolicy"),
+                spec.syncPolicy == SettingSyncPolicy::PortableDefault   ? QStringLiteral("portable")
+                    : spec.syncPolicy == SettingSyncPolicy::DeviceOptIn ? QStringLiteral("device")
+                                                                        : QStringLiteral("never") },
+            { QStringLiteral("nativePreference"), QLatin1String(spec.nativePreference) },
             { QStringLiteral("from"), spec.minimum }, { QStringLiteral("to"), spec.maximum },
             { QStringLiteral("step"), spec.step }, { QStringLiteral("unitText"), QLatin1String(spec.unit) } };
         QVariantList values;
@@ -677,4 +783,4 @@ QVariantList settingSchemaModel()
     return model;
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

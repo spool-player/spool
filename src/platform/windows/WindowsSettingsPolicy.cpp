@@ -4,7 +4,7 @@
 
 #include <QFontDatabase>
 
-namespace JellyfinNative {
+namespace Spool {
 namespace {
     constexpr SettingChoice kChoices[] = { { "auto", "Automatic" }, { "wasapi", "WASAPI" } };
 }
@@ -57,10 +57,6 @@ bool platformUsesPerOutputAudioDelay()
 {
     return false;
 }
-bool platformDefaultCastButtonEnabled()
-{
-    return true;
-}
 bool platformDefaultRemoteControlTargetEnabled()
 {
     return true;
@@ -82,4 +78,4 @@ int platformAutomaticAudioDelayMs(const QString&, int, int)
     return 0;
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

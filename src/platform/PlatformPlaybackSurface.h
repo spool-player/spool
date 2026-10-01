@@ -9,7 +9,7 @@
 class QObject;
 struct mpv_handle;
 
-namespace JellyfinNative {
+namespace Spool {
 
 class NativeAppWindow;
 struct PlaybackSession;
@@ -41,4 +41,4 @@ void platformAudioTrackChanged(int index);
 // where the scene graph already letterboxes.
 void platformVideoSizeChanged(int width, int height);
 
-} // namespace JellyfinNative
+} // namespace Spool

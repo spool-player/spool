@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../common/JellyfinTypes.h"
+#include "../media/MediaTypes.h"
 #include "../platform/MpvConfigPolicy.h"
 #include "MpvLifecycle.h"
 #include "MpvOptionProfile.h"
@@ -23,10 +23,10 @@
 
 struct mpv_handle;
 
-namespace JellyfinNative {
+namespace Spool {
 
-class JellyfinApiFacade;
 class NativeAppWindow;
+class PlaybackSource;
 class TlsTrustController;
 
 class PlayerController final : public QObject {
@@ -76,10 +76,9 @@ class PlayerController final : public QObject {
     Q_PROPERTY(QString activeSegmentType READ activeSegmentType NOTIFY segmentsChanged)
     Q_PROPERTY(double activeSegmentEndSeconds READ activeSegmentEndSeconds NOTIFY segmentsChanged)
     Q_PROPERTY(bool trickplayAvailable READ trickplayAvailable NOTIFY trickplayChanged)
-    Q_PROPERTY(QStringList trickplaySheetUrls READ trickplaySheetUrls NOTIFY trickplayChanged)
 
 public:
-    PlayerController(NativeAppWindow *window, JellyfinApiFacade *api, TlsTrustController *tlsTrust,
+    PlayerController(NativeAppWindow *window, PlaybackSource *api, TlsTrustController *tlsTrust,
         const QString& subtitleFontsPath, QObject *parent = nullptr);
     ~PlayerController() override;
 
@@ -137,11 +136,10 @@ public:
     QString activeSegmentType() const;
     double activeSegmentEndSeconds() const;
     bool trickplayAvailable() const;
-    QStringList trickplaySheetUrls() const;
     Q_INVOKABLE void skipActiveSegment();
     Q_INVOKABLE QVariantMap trickplayForSeconds(double seconds) const;
 
-    Q_INVOKABLE void play(const JellyfinNative::PlaybackSession& session, bool startPaused = false);
+    Q_INVOKABLE void play(const Spool::PlaybackSession& session, bool startPaused = false);
     void setMediaSegments(const QString& itemId, const std::vector<MediaSegment>& segments);
     Q_INVOKABLE void togglePause();
     Q_INVOKABLE bool forwardMpvKey(int key, int modifiers, const QString& text, bool pressed, bool repeat);
@@ -207,8 +205,8 @@ public:
     Q_INVOKABLE void setPlaybackSpeed(double speed);
     void setSyncPlaybackSpeed(double speed);
     void clearSyncPlaybackSpeed();
-    void setSubtitlePreferences(const JellyfinNative::SubtitlePreferences& preferences);
-    void previewSubtitlePreferences(const JellyfinNative::SubtitlePreferences& preferences);
+    void setSubtitlePreferences(const Spool::SubtitlePreferences& preferences);
+    void previewSubtitlePreferences(const Spool::SubtitlePreferences& preferences);
     void setDemuxerBudget(const QByteArray& maxBytes, const QByteArray& maxBackBytes);
     void setForwardCacheSizeMiB(int sizeMiB);
     void setMpvConfigPolicy(const MpvConfigPolicy& policy);
@@ -229,6 +227,9 @@ signals:
     void trickplayChanged();
     void chaptersChanged();
     void playbackStopped(const QString& itemId, qint64 positionTicks, bool completed);
+    // The stream ended before the item did. Emitted after playbackStopped,
+    // which has already recorded the position as a resume point.
+    void playbackInterrupted(const QString& itemId, qint64 positionTicks, bool resumable);
     void playbackLoadFailed(const QString& itemId, qint64 positionTicks, const QString& message,
         bool retryableCodecFailure, int audioStreamIndex, int subtitleStreamIndex);
     void streamSelectionChanged(int audioStreamIndex, int subtitleStreamIndex);
@@ -299,7 +300,6 @@ private:
     double seekAnchorPosition();
     void resetPlaybackUiState();
     void resetRenderStrain();
-    void rebuildTrickplaySheetUrls();
     bool applyMpvRuntimeOption(MpvRuntimeOption option, MpvOptionApplyMode mode, mpv_handle *handle);
     bool applyMpvSubtitleOptions(MpvOptionApplyMode mode, mpv_handle *handle, bool preserveTrackSelection = false,
         const SubtitlePreferences *previousPreferences = nullptr);
@@ -325,7 +325,7 @@ private:
     int m_videoWidth = 0;
     int m_videoHeight = 0;
     NativeAppWindow *m_window = nullptr;
-    JellyfinApiFacade *m_api = nullptr;
+    PlaybackSource *m_api = nullptr;
     PlaybackSession m_session;
     PlaybackReporter m_reporter;
     MpvLifecycle m_mpvLifecycle;
@@ -406,7 +406,6 @@ private:
     QByteArray m_targetTransfer;
     PlaybackPositionTracker m_positionTracker;
     PlaybackTimeline m_timeline;
-    QStringList m_trickplaySheetUrls;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

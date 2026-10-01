@@ -24,11 +24,11 @@ jobs:
           mkdir sboms
           tag="$(gh release list --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName')"
           test -n "$tag"
-          gh release download "$tag" --pattern '*.cdx.json' --dir sboms
-          test -n "$(find sboms -type f -name '*.cdx.json' -print -quit)"
+          gh release download "$tag" --pattern '*.syft.json' --pattern 'ffmpeg-vex.json' --dir sboms
+          test -n "$(find sboms -type f -name '*.syft.json' -print -quit)"
       - name: Enforce vulnerability policy
         run: |
           set -euo pipefail
-          for sbom in sboms/*.cdx.json; do
-            "$RUNNER_TEMP/release-tools/grype" "sbom:$sbom" --fail-on high --only-fixed
+          for sbom in sboms/*.syft.json; do
+            "$RUNNER_TEMP/release-tools/grype" "sbom:$sbom" --vex sboms/ffmpeg-vex.json --fail-on high --only-fixed
           done

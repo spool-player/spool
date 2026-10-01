@@ -5,8 +5,9 @@
 struct wp_color_management_surface_v1;
 
 class QWindow;
+class QScreen;
 
-namespace JellyfinNative {
+namespace Spool {
 
 // What the compositor says the output can actually show.
 //
@@ -18,6 +19,7 @@ namespace JellyfinNative {
 // tone mapping to a constant nobody chose.
 struct WaylandColorInfo {
     bool valid = false;
+    bool hdrEnabled = false;
     float minLuminanceNits = 0.0f;
     float maxLuminanceNits = 0.0f;
     // The luminance the compositor puts diffuse white at, which is what SDR
@@ -27,7 +29,7 @@ struct WaylandColorInfo {
 
 // Empty unless this is a Wayland session whose compositor implements
 // wp_color_manager_v1 and whose output has an image description to describe.
-WaylandColorInfo waylandColorInfo(QWindow *window);
+WaylandColorInfo waylandColorInfo(QScreen *screen);
 
 // Owns the description for Qt's Vulkan PASS_THROUGH surface. The protocol
 // object's lifetime is the surface's lifetime, not a one-shot tagging request.
@@ -46,4 +48,4 @@ private:
     wp_color_management_surface_v1 *m_surface = nullptr;
     bool m_enabled = false;
 };
-} // namespace JellyfinNative
+} // namespace Spool

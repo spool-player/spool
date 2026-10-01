@@ -2,7 +2,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Layouts
-import JellyfinWebOS
+import Spool
 import "../theme"
 import "../primitives"
 import "../shell" as Shell
@@ -11,7 +11,7 @@ Item {
     id: root
 
     required property var overlay
-    readonly property bool syncPlayMenuOpen: syncPlayMenu.menuOpen
+    readonly property bool syncPlayMenuOpen: syncPlayMenu.item ? syncPlayMenu.item.menuOpen : false
     property int lastPointerX: -1
     property int lastPointerY: -1
 
@@ -55,13 +55,6 @@ Item {
             overlay.showControlsFromPointer()
     }
 
-    function artworkSource(url) {
-        if (!url)
-            return ""
-        return url.indexOf("http://") === 0 || url.indexOf("https://") === 0 ? "image://artwork/" + encodeURIComponent(
-                                                                                   url) : url
-    }
-
     function resetMenu(index) {
         Qt.callLater(function () {
             menuList.currentIndex = menuList.count > 0 ? Math.min(index, menuList.count - 1) : -1
@@ -72,20 +65,24 @@ Item {
     }
 
     function openSyncPlayMenu() {
-        SyncPlay.refreshGroups()
-        syncPlayMenu.openMenu()
+        if (!syncPlayMenu.item)
+            return
+        root.overlay.syncPlay.refreshGroups()
+        syncPlayMenu.item.openMenu()
     }
 
     function closeSyncPlayMenu() {
-        syncPlayMenu.closeMenu()
+        if (syncPlayMenu.item)
+            syncPlayMenu.item.closeMenu()
     }
 
     function routeSyncPlayMenuKey(key, repeat) {
-        return syncPlayMenu.routeKey(key, "press", repeat)
+        return syncPlayMenu.item ? syncPlayMenu.item.routeKey(key, "press", repeat) : false
     }
 
     function activateSyncPlayMenu() {
-        syncPlayMenu.activate()
+        if (syncPlayMenu.item)
+            syncPlayMenu.item.activate()
     }
 
     function routeMenuKey(key, repeat) {
@@ -98,19 +95,6 @@ Item {
 
     function activateMenu() {
         menuList.activate()
-    }
-
-    Item {
-        visible: false
-        Repeater {
-            model: root.overlay.visible && root.overlay.hasPlayer ? root.overlay.player.trickplaySheetUrls : []
-            delegate: Image {
-                required property string modelData
-                source: root.artworkSource(modelData)
-                asynchronous: true
-                cache: true
-            }
-        }
     }
 
     TapHandler {
@@ -244,7 +228,7 @@ Item {
         anchors.centerIn: parent
         width: root.dp(116)
         height: width
-        visible: SyncPlay.enabled && SyncPlay.waitingForPlayback
+        visible: root.overlay.syncPlayWaiting
         z: 20
 
         Rectangle {
@@ -416,7 +400,9 @@ Item {
         }
     }
 
-    Shell.SyncPlayMenu {
+    // The group menu exists only for a source with SyncPlay; the loader keeps
+    // its bindings from ever running otherwise.
+    Loader {
         id: syncPlayMenu
         anchors.right: parent.right
         anchors.bottom: hud.top
@@ -424,7 +410,10 @@ Item {
         anchors.bottomMargin: root.dp(18)
         width: root.dp(420)
         z: 55
-        onRequestClose: root.overlay.closeMenu()
+        active: root.overlay.syncPlay !== null
+        sourceComponent: Shell.GroupMenu {
+            onRequestClose: root.overlay.closeMenu()
+        }
     }
 
     PlayerAudioSyncPanel {
@@ -547,7 +536,7 @@ Item {
                         checked: root.overlay.menuItemSelected(index)
                         highlighted: menuList.currentIndex === index
                         stepperVisible: root.overlay.debugAction(index) === "speed"
-                        stepperEnabled: !SyncPlay.enabled
+                        stepperEnabled: !root.overlay.syncPlayActive
                         stepperText: root.overlay.formatPlaybackSpeed(root.overlay.player.effectivePlaybackSpeed)
                         stepperEditText: Number(root.overlay.player.effectivePlaybackSpeed || 1).toFixed(2)
                         stepperEditable: stepperVisible && root.overlay.desktopControlsAvailable

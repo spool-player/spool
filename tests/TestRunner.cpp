@@ -5,7 +5,7 @@
 #include <map>
 #include <string>
 
-namespace JellyfinTests {
+namespace SpoolTests {
 
 namespace {
 
@@ -23,11 +23,11 @@ bool registerTest(const char *name, Entry entry)
     return true;
 }
 
-} // namespace JellyfinTests
+} // namespace SpoolTests
 
 int main(int argc, char **argv)
 {
-    const auto& tests = JellyfinTests::registry();
+    const auto& tests = SpoolTests::registry();
     const auto usage = [&tests](const char *problem) {
         std::cerr << problem << "\nusage: " << "<test-executable> <selector>\navailable selectors:\n";
         for (const auto& [name, entry] : tests)

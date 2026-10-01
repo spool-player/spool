@@ -8,7 +8,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
 
@@ -65,10 +65,11 @@ namespace {
 
 } // namespace
 
-QByteArray RenderTargetPolicy::startupSwapChainRequest(bool automaticHdr)
+QByteArray RenderTargetPolicy::startupSwapChainRequest(bool desktopHdrEnabled, bool automaticHdr)
 {
     const auto preference = preferenceFromName(startupStore().value(QLatin1String(kStartupPreferenceKey)).toString());
-    if (preference == HdrOutputPreference::Never || (preference == HdrOutputPreference::Auto && !automaticHdr))
+    if (!desktopHdrEnabled || preference == HdrOutputPreference::Never
+        || (preference == HdrOutputPreference::Auto && !automaticHdr))
         return {};
     // The shell converts SDR UI to linear BT.709 at the reported reference
     // white. Do not request PQ/P3 until their composition paths exist.
@@ -139,7 +140,7 @@ RenderTargetProfile RenderTargetPolicy::resolve(
 
     RenderTargetProfile profile;
     profile.sdrWhiteNits = white >= kMinNits ? white : RenderTargetProfile::kDefaultSdrWhiteNits;
-    if (preference == HdrOutputPreference::Never)
+    if (!display.desktopHdrEnabled || preference == HdrOutputPreference::Never)
         return profile;
     // No HDR swapchain means no HDR, whatever the display or the user think.
     // Every OpenGL context lands here, which is why this is asked of the
@@ -180,4 +181,4 @@ std::vector<MpvOption> RenderTargetPolicy::targetOptions(const RenderTargetProfi
     };
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

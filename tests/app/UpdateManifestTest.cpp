@@ -10,7 +10,7 @@
 #include <cstdlib>
 #include <iostream>
 
-using namespace JellyfinNative;
+using namespace Spool;
 
 namespace {
 
@@ -174,7 +174,7 @@ void webOSSelectsArmPackage()
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("update-manifest")
+SPOOL_TEST_MAIN("update-manifest")
 {
     QCoreApplication app(argc, argv);
     const QString assetKey = QStringLiteral("arm64-v8a");

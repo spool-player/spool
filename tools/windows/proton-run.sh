@@ -4,8 +4,8 @@ set -euo pipefail
 root=$(git rev-parse --show-toplevel)
 state=${SPOOL_WINDOWS_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/spool/windows-proton}
 stage=${SPOOL_WINDOWS_STAGE:-$root/build/windows-release/stage}
-if [[ ! -f "$stage/jellyfin-native.exe" ]]; then
-    printf 'Windows staged payload missing: %s\nBuild it with: nix run .#windows-proton-build\n' "$stage/jellyfin-native.exe" >&2
+if [[ ! -f "$stage/spool.exe" ]]; then
+    printf 'Windows staged payload missing: %s\nBuild it with: nix run .#windows-proton-build\n' "$stage/spool.exe" >&2
     exit 1
 fi
 proton=${SPOOL_PROTON_PATH:-$state/runtimes/GE-Proton11-6-x86_64}
@@ -60,7 +60,7 @@ export DXVK_LOG_PATH="$state/logs"
 export DXVK_LOG_LEVEL=${DXVK_LOG_LEVEL:-info}
 if [[ -d "$state/playback-profile" ]]; then
     profile="Z:${state//\//\\}\\playback-profile"
-    export JELLYFIN_CREDENTIAL_STORE_DIR="$profile\\credentials"
+    export SPOOL_CREDENTIAL_STORE_DIR="$profile\\credentials"
 fi
 cd "$stage"
-exec umu-run "$stage/jellyfin-native.exe" "$@"
+exec umu-run "$stage/spool.exe" "$@"

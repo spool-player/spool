@@ -13,7 +13,7 @@
 #include <wayland-client-core.h>
 #include <xkbcommon/xkbcommon-keysyms.h>
 
-namespace JellyfinNative {
+namespace Spool {
 
 struct XkbQtKey {
     uint32_t xkbkey;
@@ -192,4 +192,4 @@ private:
     QMap<int, Qt::KeyboardModifier> m_map;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

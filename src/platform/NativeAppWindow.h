@@ -7,7 +7,7 @@
 
 #include <memory>
 
-namespace JellyfinNative {
+namespace Spool {
 
 class InputLatencyMonitor;
 class NativeAppWindow final : public QQuickView {
@@ -168,4 +168,4 @@ private:
     bool m_immersive = false;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

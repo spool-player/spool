@@ -18,6 +18,12 @@ def run(script: Path, *args: str, expected: int = 0) -> subprocess.CompletedProc
     return result
 
 
+# Nix's compiler wrapper and dev shell add RPATHs (store paths, the shell's
+# $out), which the audit rightly rejects; a packaged binary never has them.
+COMPILE_ENV = {key: value for key, value in os.environ.items() if not key.startswith("NIX_LDFLAGS")}
+COMPILE_ENV["NIX_DONT_SET_RPATH"] = "1"
+
+
 def compile_fixture(root: Path) -> None:
     (root / "lib").mkdir()
     (root / "dep.c").write_text("int package_audit_dep(void) { return 42; }\n", encoding="utf-8")
@@ -28,13 +34,13 @@ def compile_fixture(root: Path) -> None:
     subprocess.run(
         ["cc", "-shared", "-fPIC", "-Wl,-soname,libpackage-audit-dep.so.1", "-o",
          str(root / "lib/libpackage-audit-dep.so.1"), str(root / "dep.c")],
-        check=True,
+        check=True, env=COMPILE_ENV,
     )
     os.symlink("libpackage-audit-dep.so.1", root / "lib/libpackage-audit-dep.so")
     subprocess.run(
         ["cc", "-o", str(root / "app"), str(root / "main.c"), f"-L{root / 'lib'}",
          "-lpackage-audit-dep", "-Wl,-rpath,$ORIGIN/lib"],
-        check=True,
+        check=True, env=COMPILE_ENV,
     )
     subprocess.run(["strip", "--strip-unneeded", str(root / "app"), str(root / "lib/libpackage-audit-dep.so.1")],
                    check=True)
@@ -64,7 +70,7 @@ def main() -> int:
         orphan = root / "lib/liborphan.so.1"
         subprocess.run(
             ["cc", "-shared", "-fPIC", "-Wl,-soname,liborphan.so.1", "-o", str(orphan), str(root / "dep.c")],
-            check=True,
+            check=True, env=COMPILE_ENV,
         )
         subprocess.run(["strip", "--strip-unneeded", str(orphan)], check=True)
         unreachable = run(
@@ -74,8 +80,17 @@ def main() -> int:
         orphan.unlink()
         (root / "lib/libpackage-audit-dep.so").unlink()
         run(script, "elf", str(root), "--root", "app", "--allow-system", "libc.so.6")
-        (root / "lib/libpackage-audit-dep.so.1").unlink()
+        # The loader finds libpackage-audit-dep.so.1 as a file; a copy under
+        # another name with that SONAME does not satisfy it.
+        (root / "lib/libpackage-audit-dep.so.1").rename(root / "lib/libpackage-audit-dep.so")
+        renamed = run(script, "elf", str(root), "--root", "app", "--allow-system", "libc.so.6", expected=1)
+        assert "missing ELF dependency" in renamed.stderr
+        (root / "lib/libpackage-audit-dep.so").unlink()
         missing = run(script, "elf", str(root), "--root", "app", "--allow-system", "libc.so.6", expected=1)
         assert "missing ELF dependency" in missing.stderr
     return 0
 
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

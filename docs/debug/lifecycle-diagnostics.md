@@ -1,11 +1,11 @@
 # Lifecycle Diagnostics
 
-Build with `-DJELLYFIN_DIAGNOSTICS=ON` to enable debug-only evidence for stale process and slow relaunch issues.
+Build with `-DSPOOL_DIAGNOSTICS=ON` to enable debug-only evidence for stale process and slow relaunch issues.
 
 Optional flags:
 
-- `-DJELLYFIN_DIAGNOSTICS_STACKDUMP=ON` requests `gdb` stack dumps when available.
-- `-DJELLYFIN_DIAGNOSTICS_ABORT_ON_HANG=ON` aborts after watchdog evidence is written.
+- `-DSPOOL_DIAGNOSTICS_STACKDUMP=ON` requests `gdb` stack dumps when available.
+- `-DSPOOL_DIAGNOSTICS_ABORT_ON_HANG=ON` aborts after watchdog evidence is written.
 
 Generated files:
 
@@ -24,9 +24,9 @@ webOS helpers:
 
 Simulation knobs:
 
-- `JELLYFIN_DIAGNOSTICS_DIR=/tmp/com.sachk.spool-diagnostics` overrides the output directory.
-- `JELLYFIN_DIAGNOSTICS_BLOCK_GUI_MS=8000` blocks the GUI thread after startup to test watchdog capture.
-- `JELLYFIN_DIAGNOSTICS_SHUTDOWN_HANG_MS=8000` blocks shutdown to test shutdown-stall capture.
+- `SPOOL_DIAGNOSTICS_DIR=/tmp/com.sachk.spool-diagnostics` overrides the output directory.
+- `SPOOL_DIAGNOSTICS_BLOCK_GUI_MS=8000` blocks the GUI thread after startup to test watchdog capture.
+- `SPOOL_DIAGNOSTICS_SHUTDOWN_HANG_MS=8000` blocks shutdown to test shutdown-stall capture.
 
 Typical stale-process flow:
 

@@ -4,7 +4,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
 
@@ -111,4 +111,4 @@ UpdateManifestResult selectUpdate(
     return { std::move(selected), {} };
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

@@ -169,7 +169,7 @@ public final class RemoteMediaSessionBridge {
         Notification.Builder builder = new Notification.Builder(activity, CHANNEL_ID)
                                            .setSmallIcon(com.sachk.spool.R.mipmap.ic_launcher)
                                            .setContentTitle(emptyFallback(title, "Remote playback"))
-                                           .setContentText("Playing on " + emptyFallback(targetName, "Jellyfin client"))
+                                           .setContentText("Playing on " + emptyFallback(targetName, "another device"))
                                            .setOnlyAlertOnce(true)
                                            .setOngoing(playing)
                                            .setVisibility(Notification.VISIBILITY_PUBLIC)
@@ -210,7 +210,7 @@ public final class RemoteMediaSessionBridge {
     {
         NotificationChannel channel
             = new NotificationChannel(CHANNEL_ID, "Remote playback", NotificationManager.IMPORTANCE_LOW);
-        channel.setDescription("Controls the Jellyfin client selected in Spool");
+        channel.setDescription("Controls the device selected in Spool");
         channel.setShowBadge(false);
         notifications.createNotificationChannel(channel);
     }

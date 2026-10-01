@@ -11,7 +11,7 @@
 #include <cstdlib>
 #include <iostream>
 
-using namespace JellyfinNative;
+using namespace Spool;
 
 namespace {
 
@@ -54,7 +54,7 @@ void require(bool condition, const char *message)
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("mpv-option-profile")
+SPOOL_TEST_MAIN("mpv-option-profile")
 {
     QCoreApplication app(argc, argv);
 #ifdef Q_OS_MACOS

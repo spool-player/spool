@@ -8,28 +8,28 @@
 #include <atomic>
 #include <memory>
 
-// JELLYFIN_MPV_ITEM_RHI comes from a header CMake generates, which knows the
+// SPOOL_MPV_ITEM_RHI comes from a header CMake generates, which knows the
 // platform before any Qt header does -- and so does moc, which would otherwise
 // disagree with the compiler about which class this derives from. A generated
 // header rather than a compile definition so that changing the answer is a
 // file change both of them depend on; see the comment in CMakeLists.txt.
 #include "MpvVideoItemBase.h"
-#if !defined(JELLYFIN_MPV_ITEM_RHI)
+#if !defined(SPOOL_MPV_ITEM_RHI)
 #error "MpvVideoItemBase.h was not found on the include path"
 #endif
 
-#if JELLYFIN_MPV_ITEM_RHI
+#if SPOOL_MPV_ITEM_RHI
 #include <QQuickRhiItem>
-#define JELLYFIN_MPV_ITEM_BASE QQuickRhiItem
+#define SPOOL_MPV_ITEM_BASE QQuickRhiItem
 #else
 #include <QQuickFramebufferObject>
-#define JELLYFIN_MPV_ITEM_BASE QQuickFramebufferObject
+#define SPOOL_MPV_ITEM_BASE QQuickFramebufferObject
 #endif
 
 struct mpv_handle;
 struct mpv_render_context;
 
-namespace JellyfinNative {
+namespace Spool {
 
 // The scene-graph item that hosts libmpv's render API. PlayerController hands
 // us an mpv_handle via setMpvHandle(); the render thread then creates an
@@ -41,13 +41,19 @@ namespace JellyfinNative {
 // target can be a floating-point image an HDR swapchain will accept. Android
 // and webOS keep the framebuffer item: neither has an HDR swapchain to reach,
 // and neither can be tested from here.
-class MpvVideoItem : public JELLYFIN_MPV_ITEM_BASE {
+class MpvVideoItem : public SPOOL_MPV_ITEM_BASE {
     Q_OBJECT
     QML_NAMED_ELEMENT(MpvVideoItem)
+    Q_PROPERTY(bool hdrOutput READ hdrOutput WRITE setHdrOutput NOTIFY hdrOutputChanged)
 
 public:
     explicit MpvVideoItem(QQuickItem *parent = nullptr);
     ~MpvVideoItem() override;
+    bool hdrOutput() const
+    {
+        return m_hdrOutput;
+    }
+    void setHdrOutput(bool enabled);
 
     // Schedule render-context creation on Qt's scene-graph thread.
     void setMpvHandle(mpv_handle *handle);
@@ -68,7 +74,7 @@ public:
 
     static MpvVideoItem *instance();
 
-#if JELLYFIN_MPV_ITEM_RHI
+#if SPOOL_MPV_ITEM_RHI
     QQuickRhiItemRenderer *createRenderer() override;
 #else
     Renderer *createRenderer() const override;
@@ -93,9 +99,11 @@ public:
 signals:
     void renderError(const QString& message);
     void renderContextHandoffCompleted();
+    void hdrOutputChanged();
 
 private:
     static MpvVideoItem *s_instance;
+    bool m_hdrOutput = false;
 
     QMutex m_handleMutex;
     mpv_handle *m_pendingHandle = nullptr;
@@ -107,4 +115,4 @@ private:
     std::shared_ptr<std::atomic_bool> m_attachCompleted;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

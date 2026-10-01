@@ -2,11 +2,15 @@
 #include "../common/TlsTrust.h"
 #include "../platform/PlatformSettingsPolicy.h"
 #include "ArtworkImageProvider.h"
+#include "LocalThumbnail.h"
 
 #include <QBuffer>
+#include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDebug>
 #include <QDir>
 #include <QImageReader>
+#include <QJSValue>
 #include <QMutexLocker>
 #include <QNetworkAccessManager>
 #include <QNetworkDiskCache>
@@ -25,7 +29,7 @@
 #include <cmath>
 #include <utility>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
 
@@ -49,7 +53,7 @@ namespace {
         return sourceSize.scaled(requestedSize, Qt::KeepAspectRatioByExpanding);
     }
 
-#if defined(JELLYFIN_ARTWORK_ASPECT_DIAGNOSTICS)
+#if defined(SPOOL_ARTWORK_ASPECT_DIAGNOSTICS)
     bool shouldLogAspectDiagnostic(const QSize& source, const QSize& requested, const QSize& decoded)
     {
         if (!source.isValid() || !requested.isValid() || !decoded.isValid() || source.width() <= 0
@@ -83,7 +87,7 @@ namespace {
         reader.setAutoTransform(false);
         const QSize scaledSize = decodeSizeForRequest(reader.size(), requestedSize);
         if (scaledSize.isValid()) {
-#if defined(JELLYFIN_ARTWORK_ASPECT_DIAGNOSTICS)
+#if defined(SPOOL_ARTWORK_ASPECT_DIAGNOSTICS)
             if (shouldLogAspectDiagnostic(reader.size(), requestedSize, scaledSize)) {
                 qWarning() << "artwork: aspect-preserving decode"
                            << "source=" << reader.size() << "requested=" << requestedSize << "decode=" << scaledSize;
@@ -115,15 +119,14 @@ public:
     {
     }
 
-    void fetchRender(int requestId, QUrl url)
+    void fetchRender(int requestId, QUrl url, QString key, QByteArray headers)
     {
         ensureNetwork();
         if (!m_network || !url.isValid() || url.scheme().isEmpty()) {
-            deliverRender(requestId, cacheKeyForUrl(url), {}, QStringLiteral("Invalid artwork URL"), false);
+            deliverRender(requestId, key, {}, QStringLiteral("Invalid artwork URL"), false);
             return;
         }
-
-        m_renderQueue.enqueue({ requestId, std::move(url), monotonicNs() });
+        m_renderQueue.enqueue({ requestId, std::move(url), monotonicNs(), std::move(key), std::move(headers) });
         drainRender();
     }
 
@@ -167,11 +170,6 @@ public:
         }
     }
 
-    void setAuthorizationHeader(QString header)
-    {
-        m_authorizationHeader = header.toUtf8();
-    }
-
     void cancelAll()
     {
         m_renderQueue.clear();
@@ -188,6 +186,8 @@ private:
         int requestId = 0;
         QUrl url;
         qint64 queuedNs = 0;
+        QString key;
+        QByteArray headers;
     };
 
     void ensureNetwork()
@@ -206,12 +206,26 @@ private:
         }
     }
 
-    QNetworkRequest cachedRequest(const QUrl& url) const
+    QNetworkRequest cachedRequest(const QUrl& url, const QByteArray& headers = {}) const
     {
         QNetworkRequest request(url);
-        request.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::PreferCache);
-        if (!m_authorizationHeader.isEmpty())
-            request.setRawHeader("Authorization", m_authorizationHeader);
+        if (headers.isEmpty()) {
+            request.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::PreferCache);
+            return request;
+        }
+        // Qt's disk cache is keyed only by URL, not account/Authorization.
+        // Protected previews use the credential-partitioned memory cache and
+        // must never forward credentials to a redirected foreign origin.
+        request.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::AlwaysNetwork);
+        request.setAttribute(QNetworkRequest::CacheSaveControlAttribute, false);
+        request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::SameOriginRedirectPolicy);
+        request.setAttribute(QNetworkRequest::CookieLoadControlAttribute, QNetworkRequest::Manual);
+        request.setAttribute(QNetworkRequest::CookieSaveControlAttribute, QNetworkRequest::Manual);
+        for (const QByteArray& line : headers.split('\n')) {
+            const auto colon = line.indexOf(':');
+            if (colon > 0)
+                request.setRawHeader(line.left(colon), line.mid(colon + 1).trimmed());
+        }
         return request;
     }
 
@@ -221,9 +235,9 @@ private:
         while (m_network && m_renderReplies.size() < kRenderConcurrency && !m_renderQueue.isEmpty()) {
             const RenderRequest request = m_renderQueue.dequeue();
             const qint64 fetchStartedNs = monotonicNs();
-            QNetworkReply *reply = m_network->get(cachedRequest(request.url));
+            QNetworkReply *reply = m_network->get(cachedRequest(request.url, request.headers));
             m_renderReplies.insert(request.requestId, reply);
-            const QString key = cacheKeyForUrl(request.url);
+            const QString key = request.key;
             connect(reply, &QNetworkReply::finished, this,
                 [this, reply, requestId = request.requestId, key, queuedNs = request.queuedNs, fetchStartedNs]() {
                     m_renderReplies.remove(requestId);
@@ -312,7 +326,6 @@ private:
     qint64 m_networkCacheBytes = 0;
     QPointer<ArtworkService> m_service;
     TlsTrustController *m_tlsTrust = nullptr;
-    QByteArray m_authorizationHeader;
     QNetworkAccessManager *m_network = nullptr;
     QQueue<RenderRequest> m_renderQueue;
     QHash<int, QNetworkReply *> m_renderReplies;
@@ -328,11 +341,24 @@ public:
         : m_service(service)
         , m_requestedSize(std::move(requestedSize))
     {
-        if (!m_service) {
-            finish({}, QStringLiteral("Artwork service unavailable"));
-            return;
-        }
-        m_requestId = m_service->requestImage(std::move(url), m_requestedSize, this);
+        const QPointer<ArtworkImageResponse> self(this);
+        QObject *context = service ? static_cast<QObject *>(service) : QCoreApplication::instance();
+        if (context && thread() != context->thread())
+            moveToThread(context->thread());
+        // Source/account resolution and request bookkeeping belong to the GUI
+        // thread. Deferring also lets Qt connect finished() before any error.
+        QMetaObject::invokeMethod(
+            context,
+            [self, url = std::move(url)]() mutable {
+                if (!self)
+                    return;
+                if (!self->m_service || self->cancelled()) {
+                    self->finish({}, QStringLiteral("Artwork request unavailable"));
+                    return;
+                }
+                self->m_requestId = self->m_service->requestImage(std::move(url), self->m_requestedSize, self);
+            },
+            Qt::QueuedConnection);
     }
 
     ~ArtworkImageResponse() override = default;
@@ -350,8 +376,18 @@ public:
     void cancel() override
     {
         m_cancelled.store(true);
-        if (m_service && m_requestId > 0)
-            m_service->cancelRequest(m_requestId);
+        const QPointer<ArtworkImageResponse> self(this);
+        QObject *context = m_service ? static_cast<QObject *>(m_service.data()) : QCoreApplication::instance();
+        QMetaObject::invokeMethod(
+            context,
+            [self] {
+                if (!self)
+                    return;
+                if (self->m_service && self->m_requestId > 0)
+                    self->m_service->cancelRequest(self->m_requestId);
+                self->finish({}, QStringLiteral("Cancelled"));
+            },
+            Qt::QueuedConnection);
     }
 
     bool cancelled() const
@@ -368,15 +404,10 @@ public:
     {
         if (m_finished.exchange(true))
             return;
-        if (m_cancelled.load() && error.isEmpty()) {
-            m_error = QStringLiteral("Cancelled");
-        } else if (image.isNull() && !error.isEmpty()) {
-            m_image = QImage(1, 1, QImage::Format_ARGB32_Premultiplied);
-            m_image.fill(Qt::transparent);
-        } else {
-            m_image = std::move(image);
-            m_error = std::move(error);
-        }
+        if (m_cancelled.load() && error.isEmpty())
+            error = QStringLiteral("Cancelled");
+        m_image = std::move(image);
+        m_error = std::move(error);
         emit finished();
     }
 
@@ -427,6 +458,8 @@ ArtworkService::ArtworkService(QString cacheDirectory, qint64 networkCacheBytes,
 {
     m_decodePool.setMaxThreadCount(std::max(1, decodeThreads));
     m_decodePool.setExpiryTimeout(30000);
+    m_thumbnailPool.setMaxThreadCount(1);
+    m_thumbnailPool.setExpiryTimeout(1000);
     m_timingBatchTimer.setSingleShot(true);
     m_timingBatchTimer.setInterval(120);
     connect(&m_timingBatchTimer, &QTimer::timeout, this, &ArtworkService::flushTimingBatch);
@@ -452,10 +485,13 @@ ArtworkService::~ArtworkService()
     m_workerThread.quit();
     m_workerThread.wait();
     m_decodePool.waitForDone();
+    m_thumbnailPool.waitForDone();
 }
 
 QString ArtworkService::url(const QVariant& value, const QString& kind, int width) const
 {
+    if (value.metaType() == QMetaType::fromType<QJSValue>())
+        return url(value.value<QJSValue>().toVariant(), kind, width);
     if (value.canConvert<MovieItem>())
         return movieUrl(value.value<MovieItem>(), kind, width);
     if (value.metaType().id() == QMetaType::QVariantMap) {
@@ -465,6 +501,14 @@ QString ArtworkService::url(const QVariant& value, const QString& kind, int widt
         item.posterTag = map.value(QStringLiteral("posterTag")).toString();
         item.albumId = map.value(QStringLiteral("albumId")).toString();
         item.albumPrimaryImageTag = map.value(QStringLiteral("albumPrimaryImageTag")).toString();
+        item.seriesId = map.value(QStringLiteral("seriesId")).toString();
+        item.seriesPrimaryImageTag = map.value(QStringLiteral("seriesPrimaryImageTag")).toString();
+        item.thumbTag = map.value(QStringLiteral("thumbTag")).toString();
+        item.thumbItemId = map.value(QStringLiteral("thumbItemId")).toString();
+        item.backdropTag = map.value(QStringLiteral("backdropTag")).toString();
+        item.backdropItemId = map.value(QStringLiteral("backdropItemId")).toString();
+        item.logoTag = map.value(QStringLiteral("logoTag")).toString();
+        item.bannerTag = map.value(QStringLiteral("bannerTag")).toString();
         return movieUrl(item, kind, width);
     }
     if (value.canConvert<LibraryItem>()) {
@@ -483,11 +527,9 @@ QString ArtworkService::itemUrl(const MovieItem& item, bool landscape, int width
     return movieUrl(item, landscape ? QStringLiteral("landscape") : QStringLiteral("poster"), width);
 }
 
-void ArtworkService::setServerUrl(QString serverUrl)
+void ArtworkService::setSource(const ArtworkSource *source)
 {
-    while (serverUrl.endsWith(QLatin1Char('/')))
-        serverUrl.chop(1);
-    m_serverUrl = std::move(serverUrl);
+    m_source = source;
 }
 
 void ArtworkService::setUiWidth(int width)
@@ -547,9 +589,11 @@ QString ArtworkService::movieUrl(const MovieItem& item, const QString& kind, int
     } else if (kind == QStringLiteral("landscape")) {
         if (!item.thumbTag.isEmpty()) {
             tag = item.thumbTag;
+            itemId = item.thumbItemId.isEmpty() ? item.id : item.thumbItemId;
             imageType = QStringLiteral("Thumb");
         } else if (!item.backdropTag.isEmpty()) {
             tag = item.backdropTag;
+            itemId = item.backdropItemId.isEmpty() ? item.id : item.backdropItemId;
             imageType = QStringLiteral("Backdrop");
         } else if (tag.isEmpty() && !item.seriesId.isEmpty()) {
             itemId = item.seriesId;
@@ -564,9 +608,11 @@ QString ArtworkService::movieUrl(const MovieItem& item, const QString& kind, int
     } else if (kind == QStringLiteral("backdrop")) {
         if (!item.backdropTag.isEmpty()) {
             tag = item.backdropTag;
+            itemId = item.backdropItemId.isEmpty() ? item.id : item.backdropItemId;
             imageType = QStringLiteral("Backdrop");
         } else if (!item.thumbTag.isEmpty()) {
             tag = item.thumbTag;
+            itemId = item.thumbItemId.isEmpty() ? item.id : item.thumbItemId;
             imageType = QStringLiteral("Thumb");
         }
         maxWidth = width > 0 ? width : 1920;
@@ -586,6 +632,7 @@ QString ArtworkService::movieUrl(const MovieItem& item, const QString& kind, int
         qualityOffset = 11;
     } else if (kind == QStringLiteral("thumb")) {
         tag = item.thumbTag;
+        itemId = item.thumbItemId.isEmpty() ? item.id : item.thumbItemId;
         imageType = QStringLiteral("Thumb");
         maxWidth = width > 0 ? width : 720;
         qualityOffset = 7;
@@ -596,36 +643,33 @@ QString ArtworkService::movieUrl(const MovieItem& item, const QString& kind, int
 QString ArtworkService::buildLosslessUrl(
     const QString& itemId, const QString& tag, const QString& imageType, int maxWidth) const
 {
-    if (m_serverUrl.isEmpty() || itemId.isEmpty() || tag.isEmpty() || imageType.isEmpty())
+    if (!m_source)
         return {};
-    QUrl url = serverUrlWithPath(m_serverUrl, { QStringLiteral("Items"), itemId, QStringLiteral("Images"), imageType });
-    QUrlQuery query;
-    query.addQueryItem(QStringLiteral("maxWidth"), QString::number(maxWidth));
-    query.addQueryItem(QStringLiteral("quality"), QStringLiteral("90"));
-    query.addQueryItem(QStringLiteral("format"), QStringLiteral("png"));
-    query.addQueryItem(QStringLiteral("tag"), tag);
-    url.setQuery(query);
-    return url.toString(QUrl::FullyEncoded);
+    ArtworkSource::ImageRequest request;
+    request.itemId = itemId;
+    request.tag = tag;
+    request.imageType = imageType;
+    request.maxWidth = maxWidth;
+    request.format = QStringLiteral("png");
+    request.quality = 90;
+    return m_source->imageUrl(request);
 }
 
 QString ArtworkService::buildUrl(const QString& itemId, const QString& tag, const QString& imageType, int maxWidth,
     int qualityOffset, int fillWidth, int fillHeight) const
 {
-    if (m_serverUrl.isEmpty() || itemId.isEmpty() || tag.isEmpty() || imageType.isEmpty())
+    if (!m_source)
         return {};
-    QUrl url = serverUrlWithPath(m_serverUrl, { QStringLiteral("Items"), itemId, QStringLiteral("Images"), imageType });
-    QUrlQuery query;
-    if (fillWidth > 0 && fillHeight > 0) {
-        query.addQueryItem(QStringLiteral("fillWidth"), QString::number(fillWidth));
-        query.addQueryItem(QStringLiteral("fillHeight"), QString::number(fillHeight));
-    } else {
-        query.addQueryItem(QStringLiteral("maxWidth"), QString::number(maxWidth));
-    }
-    query.addQueryItem(QStringLiteral("quality"), QString::number(qualityForOffset(qualityOffset)));
-    query.addQueryItem(QStringLiteral("format"), artworkFormat());
-    query.addQueryItem(QStringLiteral("tag"), tag);
-    url.setQuery(query);
-    return url.toString(QUrl::FullyEncoded);
+    ArtworkSource::ImageRequest request;
+    request.itemId = itemId;
+    request.tag = tag;
+    request.imageType = imageType;
+    request.maxWidth = maxWidth;
+    request.fillWidth = fillWidth;
+    request.fillHeight = fillHeight;
+    request.format = artworkFormat();
+    request.quality = qualityForOffset(qualityOffset);
+    return m_source->imageUrl(request);
 }
 
 QQuickImageResponse *ArtworkService::requestImageResponse(const QString& id, const QSize& requestedSize)
@@ -639,6 +683,11 @@ void ArtworkService::prefetch(const QStringList& urls)
     QStringList uncached;
     uncached.reserve(urls.size());
     for (const QString& url : urls) {
+        // Generated thumbnails and authenticated playback previews load on
+        // demand, without speculative decoding or unscoped HTTP requests.
+        const QString scheme = QUrl(url).scheme();
+        if (scheme == QLatin1String("spool-thumbnail") || scheme == QLatin1String("spool-artwork"))
+            continue;
         const QString key = cacheKeyForUrl(QUrl(url));
         if (key.isEmpty() || !m_byteCache || !m_byteCache->get(key).isEmpty())
             continue;
@@ -661,12 +710,6 @@ int ArtworkService::outstandingRequests() const
     return static_cast<int>(m_responses.size()) + static_cast<int>(m_pendingDeliveries.size());
 }
 
-void ArtworkService::setAuthorizationHeader(QString header)
-{
-    invokeWorker([header = std::move(header)](
-                     ArtworkFetchWorker *worker) mutable { worker->setAuthorizationHeader(std::move(header)); });
-}
-
 void ArtworkService::cancelPrefetches()
 {
     invokeWorker([](ArtworkFetchWorker *worker) { worker->cancelPrefetches(); });
@@ -683,13 +726,24 @@ void ArtworkService::releaseMemory(bool aggressive)
 
 int ArtworkService::requestImage(QUrl url, QSize requestedSize, ArtworkImageResponse *response)
 {
+    Q_ASSERT(thread() == QThread::currentThread());
+    QString key = cacheKeyForUrl(url);
+    QByteArray headers;
+    if (url.scheme() == QLatin1String("spool-artwork")) {
+        const auto resource = m_source ? m_source->resolveImage(url) : ArtworkSource::ImageResource {};
+        url = resource.url;
+        headers = resource.headers;
+        key += QLatin1Char(':') + cacheKeyForUrl(url);
+        if (!headers.isEmpty())
+            key += QLatin1Char(':')
+                + QString::fromLatin1(QCryptographicHash::hash(headers, QCryptographicHash::Sha256).toHex());
+    }
     if (!url.isValid() || url.scheme().isEmpty()) {
         if (response)
             response->finish({}, QStringLiteral("Invalid artwork URL"));
         return 0;
     }
 
-    const QString key = cacheKeyForUrl(url);
     const QByteArray cached = m_byteCache ? m_byteCache->get(key) : QByteArray();
     if (!cached.isEmpty()) {
         Timing timing;
@@ -703,8 +757,31 @@ int ArtworkService::requestImage(QUrl url, QSize requestedSize, ArtworkImageResp
     const int requestId = m_nextRequestId++;
     m_responses.insert(requestId, response);
     m_requestStarts.insert(requestId, monotonicNs());
-    invokeWorker([requestId, url = std::move(url)](
-                     ArtworkFetchWorker *worker) mutable { worker->fetchRender(requestId, std::move(url)); });
+    if (url.scheme() == QLatin1String("spool-thumbnail")) {
+        const QPointer<ArtworkImageResponse> target(response);
+        const qint64 queued = monotonicNs();
+        m_thumbnailPool.start(QRunnable::create([this, target, requestId, key, url, queued] {
+            if (!target || target->cancelled())
+                return;
+            const qint64 started = monotonicNs();
+            QString error;
+            QByteArray bytes = localThumbnail(url, m_cacheDirectory, error);
+            const qint64 fetched = monotonicNs() - started;
+            QMetaObject::invokeMethod(
+                this,
+                [this, requestId, key, bytes = std::move(bytes), error = std::move(error), queued, started,
+                    fetched]() mutable {
+                    handleRenderFetched(
+                        requestId, key, std::move(bytes), std::move(error), true, started - queued, fetched);
+                },
+                Qt::QueuedConnection);
+        }));
+        return requestId;
+    }
+    invokeWorker(
+        [requestId, url = std::move(url), key, headers = std::move(headers)](ArtworkFetchWorker *worker) mutable {
+            worker->fetchRender(requestId, std::move(url), key, std::move(headers));
+        });
     return requestId;
 }
 
@@ -906,4 +983,4 @@ QQuickImageResponse *ArtworkImageProvider::requestImageResponse(const QString& i
                      : new ArtworkImageResponse(nullptr, {}, requestedSize);
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

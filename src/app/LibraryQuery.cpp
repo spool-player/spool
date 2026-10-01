@@ -6,7 +6,7 @@
 #include <QStringList>
 #include <QVariant>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
 
@@ -60,19 +60,6 @@ namespace {
 
 } // namespace
 
-QString libraryContentLabel(const LibraryItem& library)
-{
-    if (library.collectionType == QStringLiteral("tvshows"))
-        return QStringLiteral("TV Shows");
-    if (library.collectionType == QStringLiteral("movies"))
-        return QStringLiteral("Movies");
-    if (library.collectionType == QStringLiteral("musicvideos"))
-        return QStringLiteral("Music Videos");
-    if (library.collectionType == QStringLiteral("homevideos"))
-        return QStringLiteral("Home Videos");
-    return library.name.isEmpty() ? QStringLiteral("Library") : library.name;
-}
-
 QVariantMap defaultLibraryQuery(const LibraryItem& library)
 {
     Q_UNUSED(library);
@@ -116,6 +103,7 @@ int activeLibraryFilterCount(const QVariantMap& query)
         QStringLiteral("isHd"),
         QStringLiteral("is4K"),
         QStringLiteral("is3D"),
+        QStringLiteral("isHdr"),
         QStringLiteral("hasSubtitles"),
         QStringLiteral("hasTrailer"),
         QStringLiteral("hasSpecialFeature"),
@@ -153,4 +141,4 @@ QString libraryCacheKey(const LibraryItem& library, const QVariantMap& query)
     return signature.isEmpty() ? baseKey : QStringLiteral("%1?%2").arg(baseKey, signature);
 }
 
-} // namespace JellyfinNative
+} // namespace Spool
