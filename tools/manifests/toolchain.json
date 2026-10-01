@@ -67,10 +67,10 @@
     "windowsPrefix": "qcoro-0.13-msvc2022"
   },
   "ffmpeg": {
-    "version": "9.0.1",
-    "url": "https://ffmpeg.org/releases/ffmpeg-9.0.1.tar.xz",
-    "sha256": "cf38e0e28c7e5605942c4a77755349b0145804a397af37eb1fb4c77cb237f635",
-    "sri": "sha256-zzjg4ox+VgWULEp3dVNJsBRYBKOXrzfrH7THfLI39jU="
+    "version": "9.0.2",
+    "url": "https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz",
+    "sha256": "8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e",
+    "sri": "sha256-jDhQKD6yX6AmSCB4oEBR4L4XNHsJ74GghJvsFaluAC4="
   },
   "shaderTools": {
     "comment": [
