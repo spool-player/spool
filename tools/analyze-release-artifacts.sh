@@ -6,6 +6,14 @@ report_dir="${2:?usage: analyze-release-artifacts.sh ASSET_DIR REPORT_DIR}"
 : "${SYFT:=syft}"
 : "${GRYPE:=grype}"
 mkdir -p "$report_dir"
+root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+version="$(tr -d '[:space:]' <"$root_dir/VERSION")"
+# Grype's commit-based FFmpeg advisories do not recognize upstream release
+# backports. Keep the exact component version and fix evidence in OpenVEX;
+# every other finding still goes through the unchanged high-severity gate.
+jq --arg product "pkg:generic/spool@$version" \
+  '.statements[].products |= map({"@id": $product, "subcomponents": [.]})' \
+  "$root_dir/tools/manifests/ffmpeg-vex.json" >"$report_dir/ffmpeg-vex.json"
 shopt -s nullglob
 assets=("$asset_dir"/*.AppImage "$asset_dir"/*.dmg "$asset_dir"/*-Portable.exe "$asset_dir"/*-Setup.exe "$asset_dir"/*.ipk)
 (( ${#assets[@]} > 0 )) || { echo 'no release packages found' >&2; exit 1; }
@@ -43,9 +51,12 @@ for asset in "${assets[@]}"; do
       tar -xf "$data_archive" -C "$root"
       ;;
   esac
-  "$SYFT" "dir:$root" -o "cyclonedx-json=$report_dir/$base.cdx.json"
-  "$SYFT" "dir:$root" -o "spdx-json=$report_dir/$base.spdx.json"
-  "$GRYPE" "sbom:$report_dir/$base.cdx.json" -o json >"$report_dir/$base.grype.json"
-  "$GRYPE" "sbom:$report_dir/$base.cdx.json" --fail-on high --only-fixed
+  "$SYFT" "dir:$root" --source-name spool --source-version "$version" \
+    -o "cyclonedx-json=$report_dir/$base.cdx.json" \
+    -o "spdx-json=$report_dir/$base.spdx.json" \
+    -o "syft-json=$report_dir/$base.syft.json"
+  "$GRYPE" "sbom:$report_dir/$base.syft.json" --vex "$report_dir/ffmpeg-vex.json" \
+    -o json >"$report_dir/$base.grype.json"
+  "$GRYPE" "sbom:$report_dir/$base.syft.json" --vex "$report_dir/ffmpeg-vex.json" --fail-on high --only-fixed
   rm -rf "$work"
 done

@@ -21,3 +21,9 @@ Please allow a reasonable remediation window before public disclosure. Once a fi
 HTTPS is the default and recommended server transport. Certificate validation is never disabled globally. A certificate exception is scoped to the exact server origin and certificate fingerprint that the user confirms. Remembered certificates can be reviewed and removed from **Settings → Network → Remembered certificates**. Removing an entry restores normal platform trust validation on the next connection.
 
 HTTP may be used only for an explicitly approved local address. Credentials are denied for public HTTP destinations and are not forwarded across an origin-changing redirect.
+
+## Release dependency scans
+
+Release packages carry CycloneDX, SPDX and Syft SBOMs plus Grype results. Publication fails on fixed High or Critical findings. Scheduled rescans use the same policy.
+
+`tools/manifests/ffmpeg-vex.json` records upstream fixes present in the SHA-256-pinned FFmpeg 9.0.2 archive for CVE-2026-75146, CVE-2026-75142 and CVE-2026-75147. Grype's commit-based advisory ranges currently report those fixes as missing from release versions. The generated `ffmpeg-vex.json` scopes this evidence to the Spool release and exact FFmpeg package version; other versions, components and advisories remain subject to the severity gate.
