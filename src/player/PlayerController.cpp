@@ -1,4 +1,5 @@
 #include "PlayerController.h"
+#include "../app/TrickplayService.h"
 
 #include "../common/LogRotation.h"
 #include "../common/TlsTrust.h"
@@ -200,6 +201,8 @@ PlayerController::PlayerController(NativeAppWindow *window, PlaybackSource *api,
     }
     if (m_api) {
         connect(m_api, &PlaybackSource::credentialsChanged, this, [this]() {
+            if (m_trickplay)
+                m_trickplay->clear();
             if (auto *handle = m_mpvLifecycle.handle())
                 setMpvProperty(handle, "http-header-fields", "");
         });
@@ -1198,6 +1201,8 @@ void PlayerController::play(const PlaybackSession& session, bool startPaused)
     m_errorText.clear();
     const double startSeconds
         = session.startTimeTicks > 0 ? static_cast<double>(session.startTimeTicks) / 10000000.0 : 0.0;
+    if (m_trickplay)
+        m_trickplay->setSession(session.trickplay, startSeconds);
     // Seed the position and runtime from the session so a restart, such as a
     // quality change, never shows a seek bar snapped to zero on its way back
     // to where the viewer was.
@@ -2033,6 +2038,8 @@ void PlayerController::resetRenderStrain()
 
 void PlayerController::resetPlaybackUiState()
 {
+    if (m_trickplay)
+        m_trickplay->clear();
     releaseMpvKeys();
     m_visible = false;
     m_sessionActive = false;
@@ -2583,7 +2590,7 @@ double PlayerController::activeSegmentEndSeconds() const
 }
 bool PlayerController::trickplayAvailable() const
 {
-    return m_timeline.trickplayAvailable();
+    return m_trickplay && m_trickplay->available();
 }
 
 void PlayerController::skipActiveSegment()
@@ -2593,30 +2600,16 @@ void PlayerController::skipActiveSegment()
     seek(activeSegmentEndSeconds());
 }
 
+void PlayerController::setTrickplayService(TrickplayService *service)
+{
+    m_trickplay = service;
+    if (service)
+        connect(service, &TrickplayService::changed, this, &PlayerController::trickplayChanged);
+}
+
 QVariantMap PlayerController::trickplayForSeconds(double seconds) const
 {
-    // Returns { url, width, height, offsetX, offsetY, available } so QML can
-    // paint a single tile sprite from a positioned BorderImage / clipped Image.
-    QVariantMap result;
-    if (!trickplayAvailable() || !m_api) {
-        result.insert(QStringLiteral("available"), false);
-        return result;
-    }
-    const PlaybackTimeline::TrickplayFrame frame = m_timeline.trickplayFrameAt(seconds);
-    if (!frame.available) {
-        result.insert(QStringLiteral("available"), false);
-        return result;
-    }
-    result.insert(QStringLiteral("available"), true);
-    result.insert(QStringLiteral("url"),
-        m_api->trickplayTileUrl(m_session.itemId, m_timeline.trickplayWidth(), frame.sheetIndex));
-    result.insert(QStringLiteral("width"), frame.width);
-    result.insert(QStringLiteral("height"), frame.height);
-    result.insert(QStringLiteral("offsetX"), frame.offsetX);
-    result.insert(QStringLiteral("offsetY"), frame.offsetY);
-    result.insert(QStringLiteral("sheetWidth"), frame.sheetWidth);
-    result.insert(QStringLiteral("sheetHeight"), frame.sheetHeight);
-    return result;
+    return m_trickplay ? m_trickplay->frame(seconds) : QVariantMap { { "available", false } };
 }
 
 } // namespace Spool

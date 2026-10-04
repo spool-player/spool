@@ -193,7 +193,10 @@ export interface Resolved {
     url: string; headers?: Record<string, string>; variantId: string; playSessionId?: string;
     playMethod?: 'DirectPlay' | 'DirectStream' | 'Transcode'; container?: string;
     streams?: Stream[]; segments?: Segment[];
-    trickplay?: { width: number; height: number; columns: number; rows: number; count: number; intervalMs: number };
+    /** Native preview loader fetches/caches sheets or one BIF sequence using this account's headers. */
+    trickplay?: { width: number; height: number; columns: number; rows: number; count: number; intervalMs: number;
+        urlTemplate: string; format?: 'sprites'; headers?: Record<string, string> } |
+        { format: 'bif'; url: string; width?: number; height?: number; headers?: Record<string, string> };
 }
 /** Answer resolve with this to show the provider's `picker` screen first; Spool calls resolve again with what it completes with merged in. */
 export interface PickRequest { pick: Record<string, Value> }
@@ -266,9 +269,8 @@ export interface RemoteState {
     queueRevision?: string; currentEntryId?: string;
     /** Genuine backend acknowledgment only; never a fabricated host sequence. */
     commandSequence?: number;
-    /** Approved source origin; only numeric {index} substitution is permitted. */
-    preview?: { width: number; height: number; columns: number; rows: number;
-        count: number; intervalMs: number; urlTemplate: string; headers?: Record<string, string> };
+    /** Approved source origin; native decoding supports sprite sheets and whole BIF sequences. */
+    preview?: Resolved['trickplay'];
 }
 export type RemoteTargetCommand =
     | { action: 'play'; itemIds: string[]; index: number; positionTicks: string;
@@ -305,8 +307,8 @@ export interface AccountActivationExtensions {
 
 export interface Source extends CatalogueExtensions, PreferenceExtensions, ApplicationDataExtensions,
     RemoteTargetExtensions, AccountActivationExtensions {
-    /** Required. Templates take {itemId} {type} {tag} {width} {height} {quality} {format}; trickplay {itemId} {width} {index} {variantId}. */
-    describe(): { artwork?: string; trickplay?: string; extensions?: Extensions;
+    /** Required. Artwork templates take {itemId} {type} {tag} {width} {height} {quality} {format}. */
+    describe(): { artwork?: string; extensions?: Extensions;
         activation?: { familyId: string; identityId: string } };
     /** Baseline-callable compatibility information; no network update check. */
     extensionStatus?: Operation<{}, { enabled: Extensions; missingHost: string[] }>;

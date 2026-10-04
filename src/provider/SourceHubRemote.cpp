@@ -2,6 +2,7 @@
 #include "SourceHub.h"
 
 #include <QByteArrayView>
+#include <QCryptographicHash>
 #include <QUrl>
 #include <algorithm>
 #include <cmath>
@@ -271,19 +272,25 @@ QCoro::Task<QVariantMap> SourceHub::remoteState(QString targetId, bool connect, 
     if (present(response, "preview") && state.contains("item")) {
         const auto preview = object(response.value("preview"));
         QVariantMap descriptor;
-        for (const auto *field : { "width", "height", "columns", "rows", "count", "intervalMs" }) {
-            const int maximum = QByteArray(field) == "intervalMs" ? 3600000
-                : QByteArray(field) == "count"                    ? 1000000
-                                                                  : 16384;
-            descriptor.insert(QLatin1String(field), int(number(preview.value(QLatin1String(field)), 1, maximum, true)));
+        const bool bif = preview.value("format").toString() == QLatin1String("bif");
+        if (bif)
+            descriptor.insert("format", QStringLiteral("bif"));
+        if (!bif) {
+            for (const auto *field : { "width", "height", "columns", "rows", "count", "intervalMs" }) {
+                const int maximum = QByteArray(field) == "intervalMs" ? 3600000
+                    : QByteArray(field) == "count"                    ? 1000000
+                                                                      : 16384;
+                descriptor.insert(
+                    QLatin1String(field), int(number(preview.value(QLatin1String(field)), 1, maximum, true)));
+            }
         }
         const qint64 sheetWidth = descriptor.value("width").toLongLong() * descriptor.value("columns").toLongLong();
         const qint64 sheetHeight = descriptor.value("height").toLongLong() * descriptor.value("rows").toLongLong();
         if (sheetWidth > 16384 || sheetHeight > 16384 || sheetWidth * sheetHeight > 64 * 1024 * 1024)
             invalid();
-        const QString templateUrl = text(preview.value("urlTemplate"), 16384, true);
+        const QString templateUrl = text(preview.value(bif ? "url" : "urlTemplate"), 16384, true);
         QString resolved = templateUrl;
-        if (!resolved.contains("{index}"))
+        if (!bif && !resolved.contains("{index}"))
             invalid();
         resolved.replace("{index}", "0");
         if (resolved.contains(QLatin1Char('{')) || resolved.contains(QLatin1Char('}')))
@@ -316,12 +323,18 @@ QCoro::Task<QVariantMap> SourceHub::remoteState(QString targetId, bool connect, 
                 headers += name + ": " + value.toUtf8() + '\n';
             }
         }
-        previews.insert(rawId(targetId), { templateUrl, std::move(headers) });
-        descriptor.insert("urlTemplate",
+        QCryptographicHash hash(QCryptographicHash::Sha256);
+        hash.addData(templateUrl.toUtf8());
+        hash.addData(QByteArrayView("\0", 1));
+        hash.addData(headers);
+        const QString revision = QString::fromLatin1(hash.result().toHex());
+        previews.insert(rawId(targetId), { templateUrl, std::move(headers), revision });
+        descriptor.insert(bif ? "url" : "urlTemplate",
             QStringLiteral("spool-artwork://account-") + prefix + QStringLiteral("/remote/")
                 + QString::fromLatin1(
                     rawId(targetId).toUtf8().toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals))
-                + QStringLiteral("?index={index}"));
+                + (bif ? QStringLiteral("?index=0") : QStringLiteral("?index={index}")) + QStringLiteral("&revision=")
+                + revision);
         state.insert("preview", descriptor);
     }
     co_return state;

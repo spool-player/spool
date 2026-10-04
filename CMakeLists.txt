@@ -206,6 +206,10 @@ set(SPOOL_SHELL_SOURCES
     src/app/ArtworkPrefetcher.h
     src/app/ArtworkService.cpp
     src/app/ArtworkService.h
+    src/app/TrickplayDecoder.cpp
+    src/app/TrickplayDecoder.h
+    src/app/TrickplayService.cpp
+    src/app/TrickplayService.h
     src/app/BrowseSessionController.cpp
     src/app/BrowseSessionController.h
     src/app/ContentModelController.cpp
@@ -789,6 +793,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         group-playback-policy tests/app/GroupPlaybackPolicyTest.cpp
         update-manifest tests/app/UpdateManifestTest.cpp
         artwork-url tests/app/ArtworkUrlTest.cpp
+        trickplay tests/app/TrickplayTest.cpp
     )
     set(SPOOL_TESTS_cache
         database-manager tests/cache/DatabaseManagerTest.cpp

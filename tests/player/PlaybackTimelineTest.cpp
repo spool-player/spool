@@ -42,38 +42,11 @@ void testSegments()
     expect(timeline.activeSegmentType().isEmpty(), "segment clears near its end");
 }
 
-void testTrickplay()
-{
-    PlaybackSession session;
-    session.trickplay.width = 320;
-    session.trickplay.height = 180;
-    session.trickplay.tileWidth = 4;
-    session.trickplay.tileHeight = 3;
-    session.trickplay.thumbnailCount = 25;
-    session.trickplay.intervalMs = 10000;
-
-    PlaybackTimeline timeline;
-    timeline.setSession(session);
-    expect(timeline.trickplayAvailable(), "valid trickplay metadata is available");
-
-    const auto first = timeline.trickplayFrameAt(-1.0);
-    expect(first.available && first.sheetIndex == 0 && first.offsetX == 0 && first.offsetY == 0,
-        "negative positions clamp to the first frame");
-
-    const auto secondSheet = timeline.trickplayFrameAt(130.0);
-    expect(secondSheet.available && secondSheet.sheetIndex == 1, "frame selects the correct sheet");
-    expect(secondSheet.offsetX == -320 && secondSheet.offsetY == 0, "frame exposes sprite offsets");
-    expect(secondSheet.sheetWidth == 1280 && secondSheet.sheetHeight == 540, "frame exposes sheet dimensions");
-
-    expect(!timeline.trickplayFrameAt(250.0).available, "positions beyond the manifest are unavailable");
-}
-
 } // namespace
 
 SPOOL_TEST_MAIN("playback-timeline")
 {
     QCoreApplication application(argc, argv);
     testSegments();
-    testTrickplay();
     return failures == 0 ? 0 : 1;
 }

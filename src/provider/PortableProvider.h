@@ -15,9 +15,8 @@ namespace Spool {
 class ProviderRegistry;
 
 // One account on a JavaScript provider, seen as native interfaces. Listing
-// and details are decoded on the provider's worker; image and trickplay URLs
-// are filled from templates the provider described once, so drawing artwork
-// never calls into JS.
+// and details are decoded on the provider's worker; artwork templates and
+// per-playback preview descriptors draw without calling back into JS.
 class PortableProvider final : public Provider,
                                public Catalog,
                                public SearchSource,
@@ -117,7 +116,6 @@ private:
     Capabilities m_capabilities;
     bool m_legacySpeedTest = false;
     QString m_artworkTemplate;
-    QString m_trickplayTemplate;
     QVariantMap m_playbackContext;
     QVariantMap m_queueSnapshot;
     int m_queueIndex = -1;

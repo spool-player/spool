@@ -186,8 +186,48 @@ being mistaken for good performance.
 Provider form layouts are precompiled in the host. Settings creates only visible
 rows and opens its native folder chooser on demand; initial viewport readiness is
 checked at the end of the current event-loop turn, with timed retries only when
-delegates are still missing. Playback no longer creates hidden image objects for
-every trickplay sheet: previews load the sheet needed by the current seek position.
+delegates are still missing. Playback previews prime the resume-position
+texture on a dedicated network/decode path, independent of poster queues.
+Sprite sheets up to 50 MB decoded RGB32 (12.5 megapixels) stay resident:
+moving between tiles changes the displayed crop without another image load,
+CPU crop, or texture upload. Larger JPEG sheets use codec-clipped frames.
+Whole BIF sequences use their native timestamp indexes, not an assumed
+uniform interval. Qt's existing JPEG plugin supplies its libjpeg/libjpeg-turbo
+decoder; no duplicate JPEG dependency is needed.
+
+The server-free native fixture smoke exercises real JPEG sprite and BIF pixels,
+malformed BIF boundaries, resident-sheet crops, the 50 MB boundary, directional
+prefetch, and stale-session/late-request cancellation:
+
+```sh
+nix develop .#native -c cmake --build build/linux-dev/app --target app-tests providers-tests
+nix develop .#native -c env SPOOL_TRICKPLAY_SMOKE_OUTPUT=/tmp/spool-preview-frame.png \
+  build/linux-dev/app/app-tests trickplay
+nix develop .#native -c ctest --test-dir build/linux-dev/app \
+  -R '^(trickplay|artwork-authentication|playback-timeline)$' --output-on-failure
+```
+
+The smoke prints cold response time, 24 explicit warm image-provider response
+times, full-sheet decode time, and texture byte counts. Normal hover within a
+resident sheet does not issue those additional image-provider requests.
+These measurements exclude actual GPU transfer and presentation duration.
+Each local/remote session caps retained decoded textures at 50,000,000 bytes
+and encoded sheets (or one BIF sequence) at 32 MiB. The decoded budget is not
+a total RAM/VRAM limit: decoder workspace, active image delivery and GPU
+textures add to it. Sequences over 32 MiB are rejected.
+
+Hover image selection consumes the latest input once per rendered frame;
+the timestamp and preview position update immediately. Prefetch follows hover
+direction to one neighbouring sheet or at most two BIF frames. Foreground
+requests preempt speculative work; a neighbouring sheet is decoded only when
+it fits beside the current retained textures, otherwise only its encoded bytes
+are prefetched. Qt image caching is disabled for previews so historical sheets
+do not accumulate in its image cache. Switching sessions cancels outstanding
+delivery and drops caches.
+Remote resource revisions also change when a target switches preview URL or
+credentials for the same item. Retired revisions cannot reuse cached frames;
+unchanged resources keep stable identities across state polling.
+
 
 
 ## Android development

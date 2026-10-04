@@ -29,8 +29,15 @@ namespace {
         QByteArray lines;
         for (auto it = headers.cbegin(); it != headers.cend(); ++it) {
             const QByteArray value = it.value().toString().toUtf8();
-            if (!value.contains('\n') && !value.contains('\r') && !it.key().contains(QLatin1Char('\n')))
-                lines += it.key().toUtf8() + ": " + value + '\n';
+            const QByteArray name = it.key().toLatin1();
+            if (!name.isEmpty() && name.size() <= 128
+                && std::all_of(name.begin(), name.end(),
+                    [](unsigned char c) {
+                        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+                            || QByteArrayView("!#$%&'*+-.^_`|~").contains(c);
+                    })
+                && !value.contains('\n') && !value.contains('\r'))
+                lines += name + ": " + value + '\n';
         }
         return lines;
     }
@@ -119,14 +126,6 @@ public:
     {
         return true;
     }
-    QString trickplayTileUrl(const QString& itemId, int width, int tileIndex) const override
-    {
-        if (m_owner->m_trickplayTemplate.isEmpty() || itemId.isEmpty() || width <= 0 || tileIndex < 0)
-            return {};
-        return fill(m_owner->m_trickplayTemplate,
-            { { "itemId", itemId }, { "width", QString::number(width) }, { "index", QString::number(tileIndex) },
-                { "variantId", m_variantId } });
-    }
 
     QCoro::Task<PlaybackSession> resolvePlayback(MovieItem item, bool forceTranscode) override
     {
@@ -183,14 +182,19 @@ public:
         session.mediaStreams.append(externalSubtitles);
         session.segments = segmentsFrom(result.value(QStringLiteral("segments")).toList());
         const QVariantMap trickplay = result.value(QStringLiteral("trickplay")).toMap();
-        session.trickplay = { trickplay.value(QStringLiteral("width")).toInt(),
-            trickplay.value(QStringLiteral("height")).toInt(), trickplay.value(QStringLiteral("columns")).toInt(),
-            trickplay.value(QStringLiteral("rows")).toInt(), trickplay.value(QStringLiteral("count")).toInt(),
-            trickplay.value(QStringLiteral("intervalMs")).toInt(), 0 };
+        session.trickplay.width = trickplay.value(QStringLiteral("width")).toInt();
+        session.trickplay.height = trickplay.value(QStringLiteral("height")).toInt();
+        session.trickplay.tileWidth = trickplay.value(QStringLiteral("columns")).toInt();
+        session.trickplay.tileHeight = trickplay.value(QStringLiteral("rows")).toInt();
+        session.trickplay.thumbnailCount = trickplay.value(QStringLiteral("count")).toInt();
+        session.trickplay.intervalMs = trickplay.value(QStringLiteral("intervalMs")).toInt();
+        session.trickplay.urlTemplate = trickplay.value(QStringLiteral("urlTemplate")).toString();
+        session.trickplay.format = trickplay.value(QStringLiteral("format")).toString();
+        session.trickplay.url = trickplay.value(QStringLiteral("url")).toString();
+        session.trickplay.headers = headerLines(trickplay.value(QStringLiteral("headers")).toMap());
 
         const QByteArray headers = headerLines(result.value(QStringLiteral("headers")).toMap());
         const QUrl origin = QUrl(session.url).adjusted(QUrl::RemovePath | QUrl::RemoveQuery | QUrl::RemoveFragment);
-        m_variantId = session.mediaSourceId;
         if (headers != m_headers || origin != m_origin) {
             m_headers = headers;
             m_origin = origin;
@@ -265,7 +269,6 @@ private:
     PortableProvider *m_owner;
     QByteArray m_headers;
     QUrl m_origin;
-    QString m_variantId;
     QString m_reportedQueueRevision;
     quint64 m_queueSupportGeneration = 0;
 };
@@ -301,7 +304,6 @@ PortableProvider::PortableProvider(ProviderRegistry *registry, QString accountId
     , m_capabilities(capabilities)
     , m_legacySpeedTest(capabilities.testFlag(SpeedTest))
     , m_artworkTemplate(description.value(QStringLiteral("artwork")).toString())
-    , m_trickplayTemplate(description.value(QStringLiteral("trickplay")).toString())
     , m_playback(new Playback(this))
 {
 }

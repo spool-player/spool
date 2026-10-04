@@ -35,11 +35,30 @@ FocusScope {
     onFocusedIndexChanged: if (focusedIndex >= 0)
                                lastFocusedIndex = focusedIndex
     readonly property var preview: snapshot.preview || null
-    readonly property int previewFrame: preview ? Math.min(preview.count - 1, Math.max(0, Math.floor(editedValue * 1000
-                                                                                                     / preview.intervalMs))) :
-                                                  0
-    readonly property int previewSheet: preview ? Math.floor(previewFrame / (preview.columns * preview.rows)) : 0
-    readonly property int previewTile: preview ? previewFrame % (preview.columns * preview.rows) : 0
+    readonly property bool previewActive: visible && !customContext && editingKey === "seek" && preview !== null
+                                          && remote.trickplayAvailable
+    property var previewFrame: ({})
+    property bool previewSelectionPending: previewActive
+    onPreviewActiveChanged: {
+        previewSelectionPending = previewActive
+        if (!previewActive)
+            previewFrame = ({})
+    }
+    onEditedValueChanged: if (previewActive)
+                              previewSelectionPending = true
+    onRemoteChanged: {
+        previewFrame = ({})
+        previewSelectionPending = previewActive
+    }
+
+    // Selection belongs to the page, not the image-ready item below.
+    FrameAnimation {
+        running: root.previewActive && root.previewSelectionPending
+        onTriggered: {
+            root.previewSelectionPending = false
+            root.previewFrame = root.remote.trickplayForSeconds(root.editedValue)
+        }
+    }
 
     function supports(action) {
         return attached && commands.indexOf(action) >= 0
@@ -237,6 +256,12 @@ FocusScope {
     }
     Connections {
         target: root.remote
+        ignoreUnknownSignals: true
+        function onTrickplayChanged() {
+            if (!root.previewActive)
+                root.previewFrame = ({})
+            root.previewSelectionPending = root.previewActive
+        }
         function onSelectionChanged() {
             root.editingKey = ""
             root.customContext = null
@@ -462,20 +487,29 @@ FocusScope {
             color: Theme.textSecondary
             wrapMode: Text.WordWrap
         }
-        Image {
-            visible: root.editingKey === "seek" && root.preview !== null
+        Item {
+            id: seekPreview
+            readonly property bool ready: root.previewFrame.available === true
+            readonly property real imageScale: ready && root.previewFrame.width > 0 ? width / root.previewFrame.width :
+                                                                                      0
+
+            visible: ready && seekPreviewImage.status === Image.Ready
             Layout.alignment: Qt.AlignHCenter
             Layout.preferredWidth: Metrics.scaled(240)
-            Layout.preferredHeight: root.preview ? width * root.preview.height / root.preview.width : 0
-            source: visible ? "image://artwork/" + encodeURIComponent(root.preview.urlTemplate.replace("{index}", String(
-                                                                                                           root.previewSheet))) :
-                              ""
-            sourceClipRect: root.preview ? Qt.rect((root.previewTile % root.preview.columns) * root.preview.width,
-                                                   Math.floor(root.previewTile / root.preview.columns)
-                                                   * root.preview.height, root.preview.width, root.preview.height) :
-                                           Qt.rect(0, 0, 0, 0)
-            fillMode: Image.PreserveAspectFit
-            asynchronous: true
+            Layout.preferredHeight: ready ? root.previewFrame.height * imageScale : 0
+            clip: true
+
+            Image {
+                id: seekPreviewImage
+                source: seekPreview.ready ? root.previewFrame.url : ""
+                x: seekPreview.ready ? root.previewFrame.offsetX * seekPreview.imageScale : 0
+                y: seekPreview.ready ? root.previewFrame.offsetY * seekPreview.imageScale : 0
+                width: seekPreview.ready ? root.previewFrame.sheetWidth * seekPreview.imageScale : 0
+                height: seekPreview.ready ? root.previewFrame.sheetHeight * seekPreview.imageScale : 0
+                fillMode: Image.Stretch
+                cache: false
+                asynchronous: true
+            }
         }
         ListView {
             id: list

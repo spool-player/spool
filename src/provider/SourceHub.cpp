@@ -7,6 +7,7 @@
 #include <QDebug>
 #include <QRegularExpression>
 #include <QUrlQuery>
+#include <QUuid>
 
 #include <algorithm>
 #include <limits>
@@ -275,16 +276,6 @@ public:
     {
         return m_hub->signedIn();
     }
-    QString trickplayTileUrl(const QString& itemId, int width, int tileIndex) const override
-    {
-        PlaybackSource *playback = sourceFor(itemId);
-        const QString url = playback ? playback->trickplayTileUrl(rawId(itemId), width, tileIndex) : QString();
-        if (url.isEmpty())
-            return {};
-        return QStringLiteral("spool-artwork://account-") + prefixOf(m_hub->accountOf(itemId)) + QLatin1Char('/')
-            + QString::fromLatin1(
-                url.toUtf8().toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals));
-    }
 
     QCoro::Task<PlaybackSession> resolvePlayback(MovieItem item, bool forceTranscode) override
     {
@@ -309,6 +300,36 @@ public:
         item.albumId = rawId(item.albumId);
         PlaybackSession session = co_await playback->resolvePlayback(std::move(item), forceTranscode);
         session.itemId = m_hub->scoped(account, session.itemId);
+        auto& entry = m_hub->m_entries[prefixOf(account)];
+        entry.playbackPreviews.clear();
+        auto& preview = session.trickplay;
+        QString resource = preview.format == QLatin1String("bif") ? preview.url : preview.urlTemplate;
+        QString first = resource;
+        first.replace(QLatin1String("{index}"), QStringLiteral("0"));
+        QString next = resource;
+        next.replace(QLatin1String("{index}"), QStringLiteral("1"));
+        const QUrl firstUrl(first, QUrl::StrictMode);
+        const QUrl nextUrl(next, QUrl::StrictMode);
+        const auto origin
+            = [](const QUrl& url) { return url.adjusted(QUrl::RemovePath | QUrl::RemoveQuery | QUrl::RemoveFragment); };
+        if (resource.isEmpty() || !firstUrl.isValid() || !nextUrl.isValid()
+            || (firstUrl.scheme() != QLatin1String("http") && firstUrl.scheme() != QLatin1String("https"))
+            || origin(firstUrl) != origin(nextUrl) || origin(firstUrl) != playback->mediaOrigin()
+            || !m_hub->m_registry->accountOriginAllowed(account, firstUrl)
+            || (preview.format != QLatin1String("bif") && !resource.contains(QLatin1String("{index}")))) {
+            preview = {};
+        } else {
+            const QString token = QUuid::createUuid().toString(QUuid::Id128);
+            entry.playbackPreviews.insert(
+                token, { resource, preview.headers.isEmpty() ? playback->mediaRequestHeaders() : preview.headers, {} });
+            const QString scoped = QStringLiteral("spool-artwork://account-") + prefixOf(account)
+                + QStringLiteral("/preview/") + token + QStringLiteral("?index=");
+            if (preview.format == QLatin1String("bif"))
+                preview.url = scoped + QLatin1Char('0');
+            else
+                preview.urlTemplate = scoped + QStringLiteral("{index}");
+            preview.headers.clear();
+        }
         for (PlaybackQueueItem& entry : session.nowPlayingQueue)
             entry.itemId = m_hub->scoped(account, entry.itemId);
         co_return session;
@@ -488,8 +509,10 @@ void SourceHub::removeSource(const QString& accountId)
     const Entry entry = m_entries.take(prefixOf(accountId));
     if (m_speedTestAccount == accountId)
         cancelSpeedTest();
-    if (m_playbackAccount == accountId)
+    if (m_playbackAccount == accountId) {
         m_playbackAccount.clear();
+        emit m_playback->credentialsChanged();
+    }
     m_access.remove(accountId);
     if (entry.browse) {
         emit browseSourcesChanged();
@@ -1461,13 +1484,31 @@ ArtworkSource::ImageResource SourceHub::resolveImage(const QUrl& url) const
     const auto entry = m_entries.constFind(host.mid(8));
     if (entry == m_entries.cend() || !entry->provider)
         return {};
+    if (url.path().startsWith(QLatin1String("/preview/"))) {
+        const auto preview = entry->playbackPreviews.constFind(url.path().mid(9));
+        bool ok = false;
+        const int index = QUrlQuery(url).queryItemValue(QStringLiteral("index")).toInt(&ok);
+        if (preview == entry->playbackPreviews.cend() || !ok || index < 0)
+            return {};
+        QString resolved = preview->urlTemplate;
+        resolved.replace(QLatin1String("{index}"), QString::number(index));
+        const QUrl resource(resolved, QUrl::StrictMode);
+        const auto *playback = entry->provider->playback();
+        if (!playback || !m_registry->accountOriginAllowed(entry->accountId, resource)
+            || resource.adjusted(QUrl::RemovePath | QUrl::RemoveQuery | QUrl::RemoveFragment)
+                != playback->mediaOrigin())
+            return {};
+        return { resource, preview->headers };
+    }
     if (url.path().startsWith(QLatin1String("/remote/"))) {
         const QString target = QString::fromUtf8(QByteArray::fromBase64(
             url.path().mid(8).toLatin1(), QByteArray::Base64UrlEncoding | QByteArray::AbortOnBase64DecodingErrors));
         const auto preview = entry->remotePreviews.constFind(target);
         bool ok = false;
-        const int index = QUrlQuery(url).queryItemValue(QStringLiteral("index")).toInt(&ok);
-        if (preview == entry->remotePreviews.cend() || !ok || index < 0)
+        const QUrlQuery query(url);
+        const int index = query.queryItemValue(QStringLiteral("index")).toInt(&ok);
+        if (preview == entry->remotePreviews.cend() || !ok || index < 0
+            || query.queryItemValue(QStringLiteral("revision")) != preview->revision)
             return {};
         QString resolved = preview->urlTemplate;
         resolved.replace(QLatin1String("{index}"), QString::number(index));
@@ -1476,17 +1517,7 @@ ArtworkSource::ImageResource SourceHub::resolveImage(const QUrl& url) const
             return {};
         return { resource, preview->headers };
     }
-    const auto *playback = entry->provider->playback();
-    if (!playback)
-        return {};
-    const QByteArray encoded = QByteArray::fromBase64(
-        url.path().mid(1).toLatin1(), QByteArray::Base64UrlEncoding | QByteArray::AbortOnBase64DecodingErrors);
-    const QUrl resource = QUrl::fromEncoded(encoded, QUrl::StrictMode);
-    if (!resource.isValid()
-        || (resource.scheme() != QLatin1String("https") && resource.scheme() != QLatin1String("http"))
-        || resource.adjusted(QUrl::RemovePath | QUrl::RemoveQuery | QUrl::RemoveFragment) != playback->mediaOrigin())
-        return {};
-    return { resource, playback->mediaRequestHeaders() };
+    return {};
 }
 
 } // namespace Spool
