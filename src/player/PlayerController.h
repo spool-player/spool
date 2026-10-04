@@ -28,6 +28,7 @@ namespace Spool {
 class NativeAppWindow;
 class PlaybackSource;
 class TlsTrustController;
+class TrickplayService;
 
 class PlayerController final : public QObject {
     Q_OBJECT
@@ -138,6 +139,7 @@ public:
     bool trickplayAvailable() const;
     Q_INVOKABLE void skipActiveSegment();
     Q_INVOKABLE QVariantMap trickplayForSeconds(double seconds) const;
+    void setTrickplayService(TrickplayService *service);
 
     Q_INVOKABLE void play(const Spool::PlaybackSession& session, bool startPaused = false);
     void setMediaSegments(const QString& itemId, const std::vector<MediaSegment>& segments);
@@ -326,6 +328,7 @@ private:
     int m_videoHeight = 0;
     NativeAppWindow *m_window = nullptr;
     PlaybackSource *m_api = nullptr;
+    TrickplayService *m_trickplay = nullptr;
     PlaybackSession m_session;
     PlaybackReporter m_reporter;
     MpvLifecycle m_mpvLifecycle;

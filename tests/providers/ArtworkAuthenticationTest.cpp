@@ -1,6 +1,7 @@
 #include "ProviderFixture.h"
 #include "TestMain.h"
 #include "app/ArtworkService.h"
+#include "app/TrickplayService.h"
 #include "cache/DatabaseManager.h"
 #include "provider/ProviderRegistry.h"
 #include "provider/SourceHub.h"
@@ -86,7 +87,7 @@ SPOOL_TEST_MAIN("artwork-authentication")
                 }
                 socket->setProperty("answered", true);
                 ++requests;
-                if (request.startsWith("GET /redirect ")) {
+                if (request.startsWith("GET /redirect")) {
                     socket->write("HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:"
                         + QByteArray::number(foreignServer.serverPort())
                         + "/steal\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
@@ -118,20 +119,25 @@ SPOOL_TEST_MAIN("artwork-authentication")
     package.manifest = *ProviderManifest::parse(package.files.value("manifest.json"));
     package.files["logic/provider.mjs"] = R"JS(
 export function createSource(config) {
+    let remoteRevision = 0;
     return {
-        describe: function() { return {extensions: {'spool.remote-targets': 1},
-            trickplay: config.origin + '/sheet/{index}.png'}; },
-        remoteState: function() { return {state:'paused', commands:['seek'], item:{id:'movie', title:'Movie'},
-            preview:{width:16, height:16, columns:1, rows:1, count:1, intervalMs:1000,
-                urlTemplate:config.origin + '/remote/{index}.png',
-                headers:{Authorization:'MediaBrowser Token="' + config.token + '"'}}}; },
+        describe: function() { return {extensions: {'spool.remote-targets': 1}}; },
+        remoteState: function() {
+            const revision = remoteRevision++;
+            const token = revision < 2 ? config.token : 'bob-secret';
+            return {state:'paused', commands:['seek'], item:{id:'movie', title:'Movie'},
+                preview:{width:16, height:16, columns:1, rows:1, count:1, intervalMs:1000,
+                    urlTemplate:config.origin + (revision === 0 ? '/remote/{index}.png' : '/remote-alt/{index}.png'),
+                    headers:{Authorization:'MediaBrowser Token="' + token + '"'}}};
+        },
         resolve: function(args) { return {url: config.origin + '/video', variantId: 'edition',
             headers: {Authorization: 'MediaBrowser Token="' + config.token + '"'},
             streams: [{index: 0, type: 'Video'},
                 {index: 10000, type: 'Subtitle', external: true, url: config.origin + '/subs/1.srt'},
                 {index: 10001, type: 'Subtitle', external: true, url: 'https://elsewhere.invalid/2.srt'},
                 {index: 2, type: 'Subtitle'}, {index: 10002, type: 'Subtitle', external: true}],
-            trickplay: {width:16, height:16, columns:1, rows:1, count:1, intervalMs:1000}}; }
+            trickplay: {width:16, height:16, columns:1, rows:1, count:1, intervalMs:1000,
+                urlTemplate: config.previewUrl || config.origin + '/sheet/{index}.png'}}; }
     };
 }
 )JS";
@@ -146,10 +152,11 @@ export function createSource(config) {
         { { "providers/accounts/2", QStringLiteral(R"JSON({"accounts":[{"id":"01234567-89ab-4cde-8fab-0123456789ab",
         "module":"fixture.test","key":"alice-secret","label":"Fixture","enabled":false}]})JSON") } }));
     QCoro::waitFor(registry.restore());
-    const auto add = [&](const QString& token) {
+    const auto add = [&](const QString& token, const QString& previewUrl = QString()) {
         const QString id = registry.finishSetup({},
             { { "module", "fixture.test" }, { "account", token }, { "label", "Fixture" },
-                { "configuration", QVariantMap { { "origin", origin }, { "token", token } } } });
+                { "configuration",
+                    QVariantMap { { "origin", origin }, { "token", token }, { "previewUrl", previewUrl } } } });
         waitUntil([&] { return registry.sourceRunning(id); }, "source activates");
         MovieItem item;
         item.id = hub.scoped(id, "movie");
@@ -160,7 +167,9 @@ export function createSource(config) {
         require(
             order == QList<int> { 0, 2, 10000 } && session.mediaStreams.last().deliveryUrl == origin + "/subs/1.srt",
             "subtitle files follow the file's own tracks, and only those on the stream's origin are kept");
-        return std::pair(id, hub.playback()->trickplayTileUrl(item.id, 16, 0));
+        QString url = session.trickplay.urlTemplate;
+        url.replace("{index}", "0");
+        return std::pair(id, url);
     };
     const auto alice = add("alice-secret");
     const auto bob = add("bob-secret");
@@ -212,21 +221,77 @@ export function createSource(config) {
     artwork.releaseMemory(false);
     require(fetch(bob.second, true).pixelColor(8, 8) == QColor(Qt::red),
         "protected previews bypass the URL-only disk cache after memory eviction");
-    const auto routed = [&](const QString& networkUrl) {
-        QUrl resource(alice.second);
-        resource.setPath('/'
-            + QString::fromLatin1(
-                networkUrl.toUtf8().toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals)));
-        return resource.toString();
+    TrickplayService nativeAlice(&hub, nullptr), nativeBob(&hub, nullptr);
+    const auto nativeInfo = [](const QString& scoped) {
+        TrickplayInfo info;
+        info.width = info.height = 16;
+        info.tileWidth = info.tileHeight = info.thumbnailCount = 1;
+        info.intervalMs = 1000;
+        info.urlTemplate = scoped;
+        return info;
     };
-    fetch(routed(QStringLiteral("http://127.0.0.1:%1/steal").arg(foreignServer.serverPort())), false);
-    fetch(routed(origin + "/redirect"), false);
+    nativeAlice.setSession(nativeInfo(alice.second), 0);
+    nativeBob.setSession(nativeInfo(bob.second), 0);
+    const auto nativeFetch = [&](TrickplayService& service, bool success) {
+        const QString id = QUrl(service.frame(0).value("url").toString()).path().mid(1);
+        std::unique_ptr<QQuickImageResponse> response(service.requestImageResponse(id));
+        bool finished = false;
+        QObject::connect(response.get(), &QQuickImageResponse::finished, &app, [&] { finished = true; });
+        waitUntil([&] { return finished; }, "native authenticated preview completes");
+        require(response->errorString().isEmpty() == success, "native preview reports account authorization");
+        if (!success)
+            return QImage();
+        std::unique_ptr<QQuickTextureFactory> texture(response->textureFactory());
+        require(bool(texture), "native protected preview produces real frame pixels");
+        return texture->image();
+    };
+    require(nativeFetch(nativeAlice, true).pixelColor(8, 8) == QColor(Qt::green)
+            && nativeFetch(nativeBob, true).pixelColor(8, 8) == QColor(Qt::red)
+            && nativeFetch(nativeAlice, true).pixelColor(8, 8) == QColor(Qt::green),
+        "dedicated native frames keep same-URL credentials and decoded caches account-isolated");
+    TrickplayService nativeRemote(&hub, nullptr);
+    nativeRemote.setSession(nativeInfo(remoteUrl), 0);
+    require(nativeFetch(nativeRemote, true).pixelColor(8, 8) == QColor(Qt::green),
+        "initial remote resource produces its authenticated native frame");
+    const auto changedResource = QCoro::waitFor(hub.remoteState(hub.scoped(alice.first, "target"), false, "preview"));
+    QString changedUrl = changedResource.value("preview").toMap().value("urlTemplate").toString();
+    changedUrl.replace("{index}", "0");
+    require(changedResource.value("item") == remote.value("item") && changedUrl != remoteUrl,
+        "same-item remote edition changes invalidate the scoped resource identity");
+    fetch(remoteUrl, false);
+    nativeFetch(nativeRemote, false);
+    nativeRemote.setSession(nativeInfo(changedUrl), 0);
+    require(nativeFetch(nativeRemote, true).pixelColor(8, 8) == QColor(Qt::green),
+        "replacement remote resource loads rather than reusing its retired native frame");
+    const auto changedAuth = QCoro::waitFor(hub.remoteState(hub.scoped(alice.first, "target"), false, "preview"));
+    QString credentialUrl = changedAuth.value("preview").toMap().value("urlTemplate").toString();
+    credentialUrl.replace("{index}", "0");
+    require(credentialUrl != changedUrl && !credentialUrl.contains("bob-secret"),
+        "header-only changes revise the opaque resource without exposing credentials");
+    fetch(changedUrl, false);
+    nativeFetch(nativeRemote, false);
+    nativeRemote.setSession(nativeInfo(credentialUrl), 0);
+    require(nativeFetch(nativeRemote, true).pixelColor(8, 8) == QColor(Qt::red),
+        "same-URL remote authentication changes cannot retain previous credential-colored pixels");
+    const auto unchanged = QCoro::waitFor(hub.remoteState(hub.scoped(alice.first, "target"), false, "preview"));
+    require(unchanged.value("preview") == changedAuth.value("preview")
+            && nativeFetch(nativeRemote, true).pixelColor(8, 8) == QColor(Qt::red),
+        "unchanged remote resources preserve scoped identity and decoded cache reuse");
+    remoteUrl = credentialUrl;
+    const auto foreign
+        = add("foreign-secret", QStringLiteral("http://127.0.0.1:%1/steal/{index}").arg(foreignServer.serverPort()));
+    require(foreign.second.isEmpty(), "a provider cannot describe a preview on a foreign media origin");
+    fetch(foreign.second, false);
+    const auto redirected = add("redirect-secret", origin + "/redirect?index={index}");
+    fetch(redirected.second, false);
     registry.removeAccount(alice.first);
     waitUntil(
         [&] { return hub.source(alice.first) == nullptr; }, "account removal completes before reusing its preview URL");
     fetch(alice.second, false);
     fetch(remoteUrl, false);
-    require(requests == 5 && foreignRequests == 0,
+    nativeFetch(nativeAlice, false);
+    nativeFetch(nativeRemote, false);
+    require(requests == 10 && foreignRequests == 0,
         "foreign origins, redirects and removed accounts cannot receive credentials or cached previews");
     return 0;
 }

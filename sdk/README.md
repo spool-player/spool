@@ -162,6 +162,21 @@ media rows; home cards and details request the image from that owner.
 Do not attach a parent's tag to a child without its owner ID. Series posters
 and album covers retain their existing `seriesId`/`albumId` ownership.
 
+## Seek previews
+
+Return `resolve().trickplay` for the selected media variant, not a global URL
+template in `describe()`. Sprite sheets use
+`{width, height, columns, rows, count, intervalMs, urlTemplate}`; the absolute
+HTTP(S) template has one `{index}` substitution. BIF sequences use
+`{format: "bif", url}` with optional `width`/`height`. Pass the whole sequence
+URL, not individual JPEGs: C++ parses its timestamp/offset index and decodes
+the selected frame. Missing server-generated previews mean omit `trickplay`.
+
+Both formats use the account's `resolve().headers`; keep tokens out of URLs.
+The native loader prefetches the resume preview, caches bounded preview data
+separately from posters, and uploads only the requested frame. While loading
+or on failure, the player shows no preview frame or black placeholder.
+
 ## Screens
 
 A screen is mounted with a `provider` property (`ScreenContext` in `provider.d.ts`) and may
@@ -283,14 +298,13 @@ is verified against count/order and occurrence IDs, with read-back before
 reconciliation after uncertain mutations; fixture success is not a live-server
 compatibility guarantee.
 
-Protected `spool.remote-targets` preview descriptors may include an optional
-`headers` map alongside `urlTemplate`. Use the same account/device authorization
-as media requests; never put account tokens in preview query strings. The host
-keeps headers out of QML, validates the approved HTTP(S) origin and numeric
-`{index}` substitution, and loads only requested sheets through its isolated
-artwork pipeline. Local trickplay sheets use `resolve().headers` from their own
-account. Authenticated sheets bypass the URL-only disk cache and cookies, reject
-foreign-origin redirects, and reuse only their credential-partitioned memory cache.
+Protected `spool.remote-targets` state uses the same sheet/BIF descriptor in
+`preview`, with an optional `headers` map. Use the same account/device
+authorization as media requests; never put tokens in preview query strings.
+The host keeps headers out of QML, validates the approved HTTP(S) origin and
+numeric `{index}` substitution, and decodes previews through the dedicated
+native loader. Authenticated previews bypass URL-only disk caching and cookies,
+reject foreign-origin redirects, and keep cached data isolated by session.
 
 ### Native preferences and application data
 

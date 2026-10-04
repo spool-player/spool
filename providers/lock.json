@@ -5,19 +5,19 @@
       "id": "spool.jellyfin",
       "version": "0.2.8",
       "archive": "bundled/spool.jellyfin-0.2.8.tar.zst",
-      "sha256": "d64e4efbea49e757361a8b5a2d56701768489d3b78bc990aad57687f87bfd65f"
+      "sha256": "17913a9c887edd29c5a886d5fc9af80d7659e1559c8e06aa86a8ad88aa2e4d08"
     },
     {
       "id": "spool.emby",
       "version": "0.1.4",
       "archive": "bundled/spool.emby-0.1.4.tar.zst",
-      "sha256": "5dec32cd62dafdd4a461e40bb0faa24b51c07ff251d36c85b301cf2740fe13ac"
+      "sha256": "437db9ab69491c8f3b93627afa7e475a6c6cef95d0c134faa580df9237f3e6fb"
     },
     {
       "id": "spool.plex",
       "version": "0.1.5",
       "archive": "bundled/spool.plex-0.1.5.tar.zst",
-      "sha256": "5e426dd3d888d75bfd00a12d37cbab7ab11ab56f02fbd684f4f876ed3ba8c80d"
+      "sha256": "10ffbe71e182177bf07035c3c025ccf14872bacff31c03653c76a4e6dcf166fa"
     }
   ]
 }

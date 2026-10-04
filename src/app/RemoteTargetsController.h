@@ -19,6 +19,7 @@ class ProviderRegistry;
 class GroupPlaybackController;
 class ProviderUiContext;
 class PlatformRemoteMediaSession;
+class TrickplayService;
 
 // Outbound control only. Neither selection nor a remote snapshot is an inbound
 // playback command; every asynchronous result belongs to one selection epoch.
@@ -36,6 +37,7 @@ class RemoteTargetsController final : public QObject {
     Q_PROPERTY(bool queueBusy READ queueBusy NOTIFY queueChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(QString problem READ problem NOTIFY problemChanged)
+    Q_PROPERTY(bool trickplayAvailable READ trickplayAvailable NOTIFY trickplayChanged)
     Q_PROPERTY(bool chooserVisible READ chooserVisible NOTIFY visibilityChanged)
     Q_PROPERTY(bool queueVisible READ queueVisible NOTIFY visibilityChanged)
     Q_PROPERTY(
@@ -122,6 +124,9 @@ public:
     Q_INVOKABLE QObject *createAdvancedControls();
     // Also used by lifecycle adapters on platforms without QGuiApplication.
     void setForeground(bool foreground);
+    void setTrickplayService(TrickplayService *service);
+    Q_INVOKABLE QVariantMap trickplayForSeconds(double seconds) const;
+    bool trickplayAvailable() const;
 signals:
     void targetsChanged();
     void availableChanged();
@@ -133,6 +138,7 @@ signals:
     void problemChanged();
     void visibilityChanged();
     void groupLeaveConfirmationChanged();
+    void trickplayChanged();
 
 private:
     void updateTimers();
@@ -163,6 +169,7 @@ private:
     QString m_position;
     QString m_runtime;
     QVariantList m_targets;
+    TrickplayService *m_trickplay = nullptr;
     QHash<QString, QVariantList> m_accountTargets;
     QStringList m_listAccounts;
     QSet<QString> m_listPending;

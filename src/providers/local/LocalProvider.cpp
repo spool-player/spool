@@ -68,10 +68,6 @@ public:
     {
         return true;
     }
-    QString trickplayTileUrl(const QString&, int, int) const override
-    {
-        return {};
-    }
     QCoro::Task<PlaybackSession> resolvePlayback(MovieItem item, bool) override
     {
         co_return m_provider->playbackSession(item.id);

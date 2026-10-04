@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QByteArray>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QList>
@@ -331,8 +332,7 @@ public:
     qint64 endTicks = 0;
 };
 
-// Per-width trickplay manifest matching Jellyfin's
-// item.Trickplay[mediaSourceId][width] structure.
+// A per-playback sprite manifest or a whole-sequence BIF index.
 struct TrickplayInfo {
     int width = 0;
     int height = 0;
@@ -341,6 +341,10 @@ struct TrickplayInfo {
     int thumbnailCount = 0;
     int intervalMs = 0;
     int bandwidth = 0;
+    QString urlTemplate; // sprite sheet URL, with {index}
+    QString format; // "bif" for a whole sequence, empty for sheets
+    QString url;
+    QByteArray headers; // native-only credential snapshot
 };
 
 struct SubtitlePreferences {

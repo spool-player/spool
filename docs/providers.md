@@ -332,14 +332,19 @@ Advanced navigation/text commands remain provider-owned operations; their thin
 picker adapters configure the shared, precompiled `ProviderRemoteControls` surface.
 
 Protected playback previews use account-scoped `spool-artwork://` resources,
-resolved by `ArtworkService` on the GUI thread. Local previews use the owning
-account's playback headers, not the currently active player's credentials.
-Remote descriptors may supply `headers`; SourceHub retains them privately and
-exposes only an opaque numeric-index template to QML. Remote previews do not
-require starting local playback. Requests stay on the approved origin, reject
-foreign-origin redirects, disable cookies and bypass Qt's URL-only disk cache.
-The memory cache is partitioned by account, resolved URL and credential hash;
-removed accounts cannot resolve old resources, even from memory.
+resolved privately by `SourceHub`. `TrickplayService` loads local and remote
+sprite sheets or whole BIF sequences on a dedicated worker. Sheets fitting
+the 50,000,000-byte decoded RGB32 budget expose stable sheet `image://` URLs
+and per-thumbnail crop offsets; larger JPEGs and BIF use single-frame URLs.
+Local descriptors use the owning account's playback headers; remote descriptors
+may supply their account/device `headers`.
+Remote previews do not require starting local playback. Requests stay on the
+approved origin, reject foreign-origin redirects, disable cookies and bypass
+Qt's URL-only disk cache. Encoded and decoded texture caches are bounded and
+session-isolated; removed accounts cannot resolve old resources, even from memory.
+Directional prefetch is limited to one neighbouring sheet or two BIF frames
+and yields to foreground requests. Both preview surfaces consume the latest
+selection once per rendered frame and clip resident sheets to the selected tile.
 
 These adapters do not implement Plex watch-together or native SpoolLink peer
 enhancements. Protocol/loopback verification does not imply live-device support

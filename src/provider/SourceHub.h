@@ -204,8 +204,10 @@ private:
         struct RemotePreview {
             QString urlTemplate;
             QByteArray headers;
+            QString revision;
         };
         QHash<QString, RemotePreview> remotePreviews; // by raw target ID
+        QHash<QString, RemotePreview> playbackPreviews; // by scoped resource token
     };
     struct SearchRun;
 

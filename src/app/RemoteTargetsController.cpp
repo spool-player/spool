@@ -6,6 +6,7 @@
 #include "../provider/ProviderUiContext.h"
 #include "../provider/SourceHub.h"
 #include "GroupPlaybackController.h"
+#include "TrickplayService.h"
 
 #include <QGuiApplication>
 #include <QPointer>
@@ -83,6 +84,13 @@ RemoteTargetsController::RemoteTargetsController(
         emit availableChanged();
         if (m_chooserVisible && m_foreground)
             refreshTargets();
+    });
+    connect(registry, &ProviderRegistry::sourceStopped, this, [this](const QString& account) {
+        if (m_trickplay && m_selection.accountId == account) {
+            m_trickplay->clear();
+            m_state.remove("preview");
+            emit stateChanged();
+        }
     });
     connect(hub, &SourceHub::accountEvent, this,
         [this](const QString& account, const QString& type, const QVariantMap& payload) {
@@ -402,6 +410,8 @@ void RemoteTargetsController::confirmLeaveGroup(bool accepted)
 }
 void RemoteTargetsController::cancelSelection()
 {
+    if (m_trickplay)
+        m_trickplay->clear();
     const auto account = m_selection.accountId;
     ++m_selection.generation;
     ++m_commandEpoch;
@@ -582,6 +592,21 @@ void RemoteTargetsController::applyState(QVariantMap response)
     response.remove("commandSequence");
     const QString revision = response.value("queueRevision").toString();
     const bool revisionChanged = revision != m_state.value("queueRevision").toString();
+    if (m_trickplay
+        && (m_state.value("preview") != response.value("preview") || m_state.value("item") != response.value("item"))) {
+        const auto descriptor = response.value("preview").toMap();
+        TrickplayInfo info;
+        info.width = descriptor.value("width").toInt();
+        info.height = descriptor.value("height").toInt();
+        info.tileWidth = descriptor.value("columns").toInt();
+        info.tileHeight = descriptor.value("rows").toInt();
+        info.thumbnailCount = descriptor.value("count").toInt();
+        info.intervalMs = descriptor.value("intervalMs").toInt();
+        info.urlTemplate = descriptor.value("urlTemplate").toString();
+        info.format = descriptor.value("format").toString();
+        info.url = descriptor.value("url").toString();
+        m_trickplay->setSession(info, position.toDouble() / 10000000.0);
+    }
     if (m_state != response) {
         m_state = std::move(response);
         emit stateChanged();
@@ -866,5 +891,24 @@ void RemoteTargetsController::updateMediaSession()
     if (m_state.contains("volume"))
         session.volume = m_state.value("volume").toInt();
     m_mediaSession->update(session);
+}
+} // namespace Spool
+
+namespace Spool {
+void RemoteTargetsController::setTrickplayService(TrickplayService *service)
+{
+    m_trickplay = service;
+    if (service) {
+        service->setImageProviderName(QStringLiteral("remote-trickplay"));
+        connect(service, &TrickplayService::changed, this, &RemoteTargetsController::trickplayChanged);
+    }
+}
+QVariantMap RemoteTargetsController::trickplayForSeconds(double seconds) const
+{
+    return m_trickplay ? m_trickplay->frame(seconds) : QVariantMap { { "available", false } };
+}
+bool RemoteTargetsController::trickplayAvailable() const
+{
+    return m_trickplay && m_trickplay->available();
 }
 } // namespace Spool

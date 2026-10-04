@@ -31,7 +31,8 @@ TestCase {
                 sheetHeight: 90,
                 offsetX: 0,
                 offsetY: 0,
-                url: ""
+                url: "data:image/svg+xml," + encodeURIComponent(
+                         '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="90"><path fill="green" d="M0 0h160v90H0z"/></svg>')
             }
         }
     }
@@ -135,7 +136,7 @@ TestCase {
         overlayDouble.controlsReason = "remote"
         overlayDouble.remoteScrubbing = true
         overlayDouble.scrubSeconds = 80
-        verify(preview.visible)
+        tryCompare(preview, "visible", true)
         compare(preview.previewSeconds, 80)
 
         overlayDouble.remoteScrubbing = false

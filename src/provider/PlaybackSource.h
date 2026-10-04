@@ -33,7 +33,6 @@ public:
     virtual int playbackParallelRequests() const = 0;
     // Whether reports and follow-up lookups can be made right now.
     virtual bool signedIn() const = 0;
-    virtual QString trickplayTileUrl(const QString& itemId, int width, int tileIndex) const = 0;
 
     // Turns an item into something mpv can open: the URL, its streams, and
     // where to start. `forceTranscode` asks a source that can re-encode to

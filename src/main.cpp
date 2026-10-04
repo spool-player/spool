@@ -10,6 +10,7 @@
 #include "app/RemoteTargetsController.h"
 #include "app/RouterController.h"
 #include "app/SettingsSyncController.h"
+#include "app/TrickplayService.h"
 #include "app/UserItemStateController.h"
 #include "cache/DatabaseManager.h"
 #include "common/AsyncTask.h"
@@ -738,9 +739,12 @@ int main(int argc, char **argv)
         &tlsTrust);
     artworkService->setUiWidth(window.width());
     artworkService->setSource(hub.artwork());
+    Spool::TrickplayService trickplay(hub.artwork(), &tlsTrust);
+    Spool::TrickplayService remoteTrickplay(hub.artwork(), &tlsTrust);
 
     auto player = std::make_unique<Spool::PlayerController>(
         &window, hub.playback(), &tlsTrust, Spool::bundledFontsPath(appRootPath));
+    player->setTrickplayService(&trickplay);
     player->setDemuxerBudget(memoryBudget.mpvDemuxerMaxBytes, memoryBudget.mpvDemuxerMaxBackBytes);
     Spool::ScreenSaverInhibitor screenSaverInhibitor;
     const auto updateScreenSaver = [&screenSaverInhibitor, player = player.get()] {
@@ -762,6 +766,7 @@ int main(int argc, char **argv)
     auto controller = std::make_unique<Spool::AppController>(&database, &hub, artworkService.get(), player.get());
     Spool::SettingsSyncController settingsSync(controller->settings(), &database, &providers);
     Spool::RemoteTargetsController remoteTargets(&hub, &providers, controller->group());
+    remoteTargets.setTrickplayService(&remoteTrickplay);
     controller->attachRemoteTargets(&remoteTargets);
     QObject::connect(&providers, &Spool::ProviderRegistry::accountIdentityRevoked, controller.get(),
         &Spool::AppController::revokeAccountIdentity);
@@ -867,6 +872,9 @@ int main(int argc, char **argv)
         &Spool::ProviderQmlCache::clear);
     QObject::connect(&app, &QCoreApplication::aboutToQuit, providerQmlCache, &Spool::ProviderQmlCache::clear);
     window.engine()->addImageProvider(QStringLiteral("artwork"), new Spool::ArtworkImageProvider(artworkService.get()));
+    window.engine()->addImageProvider(QStringLiteral("trickplay"), new Spool::TrickplayImageProvider(&trickplay));
+    window.engine()->addImageProvider(
+        QStringLiteral("remote-trickplay"), new Spool::TrickplayImageProvider(&remoteTrickplay));
     window.engine()->addImageProvider(QStringLiteral("mpv-overlay"), window.createOverlayImageProvider());
 #if !defined(SPOOL_WEBOS) && !defined(SPOOL_ANDROID)
     window.engine()->addImportPath(appRootPath + QStringLiteral("/qt-qml"));
