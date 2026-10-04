@@ -1,5 +1,9 @@
 # Spool
 
+**Disposable experiment branch:** `experiment/trickplay-yuv-benchmark` launches
+the onscreen RGB/YUV benchmark automatically. It is not intended for merging.
+Use `--regular-app` to enter the retained normal application.
+
 - libmpv: We've forked this and made it compatible in the directory above. keep libmpv behind a thin PlayerController / PlaybackController facade and do not let Jellyfin/network/UI code know about mpv internals.
 - Qt6.11
   HTTP / REST: QNetworkAccessManager as the base, QRestAccessManager on top, plus QNetworkRequestFactory for shared base URL / headers / auth boilerplate. Use Qt’s JSON types (QJsonDocument, QJsonObject, QJsonArray) end to end. In Qt 6.11, QRestAccessManager is the REST-focused wrapper over QNetworkAccessManager, and Qt OpenAPI generates Qt HTTP clients using Qt Network APIs such as QRestAccessManager.
@@ -168,6 +172,70 @@ F9 quit
 the player; it does not close Spool. `stop` also returns to the application.
 Bindings which manipulate volume, mute or speed update the corresponding Spool
 controls. Closing Spool continues to use its normal application shutdown path.
+
+## Disposable trickplay RGB/YUV benchmark
+
+The bundled private fixture is the nearest-rank 95th percentile by compressed
+JPEG size among 15,603 sheets inventoried from Jellyfin's trickplay directory:
+1,548,147 bytes, 3200×1800, 10×10 thumbnails, 8-bit 4:2:0. The exact SHA-256,
+source-relative path, population and selection rule are in
+`tests/fixtures/trickplay-p95.json`. This is not a claim of 95th-percentile
+decode latency. Do not publish the fixture with this temporary branch.
+
+The three cases are the current production Qt RGB32 decoder, direct libjpeg
+BGRA decoding, and direct libjpeg planar YUV420 decoding. All use the same
+single-quad Qt Quick renderer, thumbnail geometry and fixed tile trace.
+Direct RGB batches scanlines; YUV writes directly into MCU-padded planes and
+uses actual one-byte GPU textures. GPU textures are reused for replacement
+sheets. Crop-only frames never re-upload pixels. Both paths are opaque,
+single-pass draws into the SDR window; no intermediate RGB framebuffer exists.
+
+Each case runs three complete warm-ups, then three measured runs in a shuffled,
+logged order. Every run contains 12 decode/upload replacements and 120
+crop-only frames. The seed is logged. Default launch leaves the final result
+onscreen; `--bench-auto-exit` makes desktop runs finite:
+
+```sh
+nix develop .#native -c cmake --build build/linux-release/app --target spool
+nix develop .#native -c env SPOOL_RENDER_API=vulkan \
+  build/linux-release/app/spool --bench-auto-exit --bench-seed 20261005 \
+  --bench-log local-docs/trickplay-yuv-benchmark/optimized-vulkan.jsonl
+nix develop .#native -c env SPOOL_RENDER_API=opengl \
+  build/linux-release/app/spool --bench-auto-exit --bench-seed 20261005 \
+  --bench-log local-docs/trickplay-yuv-benchmark/optimized-opengl.jsonl
+```
+
+`--bench-fresh-textures` restores the initial fresh-resource experiment.
+`--bench-screenshot-dir PATH` chooses the diagnostic image directory.
+Without an explicit log path, JSONL goes into the platform's persistent data
+directory; the path is printed and shown onscreen. Every raw record also goes
+to stdout with a `BENCH` prefix.
+
+Logs retain warm-ups and measured records, wall/thread-CPU decode stages,
+allocation sizes, queue/handoff times, synchronization, material updates,
+per-plane upload enqueue, command recording and selection-to-Qt-swap latency.
+Qt does not expose a truthful allocation/codec stage split, so those Qt fields
+are null. GPU upload enqueue is not GPU execution time. Vulkan GPU events are
+attributed to their originating request using Qt's frame-slot timestamp
+lifecycle and include the whole Qt frame, uploads and drawing. Other backends
+retain explicitly unattributed delayed GPU diagnostics; isolated GPU
+upload/draw timings are always null.
+
+Process RSS/anonymous memory has both a fixed pre-fixture baseline and
+per-run baselines. An independent requested-1 ms sampler records approximate
+run peaks; cumulative VmHWM remains separately labeled. Replacement decoding
+can overlap the old and new CPU buffers. Decoded bytes, logical texture bytes
+and Vulkan/D3D12 allocator counters are separate: none are a physical VRAM
+measurement, and they must not be added blindly to RSS. Allocator caches and
+driver/code pages can remain resident across runs.
+
+After timing, the app reads back two thumbnails per case, including a
+same-pointer crop change with `uploaded=false`, and verifies real rendered
+pixels against CPU-decoded fixture crops. Screenshots and comparisons are
+excluded from every performance metric. Treat results as valid only when the
+final `complete` record reports both independent visual checks successful.
+The early `fresh-vulkan.jsonl` run predates that check and is invalid because
+its missing batchable shader variant produced blank previews.
 
 ## Performance benchmarks
 

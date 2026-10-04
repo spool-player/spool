@@ -340,7 +340,14 @@ qt_add_executable(spool
     src/main.cpp
     src/app/GraphicsStartup.cpp
     src/app/GraphicsStartup.h
+    src/diagnostics/TrickplayBenchmark.h
+    src/diagnostics/TrickplayBenchmark.cpp
+    src/diagnostics/TrickplayBenchmarkItem.cpp
 )
+# Reuse the same SIMD JPEG library as Qt; the experiment needs no second codec.
+find_package(JPEG REQUIRED)
+find_package(Qt6 REQUIRED COMPONENTS GuiPrivate)
+target_link_libraries(spool PRIVATE JPEG::JPEG Qt6::GuiPrivate)
 
 find_package(Python3 3.11 REQUIRED COMPONENTS Interpreter)
 include(cmake/ProviderBundle.cmake)
@@ -611,6 +618,23 @@ qt_add_shaders(spool "hdr_ui_shaders"
     PREFIX "/shaders"
     BASE "${CMAKE_CURRENT_SOURCE_DIR}/qml/shell/shaders"
     FILES qml/shell/shaders/sdr-ui-to-scrgb.frag
+)
+
+qt_add_shaders(spool "trickplay_benchmark_shaders"
+    PREFIX "/bench/shaders"
+    BASE "${CMAKE_CURRENT_SOURCE_DIR}/src/diagnostics/shaders"
+    BATCHABLE
+    GLSL "100 es,120,150"
+    FILES
+        src/diagnostics/shaders/preview.vert
+        src/diagnostics/shaders/rgb.frag
+        src/diagnostics/shaders/yuv.frag
+)
+set_source_files_properties(tests/fixtures/trickplay-p95.json PROPERTIES QT_RESOURCE_ALIAS fixture.json)
+qt_add_resources(spool "trickplay_benchmark_fixture"
+    PREFIX "/bench"
+    BASE "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures"
+    FILES tests/fixtures/trickplay-p95.jpg tests/fixtures/trickplay-p95.json
 )
 if(NOT SPOOL_WEBOS)
     qt_target_qml_sources(spool

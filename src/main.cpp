@@ -20,6 +20,7 @@
 #include "diagnostics/InputLatencyMonitor.h"
 #include "diagnostics/RenderBenchmark.h"
 #include "diagnostics/SystemPerformanceMonitor.h"
+#include "diagnostics/TrickplayBenchmark.h"
 #include "media/MediaTypes.h"
 #include "platform/NativeAppWindow.h"
 #include "platform/PlatformApplicationServices.h"
@@ -457,6 +458,13 @@ int main(int argc, char **argv)
 #ifdef Q_OS_UNIX
     umask(S_IRWXG | S_IRWXO);
 #endif
+    bool regularApplication = false;
+    for (int i = 1; i < argc; ++i)
+        regularApplication
+            |= strcmp(argv[i], "--regular-app") == 0 || strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-v") == 0;
+    if (!regularApplication)
+        return Spool::runTrickplayBenchmark(argc, argv);
+
     const Spool::ProcessStartupTiming processStartupTiming = Spool::captureProcessStartupTiming();
     g_startupTimer.start();
     QElapsedTimer& startupTimer = g_startupTimer;
