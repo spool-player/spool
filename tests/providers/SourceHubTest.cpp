@@ -212,8 +212,8 @@ SPOOL_TEST_MAIN("source-hub")
         require(!library.name.contains(QStringLiteral(" · ")), "a name no longer shared is shown plain");
     require(hub.accountOf(hub.scoped(a, QStringLiteral("x"))) == a, "the others keep their scope");
 
-    // Several users of one server: search goes through as few of them as
-    // reach every library, and never shows the same item twice.
+    // Alternate profiles must never widen the selected viewer's permissions.
+    // Independent servers still merge and deduplicate their selected results.
     const auto user = [&](const char *key, const char *server, QStringList libraries, bool exact = false) {
         const QString id = registry.finishSetup({},
             { { QStringLiteral("module"), QStringLiteral("fixture.test") },
@@ -239,20 +239,13 @@ SPOOL_TEST_MAIN("source-hub")
     waitUntil([&] { return hub.source(narrow) && hub.source(used) && hub.source(mine); }, "the users in use start");
     const size_t browsed = hub.sources().size();
     const QString scopeKey = hub.libraryScopeKey();
-    hub.prepareSearch();
-    waitUntil([&] { return hub.source(wide) && hub.source(same) && hub.source(twin) && hub.source(other); },
-        "users set aside start for search");
-    require(hub.sources().size() == browsed && hub.libraryScopeKey() == scopeKey,
-        "and stay out of browsing and the library caches");
 
     QStringList planned;
     for (const SourceHub::SearchTarget& target : QCoro::waitFor(hub.searchPlan()))
         planned.append(target.accountId);
-    require(planned.contains(wide) && !planned.contains(narrow) && !planned.contains(same),
-        "a user who sees more stands in for those who see less");
-    require(planned.contains(used) && !planned.contains(twin), "of two who see the same, the one in use searches");
-    require(planned.indexOf(mine) >= 0 && planned.indexOf(mine) < planned.indexOf(other),
-        "overlapping users both search, the one in use first");
+    require(planned.contains(narrow) && !planned.contains(wide) && !planned.contains(same) && planned.contains(used)
+            && !planned.contains(twin) && planned.contains(mine) && !planned.contains(other),
+        "search uses only the selected viewer from every independent server");
 
     int updates = 0;
     std::vector<MovieItem> found;
@@ -274,6 +267,15 @@ SPOOL_TEST_MAIN("source-hub")
             == 1,
         "the same movie from different servers appears once");
     require(!found.empty() && found.front().title == QStringLiteral("The Film"), "the exact title ranks first");
+    require(hub.sources().size() == browsed && hub.libraryScopeKey() == scopeKey && !hub.source(wide)
+            && !hub.source(same) && !hub.source(twin) && !hub.source(other)
+            && std::none_of(found.begin(), found.end(),
+                [&](const MovieItem& item) {
+                    const QString owner = hub.accountOf(item.id);
+                    return owner == wide || owner == same || owner == twin || owner == other
+                        || SourceHub::rawId(item.id) == QStringLiteral("anime-1");
+                }),
+        "real search cannot expose an alternate viewer's unique restricted library");
     const auto shared = std::find_if(found.begin(), found.end(),
         [&](const MovieItem& item) { return SourceHub::rawId(item.id) == QStringLiteral("shared-1"); });
     require(shared != found.end() && hub.accountOf(shared->id) == mine,

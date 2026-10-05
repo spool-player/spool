@@ -29,8 +29,6 @@ public:
     {
         update(co_await searchItems(std::move(searchTerm), limit));
     }
-    // Search is about to be used; a chance to get connections ready.
-    virtual void prepareSearch() { }
 };
 
 } // namespace Spool

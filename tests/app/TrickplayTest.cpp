@@ -20,6 +20,12 @@
 #include <limits>
 #include <memory>
 
+#include <cstdio>
+#if defined(SPOOL_QT_BUNDLED_JPEG)
+#include <QtJpeg/private/jpeglib.h>
+#else
+#include <jpeglib.h>
+#endif
 using namespace Spool;
 namespace {
 void require(bool ok, const char *message)
@@ -45,6 +51,35 @@ QByteArray jpeg(const QImage& image)
     QBuffer buffer(&bytes);
     buffer.open(QIODevice::WriteOnly);
     require(image.save(&buffer, "JPEG", 95), "JPEG fixture encoder available");
+    return bytes;
+}
+QByteArray jpegSampling(const QImage& image, int horizontal, int vertical)
+{
+    const QImage rgb = image.convertToFormat(QImage::Format_RGB888);
+    jpeg_compress_struct codec {};
+    jpeg_error_mgr error {};
+    codec.err = jpeg_std_error(&error);
+    jpeg_create_compress(&codec);
+    unsigned char *data = nullptr;
+    unsigned long size = 0;
+    jpeg_mem_dest(&codec, &data, &size);
+    codec.image_width = rgb.width();
+    codec.image_height = rgb.height();
+    codec.input_components = 3;
+    codec.in_color_space = JCS_RGB;
+    jpeg_set_defaults(&codec);
+    codec.comp_info[0].h_samp_factor = horizontal;
+    codec.comp_info[0].v_samp_factor = vertical;
+    jpeg_set_quality(&codec, 95, TRUE);
+    jpeg_start_compress(&codec, TRUE);
+    while (codec.next_scanline < codec.image_height) {
+        auto *row = const_cast<JSAMPLE *>(rgb.constScanLine(int(codec.next_scanline)));
+        jpeg_write_scanlines(&codec, &row, 1);
+    }
+    jpeg_finish_compress(&codec);
+    const QByteArray bytes(reinterpret_cast<const char *>(data), qsizetype(size));
+    std::free(data);
+    jpeg_destroy_compress(&codec);
     return bytes;
 }
 void word(QByteArray& bytes, qsizetype offset, quint32 value)
@@ -86,7 +121,7 @@ class FixtureSource final : public ArtworkSource {
         return {};
     }
 };
-QImage frame(TrickplayService& service, double seconds, bool success = true, QImage *residentTexture = nullptr)
+std::unique_ptr<QQuickTextureFactory> textureForSeconds(TrickplayService& service, double seconds, bool success = true)
 {
     const auto descriptor = service.frame(seconds);
     require(descriptor.value("available").toBool(), "native frame descriptor available");
@@ -100,6 +135,14 @@ QImage frame(TrickplayService& service, double seconds, bool success = true, QIm
         return {};
     std::unique_ptr<QQuickTextureFactory> texture(response->textureFactory());
     require(bool(texture), "native output creates a real texture");
+    return texture;
+}
+QImage frame(TrickplayService& service, double seconds, bool success = true, QImage *residentTexture = nullptr)
+{
+    auto texture = textureForSeconds(service, seconds, success);
+    if (!texture)
+        return {};
+    const auto descriptor = service.frame(seconds);
     const QImage image = texture->image();
     require(image.width() == descriptor.value("sheetWidth").toInt()
             && image.height() == descriptor.value("sheetHeight").toInt(),
@@ -117,6 +160,40 @@ SPOOL_TEST_MAIN("trickplay")
 {
     qputenv("QT_QPA_PLATFORM", "offscreen");
     QGuiApplication application(argc, argv);
+    QImage odd(33, 19, QImage::Format_RGB32);
+    odd.fill(Qt::cyan);
+    const QByteArray odd420 = jpegSampling(odd, 2, 2);
+    for (bool accurate : { false, true }) {
+        QString decodeError;
+        const auto raw = decodeTrickplayTexture(odd420, {}, odd.size(), false, accurate, &decodeError);
+        require(raw && raw->planar() && raw->size == odd.size() && decodeError.isEmpty(),
+            "both JPEG transforms preserve odd visible 420 dimensions without RGB intermediate");
+        for (int i = 0; i < 3; ++i) {
+            const int width = i == 0 ? odd.width() : (odd.width() + 1) / 2;
+            const int height = i == 0 ? odd.height() : (odd.height() + 1) / 2;
+            require(
+                raw->strides[i] >= width && raw->planes[i].size() >= qsizetype(height - 1) * raw->strides[i] + width,
+                "raw plane backing covers every visible row including partial MCU");
+        }
+        const QImage reconstructed = raw->image();
+        color(reconstructed, Qt::cyan);
+        require(reconstructed.pixelColor(0, 0).green() > 250 && reconstructed.pixelColor(32, 18).blue() > 250,
+            "partial MCU edges reconstruct real pixels");
+    }
+    for (const auto factors : { QSize(2, 1), QSize(1, 1) }) {
+        QString decodeError;
+        const auto rgb = decodeTrickplayTexture(
+            jpegSampling(odd, factors.width(), factors.height()), {}, odd.size(), false, false, &decodeError);
+        require(rgb && !rgb->planar() && decodeError.isEmpty(), "422 and 444 JPEGs retain a valid RGB fallback");
+        color(rgb->image(), Qt::cyan);
+    }
+    QImage gray(33, 19, QImage::Format_Grayscale8);
+    gray.fill(96);
+    QString grayError;
+    const auto grayTexture = decodeTrickplayTexture(jpeg(gray), {}, gray.size(), false, false, &grayError);
+    require(grayTexture && !grayTexture->planar() && grayError.isEmpty(),
+        "grayscale JPEG uses the RGB fallback rather than interpreting missing chroma planes");
+    color(grayTexture->image(), QColor(96, 96, 96));
     QTemporaryDir directory;
     QImage green(32, 18, QImage::Format_RGB32), blue(48, 27, QImage::Format_RGB32);
     green.fill(Qt::green);
@@ -199,6 +276,9 @@ SPOOL_TEST_MAIN("trickplay")
     require(service.frame(23).value("offsetX").toInt() == -960 && service.frame(23).value("offsetY").toInt() == -360,
         "resident-sheet descriptor locates both crop axes");
     require(firstTexture.size() == sheet.size(), "resident sheet is delivered without per-tile copies");
+    auto firstFactory = textureForSeconds(service, 0);
+    auto *firstBacking = dynamic_cast<TrickplayTextureFactory *>(firstFactory.get());
+    require(firstBacking != nullptr, "resident output exposes the decoded payload used by the renderer");
     require(!service.frame(100).value("available").toBool()
             && !service.frame(std::numeric_limits<double>::infinity()).value("available").toBool(),
         "sprite end and nonfinite positions unavailable");
@@ -208,9 +288,13 @@ SPOOL_TEST_MAIN("trickplay")
     QElapsedTimer warm;
     warm.start();
     for (int tile = 1; tile <= 24; ++tile) {
-        QImage texture;
-        color(frame(service, tile, true, &texture), tile % 2 ? Qt::blue : Qt::green);
-        require(texture.cacheKey() == firstTexture.cacheKey(), "warm tiles reuse the resident decoded pixels");
+        auto texture = textureForSeconds(service, tile);
+        auto *backing = dynamic_cast<TrickplayTextureFactory *>(texture.get());
+        require(backing && backing->texture == firstBacking->texture, "warm tiles reuse immutable resident backing");
+        const auto selected = service.frame(tile);
+        color(firstTexture.copy(QRect(-selected.value("offsetX").toInt(), -selected.value("offsetY").toInt(),
+                  selected.value("width").toInt(), selected.value("height").toInt())),
+            tile % 2 ? Qt::blue : Qt::green);
     }
     const double warmMs = warm.nsecsElapsed() / 1000000.0;
     QObject::disconnect(warmConnection);
@@ -223,6 +307,15 @@ SPOOL_TEST_MAIN("trickplay")
               << " native_texture_bytes=" << firstTexture.sizeInBytes() << " output=" << output.constData() << '\n';
     // These are measured CPU response/decode times and texture byte counts,
     // not a claim that textureFactory creation measures actual GPU upload.
+    const auto fastUrl = service.frame(0).value("url");
+    service.setAccurateDecoding(true);
+    require(service.frame(0).value("url") != fastUrl, "accuracy changes retire old decoded generations");
+    auto accurateFactory = textureForSeconds(service, 0);
+    auto *accurateBacking = dynamic_cast<TrickplayTextureFactory *>(accurateFactory.get());
+    require(accurateBacking && accurateBacking->texture != firstBacking->texture,
+        "accuracy changes do not reuse a cached fast transform");
+    color(accurateFactory->image().copy(QRect(0, 0, 320, 180)), Qt::green);
+    service.setAccurateDecoding(false);
 
     QImage redSheet(sheet.size(), QImage::Format_RGB32);
     redSheet.fill(Qt::red);

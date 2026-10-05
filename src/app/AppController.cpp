@@ -175,7 +175,13 @@ AppController::AppController(
     connect(m_home, &HomeModelController::loadingChanged, this, updateProbeActivity);
     connect(m_content, &ContentModelController::detailRowsChanged, this, updateProbeActivity);
     connect(m_content, &ContentModelController::personItemsChanged, this, updateProbeActivity);
-    connect(m_playQueue, &PlayQueueController::successorPlaybackReady, this, [this]() { playQueueCurrent(false); });
+    connect(m_playQueue, &PlayQueueController::successorLookupFinished, this, [this](bool ready) {
+        if (!ready || inGroup()) {
+            setPlaybackTransition(false);
+            return;
+        }
+        playQueueCurrent(false);
+    });
     connect(m_browse, &BrowseSessionController::reloadRequested, this, [this]() { beginBrowse(); });
     connect(m_browse, &BrowseSessionController::moreItemsRequested, this, &AppController::loadMoreCurrentItems);
     connect(m_database, &DatabaseManager::recoveryNotice, this, &AppController::showToast);
@@ -238,7 +244,30 @@ AppController::AppController(
     });
     connect(m_provider, &Provider::sessionEnded, this, &AppController::resetApplicationState);
 
+    connect(m_player, &PlayerController::stopRequested, this, [this] {
+        m_playbackLoadGeneration.invalidate();
+        m_playQueue->cancelEpisodeSuccessors();
+        cancelEpisodicPlaybackSelection();
+        setPlaybackTransition(false);
+        setBusy(false);
+    });
     connect(m_player, &PlayerController::playbackStopped, this, &AppController::handlePlaybackStopped);
+    connect(m_player, &PlayerController::playbackSeekOutsideStream, this,
+        [this](const QString& itemId, qint64 positionTicks) {
+            if (itemId != m_activePlaybackItem.id || !m_player->sessionActive())
+                return;
+            const MovieItem seekItem = PlaybackFailurePolicy::retryItem(m_activePlaybackItem, positionTicks);
+            setBusy(true, QStringLiteral("Seeking…"));
+            Async::runScoped(
+                this,
+                startPlayback(seekItem, false, false, m_activeAudioStreamIndex, m_activeSubtitleStreamIndex, true),
+                []() {},
+                [this](const std::exception_ptr& error) {
+                    setBusy(false);
+                    showToast(exceptionMessage(error));
+                },
+                "seek outside stream");
+        });
     // A dropped connection used to look like the end of the episode: it was
     // marked played and the next one started. Pick up where the stream broke
     // instead, holding the surface as a queue advance would.
@@ -477,26 +506,19 @@ void AppController::goHome()
 
 void AppController::openLibrary(int index)
 {
-    const LibraryItem library = m_libraries.libraryAt(index);
-    if (library.id.isEmpty())
-        return;
-    const QVariantMap defaultQuery = defaultLibraryQuery(library);
-    m_browse->enterLibrary(library, defaultQuery);
-    m_home->recordLibraryUse(library);
-    loadLibraryFilterOptions(beginBrowse(m_browse->query() == defaultQuery), library);
+    openLibraryById(m_libraries.libraryAt(index).id);
 }
 
 bool AppController::openLibraryById(const QString& libraryId)
 {
-    if (libraryId.isEmpty())
+    const LibraryItem library = m_libraries.libraryById(libraryId);
+    if (library.id.isEmpty())
         return false;
-    for (int index = 0; index < m_libraries.count(); ++index) {
-        if (m_libraries.libraryAt(index).id == libraryId) {
-            openLibrary(index);
-            return true;
-        }
-    }
-    return false;
+    const QVariantMap defaultQuery = defaultLibraryQuery(library);
+    m_browse->enterLibrary(library, defaultQuery);
+    m_home->recordLibraryUse(library);
+    loadLibraryFilterOptions(beginBrowse(m_browse->query() == defaultQuery), library);
+    return true;
 }
 
 void AppController::playOrOpen(const MovieItem& item, bool fromStart)
@@ -656,11 +678,6 @@ void AppController::playAlbumFrom(const MovieItem& track, bool fromStart, PlayDe
 
 void AppController::stopPlayback()
 {
-    // A system stop can arrive between tracks, while no mpv session exists.
-    // Invalidate negotiation as well so its reply cannot restart stopped music.
-    m_playbackLoadGeneration.invalidate();
-    setPlaybackTransition(false);
-    setBusy(false);
     m_player->stop();
 }
 
@@ -1166,6 +1183,11 @@ QCoro::Task<void> AppController::startPlayback(MovieItem playItem, bool startPau
             co_return;
     }
     m_activePlaybackStreams = session.mediaStreams;
+    m_activeMediaSourceId = session.mediaSourceId;
+    m_activeSourceBitrate = session.sourceBitrate;
+    m_activeSourceHeight = session.sourceHeight;
+    m_activeSourceWidth = session.sourceWidth;
+    m_activePlayMethod = session.playMethod;
     const int fileAudioDelayMs = restartActive ? m_player->fileAudioDelayMs() : 0;
     const int subtitleDelayMs = restartActive ? m_player->subtitleDelayMs() : 0;
     setBusy(false);
@@ -1402,6 +1424,53 @@ void AppController::refreshConnectionSpeed()
     m_provider->refreshSpeedTests();
 }
 
+AppController::SourceAnalysis AppController::typedSourceAnalysis() const
+{
+    SourceAnalysis analysis { m_activeSourceBitrate, m_activeSourceWidth, m_activeSourceHeight,
+        std::max(m_activeSourceHeight, m_activeSourceWidth * 9 / 16) };
+    const bool needsResolution = analysis.width <= 0 && analysis.height <= 0;
+    if (analysis.bitrate > 0 && !needsResolution)
+        return analysis;
+
+    // Resolved original-source dimensions take precedence over cached item
+    // metadata. Never infer the original from the player's transcoded output.
+    for (const MediaSourceInfo& source : m_activePlaybackItem.mediaSources) {
+        if (!m_activeMediaSourceId.isEmpty() && source.id != m_activeMediaSourceId)
+            continue;
+        if (analysis.bitrate <= 0)
+            analysis.bitrate = source.bitRate;
+        if (needsResolution) {
+            for (const MediaStreamInfo& stream : source.streams) {
+                if (stream.type != QStringLiteral("Video"))
+                    continue;
+                const int qualityHeight = std::max(stream.height, stream.width * 9 / 16);
+                if (qualityHeight > analysis.qualityHeight) {
+                    analysis.width = stream.width;
+                    analysis.height = stream.height;
+                    analysis.qualityHeight = qualityHeight;
+                }
+            }
+        }
+        break;
+    }
+    return analysis;
+}
+
+QVariantMap AppController::streamingQualitySource() const
+{
+    const SourceAnalysis source = typedSourceAnalysis();
+    return {
+        { QStringLiteral("active"), m_player->sessionActive() },
+        { QStringLiteral("sourceId"), m_activeMediaSourceId },
+        { QStringLiteral("bitrate"), source.bitrate },
+        { QStringLiteral("width"), source.width },
+        { QStringLiteral("height"), source.height },
+        { QStringLiteral("qualityHeight"), source.qualityHeight },
+        { QStringLiteral("resolution"), StreamQualityControl::describeResolution(source.qualityHeight) },
+        { QStringLiteral("playMethod"), m_activePlayMethod },
+    };
+}
+
 QVariantList AppController::streamingQualityOptions() const
 {
     const qint64 override = m_quality ? m_quality->bitrateOverride() : m_genericBitrateOverride;
@@ -1415,15 +1484,18 @@ QVariantList AppController::streamingQualityOptions() const
         { QStringLiteral("selected"), override <= 0 && heightOverride <= 0 },
     });
 
-    qint64 sourceBitrate = 0;
-    int sourceHeight = 0;
-    for (const MediaSourceInfo& source : m_activePlaybackItem.mediaSources) {
-        sourceBitrate = std::max<qint64>(sourceBitrate, source.bitRate);
-        for (const MediaStreamInfo& stream : source.streams) {
-            if (stream.type == QStringLiteral("Video") && stream.height > 0)
-                sourceHeight = std::max(sourceHeight, stream.height);
-        }
-    }
+    const SourceAnalysis source = typedSourceAnalysis();
+    const qint64 sourceBitrate = source.bitrate;
+    const int sourceHeight = source.qualityHeight;
+
+    options.push_back(QVariantMap {
+        { QStringLiteral("label"), QStringLiteral("Original") },
+        { QStringLiteral("detail"),
+            sourceBitrate > 0 ? StreamQualityControl::formatBitrate(sourceBitrate) : QString() },
+        { QStringLiteral("bitrate"), 1'000'000'000LL },
+        { QStringLiteral("height"), std::max(4320, sourceHeight) },
+        { QStringLiteral("selected"), override == 1'000'000'000LL && heightOverride == std::max(4320, sourceHeight) },
+    });
 
     std::vector<StreamQualityControl::Rung> rungs;
     if (m_quality)
@@ -1486,7 +1558,10 @@ void AppController::selectStreamingQuality(qint64 bitrate, int height)
 void AppController::handlePlaybackStopped(const QString& itemId, qint64 positionTicks, bool completed)
 {
     qInfo() << "app: playback stopped" << itemId << positionTicks << completed;
-    m_itemState->recordPlaybackStopped(m_activePlaybackItem, itemId, positionTicks, completed);
+    const MovieItem successor = completed && itemId == m_activePlaybackItem.id
+        ? m_playQueue->nextUnplayedEpisode(m_activePlaybackItem)
+        : MovieItem {};
+    m_itemState->recordPlaybackStopped(m_activePlaybackItem, itemId, positionTicks, completed, successor);
     m_playQueue->updateResumeTicks(itemId, completed ? 0 : positionTicks);
     if (!completed || m_activePlaybackItem.id != itemId || inGroup()) {
         setPlaybackTransition(false);
@@ -1506,7 +1581,7 @@ void AppController::handlePlaybackStopped(const QString& itemId, qint64 position
         setPlaybackTransition(true);
         playQueueCurrent(m_repeatMode == QStringLiteral("RepeatOne"));
     } else {
-        setPlaybackTransition(false);
+        setPlaybackTransition(true);
         m_playQueue->enqueueEpisodeSuccessors(m_activePlaybackItem);
     }
 }

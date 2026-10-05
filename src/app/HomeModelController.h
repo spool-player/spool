@@ -5,7 +5,9 @@
 #include "../models/MovieGridModel.h"
 #include "../provider/Catalog.h"
 #include <QCoroTask>
+#include <QHash>
 #include <QJsonObject>
+#include <QSet>
 
 #include <QObject>
 #include <QStringList>
@@ -53,6 +55,8 @@ public:
     void updateResumeTicks(const QString& itemId, qint64 positionTicks);
     void updateFavorite(const QString& itemId, bool favorite);
     void updatePlayed(const QString& itemId, bool played);
+    void advanceNextUp(const MovieItem& completed, const MovieItem& successor);
+    void refreshPlaybackRows();
     void invalidate(const std::function<bool(const QString&)>& isAvailable = {});
     void reset();
 
@@ -79,6 +83,8 @@ private:
     QCoro::Task<void> loadCachedPayloadAsync();
     QString payloadCacheKey() const;
     void saveCachedPayload(const QJsonObject& payload);
+    QCoro::Task<void> refreshPlaybackRowsAsync(RequestGeneration::Token generation);
+    void reconcilePlaybackRows(std::vector<MovieItem>& resume, std::vector<MovieItem>& nextUp);
 
     DatabaseManager *m_database = nullptr;
     Catalog *m_api = nullptr;
@@ -87,6 +93,9 @@ private:
     MovieGridModel m_nextUpItems;
     std::vector<LatestLibrarySection> m_latestLibrarySections;
     RequestGeneration m_generation;
+    RequestGeneration m_playbackRowsGeneration;
+    QSet<QString> m_locallyPlayed;
+    QHash<QString, MovieItem> m_optimisticNextUp;
     bool m_refreshInFlight = false;
     bool m_loaded = false;
     QStringList m_recentLibraryIds;

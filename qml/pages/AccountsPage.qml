@@ -12,11 +12,57 @@ FocusScope {
     id: root
 
     property var shell
-    readonly property var accounts: Providers.accounts
+    property string serverFilter: ""
+    readonly property var serverGroups: {
+        const groups = []
+        for (const account of Providers.accounts) {
+            const key = JSON.stringify([account.moduleId, account.group || account.id])
+            if (!groups.some(group => group.key === key))
+                groups.push({
+                                key: key,
+                                label: String(account.detail || account.address || account.providerName),
+                                provider: String(account.providerName)
+                            })
+        }
+        return groups
+    }
+    readonly property var accounts: Providers.accounts.filter(account => !serverFilter || JSON.stringify([account.moduleId,
+                                                                                                          account.group
+                                                                                                          || account.id])
+                                                                         === serverFilter).slice().sort((a, b) => (
+                                                                         a.moduleId + "/" + (a.group
+                                                                                             || a.id)).localeCompare(
+                                        b.moduleId + "/" + (b.group || b.id)))
     readonly property int count: accounts.length + 1
     readonly property int tileSize: Metrics.scaled(Metrics.laneAtLeast(width, "wide") ? 148 : Metrics.laneAtLeast(width, "regular") ? 132 :
                                                                                                                                       104)
     property var menuAccount: null
+    property string pendingAccountId: ""
+    property string selectionMessage: ""
+    property bool choosingServer: false
+    readonly property bool selecting: pendingAccountId.length > 0
+    readonly property var selectedAccount: accountAt(grid.currentIndex)
+
+    Connections {
+        target: Providers
+        function onAccountSelectionFinished(accountId, selected) {
+            if (accountId !== root.pendingAccountId)
+                return
+            root.pendingAccountId = ""
+            if (selected)
+                root.shell.goHome()
+            else {
+                const account = Providers.accounts.find(account => account.id === accountId)
+                root.selectionMessage = account && account.errorText ? account.errorText :
+                                                                       "Profile switch cancelled. Your current profile is unchanged."
+            }
+        }
+    }
+
+    function openServerMenu() {
+        choosingServer = true
+        menuLoader.active = true
+    }
 
     focus: true
 
@@ -25,6 +71,9 @@ FocusScope {
     }
 
     function activateAt(index) {
+        if (selecting)
+            return
+        selectionMessage = ""
         const account = accountAt(index)
         if (!account) {
             shell.pushRoute("addProvider")
@@ -34,11 +83,12 @@ FocusScope {
             shell.openProviderScreen(Providers.beginSetup(account.moduleId))
             return
         }
+        pendingAccountId = account.id
         Providers.useAccount(account.id)
-        shell.goHome()
     }
 
     function openMenu(index) {
+        choosingServer = false
         const account = accountAt(index)
         if (!account)
             return false
@@ -50,11 +100,20 @@ FocusScope {
     function activate() {
         if (menuLoader.item)
             return menuLoader.item.activate()
+        if (serverButton.activeFocus) {
+            openServerMenu()
+            return
+        }
+        if (addProfileButton.activeFocus) {
+            if (addProfileButton.enabled && selectedAccount)
+                shell.openProviderScreen(Providers.beginSetup(selectedAccount.moduleId))
+            return
+        }
         activateAt(grid.currentIndex)
     }
 
     function longPress() {
-        return openMenu(grid.currentIndex)
+        return !serverButton.activeFocus && !addProfileButton.activeFocus && openMenu(grid.currentIndex)
     }
 
     function back() {
@@ -70,6 +129,23 @@ FocusScope {
             return menuLoader.item.routeKey(key, phase, repeat)
         if (phase !== "press")
             return InputKeys.isDirection(key)
+        if (serverButton.activeFocus || addProfileButton.activeFocus) {
+            if (key === Qt.Key_Down) {
+                if (serverButton.activeFocus && addProfileButton.visible && addProfileButton.enabled)
+                    InputKeys.focus(addProfileButton)
+                else
+                    InputKeys.focus(grid)
+                return true
+            }
+            if (key === Qt.Key_Up) {
+                if (addProfileButton.activeFocus && serverButton.visible)
+                    InputKeys.focus(serverButton)
+                else if (shell)
+                    shell.focusNavBar()
+                return true
+            }
+            return InputKeys.isDirection(key)
+        }
         const columns = Math.max(1, Math.floor(grid.width / grid.cellWidth))
         if (key === Qt.Key_Left)
             grid.currentIndex = Math.max(0, grid.currentIndex - 1)
@@ -78,7 +154,11 @@ FocusScope {
         else if (key === Qt.Key_Down)
             grid.currentIndex = Math.min(count - 1, grid.currentIndex + columns)
         else if (key === Qt.Key_Up) {
-            if (grid.currentIndex < columns && shell)
+            if (grid.currentIndex < columns && addProfileButton.visible && addProfileButton.enabled)
+                InputKeys.focus(addProfileButton)
+            else if (grid.currentIndex < columns && serverButton.visible)
+                InputKeys.focus(serverButton)
+            else if (grid.currentIndex < columns && shell)
                 shell.focusNavBar()
             else
                 grid.currentIndex = Math.max(0, grid.currentIndex - columns)
@@ -102,9 +182,49 @@ FocusScope {
         AppText {
             Layout.alignment: Qt.AlignHCenter
             Layout.topMargin: Metrics.scaled(12)
-            text: "Who's watching?"
+            text: "Profiles & servers"
             font.pixelSize: Metrics.titleSizePx
             font.weight: Font.DemiBold
+        }
+
+        AppText {
+            Layout.fillWidth: true
+            text: "Choose who's watching on a server. Independent servers appear together on Home."
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
+            color: Theme.textSecondary
+        }
+
+        ActionButton {
+            id: serverButton
+            Layout.alignment: Qt.AlignHCenter
+            visible: root.serverGroups.length > 1
+            text: {
+                const group = root.serverGroups.find(group => group.key === root.serverFilter)
+                return group ? group.label + " · " + group.provider : "All servers"
+            }
+            kind: "secondary"
+            onClicked: root.openServerMenu()
+        }
+
+        ActionButton {
+            id: addProfileButton
+            Layout.alignment: Qt.AlignHCenter
+            visible: Boolean(root.selectedAccount)
+            enabled: !root.selecting
+            text: "Add another watching profile"
+            kind: "secondary"
+            onClicked: root.shell.openProviderScreen(Providers.beginSetup(root.selectedAccount.moduleId))
+        }
+
+        AppText {
+            Layout.fillWidth: true
+            visible: root.selecting || root.selectionMessage.length > 0
+            text: root.selecting ? "Switching profile… Complete any sign-in or PIN request to continue." :
+                                   root.selectionMessage
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
+            color: Theme.textSecondary
         }
 
         AppText {
@@ -138,18 +258,23 @@ FocusScope {
                 required property int index
                 readonly property var account: root.accountAt(index)
                 readonly property string connectionState: account ? String(account.connectionState || "starting") : ""
-                readonly property string stateLabel: !account ? "" : account.needsSignIn ? "Sign in required" :
-                                                                                           connectionState === "locked"
-                                                                                           ? "Locked" : connectionState
-                                                                                             === "starting" && (
-                                                                                                 account.enabled
-                                                                                                 || account.pendingEnabled)
-                                                                                             ? "Connecting…" :
-                                                                                               !account.enabled
-                                                                                               ? "Hidden from home" :
+                readonly property string stateLabel: !account ? "" : account.needsSignIn ? "Sign in to reconnect" :
+                                                                                           connectionState
+                                                                                           === "starting" && (
+                                                                                               account.enabled
+                                                                                               || account.pendingEnabled)
+                                                                                           ? "Connecting…" :
+                                                                                             connectionState
+                                                                                             === "failed"
+                                                                                             ? "Unavailable · select to retry" :
+                                                                                               account.enabled
+                                                                                               && connectionState
+                                                                                               === "active"
+                                                                                               ? "Watching" :
                                                                                                  connectionState
-                                                                                                 === "failed"
-                                                                                                 ? "Unavailable" : ""
+                                                                                                 === "locked"
+                                                                                                 ? "Select profile / unlock" :
+                                                                                                   "Switch profile"
                 width: grid.cellWidth
                 height: grid.cellHeight
 
@@ -162,9 +287,10 @@ FocusScope {
                     focused: cell.GridView.isCurrentItem && Metrics.keyboardFocusActive
                     addTile: !cell.account
                     username: cell.account ? cell.account.label : "Add"
-                    serverName: cell.account ? cell.account.detail : ""
+                    serverName: cell.account ? String(cell.account.detail || cell.account.address
+                                                      || cell.account.providerName) : ""
                     needsSignIn: Boolean(cell.account && cell.account.needsSignIn)
-                    opacity: !cell.account || cell.account.enabled ? 1 : 0.55
+                    opacity: !cell.account || cell.account.enabled || cell.account.pendingEnabled ? 1 : 0.75
                     onAccepted: {
                         grid.currentIndex = cell.index
                         root.activateAt(cell.index)
@@ -202,7 +328,7 @@ FocusScope {
                     anchors.top: profileTile.bottom
                     anchors.topMargin: Metrics.scaled(4)
                     anchors.horizontalCenter: parent.horizontalCenter
-                    width: parent.width
+                    width: root.tileSize
                     visible: cell.stateLabel.length > 0
                     text: cell.stateLabel
                     horizontalAlignment: Text.AlignHCenter
@@ -219,6 +345,11 @@ FocusScope {
         if (!account)
             return []
         const out = []
+        if (account.needsSignIn || account.connectionState === "failed")
+            out.push({
+                         "label": "Sign in / reconnect",
+                         "value": "reconnect"
+                     })
         if (account.hasSettings)
             out.push({
                          "label": "Account settings",
@@ -240,7 +371,9 @@ FocusScope {
         const action = menuActions[index] ? menuActions[index].value : ""
         menuLoader.active = false
         InputKeys.focus(root)
-        if (action === "settings")
+        if (action === "reconnect")
+            shell.openProviderScreen(Providers.beginSetup(account.moduleId))
+        else if (action === "settings")
             shell.openProviderScreen(Providers.openSettings(account.id))
         else if (action === "toggle")
             Providers.setAccountEnabled(account.id, !(account.enabled || account.pendingEnabled))
@@ -255,10 +388,22 @@ FocusScope {
         sourceComponent: OptionPickerDialog {
             visible: true
             anchorItem: grid.currentItem
-            title: root.menuAccount ? root.menuAccount.label : ""
-            options: root.menuActions.map(action => action.label)
-            currentIndex: 0
-            onSelected: index => root.choose(index)
+            title: root.choosingServer ? "Choose server" : root.menuAccount ? root.menuAccount.label : ""
+            options: root.choosingServer ? ["All servers"].concat(root.serverGroups.map(group => group.label + " · "
+                                                                                                 + group.provider)) :
+                                           root.menuActions.map(action => action.label)
+            currentIndex: root.choosingServer ? Math.max(0, root.serverGroups.findIndex(group => group.key
+                                                                                                 === root.serverFilter)
+                                                         + 1) : 0
+            onSelected: index => {
+                if (root.choosingServer) {
+                    root.serverFilter = index > 0 ? root.serverGroups[index - 1].key : ""
+                    grid.currentIndex = 0
+                    menuLoader.active = false
+                    InputKeys.focus(grid)
+                } else
+                    root.choose(index)
+            }
             onDismissed: {
                 menuLoader.active = false
                 InputKeys.focus(root)

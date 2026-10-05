@@ -52,6 +52,8 @@ bool NativeAppWindow::prepareForPlaybackSurface()
 
 void NativeAppWindow::bringToFront()
 {
+    if (windowStates().testFlag(Qt::WindowMinimized))
+        setWindowStates(windowStates() & ~Qt::WindowMinimized);
     if (!isVisible())
         show();
     raise();

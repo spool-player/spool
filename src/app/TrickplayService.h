@@ -8,6 +8,7 @@
 #include <QObject>
 #include <QPointer>
 #include <QQuickAsyncImageProvider>
+#include <QQuickTextureFactory>
 #include <QThreadPool>
 #include <QVariantMap>
 #include <atomic>
@@ -21,6 +22,16 @@ namespace Spool {
 class TlsTrustController;
 class TrickplayImageResponse;
 
+class TrickplayTextureFactory final : public QQuickTextureFactory {
+public:
+    explicit TrickplayTextureFactory(std::shared_ptr<const TrickplayTexture> texture);
+    QSGTexture *createTexture(QQuickWindow *window) const override;
+    QSize textureSize() const override;
+    int textureByteCount() const override;
+    QImage image() const override;
+    const std::shared_ptr<const TrickplayTexture> texture;
+};
+
 class TrickplayService final : public QObject {
     Q_OBJECT
 public:
@@ -32,6 +43,7 @@ public:
         m_providerName = std::move(name);
     }
     void clear();
+    void setAccurateDecoding(bool accurate);
     bool available() const;
     QVariantMap frame(double seconds);
     QQuickImageResponse *requestImageResponse(const QString& id);
@@ -52,7 +64,7 @@ private:
     void decode(int index, QByteArray backing, bool speculative = false, qsizetype offset = 0, qsizetype length = -1);
     void startDecode(int index, bool speculative = false);
     void prefetch();
-    void complete(int index, QImage image, const QString& error, bool speculative);
+    void complete(int index, std::shared_ptr<const TrickplayTexture> image, const QString& error, bool speculative);
     const ArtworkSource *m_source;
     QNetworkAccessManager *m_network;
     QPointer<QNetworkReply> m_reply;
@@ -60,7 +72,7 @@ private:
     TrickplayInfo m_info;
     BifSequence m_bif;
     QCache<int, QByteArray> m_sheets { 32 * 1024 * 1024 };
-    QCache<int, QImage> m_images { int(TrickplayDecodedByteBudget) };
+    QCache<int, std::shared_ptr<const TrickplayTexture>> m_images { int(TrickplayDecodedByteBudget) };
     QHash<int, QList<QPointer<TrickplayImageResponse>>> m_waiters;
     std::shared_ptr<std::atomic_bool> m_cancelled;
     std::shared_ptr<std::atomic_bool> m_decodeCancelled;
@@ -80,6 +92,7 @@ private:
     int m_prefetchDirection = 0;
     int m_prefetchAttempts = 0;
     double m_startSeconds = 0;
+    bool m_accurateDecoding = false;
 };
 
 class TrickplayImageProvider final : public QQuickAsyncImageProvider {

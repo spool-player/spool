@@ -210,6 +210,8 @@ set(SPOOL_SHELL_SOURCES
     src/app/TrickplayDecoder.h
     src/app/TrickplayService.cpp
     src/app/TrickplayService.h
+    src/app/TrickplayPreviewItem.cpp
+    src/app/TrickplayPreviewItem.h
     src/app/BrowseSessionController.cpp
     src/app/BrowseSessionController.h
     src/app/ContentModelController.cpp
@@ -336,17 +338,53 @@ set(SPOOL_CORE_SOURCES
 
 add_library(spool-core STATIC ${SPOOL_CORE_SOURCES})
 
+# Raw preview decoding uses the same libjpeg selected by the Qt toolchain,
+# never a bundled second codec. The compact scene-graph textures use QRhi.
+find_package(Qt6 REQUIRED COMPONENTS GuiPrivate)
+find_package(Qt6BundledLibjpeg QUIET CONFIG)
+if(TARGET Qt6::BundledLibjpeg)
+    find_package(Qt6 REQUIRED COMPONENTS JpegPrivate)
+    target_link_libraries(spool-core PUBLIC Qt6::BundledLibjpeg Qt6::JpegPrivate Qt6::GuiPrivate)
+    target_compile_definitions(spool-core PUBLIC SPOOL_QT_BUNDLED_JPEG=1)
+else()
+    find_package(JPEG REQUIRED)
+    target_link_libraries(spool-core PUBLIC JPEG::JPEG Qt6::GuiPrivate)
+endif()
+
 qt_add_executable(spool
     src/main.cpp
     src/app/GraphicsStartup.cpp
     src/app/GraphicsStartup.h
 )
 
+if(NOT ANDROID AND NOT SPOOL_WEBOS)
+    target_sources(spool PRIVATE
+        src/automation/LocalCommandServer.cpp
+        src/automation/LocalCommandServer.h
+        src/automation/LocalControlProtocol.cpp
+        src/automation/LocalControlProtocol.h
+    )
+    add_executable(spoolet
+        src/automation/SpooletMain.cpp
+        src/automation/LocalControlProtocol.cpp
+        src/automation/LocalControlProtocol.h
+    )
+    target_link_libraries(spoolet PRIVATE Qt6::Core Qt6::Network)
+    target_include_directories(spoolet PRIVATE src)
+    if(UNIX AND NOT APPLE)
+        set_target_properties(spoolet PROPERTIES INSTALL_RPATH "$ORIGIN/../lib")
+    endif()
+    install(TARGETS spoolet RUNTIME DESTINATION bin)
+endif()
+
 find_package(Python3 3.11 REQUIRED COMPONENTS Interpreter)
 include(cmake/ProviderBundle.cmake)
 spool_bundle_providers(spool)
 
 set(SPOOL_TARGETS spool-core spool)
+if(TARGET spoolet)
+    list(APPEND SPOOL_TARGETS spoolet)
+endif()
 spool_configure_platform_targets(spool spool-core)
 foreach(target IN LISTS SPOOL_TARGETS)
     if(MSVC)
@@ -612,6 +650,17 @@ qt_add_shaders(spool "hdr_ui_shaders"
     BASE "${CMAKE_CURRENT_SOURCE_DIR}/qml/shell/shaders"
     FILES qml/shell/shaders/sdr-ui-to-scrgb.frag
 )
+
+qt_add_shaders(spool "trickplay_preview_shaders"
+    PREFIX "/trickplay/shaders"
+    BASE "${CMAKE_CURRENT_SOURCE_DIR}/src/app/shaders"
+    BATCHABLE
+    GLSL "100 es,120,150"
+    FILES
+        src/app/shaders/preview.vert
+        src/app/shaders/rgb.frag
+        src/app/shaders/yuv.frag
+)
 if(NOT SPOOL_WEBOS)
     qt_target_qml_sources(spool
         QML_FILES
@@ -769,6 +818,16 @@ target_link_libraries(spool PRIVATE
 
 
 if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
+    if(TARGET spoolet)
+        find_package(Threads REQUIRED)
+        add_executable(spoolet-protocol-tests
+            tests/automation/LocalControlProtocolTest.cpp
+            src/automation/LocalControlProtocol.cpp
+        )
+        target_include_directories(spoolet-protocol-tests PRIVATE src)
+        target_link_libraries(spoolet-protocol-tests PRIVATE Qt6::Core Qt6::Network Threads::Threads)
+        add_test(NAME spoolet-protocol COMMAND spoolet-protocol-tests)
+    endif()
     # Tests are grouped into one executable per directory. Each test keeps its
     # own ctest entry; tests/TestRunner.cpp dispatches on the selector passed
     # by add_test(). One executable per test used to cost more to build on
@@ -848,6 +907,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         mpv-option-profile tests/player/MpvOptionProfileTest.cpp
         render-target-profile tests/player/RenderTargetProfileTest.cpp
         playback-failure-policy tests/player/PlaybackFailurePolicyTest.cpp
+        player-controller tests/player/PlayerControllerTest.cpp
         play-queue-controller tests/player/PlayQueueControllerTest.cpp
         play-queue-outline-model tests/player/PlayQueueOutlineModelTest.cpp
         series-audio-selection tests/player/SeriesAudioSelectionTest.cpp
@@ -1081,9 +1141,9 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
             )
         endif()
 
-        # These tests instantiate real settings surfaces. Filesystem imports
-        # bypass qt_add_qml_module's singleton qmldirs and are not equivalent
-        # to the application's resource imports.
+        # These tests instantiate production surfaces and primitives that need
+        # registered singletons or native items. Filesystem imports bypass the
+        # application's generated singleton qmldirs and native registrations.
         find_package(Qt6 REQUIRED COMPONENTS QuickTest)
         qt_add_executable(spool-qml-tests tests/QmlTestRunner.cpp tests/ExtensionIntegration.h tests/ArtworkIntegration.h)
         target_compile_definitions(spool-qml-tests PRIVATE TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
@@ -1098,13 +1158,14 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         set(SPOOL_TEST_PLATFORM_SOURCES ${SPOOL_APP_SOURCES})
         list(FILTER SPOOL_TEST_PLATFORM_SOURCES INCLUDE REGEX "/[A-Za-z]+PlatformCapabilities\\.cpp$")
         set(SPOOL_TEST_QML_RESOURCES ${SPOOL_APP_SOURCES})
-        list(FILTER SPOOL_TEST_QML_RESOURCES INCLUDE REGEX "/qrc_(qmake_Spool|application_icons|spool_raw_qml_[0-9]+(_extra_qmldirs)?)\\.cpp$")
+        list(FILTER SPOOL_TEST_QML_RESOURCES INCLUDE REGEX "/qrc_(qmake_Spool|application_icons|trickplay_preview_shaders|spool_raw_qml_[0-9]+(_extra_qmldirs)?)\\.cpp$")
         # Reuse the application's generated resources rather than declaring a
         # second Spool module (which would also overwrite qrc_qmake_Spool.cpp).
         target_sources(spool-qml-tests PRIVATE ${SPOOL_TEST_PLATFORM_SOURCES} ${SPOOL_TEST_QML_RESOURCES})
         qt_add_resources(spool-qml-tests "component_qml_tests"
             PREFIX "/qt/qml/Spool"
             FILES
+                tests/qml/tst_MediaRow.qml
                 tests/qml/tst_SettingSyncControl.qml
                 tests/qml/tst_SubtitleSettingsPanel.qml
                 tests/qml/tst_RemoteControlPage.qml
@@ -1113,6 +1174,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
                 tests/qml/tst_ExtensionIntegration.qml
                 tests/qml/tst_ProviderForms.qml
                 tests/qml/tst_ArtworkIntegration.qml
+                tests/qml/tst_PlayerSeekBarHover.qml
         )
 
         get_filename_component(SPOOL_QML_PREFIX "${Qt6Qml_DIR}/../../.." ABSOLUTE)
@@ -1146,7 +1208,8 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
             list(GET SPOOL_QML_TESTS ${qml_source_index} qml_test_source)
             if(qml_test_name STREQUAL "setting-sync-control" OR qml_test_name STREQUAL "subtitle-settings-panel"
                 OR qml_test_name STREQUAL "remote-control-page" OR qml_test_name STREQUAL "provider-install-dialog"
-                OR qml_test_name STREQUAL "provider-shell")
+                OR qml_test_name STREQUAL "provider-shell" OR qml_test_name STREQUAL "player-seek-bar-hover"
+                OR qml_test_name STREQUAL "media-row")
                 add_test(NAME ${qml_test_name}
                     COMMAND spool-qml-tests -input ":/qt/qml/Spool/${qml_test_source}"
                 )

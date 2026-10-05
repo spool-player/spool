@@ -5,7 +5,14 @@
 #include <QtEndian>
 #include <algorithm>
 #include <cmath>
+#include <csetjmp>
+#include <cstdio>
 #include <limits>
+#if defined(SPOOL_QT_BUNDLED_JPEG)
+#include <QtJpeg/private/jpeglib.h>
+#else
+#include <jpeglib.h>
+#endif
 
 namespace Spool {
 
@@ -126,6 +133,134 @@ QImage decodeTrickplayFrame(
     if (image.format() != QImage::Format_RGB32)
         image = image.convertToFormat(QImage::Format_RGB32);
     return image;
+}
+
+namespace {
+    struct RawDecoder {
+        jpeg_decompress_struct codec {};
+        jpeg_error_mgr error {};
+        std::jmp_buf jump;
+        bool created = false;
+        static void fail(j_common_ptr codec)
+        {
+            auto *self = reinterpret_cast<RawDecoder *>(codec);
+            std::longjmp(self->jump, 1);
+        }
+        ~RawDecoder()
+        {
+            if (created)
+                jpeg_destroy_decompress(&codec);
+        }
+    };
+}
+
+std::shared_ptr<const TrickplayTexture> decodeTrickplayTexture(const QByteArray& bytes, const QRect& crop,
+    const QSize& expectedSize, bool residentSheet, bool accurate, QString *error)
+{
+    auto frame = std::make_shared<TrickplayTexture>();
+    // Keep the RGB32 admission envelope, even though raw output is smaller.
+    // Oversized sheets remain on Qt's codec-clipped RGB path.
+    const qint64 pixels = qint64(expectedSize.width()) * expectedSize.height();
+    const bool rawEligible = expectedSize.isValid() && trickplayTextureCost(expectedSize) <= TrickplayDecodedByteBudget
+        && (residentSheet || !crop.isValid()) && (crop.isValid() || pixels <= 1024 * 1024)
+        && (!crop.isValid()
+            || (QRect(QPoint(), expectedSize).contains(crop) && qint64(crop.width()) * crop.height() <= 1024 * 1024));
+    if (rawEligible && bytes.size() >= 2 && uchar(bytes[0]) == 0xff && uchar(bytes[1]) == 0xd8) {
+        // Heap-owned state and output survive libjpeg's error longjmp without
+        // bypassing destructors or reading modified automatic variables.
+        auto decoder = std::make_unique<RawDecoder>();
+        decoder->codec.err = jpeg_std_error(&decoder->error);
+        decoder->error.error_exit = RawDecoder::fail;
+        if (setjmp(decoder->jump) == 0) {
+            jpeg_create_decompress(&decoder->codec);
+            decoder->created = true;
+            jpeg_mem_src(&decoder->codec, reinterpret_cast<const unsigned char *>(bytes.constData()),
+                static_cast<unsigned long>(bytes.size()));
+            jpeg_read_header(&decoder->codec, TRUE);
+            auto& codec = decoder->codec;
+            if (codec.data_precision == 8 && codec.jpeg_color_space == JCS_YCbCr && codec.num_components == 3
+                && codec.image_width == unsigned(expectedSize.width())
+                && codec.image_height == unsigned(expectedSize.height()) && codec.comp_info[0].h_samp_factor == 2
+                && codec.comp_info[0].v_samp_factor == 2 && codec.comp_info[1].h_samp_factor == 1
+                && codec.comp_info[1].v_samp_factor == 1 && codec.comp_info[2].h_samp_factor == 1
+                && codec.comp_info[2].v_samp_factor == 1) {
+                codec.raw_data_out = TRUE;
+                codec.out_color_space = JCS_YCbCr;
+                codec.dct_method = accurate ? JDCT_ISLOW : JDCT_IFAST;
+                jpeg_start_decompress(&codec);
+                frame->size = expectedSize;
+                const int groups = (expectedSize.height() + 15) / 16;
+                for (int i = 0; i < 3; ++i) {
+                    const auto& component = codec.comp_info[i];
+                    // No scaled IDCT: verify the coded and reconstructed shapes.
+                    const int divisor = i == 0 ? 1 : 2;
+                    if (component.downsampled_width != unsigned((expectedSize.width() + divisor - 1) / divisor)
+                        || component.downsampled_height != unsigned((expectedSize.height() + divisor - 1) / divisor))
+                        RawDecoder::fail(reinterpret_cast<j_common_ptr>(&codec));
+                    frame->strides[i] = int(component.width_in_blocks) * DCTSIZE;
+                    frame->planes[i].resize(qsizetype(frame->strides[i]) * groups * component.v_samp_factor * DCTSIZE);
+                }
+                while (codec.output_scanline < codec.output_height) {
+                    JSAMPROW rows[3][16];
+                    JSAMPARRAY planes[3] { rows[0], rows[1], rows[2] };
+                    for (int i = 0; i < 3; ++i) {
+                        const int count = codec.comp_info[i].v_samp_factor * DCTSIZE;
+                        const int first = int(codec.output_scanline / 16) * count;
+                        for (int row = 0; row < count; ++row)
+                            rows[i][row] = reinterpret_cast<JSAMPROW>(
+                                frame->planes[i].data() + qsizetype(first + row) * frame->strides[i]);
+                    }
+                    if (!jpeg_read_raw_data(&codec, planes, 16))
+                        RawDecoder::fail(reinterpret_cast<j_common_ptr>(&codec));
+                }
+                jpeg_finish_decompress(&codec);
+                if (error)
+                    error->clear();
+                return frame;
+            }
+        }
+        frame->planes = {};
+        frame->strides = {};
+    }
+    frame->rgb = decodeTrickplayFrame(bytes, crop, expectedSize, residentSheet, error);
+    if (frame->rgb.isNull())
+        return {};
+    frame->size = frame->rgb.size();
+    return frame;
+}
+
+QImage TrickplayTexture::image() const
+{
+    if (!planar())
+        return rgb;
+    // Software scene graphs and unsupported RHI formats use an RGB fallback.
+    // Reconstruct the original 420 sampling, never an extra chroma downsample.
+    QImage result(size, QImage::Format_RGB32);
+    if (result.isNull())
+        return {};
+    const int cw = (size.width() + 1) / 2, ch = (size.height() + 1) / 2;
+    const auto chroma = [&](int plane, int x, int y) {
+        const float fx = (float(x) - .5f) * .5f, fy = (float(y) - .5f) * .5f;
+        const int ix = int(std::floor(fx)), iy = int(std::floor(fy));
+        const float dx = fx - ix, dy = fy - iy;
+        const auto sample = [&](int sx, int sy) {
+            return float(uchar(
+                planes[plane][qsizetype(std::clamp(sy, 0, ch - 1)) * strides[plane] + std::clamp(sx, 0, cw - 1)]));
+        };
+        return (sample(ix, iy) * (1 - dx) + sample(ix + 1, iy) * dx) * (1 - dy)
+            + (sample(ix, iy + 1) * (1 - dx) + sample(ix + 1, iy + 1) * dx) * dy - 128.f;
+    };
+    const auto channel = [](float value) { return std::clamp(int(std::lround(value)), 0, 255); };
+    for (int y = 0; y < size.height(); ++y) {
+        auto *row = reinterpret_cast<QRgb *>(result.scanLine(y));
+        for (int x = 0; x < size.width(); ++x) {
+            const float l = uchar(planes[0][qsizetype(y) * strides[0] + x]);
+            const float cb = chroma(1, x, y), cr = chroma(2, x, y);
+            row[x] = qRgb(
+                channel(l + 1.402f * cr), channel(l - .344136286f * cb - .714136286f * cr), channel(l + 1.772f * cb));
+        }
+    }
+    return result;
 }
 
 } // namespace Spool

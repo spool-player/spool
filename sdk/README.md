@@ -134,6 +134,18 @@ for Plex, translate bits/second to the server's kbit/second bandwidth setting
 and negotiate whether the selected media can direct play, remux or transcode.
 Never treat a remux preference as permission to exceed a quality ceiling.
 Preserve an explicitly selected edition rather than silently substituting one.
+`Resolved.source` can supply fresh selected-edition bitrate and pixel dimensions
+from playback negotiation. Quality menus use this original analysis rather than
+a stale catalogue summary, a measured automatic limit, or transcoded output.
+
+
+`Resolved.timelineOriginTicks` identifies the source position represented by
+normalized media time zero (zero when omitted). A server-started HLS stream
+that already begins at the resume point must advertise that origin, so Spool
+seeks only the remaining fraction instead of seeking the full resume offset
+again. UI positions, reports, chapters and segment boundaries remain absolute
+source positions. Seeking before the stream origin resolves a fresh stream.
+Direct files and full-timeline streams keep origin zero.
 
 A source-only service need not expose a transcoder. A future Stremio-style
 provider can use the same context to select among known stream variants and

@@ -88,7 +88,7 @@ public:
     QString accountOf(const QString& scopedId) const;
     static QString rawId(const QString& scopedId);
     Provider *source(const QString& accountId) const;
-    // The accounts being browsed; set-aside accounts kept for search are not.
+    // Selected browsing viewers, one per independent server.
     std::vector<Provider *> sources() const;
     // Calls an operation on the account behind a scoped or account ID.
     QCoro::Task<QVariantMap> call(QString accountId, QString operation, QVariantMap arguments = {});
@@ -143,21 +143,18 @@ public:
     QCoro::Task<QVariantMap> fetchLibraryFilterOptions(QString libraryId, QString collectionType = {}) override;
     QCoro::Task<std::vector<MovieItem>> fetchItemsByIds(QStringList itemIds) override;
 
-    // SearchSource: every server at once, through as few accounts as reach
-    // all of its libraries, ranked together as the answers arrive.
+    // SearchSource: the selected viewer on every independent server, ranked
+    // together as the answers arrive.
     QCoro::Task<std::vector<MovieItem>> searchItems(QString searchTerm, int limit = 80) override;
     QCoro::Task<void> searchProgressively(QString searchTerm, int limit, SearchUpdate update) override;
     QCoro::Task<std::vector<MovieItem>> fetchSearchSuggestions(int limit = 20) override;
-    void prepareSearch() override;
 
     struct SearchTarget {
         QString accountId;
         // Accounts on one server share item IDs; results dedupe within it.
         QString server;
     };
-    // Per server, the fewest accounts whose libraries cover everything any
-    // of its signed-in users can see: a user who sees more stands in for one
-    // who sees less, and of two who see the same the one in use searches.
+    // Selected browsing accounts only; never union alternate viewers' access.
     QCoro::Task<std::vector<SearchTarget>> searchPlan();
 
     // UserItemStateSink
@@ -220,8 +217,6 @@ private:
     QString speedDescription(const Entry& entry) const;
     void syncBrowse();
     bool accountEnabled(const QString& accountId) const;
-    // The raw IDs of the libraries an account sees; empty when unknown.
-    QCoro::Task<std::optional<QSet<QString>>> accessOf(QString accountId);
     QCoro::Task<void> searchOne(std::shared_ptr<SearchRun> run, size_t index, QString searchTerm);
     Provider *owner(const QString& scopedId) const;
     QVariantList baselineItemActions(const QString& itemId, const QString& itemType) const;
@@ -254,7 +249,6 @@ private:
     quint64 m_speedTestGeneration = 0;
     bool m_playbackActive = false;
     QString m_lastDetailsAccount;
-    QHash<QString, QSet<QString>> m_access;
     quint64 m_searchSerial = 0;
     int m_itemActionsRequest = 0;
     QString m_itemActionsAccount;

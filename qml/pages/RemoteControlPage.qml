@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import Spool
 import QtQuick.Layouts
 import "../theme"
 import "../primitives"
@@ -490,25 +491,29 @@ FocusScope {
         Item {
             id: seekPreview
             readonly property bool ready: root.previewFrame.available === true
-            readonly property real imageScale: ready && root.previewFrame.width > 0 ? width / root.previewFrame.width :
-                                                                                      0
+            readonly property real previewScale: typeof Settings !== "undefined" ? Math.max(25, Math.min(200, Number(
+                                                                                                             Settings.values["playback/trickplayPreviewScalePercent"])
+                                                                                                         || 100)) / 100 :
+                                                                                   1
+            readonly property real aspect: ready && root.previewFrame.height > 0 ? root.previewFrame.width
+                                                                                   / root.previewFrame.height : 16 / 9
 
-            visible: ready && seekPreviewImage.status === Image.Ready
+            visible: ready && seekPreviewImage.ready
             Layout.alignment: Qt.AlignHCenter
-            Layout.preferredWidth: Metrics.scaled(240)
-            Layout.preferredHeight: ready ? root.previewFrame.height * imageScale : 0
+            Layout.preferredWidth: Math.min(Metrics.scaled(320) * previewScale, Math.max(0, parent.width), Math.max(0,
+                                                                                                                    root.height
+                                                                                                                    * 0.4) * aspect)
+            Layout.preferredHeight: ready ? width / aspect : 0
             clip: true
 
-            Image {
+            TrickplayPreviewItem {
                 id: seekPreviewImage
+                objectName: "remoteTrickplayTexture"
+                anchors.fill: parent
                 source: seekPreview.ready ? root.previewFrame.url : ""
-                x: seekPreview.ready ? root.previewFrame.offsetX * seekPreview.imageScale : 0
-                y: seekPreview.ready ? root.previewFrame.offsetY * seekPreview.imageScale : 0
-                width: seekPreview.ready ? root.previewFrame.sheetWidth * seekPreview.imageScale : 0
-                height: seekPreview.ready ? root.previewFrame.sheetHeight * seekPreview.imageScale : 0
-                fillMode: Image.Stretch
-                cache: false
-                asynchronous: true
+                crop: seekPreview.ready ? Qt.rect(-root.previewFrame.offsetX, -root.previewFrame.offsetY,
+                                                  root.previewFrame.width, root.previewFrame.height) : Qt.rect(0, 0, 0,
+                                                                                                               0)
             }
         }
         ListView {

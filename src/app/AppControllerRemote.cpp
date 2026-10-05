@@ -210,6 +210,23 @@ void AppController::handleRemoteCommand(const QString& accountId, const QVariant
     }
 }
 
+bool AppController::handleLocalControl(const QVariantMap& command)
+{
+    const QString name = command.value(QStringLiteral("command")).toString();
+    if (name == QStringLiteral("play")) {
+        const QString id = command.value(QStringLiteral("itemId")).toString();
+        if (m_provider->accountOf(id).isEmpty() || SourceHub::rawId(id).isEmpty())
+            return false;
+        playLocalItemId(id, command.value(QStringLiteral("fromStart")).toBool());
+        return true;
+    }
+    if (name != QStringLiteral("pause") && name != QStringLiteral("unpause") && name != QStringLiteral("stop")
+        && name != QStringLiteral("seek") && name != QStringLiteral("navigate") && name != QStringLiteral("key"))
+        return false;
+    handleRemoteCommand({}, command);
+    return true;
+}
+
 void AppController::playRemoteItems(const QString& accountId, const QVariantMap& command)
 {
     QStringList itemIds;

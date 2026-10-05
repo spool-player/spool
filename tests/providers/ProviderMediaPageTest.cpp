@@ -82,6 +82,22 @@ SPOOL_TEST_MAIN("provider-media-page")
             && occurrences.items[0].playlistItemId == QStringLiteral("first")
             && occurrences.items[1].playlistItemId == QStringLiteral("second"),
         "duplicate media occurrences retain their independent container entry identities");
+    const auto analyzed = read(QStringLiteral(R"JS(({
+        items: [{id:'episode', variants:[{id:'file', streams:[
+            {index:-1, type:'Video', codec:'h264', frameRate:23.976},
+            {type:'Audio'}, {index:-1, type:'Subtitle', external:true},
+            {index:0, type:'Video'}
+        ]}]}], exhausted:true
+    }))JS"));
+    const auto& streams = analyzed.items.front().mediaSources.front().streams;
+    require(streams.size() == 4 && streams[0].index == -1 && streams[1].index == -1 && streams[2].index == -1
+            && streams[2].isExternal && streams[3].index == 0 && streams[0].frameRate == 23.976,
+        "unindexed media analysis and sidecars retain the native sentinel without inventing file tracks");
+    for (const QString& index : { QStringLiteral("-2"), QStringLiteral("-1.5"), QStringLiteral("Infinity"),
+             QStringLiteral("NaN"), QStringLiteral("2147483648"), QStringLiteral("'-1'") })
+        invalid(
+            QStringLiteral("({items:[{id:'x',variants:[{id:'f',streams:[{index:%1}]}]}],exhausted:true})").arg(index));
+    invalid(QStringLiteral("({items:[{id:'x',variants:[{id:'f',streams:[{index:-1,width:-1}]}]}],exhausted:true})"));
     invalid(QStringLiteral("({items:[{id:'song',entryId:42}],exhausted:true})"));
     invalid(QStringLiteral("null"));
     invalid(QStringLiteral("({items: {}, exhausted: true})"));

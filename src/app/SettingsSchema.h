@@ -158,8 +158,10 @@ QVariant settingDefaultValue(const SettingSpec& spec);
 QVariant normalizedSettingValue(const SettingSpec& spec, const QVariant& value);
 SettingSyncPolicy settingSyncPolicy(const SettingSpec& spec, const QVariant& value);
 bool settingSupportedOnPlatform(const SettingSpec& spec);
-// Unlike normalization, this rejects unsupported remote values rather than
-// substituting a local fallback that would destroy the remote preference.
+// Reject unsupported types and values rather than silently normalizing them to
+// a clamped value or fallback. Transport admission is a separate policy.
+bool settingAcceptsValue(const SettingSpec& spec, const QVariant& value);
+// Cross-device writes additionally require persisted, syncable platform settings.
 bool settingAcceptsRemoteValue(const SettingSpec& spec, const QVariant& value);
 QString serializedSettingValue(const SettingSpec& spec, const QVariant& value);
 QVariantList settingSchemaModel();

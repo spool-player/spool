@@ -6,6 +6,7 @@ import "../primitives"
 
 FocusScope {
     id: root
+    objectName: libraryContext ? "libraryContextMenu" : "itemContextMenu"
 
     property var item: ({})
     property var anchorItem: null
@@ -22,6 +23,8 @@ FocusScope {
     property bool actionsLoading: false
     property string actionsProblem: ""
     readonly property string containerId: String(context && context.containerId || "")
+    readonly property bool libraryContext: Boolean(context.library)
+    property bool showingHiddenLibraries: false
     readonly property string entryId: String(context && context.entryId || item && (item.playlistItemId || item.entryId)
                                              || "")
     readonly property string editorContainerId: itemType === "Playlist" || itemType === "BoxSet" ? itemId : containerId
@@ -84,8 +87,22 @@ FocusScope {
             Qt.callLater(root.positionMenu)
         }
         function onExtensionSupportChanged(accountId) {
-            if (root.opened)
+            if (root.opened && !root.libraryContext)
                 root.loadProviderActions()
+        }
+    }
+
+    Connections {
+        target: Libraries
+        enabled: root.opened && root.libraryContext
+        function onHiddenLibrariesChanged() {
+            root.rebuildMenu()
+            root.menuIndex = Math.max(0, Math.min(root.menuIndex, root.menuOptions.length - 1))
+            Qt.callLater(root.positionMenu)
+        }
+        function onModelReset() {
+            if (!root.showingHiddenLibraries)
+                root.closeMenu()
         }
     }
 
@@ -112,6 +129,53 @@ FocusScope {
 
     function rebuildMenu() {
         const options = []
+        if (libraryContext) {
+            if (showingHiddenLibraries) {
+                for (const library of Libraries.hiddenLibraries) {
+                    const origin = Sources.originOf(String(library.libraryId))
+                    options.push({
+                                     action: "unhide",
+                                     libraryId: String(library.libraryId),
+                                     icon: "visibility",
+                                     label: "Show " + String(library.name || "library"),
+                                     reason: Sources.multipleSources && origin ? String(origin.serverName
+                                                                                        || origin.providerName || "") :
+                                                                                 ""
+                                 })
+                }
+                if (options.length === 0)
+                    options.push({
+                                     action: "empty",
+                                     icon: "check",
+                                     label: "No hidden libraries",
+                                     enabled: false
+                                 })
+                options.push({
+                                 action: "done",
+                                 icon: "check",
+                                 label: "Done"
+                             })
+            } else {
+                if (context.row)
+                    options.push({
+                                     action: "moveLibrary",
+                                     icon: "swap_horiz",
+                                     label: "Move"
+                                 })
+                options.push({
+                                 action: "hideLibrary",
+                                 icon: "visibility_off",
+                                 label: "Hide library"
+                             })
+                options.push({
+                                 action: "hiddenLibraries",
+                                 icon: "visibility",
+                                 label: "Show hidden libraries"
+                             })
+            }
+            menuOptions = options
+            return true
+        }
         if (continueWatchingContext && actionable)
             options.push({
                              action: "details",
@@ -231,6 +295,7 @@ FocusScope {
         item = nextItem || ({})
         anchorItem = anchor || null
         context = nextContext || ({})
+        showingHiddenLibraries = Boolean(context.showHidden)
         providerActions = []
         actionsProblem = ""
         actionsLoading = true
@@ -245,7 +310,8 @@ FocusScope {
             backdropArmTimer.restart()
         }
         opened = true
-        loadProviderActions()
+        if (!libraryContext)
+            loadProviderActions()
         InputKeys.focus(menuList)
         Qt.callLater(positionMenu)
         return true
@@ -264,7 +330,8 @@ FocusScope {
         backdropArmTimer.stop()
         backdropDismissArmed = false
         opened = false
-        Sources.cancelItemActions()
+        if (!libraryContext)
+            Sources.cancelItemActions()
         actionsRequest = -1
         providerActions = []
         item = ({})
@@ -280,6 +347,33 @@ FocusScope {
         if (menuOptions[index].enabled === false)
             return
         const action = menuOptions[index].action
+        if (libraryContext) {
+            const libraryId = String(item.libraryId || "")
+            if (action === "hiddenLibraries") {
+                showingHiddenLibraries = true
+                rebuildMenu()
+                menuIndex = 0
+                Qt.callLater(positionMenu)
+                return
+            }
+            if (action === "unhide") {
+                Libraries.showLibrary(String(menuOptions[index].libraryId))
+                return
+            }
+            if (action === "moveLibrary") {
+                const row = context.row
+                closeMenu()
+                Qt.callLater(() => {
+                    if (row)
+                        row.beginMoveById(libraryId)
+                })
+                return
+            }
+            if (action === "hideLibrary")
+                Libraries.hideLibrary(libraryId)
+            closeMenu()
+            return
+        }
         if (action === "details") {
             shell.openDetailsAt(context.model, Number(context.index || 0), "resume", String(context.returnRoute
                                                                                             || "home"))
@@ -357,6 +451,7 @@ FocusScope {
 
     PopupMenuPanel {
         id: menuPanel
+        objectName: root.libraryContext ? "libraryContextMenuPanel" : "itemContextMenuPanel"
         width: root.menuPanelWidth
         open: root.opened
         openHeight: root.menuPanelHeight
@@ -364,6 +459,7 @@ FocusScope {
 
         MenuListView {
             id: menuList
+            objectName: "contextMenuList"
             anchors.fill: parent
             anchors.margins: 6
             model: root.menuOptions

@@ -9,6 +9,8 @@
 
 #include <vector>
 
+struct mpv_handle;
+
 namespace Spool {
 
 struct MpvOption {
@@ -41,6 +43,7 @@ public:
     };
 
     static NetworkProfile networkProfile(Platform platform, int parallelRequests = 1);
+    static bool applyRequestHeaders(mpv_handle *handle, QByteArray headers);
     static QByteArray renderQualityName(RenderQuality quality);
     static RenderQuality renderQualityFromName(const QString& name);
     static std::vector<MpvOption> renderQualityOptions(RenderQuality quality);

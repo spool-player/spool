@@ -68,7 +68,7 @@ void UserItemStateController::applyPlayed(const QString& itemId, bool played)
 }
 
 void UserItemStateController::recordPlaybackStopped(
-    const MovieItem& item, const QString& itemId, qint64 positionTicks, bool completed)
+    const MovieItem& item, const QString& itemId, qint64 positionTicks, bool completed, const MovieItem& successor)
 {
     if (!completed) {
         applyResumeTicks(itemId, positionTicks);
@@ -76,11 +76,17 @@ void UserItemStateController::recordPlaybackStopped(
             m_home->upsertResumeItem(item, positionTicks);
         return;
     }
+    if (m_home && item.id == itemId)
+        m_home->advanceNextUp(item, successor);
     applyPlayed(itemId, true);
     if (!m_api || !m_api->signedIn())
         return;
     Async::runScoped(
-        this, m_api->setItemPlayed(itemId, true), []() {},
+        this, m_api->setItemPlayed(itemId, true),
+        [this]() {
+            if (m_home)
+                m_home->refreshPlaybackRows();
+        },
         [this](const std::exception_ptr& error) { emit errorOccurred(exceptionMessage(error)); });
 }
 
@@ -103,7 +109,11 @@ void UserItemStateController::setPlayed(const QString& itemId, bool played)
         return;
     applyPlayed(itemId, played);
     Async::runScoped(
-        this, m_api->setItemPlayed(itemId, played), []() {},
+        this, m_api->setItemPlayed(itemId, played),
+        [this]() {
+            if (m_home)
+                m_home->refreshPlaybackRows();
+        },
         [this, itemId, played](const std::exception_ptr& error) {
             applyPlayed(itemId, !played);
             emit errorOccurred(exceptionMessage(error));

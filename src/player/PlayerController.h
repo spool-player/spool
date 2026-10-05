@@ -19,6 +19,7 @@
 #include <QVariant>
 
 #include <atomic>
+#include <utility>
 #include <vector>
 
 struct mpv_handle;
@@ -228,10 +229,13 @@ signals:
     void segmentsChanged();
     void trickplayChanged();
     void chaptersChanged();
+    // Also emitted between sessions so Stop cancels pending queue negotiation.
+    void stopRequested();
     void playbackStopped(const QString& itemId, qint64 positionTicks, bool completed);
     // The stream ended before the item did. Emitted after playbackStopped,
     // which has already recorded the position as a resume point.
     void playbackInterrupted(const QString& itemId, qint64 positionTicks, bool resumable);
+    void playbackSeekOutsideStream(const QString& itemId, qint64 positionTicks);
     void playbackLoadFailed(const QString& itemId, qint64 positionTicks, const QString& message,
         bool retryableCodecFailure, int audioStreamIndex, int subtitleStreamIndex);
     void streamSelectionChanged(int audioStreamIndex, int subtitleStreamIndex);
@@ -285,7 +289,14 @@ private:
     bool configureAndInitializeMpv(mpv_handle *handle, bool needsVideoSurface, bool embeddedVideo);
     void observeMpvProperties(mpv_handle *handle);
     void scheduleMpvTeardown();
-    void handleMpvEvent(mpv_event *event);
+    void handleMpvEvent(mpv_event *event, quint64 generation);
+    template <typename Callback> void postMpvEvent(quint64 generation, Callback callback)
+    {
+        QMetaObject::invokeMethod(this, [this, generation, callback = std::move(callback)]() mutable {
+            if (generation == m_mpvEventGeneration)
+                callback();
+        });
+    }
     void startProgressReporting();
     void stopProgressReporting(bool failed = false, bool completed = false);
     bool mpvCommand(QByteArrayList command);
@@ -333,6 +344,7 @@ private:
     PlaybackReporter m_reporter;
     MpvLifecycle m_mpvLifecycle;
     quint64 m_mpvTeardownGeneration = 0;
+    quint64 m_mpvEventGeneration = 0;
     mpv_handle *m_idleMpvHandle = nullptr;
     bool m_idleMpvPreparationScheduled = false;
     bool m_idleMpvPreparationEnabled = true;

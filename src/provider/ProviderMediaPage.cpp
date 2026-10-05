@@ -124,7 +124,10 @@ namespace {
         {
             requireObject(row);
             MediaStreamInfo stream;
-            stream.index = smallInteger(row.property(QStringLiteral("index")));
+            const QJSValue index = row.property(QStringLiteral("index"));
+            // -1 means analysis without a file track index (including sidecars).
+            // It is not permission for negative sizes, counts or other metadata.
+            stream.index = absent(index) || (index.isNumber() && index.toNumber() == -1) ? -1 : smallInteger(index);
             stream.type = field(row, "type", 32);
             stream.codec = field(row, "codec", 64);
             stream.profile = field(row, "profile", 128);

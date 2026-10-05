@@ -188,6 +188,26 @@ FocusScope {
         return entries
     }
 
+    function refreshLibraryEntries() {
+        const selected = libraryEntries[libraryIndex]
+        libraryEntries = buildLibraryEntries()
+        const index = selected ? libraryEntries.findIndex(entry => entry.libraryId === selected.libraryId) : -1
+        libraryIndex = Math.max(0, Math.min(index >= 0 ? index : libraryIndex, libraryEntries.length - 1))
+    }
+
+    Connections {
+        target: Libraries
+        function onModelReset() {
+            root.refreshLibraryEntries()
+        }
+        function onCountChanged() {
+            root.refreshLibraryEntries()
+        }
+        function onRowsMoved() {
+            root.refreshLibraryEntries()
+        }
+    }
+
     function headerDetail() {
         const total = Browse.totalCount
         const count = Browse.items ? Browse.items.count : 0
@@ -605,17 +625,19 @@ FocusScope {
     }
 
     function activateLibraryIndex(index) {
-        if (index < 0 || index >= libraryCount())
+        const entry = libraryEntries[index]
+        if (!entry)
             return
         libraryOpen = false
         sortOpen = false
         filtersOpen = false
         savedIndex = 0
         gridReveal.reset()
-        App.openLibrary(index)
+        if (!App.openLibraryById(String(entry.libraryId)))
+            return
         if (hasShell())
             shell.replaceRoute("libraryGrid", {
-                                   libraryId: String(Libraries.get(index).libraryId || ""),
+                                   libraryId: String(entry.libraryId),
                                    focusIndex: 0
                                })
         InputKeys.focus(grid)

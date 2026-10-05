@@ -407,6 +407,10 @@ struct PlaybackSession {
     QString playMethod = QStringLiteral("DirectPlay");
     QString container;
     qint64 startTimeTicks = 0;
+    qint64 timelineOriginTicks = 0; // source position represented by media time-pos zero
+    qint64 sourceBitrate = 0;
+    int sourceWidth = 0;
+    int sourceHeight = 0;
     qint64 runtimeTicks = 0;
     QList<MediaStreamInfo> mediaStreams;
     std::vector<MediaSegment> segments;

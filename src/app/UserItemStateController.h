@@ -23,7 +23,8 @@ public:
     void applyResumeTicks(const QString& itemId, qint64 positionTicks);
     void applyFavorite(const QString& itemId, bool favorite);
     void applyPlayed(const QString& itemId, bool played);
-    void recordPlaybackStopped(const MovieItem& item, const QString& itemId, qint64 positionTicks, bool completed);
+    void recordPlaybackStopped(
+        const MovieItem& item, const QString& itemId, qint64 positionTicks, bool completed, const MovieItem& successor);
     Q_INVOKABLE void setFavorite(const QString& itemId, bool favorite);
     Q_INVOKABLE void setPlayed(const QString& itemId, bool played);
     Q_INVOKABLE void clearProgress(const QString& itemId);

@@ -11,7 +11,47 @@
 #include <cmath>
 #include <iterator>
 
+extern "C" {
+#include <mpv/client.h>
+}
+
 namespace Spool {
+
+bool MpvOptionProfile::applyRequestHeaders(mpv_handle *handle, QByteArray headers)
+{
+    // Providers use newline-delimited HTTP fields. mpv's string setter instead
+    // parses a comma-delimited option list; pass typed nodes so header values
+    // retain commas/backslashes and no LF reaches libcurl's HTTP headers.
+    std::vector<mpv_node> fields;
+    if (!headers.isEmpty()) {
+        fields.reserve(static_cast<size_t>(headers.count('\n') + 1));
+        char *const data = headers.data();
+        const qsizetype size = headers.size();
+        qsizetype start = 0;
+        for (qsizetype end = 0; end <= size; ++end) {
+            if (end != size && data[end] != '\n')
+                continue;
+            if (end < size)
+                data[end] = '\0';
+            if (end > start && data[end - 1] == '\r')
+                data[end - 1] = '\0';
+            if (data[start]) {
+                mpv_node field {};
+                field.format = MPV_FORMAT_STRING;
+                field.u.string = data + start;
+                fields.push_back(field);
+            }
+            start = end + 1;
+        }
+    }
+    mpv_node_list list {};
+    list.num = static_cast<int>(fields.size());
+    list.values = fields.data();
+    mpv_node node {};
+    node.format = MPV_FORMAT_NODE_ARRAY;
+    node.u.list = &list;
+    return mpv_set_property(handle, "http-header-fields", MPV_FORMAT_NODE, &node) >= 0;
+}
 
 QByteArray MpvOptionProfile::inputKey(int key, int modifiers, const QString& text)
 {

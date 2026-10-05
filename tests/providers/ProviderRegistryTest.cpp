@@ -65,7 +65,8 @@ template <typename T> QString failure(QCoro::Task<T> task)
 }
 
 // Signs in through the fixture's login context the way its QML would.
-QString signIn(ProviderRegistry& registry, const QString& key, const QString& group, const QString& origin = {})
+QString signIn(ProviderRegistry& registry, const QString& key, const QString& group, const QString& origin = {},
+    std::optional<QVariantMap> configuration = std::nullopt)
 {
     auto *login = qobject_cast<ProviderUiContext *>(registry.beginSetup(QStringLiteral("fixture.test")));
     require(login && login->role() == QStringLiteral("login")
@@ -77,10 +78,11 @@ QString signIn(ProviderRegistry& registry, const QString& key, const QString& gr
     const auto connection
         = QObject::connect(&registry, &ProviderRegistry::accountAdded, [&added](const QString& id) { added = id; });
     const QString label = key.front().toUpper() + key.mid(1);
-    login->complete(
-        { { QStringLiteral("account"), key }, { QStringLiteral("label"), label }, { QStringLiteral("group"), group },
-            { QStringLiteral("configuration"),
-                QVariantMap { { QStringLiteral("label"), label }, { QStringLiteral("token"), key + "-secret" } } } });
+    login->complete({ { QStringLiteral("account"), key }, { QStringLiteral("label"), label },
+        { QStringLiteral("group"), group },
+        { QStringLiteral("configuration"),
+            configuration.value_or(
+                QVariantMap { { QStringLiteral("label"), label }, { QStringLiteral("token"), key + "-secret" } }) } });
     waitUntil([&] { return !added.isEmpty(); }, "the authenticated account is committed");
     QObject::disconnect(connection);
     require(!added.isEmpty(), "completing the login adds the account");
@@ -88,11 +90,141 @@ QString signIn(ProviderRegistry& registry, const QString& key, const QString& gr
     return added;
 }
 
+void credentialRecordRestore()
+{
+    QTemporaryDir directory;
+    require(directory.isValid(), "credential record temporary directory");
+    qputenv("SPOOL_CREDENTIAL_STORE_DIR", directory.filePath(QStringLiteral("credentials")).toUtf8());
+    const QString installs = directory.filePath(QStringLiteral("providers"));
+    DatabaseManager database;
+    require(
+        database.initialize(directory.filePath(QStringLiteral("cache.sqlite"))), "credential record database opens");
+    QCoro::waitFor(database.schemaVersionAsync());
+    require(ProviderPackage::install(ProviderFixture::package(), installs).has_value(),
+        "credential record fixture installs");
+
+    struct UnavailableRecord {
+        QString key;
+        QString replacement;
+        QString id;
+        QString original;
+    };
+    std::vector<UnavailableRecord> unavailable {
+        { QStringLiteral("missing"), {}, {}, {} },
+        { QStringLiteral("malformed"), QStringLiteral("{\"token\":"), {}, {} },
+        { QStringLiteral("array"), QStringLiteral("[]"), {}, {} },
+    };
+    QString empty;
+    QString healthy;
+    {
+        ProviderRegistry registry(&database);
+        registry.setInstallDirectory(installs);
+        registry.loadModules();
+        QCoro::waitFor(registry.restore());
+        empty = signIn(registry, QStringLiteral("empty"), QStringLiteral("empty"), {}, QVariantMap {});
+        healthy = signIn(registry, QStringLiteral("healthy"), QStringLiteral("healthy"));
+        for (auto& record : unavailable)
+            record.id = signIn(registry, record.key, record.key);
+    }
+    const auto emptyDocument = QJsonDocument::fromJson(CredentialStore::load(empty).toUtf8());
+    require(emptyDocument.isObject() && emptyDocument.object().isEmpty(),
+        "a login with empty configuration persists a JSON object, not an absent credential");
+    for (auto& record : unavailable) {
+        record.original = CredentialStore::load(record.id);
+        require(QJsonDocument::fromJson(record.original.toUtf8()).isObject(),
+            "faulted accounts had real saved credentials");
+        if (record.replacement.isEmpty())
+            CredentialStore::remove(record.id);
+        else
+            require(CredentialStore::save(record.id, record.replacement), "invalid credential record stored");
+        require(CredentialStore::load(record.id) == record.replacement, "credential fault reaches the actual store");
+    }
+    const auto verifyUnavailable = [&](const ProviderRegistry& registry) {
+        for (const auto& record : unavailable) {
+            bool needsSignIn = false;
+            for (const QVariant& value : registry.accounts()) {
+                const auto row = value.toMap();
+                if (row.value(QStringLiteral("id")) == record.id)
+                    needsSignIn = row.value(QStringLiteral("enabled")).toBool()
+                        && row.value(QStringLiteral("needsSignIn")).toBool();
+            }
+            require(needsSignIn && !registry.sourceRunning(record.id),
+                "missing, malformed and non-object credentials keep enabled accounts stopped and ask for sign-in");
+        }
+    };
+    const auto verifyStoredFaults = [&] {
+        for (const auto& record : unavailable)
+            require(CredentialStore::load(record.id) == record.replacement,
+                "changing another account never creates or replaces an unavailable credential record");
+    };
+    {
+        ProviderRegistry registry(&database);
+        registry.setInstallDirectory(installs);
+        registry.loadModules();
+        QCoro::waitFor(registry.restore());
+        waitUntil([&] { return registry.sourceRunning(empty) && registry.sourceRunning(healthy); },
+            "valid empty configuration starts its enabled source after restore");
+        const QVariantList libraries = QCoro::waitFor(registry.callSource(empty, QStringLiteral("libraries")))
+                                           .value(QStringLiteral("items"))
+                                           .toList();
+        require(libraries.size() == 1 && libraries.front().toMap().value(QStringLiteral("id")) == QStringLiteral("lib")
+                && libraries.front().toMap().value(QStringLiteral("title")) == QStringLiteral("Shelf")
+                && libraries.front().toMap().value(QStringLiteral("collectionType")) == QStringLiteral("movies"),
+            "the restored empty configuration serves the fixture's actual public library");
+        verifyUnavailable(registry);
+        for (const auto& record : unavailable)
+            require(failure(registry.callSource(record.id, QStringLiteral("libraries")))
+                    == QStringLiteral("source_unavailable"),
+                "unavailable credentials cannot reach the source's library operation");
+        registry.updateConfiguration(healthy, { { QStringLiteral("token"), QStringLiteral("updated-secret") } });
+    }
+    // Registry destruction drains its credential worker before inspecting the files.
+    require(QJsonDocument::fromJson(CredentialStore::load(healthy).toUtf8()).object().value(QStringLiteral("token"))
+            == QStringLiteral("updated-secret"),
+        "a healthy account change really persisted beside the unavailable accounts");
+    verifyStoredFaults();
+    {
+        ProviderRegistry registry(&database);
+        registry.setInstallDirectory(installs);
+        registry.loadModules();
+        QCoro::waitFor(registry.restore());
+        waitUntil([&] { return registry.sourceRunning(empty) && registry.sourceRunning(healthy); },
+            "healthy sources remain independently restorable");
+        verifyUnavailable(registry);
+        // The credential becomes readable again, but this registry still lacks it.
+        require(CredentialStore::save(unavailable.front().id, unavailable.front().original),
+            "an unavailable credential is recovered in the actual store");
+        registry.removeAccount(healthy);
+        waitUntil([&] { return !find(registry, QStringLiteral("Healthy")); }, "another account is actually removed");
+    }
+    require(CredentialStore::load(healthy).isEmpty(), "removing an account deletes its own credential");
+    require(CredentialStore::load(unavailable.front().id) == unavailable.front().original,
+        "removing another account never writes an empty object over recovered credentials");
+    for (size_t i = 1; i < unavailable.size(); ++i)
+        require(CredentialStore::load(unavailable[i].id) == unavailable[i].replacement,
+            "removing another account preserves invalid credential records for recovery");
+    {
+        ProviderRegistry registry(&database);
+        registry.setInstallDirectory(installs);
+        registry.loadModules();
+        QCoro::waitFor(registry.restore());
+        waitUntil([&] { return registry.sourceRunning(empty) && registry.sourceRunning(unavailable.front().id); },
+            "the empty and recovered credentials both start on the next restore");
+        require(QCoro::waitFor(registry.callSource(unavailable.front().id, QStringLiteral("configuration")))
+                    .value(QStringLiteral("configuration"))
+                    .toMap()
+                    .value(QStringLiteral("token"))
+                == QStringLiteral("missing-secret"),
+            "the recovered source receives the original credential rather than an overwritten empty configuration");
+    }
+}
+
 } // namespace
 
 SPOOL_TEST_MAIN("provider-registry")
 {
     QCoreApplication app(argc, argv);
+    credentialRecordRestore();
     QTemporaryDir directory;
     require(directory.isValid(), "temporary directory");
     const QString credentials = directory.filePath(QStringLiteral("credentials"));

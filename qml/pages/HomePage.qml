@@ -10,8 +10,9 @@ FocusScope {
 
     property var shell
     property var uiTransitionToken: 0
-    // With no account there is nothing to wait for: an empty home is ready.
-    readonly property bool contentReady: rows.firstRowReady || !Providers.hasAccounts
+    // An all-hidden library row has management controls instead of cards.
+    readonly property bool contentReady: rows.firstRowReady || !Providers.hasAccounts || (Libraries.count === 0 &&
+                                                                                          !Home.loading)
 
     focus: true
 
@@ -30,6 +31,7 @@ FocusScope {
 
     function buildSections() {
         const multiple = Sources.multipleSources
+        const hidden = Libraries.hiddenLibraries
         const sections = [
                   {
                       "key": "libraries",
@@ -37,6 +39,16 @@ FocusScope {
                       "model": Libraries,
                       "kind": "library",
                       "moveItem": (from, to) => Libraries.moveLibrary(from, to),
+                      "contextMenu": (library, anchor, context) => root.shell ? root.shell.openLibraryMenu(library,
+                                                                                                           anchor, context) :
+                                                                                false,
+                      "reserveWhenEmpty": hidden.length > 0,
+                      "headerActionText": "Show hidden libraries",
+                      "headerAction": hidden.length > 0 ? (() => root.shell ? root.shell.openLibraryMenu(null, null, {
+                                                                                                             "showHidden":
+                                                                                                             true
+                                                                                                         }) : false) :
+                                                          null,
                       "cardBadge": multiple ? (library => root.sourceBadge(library.libraryId, true)) : null
                   }
               ]
@@ -63,6 +75,7 @@ FocusScope {
                               "title": row && row.title ? row.title : "Recently Added",
                               "model": row && row.model ? row.model : null,
                               "kind": row && row.kind ? row.kind : "poster",
+                              "enabled": !Libraries.isHidden(String(row && row.libraryId || "")),
                               "reserveWhenEmpty": Home.loading,
                               "headerBadge": multiple && row ? root.sourceBadge(row.libraryId, false) : null,
                               "useSeriesPoster": true,

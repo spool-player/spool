@@ -36,6 +36,147 @@ on every invocation so sibling edits are included, using separate
 Ordinary native builds continue to default to open provider loading without
 local overrides. Set `SPOOL_REPO` to the app checkout when invoking outside it.
 
+Use the Nix launcher rather than invoking the installed binary from an unrelated
+development shell: it supplies the matching Qt plugins and, on Linux,
+`libsecret`'s `secret-tool`. Account configuration stays in the platform
+credential store; the SQLite database contains account metadata, not a copy of
+the credentials. If a scripted provider's saved configuration is missing,
+unreadable, malformed JSON, or not a JSON object, that account reports a failed
+connection and offers sign-in instead of starting with unavailable settings.
+A stored empty JSON object (`{}`) is available configuration: public or anonymous
+providers can restore it normally. Providers remain responsible for validating
+their own authentication configuration; an empty object does not bypass
+first-party activation validation.
+Unlock the credential store and restart Spool, or sign in again. Changing or
+removing another account does not overwrite unavailable credential records.
+A missing SQLite driver fails startup without resetting account data or clearing
+the credential store.
+
+Ordinary startup opens Home, combining the selected saved viewer from every
+independent server. **Profiles & servers** in the navigation bar groups saved
+profiles by server and lets you switch who's watching, or add another watching
+profile through that provider's sign-in screen. A switch stays on the profile
+page while it connects or asks for a PIN; cancellation or failure keeps the
+previous viewer and offers retry/reconnect instead of pretending the switch
+succeeded. Protected profiles that need interaction stay locked on startup.
+Search uses only the viewers selected for Home, never the combined permissions
+of an adult and child profile saved on the same server.
+
+### Built-in local automation (`spoolet`)
+
+Native desktop builds also build/install `spoolet`, a small Qt Core/Network CLI
+from this checkout, with no browser or external control service. The ordinary
+Spool desktop app starts its private local command server automatically:
+
+```sh
+nix run .#local-providers-build
+nix run .#local-providers -- --instance plex-check
+# In another terminal; uses the already-built checkout, without rebuilding:
+nix run .#spoolet -- help
+nix run .#spoolet -- instances
+nix run .#spoolet -- --instance plex-check status
+nix run .#spoolet -- --instance plex-check navigate home
+nix run .#spoolet -- --instance plex-check key right
+nix run .#spoolet -- --instance plex-check key ok
+nix run .#spoolet -- --instance plex-check back
+nix run .#spoolet -- --instance plex-check items libraries
+nix run .#spoolet -- --instance plex-check library ACCOUNT_PREFIX:LIBRARY_ID
+nix run .#spoolet -- --instance plex-check items browse 0 100
+nix run .#spoolet -- --instance plex-check play ACCOUNT_PREFIX:ITEM_ID
+nix run .#spoolet -- --instance plex-check qualities
+nix run .#spoolet -- --instance plex-check quality 0
+nix run .#spoolet -- --instance plex-check pause
+nix run .#spoolet -- --instance plex-check seek 120
+nix run .#spoolet -- --instance plex-check resume
+nix run .#spoolet -- --instance plex-check screenshot /tmp/spool-playback.png
+nix run .#spoolet -- --instance plex-check stop
+```
+
+Use the qualified IDs returned by `items`, not guessed raw provider IDs.
+`items resume`, `items next-up`, and `load-more` expose the existing loaded
+models; browsing and playback requests are asynchronous, so poll `status`
+(`initialized`, `busy`, `homeLoading`, `browseLoading`, `playback.loaded`) before
+acting on their results. `qualities` reads the actual application's current
+options, including selected Auto/Original/fixed ceilings, rather than a separate
+CLI ladder. `quality INDEX` selects one of those options using the real playback
+API; subsequent stream negotiation can take time.
+The credential-free `source` snapshot reports the actually resolved edition's
+bitrate, pixel dimensions, aspect-normalized quality height, resolution label,
+and playback method. For example, a 3840×1608 edition is a 2160-class source
+despite its cropped pixel height; the CLI never reconstructs quality choices
+from the negotiated output or invents a source ladder.
+
+Preview inspection uses real window input, without seeking the video. For this
+latency-sensitive sequence, invoke the installed `spoolet` binary directly:
+the Nix wrapper can take about three seconds to start, enough for playback
+controls to hide between commands. The Nix launcher above remains available
+for ordinary CLI use. From the checkout root on Linux:
+
+```sh
+SPOOLET=./build/linux-release-local-providers/install/bin/spoolet
+"$SPOOLET" --instance plex-check key up
+"$SPOOLET" --instance plex-check preview 120
+"$SPOOLET" --instance plex-check state
+# Poll state until visual.preview.active is true, selectionPending is false,
+# and visual.previewTexture.ready is true, then capture immediately:
+"$SPOOLET" --instance plex-check screenshot /tmp/spool-preview.png
+"$SPOOLET" --instance plex-check settings get
+"$SPOOLET" --instance plex-check settings set playback/accurateTrickplay true
+"$SPOOLET" --instance plex-check settings set playback/trickplayPreviewScalePercent 150
+"$SPOOLET" --instance plex-check settings set appearance/uiScalePercent 125
+"$SPOOLET" --instance plex-check settings set playback/renderQuality '"high"'
+```
+
+`preview` needs available trickplay and visible playback controls; it hovers the
+real seek bar. `pointer move X Y` / `pointer click X Y` use window logical
+coordinates for other precise UI interactions. Settings go through the app's
+existing schema validation and persisted user-change transaction. Local UI
+scale changes do not make this device-specific setting remotely syncable.
+Seek preview size is relative to interface scale and does not change the
+server's thumbnail resolution; the two scale settings are independent.
+The CLI exposes only the four settings shown above, not credentials or arbitrary
+configuration. `state` is a small allowlisted route/playback/visual snapshot,
+not unrestricted QObject inspection or script evaluation.
+
+For pointer testing, `pointer press X Y`, frame-paced `pointer move X Y`,
+and `pointer release X Y` perform a real held-button drag; `pointer right-click
+X Y` opens context menus. Coordinates are window-logical pixels. A normal library
+drag scrolls; choose Move from its menu before testing drag-and-drop reordering.
+
+Every command writes one machine-readable JSON result to stdout; failures exit
+nonzero and never prompt. `--timeout MS` (100–30000, default 10000) bounds the CLI
+request. The server limits each connection to one newline-framed JSON request,
+64 KiB input, 1 MiB output, eight concurrent connections, and a ten-second
+deadline. Specify `--instance ID` when more than one app is running; unnamed
+launches get a unique discoverable ID. An explicitly named duplicate launch
+fails rather than silently controlling another instance. `SPOOL_INSTANCE`
+sets the launch identifier; `--no-local-control` disables the server.
+
+This is **same-user local IPC only**: Unix-domain sockets or Windows named pipes
+with Qt's user-access restriction, plus a private discovery capability. On Unix,
+the runtime directory is owner-only and discovery files are owner-only regular
+files; unsafe/symlink discovery is rejected. Discovery lives in the user's
+runtime directory (`spool-control`, user data directory on Windows), is removed
+on clean shutdown, and stale entries are ignored after probing. No TCP/WebSocket
+listener is opened. Endpoint capabilities and provider credentials are not
+returned by the CLI. Anyone already running code as your user can control the
+app; treat screenshots and media titles as private.
+
+Screenshots wait for a newly swapped Qt frame, read the actual window framebuffer,
+and atomically save an owner-only PNG with path, pixel dimensions, file size and
+state metadata. Scene-graph embedded video is included; video on a separate
+native plane/external window is excluded and explicitly reported with
+`videoIncluded: false`. PNG is not a calibrated HDR capture. The window must be
+exposed; screenshot completion does not mean a provider image has finished
+loading—check the reported playback/preview readiness first. The server and CLI
+are desktop facilities, not a public remote-control API or a TV deployment tool.
+
+Without Nix, use `spoolet` beside `spool` in the native build directory or installed
+`bin/`. Local-provider Nix builds install it to
+`build/linux-release-local-providers/install/bin/spoolet` (macOS:
+`build/macos-local-providers/run-install/bin/spoolet`); the `.#spoolet` launcher
+uses these exact checkout outputs.
+
 ## Sign-in controls
 
 Passwords and account PINs start hidden. Select the eye beside the input to show
@@ -47,18 +188,25 @@ Device-link and Quick Connect codes have their instructions below the code box.
 On desktop and mobile, **Copy** copies the code; TVs show it for entry on another
 device without a clipboard control.
 
-## Homepage library order
+## Homepage libraries
 
-Drag a library card to another position on the homepage. Hold the pointer near
-the left or right edge of the library row while dragging to scroll to libraries
-that are offscreen, then release to drop it.
+Drag normally to scroll the library row horizontally. Right-click a library,
+long-press its card, or hold **OK/Enter** (or press **Menu**) on a focused library
+to open its menu: **Move**, **Hide library**, and **Show hidden libraries**.
 
-Alternatively, hold **OK/Enter** on a focused library, long-press its card, or
-right-click it to enter move mode. The selected card shows **↔ Move**. Use
-**Left/Right** on the remote or keyboard, or the visible arrow buttons, to move
-that library. Press **OK/Enter**, **Back/Escape**, or **Done** to finish without
-opening it. Moves are saved as they happen; Back does not undo them. Library
-ordering does not reorder the recently added shelves.
+Choose **Move** to enable drag-and-drop ordering. Hold the pointer near the left
+or right edge while dragging to scroll to offscreen libraries, then release to
+drop. In move mode, **Left/Right** on a remote or keyboard and the visible arrow
+buttons also move the selected library. Press **OK/Enter**, **Back/Escape**, or
+**Done** to finish and return to normal scrolling. Moves are saved immediately;
+Back does not undo them. Ordering does not reorder recently added shelves.
+
+**Hide library** removes that library from the home row, its recently added
+shelf, and the library switcher without deleting its contents. Choose **Show
+hidden libraries** in the menu or beside the home library heading to restore
+individual libraries. That control remains available even when every library
+is hidden. Order and visibility are saved separately for each account's library
+IDs, including while an account is temporarily disconnected.
 Library badges use a descriptive server name when available. Default or
 machine-generated server names are shown as the server's host and port instead;
 usernames are not appended to library names.
@@ -188,16 +336,63 @@ rows and opens its native folder chooser on demand; initial viewport readiness i
 checked at the end of the current event-loop turn, with timed retries only when
 delegates are still missing. Playback previews prime the resume-position
 texture on a dedicated network/decode path, independent of poster queues.
-Sprite sheets up to 50 MB decoded RGB32 (12.5 megapixels) stay resident:
-moving between tiles changes the displayed crop without another image load,
-CPU crop, or texture upload. Larger JPEG sheets use codec-clipped frames.
-Whole BIF sequences use their native timestamp indexes, not an assumed
-uniform interval. Qt's existing JPEG plugin supplies its libjpeg/libjpeg-turbo
-decoder; no duplicate JPEG dependency is needed.
+Sprite sheets within the original 50,000,000-byte RGB32 admission envelope
+(12.5 megapixels) stay resident: moving between tiles changes only GPU crop
+coordinates, without another decode, CPU crop, or texture upload. Ordinary
+8-bit YCbCr 4:2:0 JPEGs decode directly into immutable Y/Cb/Cr planes using
+Qt's toolchain-selected libjpeg/libjpeg-turbo, with `JDCT_IFAST` by default.
+Advanced **Playback → Accurate seek previews** (`playback/accurateTrickplay`)
+selects `JDCT_ISLOW` while retaining the same planar path and full encoded
+resolution. Changing it revokes the previous generation and decoded cache.
+The faster transform is a deliberate IDCT quality tradeoff, not a reduced
+resolution or another chroma downsample. Grayscale, 4:2:2, 4:4:4 and other
+unsupported JPEG layouts retain Qt's RGB decoder. Oversized sheets retain
+codec-side RGB frame clipping. Whole BIF sequences use their real timestamp
+indexes and JPEG payloads; no video-player process is used to decode previews.
+
+`TrickplayPreviewItem` integrates with Qt Quick's existing scene graph and the
+window's QRhi backend; it does not replace the application renderer or create
+a separate GPU context. Qt still owns render scheduling, command submission
+and presentation. The item owns three resident compact R8 textures
+(RED_OR_ALPHA8 on backends requiring alpha-channel sampling), including on
+webOS/GLES. Its QRhi integration uses Qt's private Gui API, so the headers and
+runtime must come from the same pinned Qt toolchain on every platform.
+The visible quad reconstructs full-range JPEG/601 colour using the source 4:2:0
+sampling; odd visible dimensions and raw MCU padding are accounted separately.
+Software scene graphs and unsupported GPU texture paths use RGB fallback.
+GPU uploads retain immutable backing until the resource-update batch owns it.
+No reusable decode pool is added: existing foreground/prefetch caching and
+in-flight render/upload ownership are retained rather than overwritten.
+
+The GPU filter is normalized, separable windowed **Lanczos2**:
+`sinc(x) * sinc(x/2)` with a fixed two-source-pixel radius. Bilinear pairing of
+the two positive middle weights reduces its 4×4 kernel to nine sample
+positions (27 compact-plane texture reads for YUV, nine for RGB). Source size,
+reciprocal size, chroma geometry and crop bounds are CPU-computed uniforms;
+only position-dependent weights are calculated by the fragment shader.
+Each tap is clamped to the selected tile's luma pixel centres to avoid
+neighbour bleed, while chroma reconstruction retains the whole-JPEG neighbours
+used by a full-JPEG RGB decoder. Clamping to the sampled neighbourhood's
+colour envelope limits negative-lobe ringing. Work touches only the visible
+quad: no full-sheet RGB framebuffer, mipmap chain or resampling pass exists.
+Its footprint does not widen at strong minification, deliberately bounding
+cost; it is not an ideal scale-adaptive low-pass filter for extreme shrinking.
+Software/backend fallback uses that backend's RGB filter, not Lanczos.
+
+Local and remote previews share a nominal **320 dp** layout width, independent
+of encoded thumbnail resolution, preserving the actual source aspect ratio
+and fitting the viewport (including the remote page's actual content margins).
+The overall interface scale applies, then advanced
+**Playback → Seek preview size** (`playback/trickplayPreviewScalePercent`,
+25–200%, default 100%) adjusts the display size only. Crop coordinates always
+remain in encoded-source pixels. Both settings persist as device defaults
+through the ordinary settings schema.
 
 The server-free native fixture smoke exercises real JPEG sprite and BIF pixels,
-malformed BIF boundaries, resident-sheet crops, the 50 MB boundary, directional
-prefetch, and stale-session/late-request cancellation:
+odd-sized raw 4:2:0 planes with both transforms, grayscale/4:2:2/4:4:4 RGB
+fallbacks, accuracy cache retirement, malformed BIF boundaries, resident-sheet
+crops, the 50 MB boundary, directional prefetch, and stale-session/late-request
+cancellation:
 
 ```sh
 nix develop .#native -c cmake --build build/linux-dev/app --target app-tests providers-tests
@@ -212,21 +407,31 @@ times, full-sheet decode time, and texture byte counts. Normal hover within a
 resident sheet does not issue those additional image-provider requests.
 These measurements exclude actual GPU transfer and presentation duration.
 Each local/remote session caps retained decoded textures at 50,000,000 bytes
-and encoded sheets (or one BIF sequence) at 32 MiB. The decoded budget is not
-a total RAM/VRAM limit: decoder workspace, active image delivery and GPU
-textures add to it. Sequences over 32 MiB are rejected.
+and encoded sheets (or one BIF sequence) at 32 MiB. Cache charging is at least
+the original RGB32 cost (and includes raw MCU padding when that is larger), so
+smaller planes do not expand historical caching. The decoded budget is not
+a total RAM/VRAM limit: decoder workspace, active image delivery, optional
+software RGB reconstruction and GPU textures add to it. Sequences over 32 MiB
+are rejected. The fixture smoke's RGB image readback is a fallback exercise,
+not evidence of the production GPU path.
 
 Hover image selection consumes the latest input once per rendered frame;
 the timestamp and preview position update immediately. Prefetch follows hover
 direction to one neighbouring sheet or at most two BIF frames. Foreground
 requests preempt speculative work; a neighbouring sheet is decoded only when
 it fits beside the current retained textures, otherwise only its encoded bytes
-are prefetched. Qt image caching is disabled for previews so historical sheets
-do not accumulate in its image cache. Switching sessions cancels outstanding
-delivery and drops caches.
+are prefetched. The preview item bypasses Qt's image cache so historical sheets
+do not accumulate there. Switching sessions cancels outstanding delivery and
+drops caches.
 Remote resource revisions also change when a target switches preview URL or
 credentials for the same item. Retired revisions cannot reuse cached frames;
 unchanged resources keep stable identities across state polling.
+
+To observe the real renderer during an application preview, set
+`QT_LOGGING_RULES='spool.trickplay.render.debug=true'` before launching Spool.
+The `planar Lanczos2` texture-format messages identify the compact path; RGB
+and software/backend fallbacks are explicitly labelled. `upload` messages
+occur on decoded-output replacement, not on same-sheet crop movement.
 
 
 

@@ -34,6 +34,14 @@ public:
     {
         QElapsedTimer timer;
         timer.start();
+        // A missing or incompatible Qt plugin is an environment failure, not
+        // evidence that the user's durable state is corrupt.
+        m_database = QSqlDatabase::addDatabase(
+            QStringLiteral("QSQLITE"), QStringLiteral("spool_native_state_") + m_connectionId);
+        if (!m_database.isValid()) {
+            qWarning() << "database: SQLite driver unavailable; local account data left unchanged";
+            return false;
+        }
         const QFileInfo cacheInfo(cachePath);
         if (!QDir().mkpath(cacheInfo.absolutePath())) {
             qWarning() << "database: failed to create data directory for" << cachePath;
@@ -45,7 +53,6 @@ public:
         const QString statePath = cacheInfo.dir().filePath(QStringLiteral("state.sqlite"));
         if (!openState(statePath)) {
             qWarning() << "database: invalid durable state; preserving and rebuilding" << statePath;
-            CredentialStore::clear();
             if (!recoverState(statePath))
                 return false;
             m_recoveryNotice = QStringLiteral(

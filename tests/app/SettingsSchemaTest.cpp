@@ -368,6 +368,17 @@ void syncPolicyRejectsUnsafeAndUnsupportedValues()
             spec.syncPolicy == SettingSyncPolicy::Never && !settingAcceptsRemoteValue(spec, settingDefaultValue(spec)),
             QStringLiteral("device authority/security setting became remotely writable: %1").arg(key));
     }
+    const auto& uiScale = requiredSpec(QStringLiteral("appearance/uiScalePercent"));
+    for (const int value : { 50, 125, 180 }) {
+        require(settingAcceptsValue(uiScale, value), QStringLiteral("valid local UI scale %1 was rejected").arg(value));
+        require(!settingAcceptsRemoteValue(uiScale, value),
+            QStringLiteral("local UI scale %1 became remotely writable").arg(value));
+    }
+    for (const QVariant& value :
+        { QVariant(45), QVariant(185), QVariant(125.5), QVariant(true), QVariant(QStringLiteral("125")), QVariant() }) {
+        require(!settingAcceptsValue(uiScale, value),
+            QStringLiteral("invalid local UI scale was accepted: %1").arg(value.toString()));
+    }
     const auto& bitrate = requiredSpec(QStringLiteral("playback/maxStreamingBitrateMbps"));
     require(!settingAcceptsRemoteValue(bitrate, 1001) && settingAcceptsRemoteValue(bitrate, 55),
         QStringLiteral("incoming bitrate must not silently clamp an unsupported value"));

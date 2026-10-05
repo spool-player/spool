@@ -192,6 +192,12 @@ export interface PlaybackContext {
 export interface Resolved {
     url: string; headers?: Record<string, string>; variantId: string; playSessionId?: string;
     playMethod?: 'DirectPlay' | 'DirectStream' | 'Transcode'; container?: string;
+    /** Source ticks represented by the normalized media stream's time-pos zero; omitted means zero.
+     * Playback positions, reporting and segments remain in source coordinates.
+     */
+    timelineOriginTicks?: string;
+    /** Fresh original-edition analysis, never the negotiated output or an automatic ceiling. */
+    source?: { bitrate: number; width: number; height: number };
     streams?: Stream[]; segments?: Segment[];
     /** Native preview loader fetches/caches sheets or one BIF sequence using this account's headers. */
     trickplay?: { width: number; height: number; columns: number; rows: number; count: number; intervalMs: number;

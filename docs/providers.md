@@ -50,17 +50,35 @@ database (`providers/accounts/2`); configuration, which holds tokens, lives in t
 store and is read off the GUI thread. Accounts in the same group (users of one server) are
 alternatives: using one sets the others aside. Accounts in different groups are shown together.
 
+Saved accounts open Home by default, combining the selected viewer on each
+independent server. A startup activation requiring a PIN remains locked without
+opening a chooser. **Profiles & servers** explicitly switches watching users;
+pending selection returns Home only after successful activation. A cancelled
+switch leaves the current viewer unchanged. Search uses these same selected
+identities, never saved alternative profiles or a union of their permissions.
+
 Changing the browsed account set immediately removes unavailable accounts from the
 library list, Continue Watching, Next Up and Recently Added while retaining the
 remaining accounts' rows. Home content then refreshes with the current libraries.
 Pending home/cache and library-list responses from an older account set cannot
 restore removed content.
 
-Search reaches past that. Once the search page opens, set-aside accounts on a server that is in use
-start too, without joining browsing, home rows or the library cache key. Each search then goes, per
-server, through the fewest accounts whose libraries cover everything any of its users can see: one who
-sees more stands in for one who sees less, and of two who see the same the one in use searches. Results
-dedupe same-server item IDs (the account in use wins), then dedupe across sources using
+Library visibility and ordering are local presentation preferences keyed by
+opaque scoped library IDs. Hiding a library does not change the retained catalog,
+Continue Watching, Next Up, or all-media query scope. Ordinary mouse dragging
+scrolls the library row. Right-click or hold opens Move, Hide library, and Show
+hidden libraries; only explicit Move enables reordering. Hidden libraries can
+be restored individually from this menu or the library heading, even when all
+libraries are hidden. Direct navigation resolves IDs against the full catalog.
+
+Episode completion immediately removes the played episode from Continue Watching
+and Next Up, replacing it with a known chronological successor from that same
+account-scoped series when available. After the played mutation is acknowledged,
+the two rows refresh from the server. Older home/cache requests and eventually
+consistent responses cannot restore the completed episode or erase a newer local
+resume update.
+
+Search dedupes same-server item IDs, then dedupes across independent sources using
 database identifiers scoped to the media type. Identifier namespaces are case-insensitive;
 IMDb, TMDb and TVDb values normalize whitespace, supported URL/protocol forms and numeric
 padding. Matching identifiers merge translated titles, but conflicting identifiers in any
@@ -73,9 +91,10 @@ artwork; its provider icon and server label appear on every search card. A new q
 the last one's operations.
 
 A provider's login screen completes with the account; the registry keeps the origins the viewer
-allowed during setup, never ones the provider claims. `http_401` from any operation marks the account
-as needing sign-in again. On first launch after upgrading, sign-ins saved by the old native Jellyfin
-client become Jellyfin accounts.
+allowed during setup, never ones the provider claims. Authentication and incomplete-configuration
+failures (`http_401`, `auth_required`, `invalid_token`, `invalid_config`) expose an actionable
+sign-in state without saving failed candidate credentials. Incorrect PIN answers stay retryable.
+On first launch after upgrading, sign-ins saved by the old native Jellyfin client become Jellyfin accounts.
 
 ## Where providers come from
 
@@ -137,6 +156,18 @@ per account. Results restore the caller's order and duplicate occurrences, omitt
 Server-bound group and remote-play queues reject foreign account IDs with `mixed_source_queue`
 before invoking the provider. Media/container IDs are account-scoped; playlist entry IDs remain
 opaque within their container.
+
+Normal episode EOF advances the local queue unpaused. If no queued successor is
+available, Spool expands that episode's account-scoped series context and selects
+the next playable episode. Explicit Stop or replacement playback cancels pending
+lookup and negotiation. Queue edits retain a pending lookup or immediately advance
+an explicitly queued successor; a final episode ends the transition without replay.
+Group playback remains server-authoritative and can deliberately start paused.
+
+Stream metadata uses a nonnegative file index or `-1` for unindexed analysis and
+sidecars; no other negative metadata integer is accepted. Providers normalize
+decimal-string frame rates and ratings to finite numbers, and preserve exact
+signed-64-bit ticks and byte sizes as decimal strings.
 
 ### Item menus and collection editing
 

@@ -6,6 +6,7 @@ import "ModelAccess.js" as ModelAccess
 
 FocusScope {
     id: root
+    objectName: cardKind === "library" ? "libraryMediaRow" : "mediaRow"
 
     property string title: ""
     // Where the row, or each of its cards, comes from, when the page says so:
@@ -34,6 +35,10 @@ FocusScope {
     // Reordering is opt-in; the host owns the model and persistence.
     property var moveItem: null
     readonly property bool reorderEnabled: typeof moveItem === "function"
+    property var headerAction: null
+    property string headerActionText: ""
+    readonly property bool hasHeaderAction: typeof headerAction === "function"
+    property var contextMenu: null
     property bool moveMode: false
     property bool dragActive: false
     property int dragSourceIndex: -1
@@ -57,15 +62,21 @@ FocusScope {
     readonly property int cardHeight: Math.round(cardWidth * cardAspect + Metrics.scaled(60))
     readonly property int focusPadding: Math.max(2, Metrics.scaled(2))
     readonly property int pageStep: Math.max(1, Math.floor((listView.width + cardGap) / (cardWidth + cardGap)))
+    readonly property real contentX: listView.contentX
 
     signal verticalWheelScrolled(var controller)
     signal pointerSelected
     signal activated(int index, var item)
 
     width: parent ? parent.width : implicitWidth
-    height: rowVisible ? headerHeight + Metrics.scaled(10) + cardHeight : 0
+    height: rowVisible ? headerHeight + (count > 0 || loading || !hasHeaderAction ? Metrics.scaled(10) + cardHeight :
+                                                                                    0) : 0
     implicitHeight: height
     visible: rowVisible
+    onVisibleChanged: if (!visible && (moveMode || dragActive))
+                          finishMove()
+    onActiveFocusChanged: if (!activeFocus && (moveMode || dragActive))
+                              finishMove()
     focus: true
 
     Component.onCompleted: resetPresentation()
@@ -111,6 +122,8 @@ FocusScope {
         function onModelReset() {
             ++root.modelRevision
             root.finishMove()
+            root.currentIndex = root.count > 0 ? Math.max(0, Math.min(root.currentIndex, root.count - 1)) : -1
+            Qt.callLater(root.syncViewCurrentIndex)
         }
         function onRowsInserted() {
             ++root.modelRevision
@@ -134,8 +147,11 @@ FocusScope {
     }
 
     function focusList() {
-        if (count <= 0)
-            return false
+        if (count <= 0) {
+            if (hasHeaderAction)
+                InputKeys.focus(headerButton)
+            return hasHeaderAction
+        }
         currentIndex = Math.max(0, Math.min(currentIndex, count - 1))
         syncViewCurrentIndex()
         InputKeys.focus(listView)
@@ -207,6 +223,10 @@ FocusScope {
     }
 
     function activateIndex(index) {
+        if (hasHeaderAction && (count <= 0 || headerButton.activeFocus)) {
+            headerAction()
+            return
+        }
         if (moveMode) {
             finishMove()
             return
@@ -236,15 +256,22 @@ FocusScope {
     }
 
     function longPress() {
-        if (reorderEnabled)
-            return beginMove(currentIndex)
-        if (cardKind === "library" || cardKind === "person" || currentIndex < 0 || !shell)
+        if (hasHeaderAction && (count <= 0 || headerButton.activeFocus))
+            return Boolean(headerAction())
+        if (cardKind === "person" || currentIndex < 0 || !shell)
             return false
         return openItemContext(currentIndex, currentCard(), true)
     }
 
     function openItemContext(index, anchor, deferBackdropDismissal) {
         if (!shell || index < 0 || index >= count)
+            return false
+        if (typeof contextMenu === "function")
+            return Boolean(contextMenu(itemAt(index), anchor, {
+                                           "row": root,
+                                           "deferBackdropDismissal": Boolean(deferBackdropDismissal)
+                                       }))
+        if (cardKind === "library")
             return false
         return Boolean(shell.openItemMenu(itemAt(index), anchor, {
                                               "model": model,
@@ -254,6 +281,14 @@ FocusScope {
                                               "deferBackdropDismissal": Boolean(deferBackdropDismissal)
                                           }))
     }
+    function beginMoveById(libraryId) {
+        for (let index = 0; index < count; ++index) {
+            if (String(itemAt(index).libraryId || "") === libraryId)
+                return beginMove(index)
+        }
+        return false
+    }
+
     function beginMove(index) {
         if (!reorderEnabled || index < 0 || index >= count)
             return false
@@ -275,7 +310,7 @@ FocusScope {
     }
 
     function moveTo(from, to) {
-        if (!reorderEnabled || from < 0 || to < 0 || from >= count || to >= count)
+        if (!moveMode || !reorderEnabled || from < 0 || to < 0 || from >= count || to >= count)
             return false
         if (from !== to && !moveItem(from, to))
             return false
@@ -292,7 +327,7 @@ FocusScope {
     }
 
     function beginDrag(index, x, y, pressX, pressY) {
-        if (!reorderEnabled || index < 0 || index >= count)
+        if (!moveMode || !reorderEnabled || index < 0 || index >= count)
             return false
         listView.cancelFlick()
         pointerSelected()
@@ -389,14 +424,33 @@ FocusScope {
     SectionHeader {
         id: rowHeader
         anchors.left: parent.left
-        anchors.right: moveButtons.visible ? moveButtons.left : carouselButtons.visible ? carouselButtons.left :
-                                                                                          parent.right
+        anchors.right: moveButtons.visible ? moveButtons.left : headerButton.visible ? headerButton.left : carouselButtons.visible
+                                                                                       ? carouselButtons.left :
+                                                                                         parent.right
 
         anchors.top: parent.top
         height: root.headerHeight
         title: root.moveMode ? "Move · Left/Right · OK or Back to finish" : root.title
         badgeIcon: root.headerBadge ? root.headerBadge.iconUrl : ""
         badgeText: root.headerBadge ? String(root.headerBadge.text || "") : ""
+    }
+
+    ActionButton {
+        id: headerButton
+        objectName: "showHiddenLibrariesButton"
+        anchors.top: parent.top
+        anchors.right: carouselButtons.visible ? carouselButtons.left : parent.right
+        height: root.headerHeight
+        visible: root.hasHeaderAction && !root.moveMode
+        text: root.headerActionText
+        iconName: "visibility"
+        Accessible.role: Accessible.Button
+        Accessible.name: text
+        Accessible.onPressAction: root.headerAction()
+        onClicked: {
+            root.pointerSelected()
+            root.headerAction()
+        }
     }
 
     Row {
@@ -488,7 +542,7 @@ FocusScope {
     Timer {
         interval: 30
         repeat: true
-        running: root.dragActive
+        running: root.moveMode && root.dragActive
         onTriggered: {
             const edge = Math.min(Metrics.scaled(64), listView.width / 4)
             const direction = root.dragPointerX < edge ? -1 : root.dragPointerX > listView.width - edge ? 1 : 0
@@ -516,7 +570,9 @@ FocusScope {
         clip: true
         orientation: ListView.Horizontal
         flickableDirection: Flickable.HorizontalFlick
+        acceptedButtons: Qt.LeftButton
         boundsBehavior: Flickable.StopAtBounds
+        interactive: !root.moveMode
         flickDeceleration: Metrics.flickDecelerationPx
         maximumFlickVelocity: Metrics.maximumFlickVelocityPx
         spacing: root.cardGap
@@ -556,9 +612,59 @@ FocusScope {
             onScrolled: root.verticalWheelScrolled(wheelHandler)
         }
 
+        Item {
+            objectName: "mediaRowPointerArea"
+            // Like GridPointerArea, observe taps passively on the viewport so
+            // Flickable retains the drag and cancels activation past threshold.
+            parent: listView
+            width: listView.width
+            height: listView.height
+            z: 3
+
+            TapHandler {
+                enabled: !root.moveMode
+                acceptedButtons: Qt.LeftButton | Qt.RightButton
+                gesturePolicy: TapHandler.DragThreshold
+                longPressThreshold: 0.52
+                property int pressedIndex: -1
+                property bool pressedWhileMoving: false
+                property bool held: false
+
+                onPressedChanged: {
+                    if (pressed) {
+                        held = false
+                        pressedWhileMoving = listView.moving
+                        pressedIndex = listView.indexAt(point.position.x + listView.contentX, point.position.y
+                                                        + listView.contentY)
+                    } else if (held && root.shell) {
+                        root.shell.finishItemMenuOpeningGesture()
+                    }
+                }
+                onTapped: (eventPoint, button) => {
+                    if (held || pressedWhileMoving || listView.moving || pressedIndex < 0)
+                        return
+                    root.pointerSelected()
+                    root.currentIndex = pressedIndex
+                    if (button === Qt.RightButton)
+                        root.openItemContext(pressedIndex, listView.itemAtIndex(pressedIndex))
+                    else
+                        root.activateIndex(pressedIndex)
+                }
+                onLongPressed: {
+                    if (pressedWhileMoving || listView.moving || pressedIndex < 0)
+                        return
+                    root.pointerSelected()
+                    root.currentIndex = pressedIndex
+                    held = root.openItemContext(pressedIndex, listView.itemAtIndex(pressedIndex), true)
+                }
+            }
+        }
+
         MouseArea {
             id: pointerArea
-            objectName: "mediaRowPointerArea"
+            objectName: "mediaRowMovePointerArea"
+            parent: listView
+            enabled: root.moveMode
             property bool gestureConsumed: false
             property bool menuHeld: false
             property real pressX: 0
@@ -567,7 +673,7 @@ FocusScope {
             z: 3
             acceptedButtons: Qt.LeftButton | Qt.RightButton
             pressAndHoldInterval: 520
-            preventStealing: root.dragActive
+            preventStealing: root.moveMode
             onPressed: mouse => {
                 gestureConsumed = false
                 menuHeld = false
@@ -576,7 +682,7 @@ FocusScope {
                 root.beginPointerSelection(listView.indexAt(mouse.x + listView.contentX, mouse.y + listView.contentY))
             }
             onPositionChanged: mouse => {
-                if (!(pressedButtons & Qt.LeftButton) || !root.reorderEnabled)
+                if (!(pressedButtons & Qt.LeftButton) || !root.moveMode)
                     return
                 const dx = Math.abs(mouse.x - pressX)
                 const dy = Math.abs(mouse.y - pressY)
@@ -613,12 +719,7 @@ FocusScope {
                 if (selectedIndex < 0)
                     return
                 if (mouse.button === Qt.RightButton) {
-                    if (root.reorderEnabled)
-                        root.beginMove(selectedIndex)
-                    else if (root.shell)
-                        root.openItemContext(selectedIndex, listView.itemAtIndex(selectedIndex))
-                    else
-                        root.activateIndex(selectedIndex)
+                    root.openItemContext(selectedIndex, listView.itemAtIndex(selectedIndex))
                 } else {
                     root.activateIndex(selectedIndex)
                 }
@@ -626,13 +727,9 @@ FocusScope {
             onPressAndHold: {
                 if (root.dragActive || root.pointerPressedIndex < 0)
                     return
-                if (root.reorderEnabled) {
-                    gestureConsumed = root.beginMove(root.pointerPressedIndex)
-                } else if (root.shell) {
-                    menuHeld = root.openItemContext(root.pointerPressedIndex, listView.itemAtIndex(
-                                                        root.pointerPressedIndex), true)
-                    gestureConsumed = menuHeld
-                }
+                menuHeld = root.openItemContext(root.pointerPressedIndex, listView.itemAtIndex(root.pointerPressedIndex),
+                                                true)
+                gestureConsumed = menuHeld
             }
         }
 

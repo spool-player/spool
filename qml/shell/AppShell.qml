@@ -397,8 +397,7 @@ KeyRouter {
     function defaultRoute() {
         if (!root.signedIn)
             return "addProvider"
-        return Providers.accounts.some(account => account.enabled && account.connectionState === "active") ? "home" :
-                                                                                                             "accounts"
+        return "home"
     }
 
     function restoreRecoveredRoute() {
@@ -793,6 +792,13 @@ KeyRouter {
         itemMenuLoaded = true
         return itemContextMenuLoader.item ? itemContextMenuLoader.item.openForItem(item || ({}), anchorItem || null,
                                                                                    context || ({})) : false
+    }
+
+    function openLibraryMenu(library, anchorItem, context) {
+        const options = Object.assign({}, context || ({}), {
+                                          "library": true
+                                      })
+        return openItemMenu(library || ({}), anchorItem, options)
     }
 
     function finishItemMenuOpeningGesture() {

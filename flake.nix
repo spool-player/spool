@@ -840,10 +840,13 @@
             buildOnly ? false,
             runTests ? false,
             localProviders ? false,
+            controlCli ? false,
             checkoutScript ? "",
           }:
             let
               runnerBinaryPath =
+                if controlCli then "${buildRoot}/" + (if pkgs.stdenv.hostPlatform.isDarwin then "run-install" else "install") + "/bin/spoolet"
+                else
                 if buildRoot == "" then binaryPath
                 else if pkgs.stdenv.hostPlatform.isDarwin
                 then "${buildRoot}/run-install/Spool.app/Contents/MacOS/Spool"
@@ -940,7 +943,7 @@
               fi
             elif [ ! -x "$BIN" ]; then
               echo "error: native app is not built: $BIN" >&2
-              echo "build it first with: nix run .#${if buildRoot == "" then "build" else "image-debug-build"}" >&2
+              echo "build it first with: nix run .#${if localProviders then "local-providers-build" else if buildRoot == "" then "build" else "image-debug-build"}" >&2
               exit 1
             fi
 
@@ -984,6 +987,12 @@
             buildBeforeRun = true;
             buildOnly = true;
             localProviders = true;
+          };
+          spooletRunner = makeRunner {
+            name = "spoolet";
+            buildRoot = localProviderBuildRoot;
+            localProviders = true;
+            controlCli = true;
           };
           localProviderIpkBuilder = makeRunner {
             name = "spool-local-providers-ipk";
@@ -1106,6 +1115,10 @@
           local-providers-ipk = {
             type = "app";
             program = "${localProviderIpkBuilder}/bin/spool-local-providers-ipk";
+          };
+          spoolet = {
+            type = "app";
+            program = "${spooletRunner}/bin/spoolet";
           };
 
           # Prefer an exact checkout build even after its source is committed.

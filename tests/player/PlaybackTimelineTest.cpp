@@ -42,11 +42,31 @@ void testSegments()
     expect(timeline.activeSegmentType().isEmpty(), "segment clears near its end");
 }
 
+void testStreamOrigin()
+{
+    PlaybackSession session;
+    session.timelineOriginTicks = 437'000'000;
+    session.runtimeTicks = 100 * 10'000'000LL;
+    PlaybackTimeline timeline;
+    timeline.setSession(session);
+    expect(std::abs(timeline.streamSeconds(43.7)) < 0.001, "server-resumed media needs no second resume seek");
+    expect(std::abs(timeline.sourceSeconds(2.0) - 45.7) < 0.001, "media samples report absolute source positions");
+    expect(std::abs(timeline.streamSeconds(60.0) - 16.3) < 0.001, "absolute seeks subtract the server origin");
+    expect(timeline.sourceDuration(56.3) == 100.0, "a resumed stream retains the full source runtime");
+    expect(!timeline.containsPosition(30.0) && timeline.containsPosition(43.7),
+        "a backwards seek outside a clipped stream must resolve again");
+    timeline.clear();
+    expect(timeline.sourceSeconds(2.0) == 2.0 && timeline.streamSeconds(60.0) == 60.0
+            && timeline.sourceDuration(100.0) == 100.0 && timeline.containsPosition(0.0),
+        "direct/full-timeline sessions and reset preserve ordinary media coordinates");
+}
+
 } // namespace
 
 SPOOL_TEST_MAIN("playback-timeline")
 {
     QCoreApplication application(argc, argv);
     testSegments();
+    testStreamOrigin();
     return failures == 0 ? 0 : 1;
 }

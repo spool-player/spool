@@ -99,6 +99,7 @@ export function createSource(config, host) {
             reason = args.reason; lastUsed = args.lastUsed; hadGrant = !!args.grant;
             host.emit('configuration', {token:'candidate-' + config.identity});
             host.emit('changed', {itemId:'private-change'});
+            if (config.activationFailure) throw new Error(config.activationFailure);
             if (args.reason !== 'linked' && args.reason !== 'family' && !(args.reason === 'startup' && args.lastUsed && config.automaticSignIn)) {
                 if (!args.answers) return {pick:{kind:'activationPin'}};
                 if (args.answers.pin !== '1234') throw new Error('invalid_pin');
@@ -169,6 +170,9 @@ SPOOL_TEST_MAIN("provider-activation")
         QPointer<ProviderUiContext> picker;
         int prompts = 0;
         int failures = 0;
+        QList<QPair<QString, bool>> selections;
+        QObject::connect(&registry, &ProviderRegistry::accountSelectionFinished,
+            [&](const QString& id, bool selected) { selections.append({ id, selected }); });
         QObject::connect(&registry, &ProviderRegistry::problem, [&](const QString&) { ++failures; });
         QStringList revoked;
         QObject::connect(&registry, &ProviderRegistry::componentRequested, [&](QObject *context) {
@@ -211,11 +215,11 @@ SPOOL_TEST_MAIN("provider-activation")
         const auto previous = saved(registry, b);
         const auto credential = saved(registry, a).configuration;
         const int revocations = revoked.size();
-        registry.startSetAside();
         require(!registry.sourceRunning(a) && !registry.sourceRunning(a2)
                 && failure(registry.callSource(a, "state")) == "source_unavailable"
                 && failure(registry.callExtension(a, "spool.settings-storage", "dataInfo")) == "unsupported_extension",
             "search and sync cannot implicitly activate another Home identity");
+        selections.clear();
         registry.useAccount(a);
         waitUntil([&] { return picker && !picker->closed(); }, "switch asks for a PIN");
         const QString privateId = picker->sourceId();
@@ -224,8 +228,14 @@ SPOOL_TEST_MAIN("provider-activation")
         require(failure(registry.callSource(privateId, "state")) == "source_unavailable"
                 && failure(registry.callSource(privateId, "activate")) == "action_unavailable",
             "even a private picker source ID cannot bypass the activation transaction");
+        require(row(registry, a).value("pendingEnabled").toBool()
+                && std::none_of(selections.begin(), selections.end(),
+                    [&](const auto& result) { return result.first == a && result.second; }),
+            "pending PIN never reports a completed successful selection");
         picker->close();
         waitUntil([&] { return row(registry, a).value("connectionState") == "locked"; }, "cancel settles locked");
+        require(!selections.isEmpty() && selections.back() == qMakePair(a, false),
+            "cancelled switch reports failure instead of navigating home");
         require(registry.sourceRunning(b) && saved(registry, b).lastUsed == previous.lastUsed
                 && saved(registry, a).configuration == credential && revoked.size() == revocations,
             "cancellation preserves previous active source, credentials and last-used selection");
@@ -242,6 +252,7 @@ SPOOL_TEST_MAIN("provider-activation")
         waitUntil([&] { return picker && !picker->closed(); }, "retry prompts afresh");
         picker->complete({ { "pin", "1234" } });
         waitUntil([&] { return registry.sourceRunning(a); }, "valid PIN commits");
+        require(selections.back() == qMakePair(a, true), "selection succeeds only after authorized publication");
         require(!registry.sourceRunning(b) && !registry.sourceRunning(a2),
             "only authorized selected identity becomes active");
         registry.useAccount(a2);
@@ -266,6 +277,13 @@ SPOOL_TEST_MAIN("provider-activation")
             [&] { return failures == beforeIdentityFailure + 1; }, "changed identity is rejected before publication");
         require(saved(registry, a2).configuration == stable && registry.sourceRunning(a2),
             "a saved account cannot become a different identity after activation");
+        const int beforeStaleFailure = failures;
+        registry.restartAccount(a2, { { "activationFailure", "http_401" } });
+        waitUntil([&] { return failures == beforeStaleFailure + 1; }, "stale credentials reject replacement");
+        require(row(registry, a2).value("needsSignIn").toBool()
+                && !row(registry, a2).value("errorText").toString().isEmpty()
+                && saved(registry, a2).configuration == stable && registry.sourceRunning(a2),
+            "failed authentication offers reconnect without committing candidate credentials or viewer");
         int optionNotifications = 0;
         auto *optionContext = qobject_cast<ProviderUiContext *>(registry.openSettings(a2));
         require(optionContext, "active sibling can open its provider screen");
@@ -314,15 +332,8 @@ SPOOL_TEST_MAIN("provider-activation")
         QPointer<ProviderUiContext> picker;
         QObject::connect(&registry, &ProviderRegistry::componentRequested,
             [&](QObject *value) { picker = qobject_cast<ProviderUiContext *>(value); });
-        registry.startSetAside();
-        waitUntil(
-            [&] {
-                return !saved(registry, b).activationFamily.isEmpty()
-                    && row(registry, b).value("connectionState") == "locked";
-            },
-            "legacy metadata is learned privately before search");
-        require(
-            !registry.sourceRunning(b) && prompts == 0, "old Home metadata cannot bypass activation through search");
+        require(!registry.sourceRunning(b) && prompts == 0,
+            "alternate Home profiles stay stopped and cannot expand search permissions");
         registry.useAccount(b);
         waitUntil(
             [&] { return picker && !picker->closed(); }, "automatic sign-in never bypasses explicit identity switch");
@@ -345,18 +356,19 @@ SPOOL_TEST_MAIN("provider-activation")
             ++prompts;
         });
         QCoro::waitFor(registry.restore());
-        waitUntil([&] { return picker && !picker->closed(); },
-            "protected last-used startup requires a PIN without automatic sign-in");
-        require(!registry.sourceRunning(a) && !registry.sourceRunning(a2),
-            "startup cannot publish protected catalogue before authorization");
-        picker->close();
         waitUntil(
             [&] {
                 return row(registry, a).value("connectionState") == "locked"
                     && row(registry, a2).value("connectionState") == "locked";
             },
-            "startup cancellation leaves all protected siblings locked");
-        require(prompts == 1, "only the last-used protected account prompts, not every server");
+            "protected startup quietly settles locked");
+        require(!registry.sourceRunning(a) && !registry.sourceRunning(a2) && prompts == 0,
+            "startup neither publishes protected media nor opens a profile/PIN chooser");
+        registry.useAccount(a2);
+        waitUntil([&] { return picker && !picker->closed(); }, "explicit profile selection requests the PIN");
+        picker->close();
+        waitUntil([&] { return row(registry, a2).value("connectionState") == "locked"; },
+            "explicit cancellation keeps protected media locked");
     }
     {
         std::atomic_int socketAttempts { 0 };
@@ -378,10 +390,22 @@ SPOOL_TEST_MAIN("provider-activation")
             revoked.append(id);
         });
         QCoro::waitFor(registry.restore());
-        waitUntil([&] { return picker && !picker->closed(); }, "startup requests authorization for teardown fixtures");
-        picker->complete({ { "pin", "1234" } });
-        waitUntil(
-            [&] { return registry.sourceRunning(a) && registry.sourceRunning(a2); }, "both saved servers activate");
+        const auto authorizeSaved = [&] {
+            waitUntil(
+                [&] {
+                    return row(registry, a).value("connectionState") == "locked"
+                        && row(registry, a2).value("connectionState") == "locked";
+                },
+                "background restore leaves protected viewers locked");
+            picker = nullptr;
+            registry.useAccount(a);
+            waitUntil([&] { return picker && !picker->closed(); }, "explicit viewer selection requests authorization");
+            picker->complete({ { "pin", "1234" } });
+            waitUntil([&] { return registry.sourceRunning(a); }, "selected server activates");
+            registry.useAccount(a2);
+            waitUntil([&] { return registry.sourceRunning(a2); }, "authorized same-viewer sibling activates");
+        };
+        authorizeSaved();
         const QPointer<Provider> previousSource = hub.source(a2);
         picker = nullptr;
         registry.restartAccount(a2);
@@ -396,13 +420,10 @@ SPOOL_TEST_MAIN("provider-activation")
             "successful same-identity replacement does not revoke local playback or sibling accounts");
         picker = nullptr;
         QCoro::waitFor(registry.install(package("fixture.activation", "1.1.0")));
-        waitUntil([&] { return picker && !picker->closed(); }, "module replacement obtains fresh authorization");
         require(revoked.count(a) == 1 && revoked.count(a2) == 1 && !registry.sourceRunning(a)
                 && !registry.sourceRunning(a2),
             "module replacement revokes every published identity server before leaving them locked");
-        picker->complete({ { "pin", "1234" } });
-        waitUntil([&] { return registry.sourceRunning(a) && registry.sourceRunning(a2); },
-            "replacement authorization succeeds");
+        authorizeSaved();
         require(!failure(registry.callSource(a2, "hang")).isEmpty(), "watchdog interrupts the stalled operation");
         waitUntil([&] { return revoked.count(a) == 2 && revoked.count(a2) == 2; },
             "watchdog revokes all published identity sources before stopping the module");
@@ -411,10 +432,7 @@ SPOOL_TEST_MAIN("provider-activation")
             "interrupted identity sources cannot supply old authenticated media");
         picker = nullptr;
         QCoro::waitFor(registry.install(package("fixture.activation", "1.2.0")));
-        waitUntil([&] { return picker && !picker->closed(); }, "new module generation cannot reuse interrupted proof");
-        picker->complete({ { "pin", "1234" } });
-        waitUntil([&] { return registry.sourceRunning(a) && registry.sourceRunning(a2); },
-            "fresh module generation activates");
+        authorizeSaved();
         const int authorizedPublications = publications;
         for (const bool missingDescription : { false, true }) {
             auto downgraded = package("fixture.activation", missingDescription ? "1.4.0" : "1.3.0");
@@ -449,10 +467,7 @@ export function createSource(config, host) {
         }
         picker = nullptr;
         QCoro::waitFor(registry.install(package("fixture.activation", "1.5.0")));
-        waitUntil([&] { return picker && !picker->closed(); }, "restored activation capability requires a new PIN");
-        picker->complete({ { "pin", "1234" } });
-        waitUntil([&] { return registry.sourceRunning(a) && registry.sourceRunning(a2); },
-            "capability restoration reauthorizes saved identities");
+        authorizeSaved();
         QCoro::waitFor(registry.uninstall("fixture.activation"));
         require(revoked.count(a) == 4 && revoked.count(a2) == 4 && !hub.source(a) && !hub.source(a2),
             "uninstall revokes published identities before removing their source and account metadata");

@@ -1,6 +1,7 @@
 #include "../CredentialStore.h"
 #include "../common/CredentialStoreFileBackend.h"
 
+#include <QDebug>
 #include <QProcess>
 
 namespace Spool::CredentialStore {
@@ -17,14 +18,20 @@ namespace {
         process.setProgram(QStringLiteral("secret-tool"));
         process.setArguments(arguments);
         process.start();
-        if (!process.waitForStarted(3000))
+        if (!process.waitForStarted(3000)) {
+            qWarning() << "credential store: secret-tool could not start; check the Linux runtime prerequisites";
             return {};
+        }
         if (!input.isEmpty()) {
             process.write(input);
             process.closeWriteChannel();
         }
-        if (!process.waitForFinished(10000))
+        if (!process.waitForFinished(10000)) {
+            qWarning() << "credential store: secret-tool timed out";
+            process.kill();
+            process.waitForFinished();
             return {};
+        }
         return { process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0,
             process.readAllStandardOutput() };
     }

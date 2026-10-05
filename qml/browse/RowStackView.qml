@@ -17,7 +17,7 @@ import "../primitives/ModelAccess.js" as ModelAccess
 //
 // Sections are plain descriptors, so a caller can build them from anything:
 //   { key, title, model, kind, useSeriesPoster, preferEpisodeTitle,
-//     contextSource, moveItem (optional callback taking from/to indices) }
+//     contextSource, moveItem, contextMenu, headerAction, headerActionText }
 FocusScope {
     id: root
 
@@ -70,9 +70,10 @@ FocusScope {
     function isPopulated(index) {
         const row = rowAt(index)
         if (row)
-            return row.count > 0
+            return row.rowVisible && (row.count > 0 || row.hasHeaderAction)
         const section = sectionAt(index)
-        return Boolean(section) && ModelAccess.count(section.model) > 0
+        return Boolean(section) && section.enabled !== false && (ModelAccess.count(section.model) > 0 || typeof section.headerAction
+                                                                 === "function")
     }
 
     function nextPopulated(start, direction) {
@@ -292,6 +293,11 @@ FocusScope {
             cardBadge: modelData.cardBadge || null
             focusVisible: root.navigationFocusVisible
             moveItem: modelData.moveItem || null
+            contextMenu: modelData.contextMenu || null
+            headerAction: modelData.headerAction || null
+            headerActionText: String(modelData.headerActionText || "")
+            onCountChanged: Qt.callLater(root.repair)
+            onHasHeaderActionChanged: Qt.callLater(root.repair)
             // This view is already inset by its host; use its usable width.
             cardWidth: Math.round(Metrics.rowCardWidth(root.width) * (cardKind === "poster" || cardKind === "square"
                                                                       ? 1 : Metrics.landscapeCardRatio))

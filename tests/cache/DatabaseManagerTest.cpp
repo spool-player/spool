@@ -283,6 +283,8 @@ SPOOL_TEST_MAIN("database-manager")
             && QCoro::waitFor(resetState.loadSettingAsync(QStringLiteral("batch/first"))).isEmpty(),
         "unreadable durable state should restart empty");
     resetState.shutdown();
+    require(CredentialStore::load(QStringLiteral("profile")) == legacyToken,
+        "durable-state recovery must not erase credentials from the independent credential store");
     require(QDir(directory.path()).entryList({ QStringLiteral("state.sqlite.corrupt-*") }, QDir::Files).size() == 1,
         "future durable state should be preserved as a diagnostic backup");
 

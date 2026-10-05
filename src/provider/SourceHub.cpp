@@ -462,8 +462,6 @@ void SourceHub::addSource(Provider *provider)
         refresh();
     });
     connect(provider, &Provider::contentChanged, this, [this, accountId](const QString& itemId) {
-        if (itemId.isEmpty())
-            m_access.remove(accountId);
         emit contentChanged(itemId.isEmpty() ? QString() : scoped(accountId, itemId));
     });
     connect(provider, &Provider::sourceEvent, this, [this, accountId](const QString& type, const QVariantMap& payload) {
@@ -513,7 +511,6 @@ void SourceHub::removeSource(const QString& accountId)
         m_playbackAccount.clear();
         emit m_playback->credentialsChanged();
     }
-    m_access.remove(accountId);
     if (entry.browse) {
         emit browseSourcesChanged();
         refresh();
@@ -1278,112 +1275,25 @@ QCoro::Task<std::vector<MovieItem>> SourceHub::fetchItemsByIds(QStringList itemI
     co_return ordered;
 }
 
-void SourceHub::prepareSearch()
-{
-    m_registry->startSetAside();
-}
-
-QCoro::Task<std::optional<QSet<QString>>> SourceHub::accessOf(QString accountId)
-{
-    if (const auto cached = m_access.constFind(accountId); cached != m_access.cend())
-        co_return *cached;
-    Provider *provider = source(accountId);
-    if (!provider)
-        co_return std::nullopt;
-    try {
-        QSet<QString> ids;
-        for (const LibraryItem& library : co_await provider->catalog()->fetchLibraries())
-            ids.insert(library.id);
-        m_access.insert(accountId, ids);
-        co_return ids;
-    } catch (const std::exception& error) {
-        qWarning() << "hub:" << accountId.left(kPrefix) << "libraries unknown for search:" << error.what();
-    }
-    co_return std::nullopt;
-}
-
 QCoro::Task<std::vector<SourceHub::SearchTarget>> SourceHub::searchPlan()
 {
-    struct Candidate {
-        QString accountId;
-        bool active = false;
-        qint64 lastUsed = 0;
-    };
-    // Accounts are grouped by provider and server; a set-aside account is
-    // only considered while another user of its server is in use.
-    QHash<QString, std::vector<Candidate>> servers;
-    QStringList order;
+    // Search the same viewers as Home. Saved alternate profiles are not a
+    // permission union: a restricted viewer must not search an adult's libraries.
+    std::vector<SearchTarget> plan;
     const auto& accounts = m_registry->accountList();
     for (const Entry& entry : std::as_const(m_entries)) {
-        if (!entry.provider || !entry.provider->search())
+        if (!entry.browse || !entry.provider || !entry.provider->search())
             continue;
         const auto account
             = std::find_if(accounts.begin(), accounts.end(), [&](const auto& a) { return a.id == entry.accountId; });
         const QString server = account == accounts.end() || account->group.isEmpty()
             ? entry.accountId
             : account->module + QLatin1Char('/') + account->group;
-        if (!servers.contains(server))
-            order.append(server);
-        servers[server].push_back({ entry.accountId, entry.browse, account == accounts.end() ? 0 : account->lastUsed });
+        plan.push_back({ entry.accountId, server });
     }
-    order.sort();
-
-    std::vector<SearchTarget> plan;
-    for (const QString& server : std::as_const(order)) {
-        std::vector<Candidate> candidates = servers.value(server);
-        if (std::none_of(candidates.begin(), candidates.end(), [](const Candidate& c) { return c.active; }))
-            continue;
-        if (candidates.size() == 1) {
-            plan.push_back({ candidates.front().accountId, server });
-            continue;
-        }
-        std::stable_sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
-            return std::tie(b.active, b.lastUsed) < std::tie(a.active, a.lastUsed);
-        });
-        // Asked of every candidate at once; cached until the server changes.
-        std::vector<QCoro::Task<std::optional<QSet<QString>>>> pending;
-        for (const Candidate& candidate : candidates)
-            pending.push_back(accessOf(candidate.accountId));
-        std::vector<std::optional<QSet<QString>>> access;
-        for (auto& task : pending)
-            access.push_back(co_await std::move(task));
-
-        QSet<QString> uncovered;
-        for (const auto& libraries : access) {
-            if (libraries)
-                uncovered.unite(*libraries);
-        }
-        std::vector<bool> chosen(candidates.size(), false);
-        // An account in use whose libraries could not be read still searches:
-        // nothing can be said to cover it.
-        for (size_t index = 0; index < candidates.size(); ++index)
-            chosen[index] = candidates[index].active && !access[index];
-        // Greedy cover: the account adding the most unseen libraries next,
-        // the one in use first among equals.
-        while (!uncovered.isEmpty()) {
-            size_t best = candidates.size();
-            qsizetype bestGain = 0;
-            for (size_t index = 0; index < candidates.size(); ++index) {
-                if (chosen[index] || !access[index])
-                    continue;
-                const qsizetype gain = QSet<QString>(*access[index]).intersect(uncovered).size();
-                if (gain > bestGain) {
-                    best = index;
-                    bestGain = gain;
-                }
-            }
-            if (best == candidates.size())
-                break;
-            chosen[best] = true;
-            uncovered.subtract(*access[best]);
-        }
-        if (std::none_of(chosen.begin(), chosen.end(), [](bool c) { return c; }))
-            chosen.front() = true;
-        for (size_t index = 0; index < candidates.size(); ++index) {
-            if (chosen[index])
-                plan.push_back({ candidates[index].accountId, server });
-        }
-    }
+    std::sort(plan.begin(), plan.end(), [](const SearchTarget& a, const SearchTarget& b) {
+        return std::tie(a.server, a.accountId) < std::tie(b.server, b.accountId);
+    });
     co_return plan;
 }
 

@@ -151,10 +151,6 @@ public:
     QCoro::Task<QVariantMap> pick(QString accountId, QVariantMap arguments);
     Q_INVOKABLE QUrl componentUrl(const QString& moduleId, const QString& role) const;
     Q_INVOKABLE void useAccount(const QString& accountId);
-    // Starts the accounts set aside for another user of the same server, so
-    // search can reach libraries the account in use cannot. They stay out of
-    // browsing; SourceHub decides which of them a search needs.
-    void startSetAside();
     Q_INVOKABLE void setAccountEnabled(const QString& accountId, bool enabled);
     Q_INVOKABLE void removeAccount(const QString& accountId);
 
@@ -184,6 +180,8 @@ signals:
     void accountIdentityRevoked(const QString& accountId);
     void activationConfigurationChanged(const QString& accountId);
     void accountAdded(const QString& accountId);
+    // Selection has committed or settled without changing the viewer.
+    void accountSelectionFinished(const QString& accountId, bool selected);
     void problem(const QString& message);
     // A provider component the shell should mount now (a picker).
     void componentRequested(QObject *context);
@@ -276,6 +274,10 @@ private:
     QString m_consentSource;
     QString m_consentScope;
     QSet<QString> m_failedAccounts;
+    QHash<QString, QString> m_accountErrors;
+    // Scripted accounts whose stored configuration is not a valid JSON object,
+    // rather than accounts whose valid configuration happens to be empty.
+    QSet<QString> m_unavailableConfigurations;
     bool m_restored = false;
     QStringList m_removedAccounts;
     QSet<QString> m_expired;

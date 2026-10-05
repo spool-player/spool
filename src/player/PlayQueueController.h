@@ -141,6 +141,8 @@ public:
     // Queue a whole season or series in one go, either next or at the end.
     bool addToQueue(const std::vector<MovieItem>& items, bool next);
     void enqueueEpisodeSuccessors(const MovieItem& episode);
+    void cancelEpisodeSuccessors();
+    MovieItem nextUnplayedEpisode(const MovieItem& episode) const;
     bool updateResumeTicks(const QString& itemId, qint64 resumeTicks);
     bool updatePeople(const QString& itemId, const QList<PersonItem>& people);
 
@@ -148,7 +150,7 @@ signals:
     void queueChanged();
     void currentIndexChanged();
 
-    void successorPlaybackReady();
+    void successorLookupFinished(bool ready);
 
 private:
     static bool isQueueable(const MovieItem& item);
@@ -166,6 +168,8 @@ private:
     std::vector<int> m_order;
     int m_orderIndex = -1;
     bool m_shuffled = false;
+    quint64 m_successorGeneration = 0;
+    QString m_successorItemId;
 };
 
 } // namespace Spool

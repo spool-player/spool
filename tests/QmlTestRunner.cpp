@@ -1,3 +1,5 @@
+#include "app/ArtworkService.h"
+#include "app/TrickplayPreviewItem.h"
 #include "diagnostics/InputLatencyMonitor.h"
 #include "platform/PlatformCapabilities.h"
 
@@ -48,13 +50,19 @@ public slots:
         m_platform->insert(QStringLiteral("supportsMpvConfig"), capabilities.supportsMpvConfig);
         m_platform->insert(QStringLiteral("usesPerOutputAudioDelay"), capabilities.usesPerOutputAudioDelay);
         qmlRegisterSingletonInstance("Spool", 1, 0, "Platform", m_platform);
+        qmlRegisterType<Spool::TrickplayPreviewItem>("Spool", 1, 0, "TrickplayPreviewItem");
         if (qEnvironmentVariableIsSet("SPOOL_ARTWORK_INTEGRATION"))
             m_artwork = std::make_unique<ArtworkIntegration>();
+        else {
+            m_componentArtwork = std::make_unique<Spool::ArtworkService>(m_settings.path(), 0, 1024 * 1024, 1, nullptr);
+            qmlRegisterSingletonInstance("Spool", 1, 0, "Art", m_componentArtwork.get());
+        }
     }
 
 private:
     ExtensionIntegration *m_integration = nullptr;
     std::unique_ptr<ArtworkIntegration> m_artwork;
+    std::unique_ptr<Spool::ArtworkService> m_componentArtwork;
     QQmlPropertyMap *m_platform = QQmlPropertyMap::create(this);
     QTemporaryDir m_settings;
     Spool::InputLatencyMonitor *m_latency = nullptr;

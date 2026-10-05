@@ -204,7 +204,7 @@ FocusScope {
                     icon: "search"
                 },
                 {
-                    label: "Accounts",
+                    label: "Profiles & servers",
                     route: "accounts",
                     icon: "switch_account"
                 },

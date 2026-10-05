@@ -327,6 +327,7 @@ void PlayerController::teardownMpv(bool async)
     releaseMpvKeys();
     ++m_mpvTeardownGeneration;
     Diagnostics::Phase phase(QStringLiteral("shutdown"), QStringLiteral("player_teardown_mpv"));
+    ++m_mpvEventGeneration;
     m_idleMpvPreparationEnabled = false;
     m_idleMpvPreparationScheduled = false;
     destroyIdleMpv("teardown");
@@ -1108,7 +1109,8 @@ bool PlayerController::ensureMpv(bool needsVideoSurface, bool embeddedVideo)
 
     m_embeddedVideoOutput = needsVideoSurface && embeddedVideo;
     m_activeUserMpvConfig = usesUserMpvConfig();
-    if (!m_mpvLifecycle.adopt(handle, [this](mpv_event *event) { handleMpvEvent(event); })) {
+    const quint64 generation = ++m_mpvEventGeneration;
+    if (!m_mpvLifecycle.adopt(handle, [this, generation](mpv_event *event) { handleMpvEvent(event, generation); })) {
         if (needsVideoSurface)
             releasePlatformMpvSurface(m_embeddedVideoOutput);
         m_embeddedVideoOutput = false;
@@ -1284,8 +1286,7 @@ void PlayerController::play(const PlaybackSession& session, bool startPaused)
     }
 
     const QByteArray urlBytes = session.url.toUtf8();
-    const QByteArray header = m_api ? m_api->mediaRequestHeaders() : QByteArray {};
-    if (!setRequiredMpvProperty(handle, "http-header-fields", header.constData())) {
+    if (!MpvOptionProfile::applyRequestHeaders(handle, m_api ? m_api->mediaRequestHeaders() : QByteArray {})) {
         m_mpvLifecycle.cancelFileLoad();
         m_errorText = QStringLiteral("libmpv rejected the authenticated media request.");
         stopProgressReporting(true);
@@ -1324,15 +1325,16 @@ void PlayerController::play(const PlaybackSession& session, bool startPaused)
             }
         }
     }
-    if (startSeconds > 0.0) {
-        const QByteArray startValue = QByteArray::number(startSeconds, 'f', 3);
+    const double streamStartSeconds = m_timeline.streamSeconds(startSeconds);
+    if (streamStartSeconds >= 0.001) {
+        const QByteArray startValue = QByteArray::number(streamStartSeconds, 'f', 3);
         if (!setOption(handle, "start", startValue.constData())) {
             m_mpvLifecycle.cancelFileLoad();
             m_errorText = QStringLiteral("libmpv rejected the resume position.");
             stopProgressReporting(true);
             return;
         }
-        qInfo() << "player: instructing mpv to start at resume position seconds=" << startSeconds;
+        qInfo() << "player: resume source seconds=" << startSeconds << "stream seconds=" << streamStartSeconds;
     }
     const QByteArray loadFileOptions = MpvOptionProfile::loadFileOptions(session);
     const char *loadCommand[] = { "loadfile", urlBytes.constData(), "replace", "-1",
@@ -1674,6 +1676,7 @@ void PlayerController::stopWithReason(const QString& reason)
     Diagnostics::Task task(QStringLiteral("player_stop"),
         { { QStringLiteral("reason"), reason }, { QStringLiteral("sessionActive"), m_sessionActive } });
     qInfo() << "player: stop requested" << reason << "sessionActive" << m_sessionActive;
+    emit stopRequested();
     if (!m_sessionActive)
         return;
 
@@ -2090,7 +2093,8 @@ bool PlayerController::mpvCommand(QByteArrayList command)
 
 QByteArrayList PlayerController::buildSeekCommand(double targetSeconds, const QByteArray& flags) const
 {
-    return { QByteArrayLiteral("no-osd"), QByteArrayLiteral("seek"), QByteArray::number(targetSeconds, 'f', 3), flags };
+    return { QByteArrayLiteral("no-osd"), QByteArrayLiteral("seek"),
+        QByteArray::number(m_timeline.streamSeconds(targetSeconds), 'f', 3), flags };
 }
 
 bool PlayerController::beginSeekCommand(double targetSeconds, const QByteArray& flags)
@@ -2099,6 +2103,10 @@ bool PlayerController::beginSeekCommand(double targetSeconds, const QByteArray& 
         return false;
 
     const double clampedTarget = clampedPosition(targetSeconds);
+    if (!m_timeline.containsPosition(clampedTarget)) {
+        emit playbackSeekOutsideStream(m_session.itemId, secondsToTicks(clampedTarget));
+        return true;
+    }
     m_seeking = true;
     // A seek waiting for its first dispatch is re-aimed rather than counted
     // again: only one command is going out, so only one restart comes back.
@@ -2163,15 +2171,15 @@ void PlayerController::flushPendingSeek()
     notifyPlaybackStateChanged();
 }
 
-void PlayerController::handleMpvEvent(mpv_event *event)
+void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation)
 {
     if (!event)
         return;
 
     switch (event->event_id) {
     case MPV_EVENT_FILE_LOADED:
-        m_mpvLifecycle.completeFileLoad();
-        QMetaObject::invokeMethod(this, [this]() {
+        postMpvEvent(generation, [this]() {
+            m_mpvLifecycle.completeFileLoad();
             qInfo() << "player: file loaded";
             m_fileLoaded = true;
             logColorDiagnostics(m_mpvLifecycle.handle());
@@ -2196,7 +2204,7 @@ void PlayerController::handleMpvEvent(mpv_event *event)
         });
         break;
     case MPV_EVENT_PLAYBACK_RESTART:
-        QMetaObject::invokeMethod(this, [this]() {
+        postMpvEvent(generation, [this]() {
             qInfo() << "player: playback restart";
             logColorDiagnostics(m_mpvLifecycle.handle());
             const bool hadPendingSeek = m_pendingSeek;
@@ -2231,7 +2239,7 @@ void PlayerController::handleMpvEvent(mpv_event *event)
             break;
 
         const double seconds = *static_cast<double *>(property->data);
-        QMetaObject::invokeMethod(this, [this, seconds]() { setPositionSeconds(seconds); });
+        postMpvEvent(generation, [this, seconds]() { setPositionSeconds(seconds); });
         break;
     }
     case MPV_EVENT_PROPERTY_CHANGE: {
@@ -2241,7 +2249,7 @@ void PlayerController::handleMpvEvent(mpv_event *event)
 
         if (strcmp(property->name, "pause") == 0 && property->format == MPV_FORMAT_FLAG) {
             const bool paused = *static_cast<int *>(property->data);
-            QMetaObject::invokeMethod(this, [this, paused]() {
+            postMpvEvent(generation, [this, paused]() {
                 if (m_paused != paused)
                     qInfo() << "player: pause state changed" << paused;
                 m_paused = paused;
@@ -2251,7 +2259,7 @@ void PlayerController::handleMpvEvent(mpv_event *event)
             });
         } else if (strcmp(property->name, "paused-for-cache") == 0 && property->format == MPV_FORMAT_FLAG) {
             const bool buffering = *static_cast<int *>(property->data);
-            QMetaObject::invokeMethod(this, [this, buffering]() {
+            postMpvEvent(generation, [this, buffering]() {
                 m_buffering = buffering;
                 if (!buffering)
                     m_bufferingPercent = 0;
@@ -2259,13 +2267,13 @@ void PlayerController::handleMpvEvent(mpv_event *event)
             });
         } else if (strcmp(property->name, "cache-buffering-state") == 0 && property->format == MPV_FORMAT_INT64) {
             const auto percent = static_cast<int>(*static_cast<int64_t *>(property->data));
-            QMetaObject::invokeMethod(this, [this, percent]() {
+            postMpvEvent(generation, [this, percent]() {
                 m_bufferingPercent = percent;
                 notifyPlaybackStateChanged();
             });
         } else if (strcmp(property->name, "vo-delayed-frame-count") == 0 && property->format == MPV_FORMAT_INT64) {
             const qint64 count = *static_cast<int64_t *>(property->data);
-            QMetaObject::invokeMethod(this, [this, count]() {
+            postMpvEvent(generation, [this, count]() {
                 if (m_delayedFrames == count)
                     return;
                 m_delayedFrames = count;
@@ -2275,7 +2283,7 @@ void PlayerController::handleMpvEvent(mpv_event *event)
             && property->format == MPV_FORMAT_DOUBLE) {
             const bool container = strcmp(property->name, "container-fps") == 0;
             const double fps = *static_cast<double *>(property->data);
-            QMetaObject::invokeMethod(this, [this, container, fps]() {
+            postMpvEvent(generation, [this, container, fps]() {
                 double& current = container ? m_containerFps : m_outputFps;
                 if (qFuzzyCompare(current, fps))
                     return;
@@ -2287,7 +2295,7 @@ void PlayerController::handleMpvEvent(mpv_event *event)
             && property->format == MPV_FORMAT_INT64) {
             const bool decoder = strcmp(property->name, "decoder-frame-drop-count") == 0;
             const qint64 count = *static_cast<int64_t *>(property->data);
-            QMetaObject::invokeMethod(this, [this, decoder, count]() {
+            postMpvEvent(generation, [this, decoder, count]() {
                 qint64& current = decoder ? m_decoderDroppedFrames : m_outputDroppedFrames;
                 if (current == count)
                     return;
@@ -2296,7 +2304,7 @@ void PlayerController::handleMpvEvent(mpv_event *event)
             });
         } else if (strcmp(property->name, "seeking") == 0 && property->format == MPV_FORMAT_FLAG) {
             const bool seeking = *static_cast<int *>(property->data);
-            QMetaObject::invokeMethod(this, [this, seeking]() {
+            postMpvEvent(generation, [this, seeking]() {
                 m_seeking = seeking;
                 // mpv can clear this before it restarts playback. The seek is
                 // not settled until the restart, so the watchdog stays armed.
@@ -2308,18 +2316,18 @@ void PlayerController::handleMpvEvent(mpv_event *event)
             });
         } else if (strcmp(property->name, "time-pos") == 0 && property->format == MPV_FORMAT_DOUBLE) {
             const double seconds = *static_cast<double *>(property->data);
-            QMetaObject::invokeMethod(this, [this, seconds]() { setPositionSeconds(seconds); });
+            postMpvEvent(generation, [this, seconds]() { setPositionSeconds(seconds); });
         } else if (strcmp(property->name, "duration") == 0 && property->format == MPV_FORMAT_DOUBLE) {
             const double seconds = *static_cast<double *>(property->data);
-            QMetaObject::invokeMethod(this, [this, seconds]() {
-                m_positionTracker.setDuration(seconds);
+            postMpvEvent(generation, [this, seconds]() {
+                m_positionTracker.setDuration(m_timeline.sourceDuration(seconds));
                 if (m_timeline.updatePosition(m_positionTracker.position()))
                     emit segmentsChanged();
                 emit positionChanged();
             });
         } else if (strcmp(property->name, "volume") == 0 && property->format == MPV_FORMAT_DOUBLE) {
             const auto volume = static_cast<int>(std::round(*static_cast<double *>(property->data)));
-            QMetaObject::invokeMethod(this, [this, volume]() {
+            postMpvEvent(generation, [this, volume]() {
                 const int clampedVolume = qBound(0, volume, 100);
                 if (m_volume.load() == clampedVolume)
                     return;
@@ -2328,13 +2336,13 @@ void PlayerController::handleMpvEvent(mpv_event *event)
             });
         } else if (strcmp(property->name, "fullscreen") == 0 && property->format == MPV_FORMAT_FLAG) {
             const bool fullscreen = *static_cast<int *>(property->data);
-            QMetaObject::invokeMethod(this, [this, fullscreen]() {
+            postMpvEvent(generation, [this, fullscreen]() {
                 if (m_window && m_window->fullScreen() != fullscreen)
                     m_window->toggleFullScreen();
             });
         } else if (strcmp(property->name, "speed") == 0 && property->format == MPV_FORMAT_DOUBLE) {
             const double speed = *static_cast<double *>(property->data);
-            QMetaObject::invokeMethod(this, [this, speed]() {
+            postMpvEvent(generation, [this, speed]() {
                 if (!m_syncPlaybackSpeedActive && !qFuzzyCompare(m_playbackSpeed, speed)) {
                     m_playbackSpeed = speed;
                     emit playbackSpeedChanged();
@@ -2343,7 +2351,7 @@ void PlayerController::handleMpvEvent(mpv_event *event)
             });
         } else if (strcmp(property->name, "mute") == 0 && property->format == MPV_FORMAT_FLAG) {
             const bool muted = *static_cast<int *>(property->data);
-            QMetaObject::invokeMethod(this, [this, muted]() {
+            postMpvEvent(generation, [this, muted]() {
                 if (m_muted.exchange(muted) != muted)
                     emit volumeChanged();
             });
@@ -2356,7 +2364,7 @@ void PlayerController::handleMpvEvent(mpv_event *event)
         } else if (strcmp(property->name, "hwdec-current") == 0 && property->format == MPV_FORMAT_STRING) {
             const auto *decoder = static_cast<char **>(property->data);
             const QByteArray decoderName(decoder && *decoder ? *decoder : "");
-            QMetaObject::invokeMethod(this, [decoderName]() {
+            postMpvEvent(generation, [decoderName]() {
                 qInfo() << "player: hardware decoder"
                         << (decoderName.isEmpty() ? QByteArrayLiteral("none") : decoderName);
             });
@@ -2364,7 +2372,7 @@ void PlayerController::handleMpvEvent(mpv_event *event)
             && property->format == MPV_FORMAT_INT64) {
             const bool isWidth = strcmp(property->name, "dwidth") == 0;
             const auto value = static_cast<int>(*static_cast<int64_t *>(property->data));
-            QMetaObject::invokeMethod(this, [this, isWidth, value]() {
+            postMpvEvent(generation, [this, isWidth, value]() {
                 (isWidth ? m_videoWidth : m_videoHeight) = value;
                 if (m_videoWidth > 0 && m_videoHeight > 0)
                     platformVideoSizeChanged(m_videoWidth, m_videoHeight);
@@ -2372,7 +2380,7 @@ void PlayerController::handleMpvEvent(mpv_event *event)
         } else if (strcmp(property->name, "video-params/transfer") == 0 && property->format == MPV_FORMAT_STRING) {
             const auto *transferValue = static_cast<char **>(property->data);
             const QByteArray transfer(transferValue && *transferValue ? *transferValue : "");
-            QMetaObject::invokeMethod(this, [this, transfer]() {
+            postMpvEvent(generation, [this, transfer]() {
                 m_hdrInput = MpvOptionProfile::isHdrTransfer(transfer);
                 if (m_starfishVideoOutput)
                     updateHdrOutput(true);
@@ -2382,7 +2390,7 @@ void PlayerController::handleMpvEvent(mpv_event *event)
             && property->format == MPV_FORMAT_STRING) {
             const auto *transferValue = static_cast<char **>(property->data);
             const QByteArray transfer(transferValue && *transferValue ? *transferValue : "");
-            QMetaObject::invokeMethod(this, [this, transfer]() {
+            postMpvEvent(generation, [this, transfer]() {
                 m_targetTransfer = transfer;
                 if (!m_starfishVideoOutput)
                     updateHdrOutput(true);
@@ -2392,7 +2400,7 @@ void PlayerController::handleMpvEvent(mpv_event *event)
         } else if (strcmp(property->name, "track-list") == 0 && property->format == MPV_FORMAT_NODE) {
             const auto *node = static_cast<mpv_node *>(property->data);
             const ParsedPlaybackTracks tracks = PlaybackTrackParser::parseTracks(node);
-            QMetaObject::invokeMethod(this, [this, tracks]() {
+            postMpvEvent(generation, [this, tracks]() {
                 m_tracks.applyParsedTracks(tracks);
                 if (m_restoreStreamSelection) {
                     const int audioStreamIndex = m_session.audioStreamIndex;
@@ -2420,15 +2428,23 @@ void PlayerController::handleMpvEvent(mpv_event *event)
             });
         } else if (strcmp(property->name, "chapter-list") == 0 && property->format == MPV_FORMAT_NODE) {
             const auto *node = static_cast<mpv_node *>(property->data);
-            const QVariantList chapters = PlaybackTrackParser::parseChapters(node);
-            QMetaObject::invokeMethod(this, [this, chapters]() {
+            QVariantList chapters = PlaybackTrackParser::parseChapters(node);
+            postMpvEvent(generation, [this, chapters]() mutable {
+                if (m_session.timelineOriginTicks > 0) {
+                    for (QVariant& chapter : chapters) {
+                        QVariantMap row = chapter.toMap();
+                        row.insert(QStringLiteral("start"),
+                            m_timeline.sourceSeconds(row.value(QStringLiteral("start")).toDouble()));
+                        chapter = row;
+                    }
+                }
                 m_tracks.setChapters(chapters);
                 qInfo() << "player: chapters" << chapters.size();
                 emit chaptersChanged();
             });
         } else if (strcmp(property->name, "chapter") == 0 && property->format == MPV_FORMAT_INT64) {
             const int chapter = static_cast<int>(*static_cast<int64_t *>(property->data));
-            QMetaObject::invokeMethod(this, [this, chapter]() {
+            postMpvEvent(generation, [this, chapter]() {
                 if (m_tracks.setCurrentChapter(chapter))
                     emit chaptersChanged();
             });
@@ -2440,13 +2456,13 @@ void PlayerController::handleMpvEvent(mpv_event *event)
         const bool failed = endFile && endFile->error < 0;
         const int endFileReason = endFile ? endFile->reason : -1;
         const int endFileError = endFile ? endFile->error : 0;
-        const bool failedBeforeLoad = failed && !m_fileLoaded;
         // A fresh mpv core is created for every play request, so an END_FILE
         // while loading belongs to this request. Clear the pending marker on
         // both success and failure; otherwise a failed manifest stays stuck in
         // the preparing state forever.
-        m_mpvLifecycle.cancelFileLoad();
-        QMetaObject::invokeMethod(this, [this, failed, failedBeforeLoad, endFileReason, endFileError]() {
+        postMpvEvent(generation, [this, failed, endFileReason, endFileError]() {
+            const bool failedBeforeLoad = failed && !m_fileLoaded;
+            m_mpvLifecycle.cancelFileLoad();
             const double positionSeconds = m_positionTracker.position();
             const double durationSeconds = m_positionTracker.duration();
             const auto fileEnd
@@ -2474,6 +2490,9 @@ void PlayerController::handleMpvEvent(mpv_event *event)
             const bool retryableCodecFailure
                 = PlaybackFailurePolicy::isRetryableCodecFailure(m_session.playMethod, failedBeforeLoad, endFileError);
             const double startSeconds = static_cast<double>(m_session.startTimeTicks) / 10000000.0;
+            // playbackStopped may synchronously start the successor. Schedule
+            // against the ending core before emitting it, never its replacement.
+            scheduleMpvTeardown();
             stopProgressReporting(failed, completed);
             if (interrupted) {
                 emit playbackInterrupted(failedItemId, failedPositionTicks,
@@ -2483,17 +2502,16 @@ void PlayerController::handleMpvEvent(mpv_event *event)
                 emit playbackLoadFailed(failedItemId, failedPositionTicks, failureMessage, retryableCodecFailure,
                     audioStreamIndex, subtitleStreamIndex);
             }
-            scheduleMpvTeardown();
         });
         break;
     }
     case MPV_EVENT_SHUTDOWN:
-        m_mpvLifecycle.requestEventLoopStop();
-        QMetaObject::invokeMethod(this, [this]() {
+        postMpvEvent(generation, [this]() {
+            m_mpvLifecycle.requestEventLoopStop();
             qInfo() << "player: mpv shutdown";
+            scheduleMpvTeardown();
             if (m_sessionActive)
                 stopProgressReporting(false);
-            scheduleMpvTeardown();
         });
         break;
     case MPV_EVENT_LOG_MESSAGE: {
@@ -2570,7 +2588,7 @@ void PlayerController::setPositionSeconds(double seconds, bool notifySegments)
     if (!m_fileLoaded)
         return;
 
-    if (!m_positionTracker.update(seconds))
+    if (!m_positionTracker.update(m_timeline.sourceSeconds(seconds)))
         return;
 
     const bool segmentChanged = m_timeline.updatePosition(m_positionTracker.position());

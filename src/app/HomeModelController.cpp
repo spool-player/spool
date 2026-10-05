@@ -210,8 +210,11 @@ bool HomeModelController::applyCachedPayload(const QJsonObject& payload)
             sections.push_back(std::move(section));
     }
 
-    m_resumeItems.setMovies(movieArrayFromJson(payload.value(QStringLiteral("resumeItems")).toArray()));
-    m_nextUpItems.setMovies(movieArrayFromJson(payload.value(QStringLiteral("nextUpItems")).toArray()));
+    auto resume = movieArrayFromJson(payload.value(QStringLiteral("resumeItems")).toArray());
+    auto nextUp = movieArrayFromJson(payload.value(QStringLiteral("nextUpItems")).toArray());
+    reconcilePlaybackRows(resume, nextUp);
+    m_resumeItems.setMovies(std::move(resume));
+    m_nextUpItems.setMovies(std::move(nextUp));
     if (updateLatestLibraryRows(std::move(sections)))
         emit latestLibraryRowsChanged();
     return m_resumeItems.rowCount() > 0 || m_nextUpItems.rowCount() > 0 || !m_latestLibrarySections.empty();
@@ -235,8 +238,10 @@ QCoro::Task<void> HomeModelController::loadCachedPayloadAsync()
     if (key.isEmpty())
         co_return;
     const RequestGeneration::Token generation = m_generation.current();
+    const auto playbackGeneration = m_playbackRowsGeneration.current();
     const QJsonObject payload = co_await m_database->loadHomePayloadAsync(key, kHomePayloadSchemaVersion);
-    if (!m_generation.isCurrent(generation) || key != payloadCacheKey() || m_loaded)
+    if (!m_generation.isCurrent(generation) || !m_playbackRowsGeneration.isCurrent(playbackGeneration)
+        || key != payloadCacheKey() || m_loaded)
         co_return;
     if (applyCachedPayload(payload))
         qInfo() << "home: warm payload cache applied" << key;
@@ -292,6 +297,7 @@ void HomeModelController::refresh(const std::vector<LibraryItem>& libraries)
 QCoro::Task<void> HomeModelController::refreshAsync(
     std::vector<LibraryItem> libraries, RequestGeneration::Token generation)
 {
+    const auto playbackGeneration = m_playbackRowsGeneration.current();
     std::vector<LibraryItem> latestLibraries;
     latestLibraries.reserve(libraries.size());
     for (const LibraryItem& library : libraries) {
@@ -326,8 +332,11 @@ QCoro::Task<void> HomeModelController::refreshAsync(
     if (!m_generation.isCurrent(generation))
         co_return;
 
-    m_resumeItems.setMovies(resumeItems);
-    m_nextUpItems.setMovies(nextUpItems);
+    if (m_playbackRowsGeneration.isCurrent(playbackGeneration)) {
+        reconcilePlaybackRows(resumeItems, nextUpItems);
+        m_resumeItems.setMovies(resumeItems);
+        m_nextUpItems.setMovies(nextUpItems);
+    }
 
     std::vector<PendingLatestLibrarySection> latestSections;
     latestSections.reserve(latestLibraries.size());
@@ -347,12 +356,12 @@ QCoro::Task<void> HomeModelController::refreshAsync(
 
     m_refreshInFlight = false;
     m_loaded = true;
-    saveCachedPayload(payloadFromSections(resumeItems, nextUpItems, latestSections));
+    saveCachedPayload(payloadFromSections(m_resumeItems.movies(), m_nextUpItems.movies(), latestSections));
     const bool latestRowsChanged = updateLatestLibraryRows(std::move(latestSections));
     emit loadingChanged();
 
-    m_prefetch->prefetchPosters(resumeItems, 0, 12, LibraryPrefetchController::ImageKind::Landscape);
-    m_prefetch->prefetchPosters(nextUpItems, 0, 12, LibraryPrefetchController::ImageKind::Landscape);
+    m_prefetch->prefetchPosters(m_resumeItems.movies(), 0, 12, LibraryPrefetchController::ImageKind::Landscape);
+    m_prefetch->prefetchPosters(m_nextUpItems.movies(), 0, 12, LibraryPrefetchController::ImageKind::Landscape);
     for (const LatestLibrarySection& section : m_latestLibrarySections) {
         if (!section.model)
             continue;
@@ -405,12 +414,14 @@ void HomeModelController::upsertResumeItem(MovieItem item, qint64 positionTicks)
     if (item.id.isEmpty())
         return;
 
+    m_playbackRowsGeneration.invalidate();
     item.resumeTicks = normalizedResumeTicks(positionTicks, item.runtimeTicks);
     item.played = false;
     if (!isMeaningfulResumePosition(item.resumeTicks, item.runtimeTicks)) {
         updateResumeTicks(item.id, item.resumeTicks);
         return;
     }
+    m_locallyPlayed.remove(item.id);
 
     const auto current = m_resumeItems.movies();
     if (!current.empty() && current.front().id == item.id) {
@@ -433,6 +444,7 @@ void HomeModelController::upsertResumeItem(MovieItem item, qint64 positionTicks)
 
 void HomeModelController::updateResumeTicks(const QString& itemId, qint64 positionTicks)
 {
+    m_playbackRowsGeneration.invalidate();
     m_resumeItems.updateResumeTicks(itemId, positionTicks);
     m_resumeItems.removeUnresumable();
     m_nextUpItems.updateResumeTicks(itemId, positionTicks);
@@ -454,6 +466,11 @@ void HomeModelController::updateFavorite(const QString& itemId, bool favorite)
 
 void HomeModelController::updatePlayed(const QString& itemId, bool played)
 {
+    m_playbackRowsGeneration.invalidate();
+    if (played)
+        m_locallyPlayed.insert(itemId);
+    else
+        m_locallyPlayed.remove(itemId);
     m_resumeItems.updatePlayed(itemId, played);
     m_resumeItems.removeUnresumable();
     if (played)
@@ -466,13 +483,91 @@ void HomeModelController::updatePlayed(const QString& itemId, bool played)
     }
 }
 
+void HomeModelController::advanceNextUp(const MovieItem& completed, const MovieItem& successor)
+{
+    if (completed.seriesId.isEmpty() || successor.id.isEmpty() || successor.id == completed.id
+        || successor.seriesId != completed.seriesId || successor.played)
+        return;
+    m_optimisticNextUp.insert(completed.seriesId, successor);
+    auto items = m_nextUpItems.movies();
+    auto current = std::find_if(items.begin(), items.end(),
+        [&completed](const MovieItem& item) { return item.seriesId == completed.seriesId; });
+    if (current != items.end())
+        *current = successor;
+    else
+        items.insert(items.begin(), successor);
+    m_nextUpItems.setMovies(std::move(items));
+}
+
+void HomeModelController::reconcilePlaybackRows(std::vector<MovieItem>& resume, std::vector<MovieItem>& nextUp)
+{
+    const auto playedLocally = [this](const MovieItem& item) { return m_locallyPlayed.contains(item.id); };
+    std::erase_if(resume, playedLocally);
+    // A home request started before completion, or an eventually consistent
+    // provider response, must never put the completed episode back on screen.
+    for (auto it = m_optimisticNextUp.begin(); it != m_optimisticNextUp.end();) {
+        auto current = std::find_if(
+            nextUp.begin(), nextUp.end(), [&it](const MovieItem& item) { return item.seriesId == it.key(); });
+        if (current != nextUp.end() && !playedLocally(*current)) {
+            it = m_optimisticNextUp.erase(it);
+        } else {
+            if (current != nextUp.end())
+                *current = it.value();
+            else
+                nextUp.insert(nextUp.begin(), it.value());
+            ++it;
+        }
+    }
+    std::erase_if(nextUp, playedLocally);
+}
+
+void HomeModelController::refreshPlaybackRows()
+{
+    if (!m_api || !m_api->signedIn())
+        return;
+    const auto generation = m_playbackRowsGeneration.next();
+    Async::runScoped(
+        this, refreshPlaybackRowsAsync(generation), []() {},
+        [](const std::exception_ptr& error) {
+            qWarning() << "home: playback rows refresh failed" << exceptionMessage(error);
+        },
+        "home playback rows");
+}
+
+QCoro::Task<void> HomeModelController::refreshPlaybackRowsAsync(RequestGeneration::Token generation)
+{
+    auto resumeTask = m_api->fetchResumeItems();
+    auto nextUpTask = m_api->fetchNextUpEpisodes();
+    auto resume = co_await resumeTask;
+    auto nextUp = co_await nextUpTask;
+    if (!m_playbackRowsGeneration.isCurrent(generation))
+        co_return;
+    reconcilePlaybackRows(resume, nextUp);
+    m_resumeItems.setMovies(std::move(resume));
+    m_nextUpItems.setMovies(std::move(nextUp));
+    std::vector<PendingLatestLibrarySection> sections;
+    sections.reserve(m_latestLibrarySections.size());
+    for (const auto& section : m_latestLibrarySections)
+        sections.push_back({ section.order, section.library, section.model->movies() });
+    saveCachedPayload(payloadFromSections(m_resumeItems.movies(), m_nextUpItems.movies(), sections));
+    m_prefetch->prefetchPosters(m_nextUpItems.movies(), 0, 12, LibraryPrefetchController::ImageKind::Landscape);
+}
+
 void HomeModelController::invalidate(const std::function<bool(const QString&)>& isAvailable)
 {
     m_generation.invalidate();
+    m_playbackRowsGeneration.invalidate();
     m_refreshInFlight = false;
     m_loaded = false;
     m_prefetch->stop();
     if (isAvailable) {
+        m_locallyPlayed.removeIf([&isAvailable](const QString& id) { return !isAvailable(id); });
+        for (auto it = m_optimisticNextUp.begin(); it != m_optimisticNextUp.end();) {
+            if (!isAvailable(it.value().id))
+                it = m_optimisticNextUp.erase(it);
+            else
+                ++it;
+        }
         const auto retainItems = [&isAvailable](MovieGridModel& model) {
             const auto& current = model.movies();
             if (std::all_of(current.begin(), current.end(),
@@ -503,6 +598,9 @@ void HomeModelController::invalidate(const std::function<bool(const QString&)>& 
 void HomeModelController::reset()
 {
     m_generation.invalidate();
+    m_playbackRowsGeneration.invalidate();
+    m_locallyPlayed.clear();
+    m_optimisticNextUp.clear();
     m_refreshInFlight = false;
     m_loaded = false;
     m_prefetch->stop();

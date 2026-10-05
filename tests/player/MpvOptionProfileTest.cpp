@@ -8,9 +8,13 @@
 #include <QTemporaryDir>
 #include <QUrl>
 
+#include <clocale>
 #include <cstdlib>
 #include <iostream>
 
+extern "C" {
+#include <mpv/client.h>
+}
 using namespace Spool;
 
 namespace {
@@ -57,6 +61,38 @@ void require(bool condition, const char *message)
 SPOOL_TEST_MAIN("mpv-option-profile")
 {
     QCoreApplication app(argc, argv);
+    setlocale(LC_NUMERIC, "C");
+    {
+        mpv_handle *handle = mpv_create();
+        require(handle, "HTTP header regression needs a real mpv handle");
+        require(mpv_set_option_string(handle, "config", "no") >= 0
+                && mpv_set_option_string(handle, "terminal", "no") >= 0
+                && mpv_set_option_string(handle, "vo", "null") >= 0 && mpv_set_option_string(handle, "ao", "null") >= 0
+                && mpv_initialize(handle) >= 0,
+            "HTTP header regression initializes headless mpv without user configuration");
+        require(MpvOptionProfile::applyRequestHeaders(handle,
+                    "X-Plex-Client-Identifier: device\nX-Plex-Session-Identifier: session\n"
+                    "X-Plex-Token: literal,comma\\backslash\r\n"),
+            "provider HTTP fields must be accepted by mpv");
+        mpv_node headers {};
+        require(mpv_get_property(handle, "http-header-fields", MPV_FORMAT_NODE, &headers) >= 0,
+            "mpv exposes the active HTTP fields");
+        require(headers.format == MPV_FORMAT_NODE_ARRAY && headers.u.list->num == 3,
+            "Plex HTTP fields must be separate headers, never one LF-containing field");
+        const char *expected[] = { "X-Plex-Client-Identifier: device", "X-Plex-Session-Identifier: session",
+            "X-Plex-Token: literal,comma\\backslash" };
+        for (int index = 0; index < 3; ++index)
+            require(headers.u.list->values[index].format == MPV_FORMAT_STRING
+                    && QByteArray(headers.u.list->values[index].u.string) == expected[index],
+                "mpv retains literal header values without option-list splitting or line endings");
+        mpv_free_node_contents(&headers);
+        require(MpvOptionProfile::applyRequestHeaders(handle, {}), "anonymous playback clears previous credentials");
+        require(mpv_get_property(handle, "http-header-fields", MPV_FORMAT_NODE, &headers) >= 0
+                && headers.format == MPV_FORMAT_NODE_ARRAY && headers.u.list->num == 0,
+            "clearing headers leaves no previous account credentials");
+        mpv_free_node_contents(&headers);
+        mpv_terminate_destroy(handle);
+    }
 #ifdef Q_OS_MACOS
     constexpr auto controlModifier = Qt::MetaModifier;
     constexpr auto metaModifier = Qt::ControlModifier;

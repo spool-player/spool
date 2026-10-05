@@ -832,5 +832,78 @@ SPOOL_TEST_MAIN("content-model-controller")
             && retainedLatestModel()->get(0).title == retainedItem.title,
         "a delayed latest response must not resurrect a removed account's library");
 
+    TestCatalog playbackCatalog;
+    LibraryPrefetchController playbackPrefetch(&playbackCatalog);
+    HomeModelController playbackHome(nullptr, &playbackCatalog, &playbackPrefetch);
+    MovieItem completedEpisode;
+    completedEpisode.id = QStringLiteral("account01:episode-1");
+    completedEpisode.seriesId = QStringLiteral("account01:series-1");
+    completedEpisode.itemType = QStringLiteral("Episode");
+    completedEpisode.resumeTicks = 100'000'000;
+    completedEpisode.runtimeTicks = 20'000'000'000;
+    MovieItem successor = completedEpisode;
+    successor.id = QStringLiteral("account01:episode-2");
+    successor.resumeTicks = 0;
+    playbackCatalog.resumeRows = { completedEpisode };
+    playbackCatalog.nextUpRows = { completedEpisode };
+    playbackHome.refresh(homeLibraries);
+    waitUntil([&] { return !playbackHome.loading(); }, "initial playback home rows did not settle");
+    playbackHome.invalidate();
+    auto beforeCompletion = std::make_shared<QPromise<std::vector<MovieItem>>>();
+    beforeCompletion->start();
+    playbackCatalog.pendingResume = beforeCompletion;
+    playbackHome.refresh(homeLibraries);
+    playbackHome.updatePlayed(completedEpisode.id, true);
+    require(playbackHome.nextUpItems()->count() == 0 && playbackHome.resumeItems()->count() == 0,
+        "completion must immediately remove the episode from Next Up and Continue Watching");
+    beforeCompletion->addResult(std::vector<MovieItem> { completedEpisode });
+    beforeCompletion->finish();
+    waitUntil([&] { return !playbackHome.loading(); }, "pre-completion home request did not settle");
+    require(playbackHome.nextUpItems()->count() == 0 && playbackHome.resumeItems()->count() == 0,
+        "a home response started before completion must not resurrect the completed episode");
+
+    playbackHome.advanceNextUp(completedEpisode, successor);
+    require(playbackHome.nextUpItems()->get(0).id == successor.id,
+        "the known successor must be visible before the server refresh");
+    playbackCatalog.pendingResume.reset();
+    playbackHome.refreshPlaybackRows();
+    require(playbackHome.nextUpItems()->get(0).id == successor.id && playbackHome.resumeItems()->count() == 0,
+        "an eventually consistent response must preserve the optimistic successor, not the completed episode");
+    successor.title = QStringLiteral("Server refreshed successor");
+    playbackCatalog.resumeRows = {};
+    playbackCatalog.nextUpRows = { successor };
+    playbackHome.refreshPlaybackRows();
+    require(playbackHome.nextUpItems()->get(0).title == successor.title,
+        "an already-loaded homepage must accept refreshed Next Up data from the server");
+
+    playbackHome.invalidate();
+    auto olderHome = std::make_shared<QPromise<std::vector<MovieItem>>>();
+    olderHome->start();
+    playbackCatalog.pendingResume = olderHome;
+    playbackCatalog.nextUpRows = { completedEpisode };
+    playbackHome.refresh(homeLibraries);
+    playbackHome.advanceNextUp(completedEpisode, successor);
+    playbackHome.updatePlayed(completedEpisode.id, true);
+    playbackCatalog.pendingResume.reset();
+    playbackCatalog.nextUpRows = { successor };
+    playbackHome.refreshPlaybackRows();
+    olderHome->addResult(std::vector<MovieItem> { completedEpisode });
+    olderHome->finish();
+    waitUntil([&] { return !playbackHome.loading(); }, "older full home refresh did not settle");
+    require(playbackHome.nextUpItems()->get(0).id == successor.id,
+        "an older full refresh cannot erase a successor already confirmed by the newer playback refresh");
+
+    auto beforePartialStop = std::make_shared<QPromise<std::vector<MovieItem>>>();
+    beforePartialStop->start();
+    playbackCatalog.pendingResume = beforePartialStop;
+    playbackHome.refreshPlaybackRows();
+    playbackHome.upsertResumeItem(successor, 80'000'000);
+    beforePartialStop->addResult(std::vector<MovieItem> {});
+    beforePartialStop->finish();
+    waitUntil([&] { return playbackCatalog.completedHomeRequests == 3; }, "old playback refresh did not settle");
+    require(playbackHome.resumeItems()->get(0).id == successor.id
+            && playbackHome.resumeItems()->get(0).resumeTicks == 80'000'000,
+        "a refresh predating a partial stop cannot erase the newly recorded Continue Watching item");
+
     return EXIT_SUCCESS;
 }

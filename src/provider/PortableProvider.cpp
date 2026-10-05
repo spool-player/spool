@@ -159,7 +159,17 @@ public:
         session.playMethod = result.value(QStringLiteral("playMethod"), QStringLiteral("DirectPlay")).toString();
         session.container = result.value(QStringLiteral("container")).toString();
         session.startTimeTicks = item.resumeTicks;
+        bool validOrigin = false;
+        session.timelineOriginTicks = result.value(QStringLiteral("timelineOriginTicks"), QStringLiteral("0"))
+                                          .toString()
+                                          .toLongLong(&validOrigin);
+        if (!validOrigin || session.timelineOriginTicks < 0 || session.timelineOriginTicks > session.startTimeTicks)
+            throw std::runtime_error("invalid_playback_timeline");
         session.runtimeTicks = item.runtimeTicks;
+        const QVariantMap source = result.value(QStringLiteral("source")).toMap();
+        session.sourceBitrate = source.value(QStringLiteral("bitrate")).toLongLong();
+        session.sourceWidth = source.value(QStringLiteral("width")).toInt();
+        session.sourceHeight = source.value(QStringLiteral("height")).toInt();
         // mpv lists a file's own tracks first and subtitle files after them,
         // in the order they are added, so the streams are kept in that order.
         // A subtitle file mpv cannot fetch is left out rather than shifting

@@ -337,6 +337,15 @@ const QVector<SettingSpec>& settingSpecs()
                 .onDesktop(),
             sliderSpec("playback/controlFadeDelaySeconds", "Playback", "Hide player controls after", "", "4", 1, 10, 1,
                 "s", SettingTarget::External),
+            toggleSpec("playback/accurateTrickplay", "Playback", "Accurate seek previews",
+                "Uses a slower, accurate JPEG transform. Off uses the faster transform; both preserve encoded "
+                "resolution",
+                false, SettingTarget::External)
+                .advanced(),
+            sliderSpec("playback/trickplayPreviewScalePercent", "Playback", "Seek preview size",
+                "Relative to the interface scale, independent of the server's thumbnail resolution", "100", 25, 200, 5,
+                "%", SettingTarget::External)
+                .advanced(),
             selectSpec("playback/videoOutput", "Playback", "Video output",
                 "Enhanced processes each frame on the GPU. Direct sends it straight to the display", "enhanced",
                 kVideoOutputChoices, SettingTarget::VideoOutputMode)
@@ -592,6 +601,7 @@ const QVector<SettingSpec>& settingSpecs()
         const QStringList device { QStringLiteral("artwork/format"), QStringLiteral("artwork/webpQuality"),
             QStringLiteral("artwork/jpegQuality"), QStringLiteral("settings/audioDelayMs"),
             QStringLiteral("playback/showVolumeSlider"), QStringLiteral("playback/controlFadeDelaySeconds"),
+            QStringLiteral("playback/accurateTrickplay"), QStringLiteral("playback/trickplayPreviewScalePercent"),
             QStringLiteral("playback/videoOutput"), QStringLiteral("playback/softwareRenderer"),
             QStringLiteral("playback/hardwareDecoding"), QStringLiteral("playback/renderQuality"),
             QStringLiteral("playback/autoAdjustQuality"), QStringLiteral("playback/graphicsApi"),
@@ -726,10 +736,8 @@ bool settingSupportedOnPlatform(const SettingSpec& spec)
 #endif
 }
 
-bool settingAcceptsRemoteValue(const SettingSpec& spec, const QVariant& value)
+bool settingAcceptsValue(const SettingSpec& spec, const QVariant& value)
 {
-    if (!spec.persisted || spec.syncPolicy == SettingSyncPolicy::Never || !settingSupportedOnPlatform(spec))
-        return false;
     if (spec.type == SettingType::Toggle)
         return value.metaType().id() == QMetaType::Bool;
     if (spec.type == SettingType::Slider) {
@@ -742,6 +750,12 @@ bool settingAcceptsRemoteValue(const SettingSpec& spec, const QVariant& value)
     if (value.metaType().id() != QMetaType::QString)
         return false;
     return normalizedSettingValue(spec, value).toString() == value.toString();
+}
+
+bool settingAcceptsRemoteValue(const SettingSpec& spec, const QVariant& value)
+{
+    return spec.persisted && spec.syncPolicy != SettingSyncPolicy::Never && settingSupportedOnPlatform(spec)
+        && settingAcceptsValue(spec, value);
 }
 
 QVariantList settingSchemaModel()

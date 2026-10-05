@@ -117,7 +117,6 @@ void SearchController::loadSuggestions()
 {
     if (!authenticated())
         return;
-    m_api->prepareSearch();
     if (m_suggestionsLoaded || m_suggestionsBusy)
         return;
 

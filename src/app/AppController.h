@@ -125,6 +125,8 @@ public:
     Q_INVOKABLE void playItemId(const QString& itemId, bool fromStart = false);
     // Explicit local launch path: inbound/CLI playback must never be relayed.
     void playLocalItemId(const QString& itemId, bool fromStart = false);
+    // Validated same-user automation; shares group/local semantics with inbound controls.
+    bool handleLocalControl(const QVariantMap& command);
     Q_INVOKABLE void transferPlaybackToRemote();
     void stopPlayback();
     Q_INVOKABLE void playQueueNext();
@@ -158,6 +160,7 @@ public:
     // the current position because the server decides direct play against the
     // ceiling it was handed at negotiation time.
     Q_INVOKABLE QVariantList streamingQualityOptions() const;
+    QVariantMap streamingQualitySource() const;
     Q_INVOKABLE void selectStreamingQuality(qint64 bitrate, int height = 0);
     QString connectionSpeedDescription() const;
     Q_INVOKABLE void refreshConnectionSpeed();
@@ -228,6 +231,14 @@ private:
     void playOrOpen(const MovieItem& item, bool fromStart = false);
     void handlePlaybackStopped(const QString& itemId, qint64 positionTicks, bool completed);
 
+    struct SourceAnalysis {
+        qint64 bitrate = 0;
+        int width = 0;
+        int height = 0;
+        int qualityHeight = 0;
+    };
+    SourceAnalysis typedSourceAnalysis() const;
+
     DatabaseManager *m_database = nullptr;
     SourceHub *m_provider = nullptr;
     Catalog *m_catalog = nullptr;
@@ -252,6 +263,11 @@ private:
     bool m_episodeQueuePending = false;
     LibraryListModel m_libraries;
     MovieItem m_activePlaybackItem;
+    QString m_activeMediaSourceId;
+    qint64 m_activeSourceBitrate = 0;
+    int m_activeSourceHeight = 0;
+    int m_activeSourceWidth = 0;
+    QString m_activePlayMethod;
     QString m_playingAccountId;
     QList<MediaStreamInfo> m_activePlaybackStreams;
     int m_activeAudioStreamIndex = -1;

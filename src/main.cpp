@@ -10,12 +10,16 @@
 #include "app/RemoteTargetsController.h"
 #include "app/RouterController.h"
 #include "app/SettingsSyncController.h"
+#include "app/TrickplayPreviewItem.h"
 #include "app/TrickplayService.h"
 #include "app/UserItemStateController.h"
 #include "cache/DatabaseManager.h"
 #include "common/AsyncTask.h"
 #include "common/LogRotation.h"
 #include "common/TlsTrust.h"
+#if !defined(SPOOL_ANDROID) && !defined(SPOOL_WEBOS)
+#include "automation/LocalCommandServer.h"
+#endif
 #include "diagnostics/Diagnostics.h"
 #include "diagnostics/InputLatencyMonitor.h"
 #include "diagnostics/RenderBenchmark.h"
@@ -772,6 +776,14 @@ int main(int argc, char **argv)
         &Spool::AppController::revokeAccountIdentity);
     controller->attachSettingsSync(&settingsSync);
     controller->settings()->attachSync(&settingsSync);
+    const auto updateTrickplayDecoding = [&trickplay, &remoteTrickplay, settings = controller->settings()] {
+        const bool accurate = settings->value(QStringLiteral("playback/accurateTrickplay")).toBool();
+        trickplay.setAccurateDecoding(accurate);
+        remoteTrickplay.setAccurateDecoding(accurate);
+    };
+    QObject::connect(
+        controller->settings(), &Spool::SettingsController::settingsValuesChanged, &app, updateTrickplayDecoding);
+    updateTrickplayDecoding();
     controller->settings()->attachInputLatency(&inputLatencyMonitor);
     settingsSync.setForeground(app.applicationState() == Qt::ApplicationActive);
     QObject::connect(&app, &QGuiApplication::applicationStateChanged, &settingsSync,
@@ -1014,6 +1026,7 @@ int main(int argc, char **argv)
     qmlRegisterSingletonInstance("Spool", 1, 0, "I18n", localization.get());
     qmlRegisterSingletonInstance("Spool", 1, 0, "Platform", platformInfo);
     qmlRegisterType<Spool::MpvVideoItem>("Spool", 1, 0, "MpvVideoItem");
+    qmlRegisterType<Spool::TrickplayPreviewItem>("Spool", 1, 0, "TrickplayPreviewItem");
     // Start asynchronous device, settings, account, and discovery reads before
     // QML construction. A sole saved account is resolved before routing begins.
     controller->initialize();
@@ -1172,6 +1185,22 @@ int main(int argc, char **argv)
     }
 
     QTimer::singleShot(1000, router.get(), [router = router.get()] { router->beginSession(false); });
+#if !defined(SPOOL_ANDROID) && !defined(SPOOL_WEBOS)
+    Spool::LocalCommandServer localCommands(controller.get(), router.get(), &window);
+    if (!app.arguments().contains(QStringLiteral("--no-local-control"))) {
+        QString error;
+        const QString instance = optionValue(app.arguments(), QStringLiteral("--instance"), "SPOOL_INSTANCE");
+        if (!localCommands.start(instance, &error)) {
+            logLine("local control unavailable: %s", qPrintable(error));
+            // An explicitly named launch must not silently target a different instance.
+            if (!instance.isEmpty())
+                return 1;
+        }
+    }
+    QObject::connect(&app, &QCoreApplication::aboutToQuit, &localCommands, &Spool::LocalCommandServer::stop);
+    QObject::connect(
+        &window, &Spool::NativeAppWindow::closeRequested, &localCommands, &Spool::LocalCommandServer::stop);
+#endif
 
     QTimer::singleShot(0, &window, [&startupTimer]() {
         logLine("startup: first event-loop turn at %lld ms", static_cast<long long>(startupTimer.elapsed()));

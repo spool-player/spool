@@ -23,11 +23,18 @@
 
 #include <algorithm>
 #include <atomic>
+#include <string_view>
 
 namespace Spool {
 
 namespace {
     const QString kAccountsKey = QStringLiteral("providers/accounts/2");
+
+    bool requiresSignIn(const std::exception& error)
+    {
+        const std::string_view code(error.what());
+        return code == "http_401" || code == "invalid_config" || code == "auth_required" || code == "invalid_token";
+    }
 
     const QHash<QString, Provider::Capability>& capabilityNames()
     {
@@ -277,17 +284,34 @@ QCoro::Task<void> ProviderRegistry::restore()
     }
     // Configuration holds credentials, so it lives in the platform's
     // credential store; the keychain can block, so it is read off-thread.
-    accounts = co_await Async::background(
-        [accounts]() mutable {
-            for (ProviderAccount& account : accounts)
-                account.configuration
-                    = QJsonDocument::fromJson(CredentialStore::load(account.id).toUtf8()).object().toVariantMap();
-            return accounts;
+    struct RestoredAccounts {
+        std::vector<ProviderAccount> accounts;
+        QSet<QString> unavailableConfigurations;
+    };
+    auto restored = co_await Async::background(
+        [accounts = std::move(accounts)]() mutable {
+            RestoredAccounts result { std::move(accounts), {} };
+            for (ProviderAccount& account : result.accounts) {
+                const QJsonDocument configuration = QJsonDocument::fromJson(CredentialStore::load(account.id).toUtf8());
+                // An empty object is valid provider configuration; only missing,
+                // malformed, or non-object records are unavailable.
+                if (configuration.isObject())
+                    account.configuration = configuration.object().toVariantMap();
+                else
+                    result.unavailableConfigurations.insert(account.id);
+            }
+            return result;
         },
         &m_credentialPool);
     if (!guard)
         co_return;
-    m_accounts = std::move(accounts);
+    m_accounts = std::move(restored.accounts);
+    for (const ProviderAccount& account : m_accounts) {
+        if (restored.unavailableConfigurations.contains(account.id) && !module(account.module)->native) {
+            m_unavailableConfigurations.insert(account.id);
+            m_failedAccounts.insert(account.id);
+        }
+    }
     // One-time: carry over the Jellyfin sign-ins the native client kept, so
     // an upgrade signs nobody out.
     if (stored.isEmpty() && m_modules.contains(QStringLiteral("spool.jellyfin"))) {
@@ -425,6 +449,12 @@ QCoro::Task<void> ProviderRegistry::start(
     QString accountId, QString reason, bool select, std::optional<ProviderAccount> replacement)
 {
     const auto *saved = account(accountId);
+    bool selected = false;
+    QPointer<ProviderRegistry> selectionGuard(this);
+    const auto selectionFinished = qScopeGuard([selectionGuard, accountId, select, &selected] {
+        if (selectionGuard && select)
+            emit selectionGuard->accountSelectionFinished(accountId, selected);
+    });
     if ((!saved && !replacement) || m_preparing.contains(accountId))
         co_return;
     ProviderAccount candidate = replacement ? *replacement : *saved;
@@ -439,8 +469,16 @@ QCoro::Task<void> ProviderRegistry::start(
     if (!select && !replacement && m_running.value(accountId).provider)
         co_return;
     ProviderModule& module = m_modules[candidate.module];
+    if (m_unavailableConfigurations.contains(accountId)
+        && (!replacement || !select || candidate.configuration.isEmpty())) {
+        emit problem(QStringLiteral("Saved configuration for %1 is unavailable. Unlock your credential store "
+                                    "and restart Spool, or sign in again.")
+                .arg(candidate.label));
+        co_return;
+    }
     m_failedAccounts.remove(accountId);
     m_lockedAccounts.remove(accountId);
+    m_accountErrors.remove(accountId);
     const QString preparedId = QStringLiteral("prepare-") + QUuid::createUuid().toString(QUuid::WithoutBraces);
     const quint64 generation = ++m_nextGeneration;
     Running prepared;
@@ -525,17 +563,16 @@ QCoro::Task<void> ProviderRegistry::start(
                 const bool family = hasFamily && cached.runtime == runtime && cached.generation != 0
                     && cached.identity == candidate.activationIdentity;
                 const bool lastUsed = lastUsedIdentity(candidate);
-                if (hasFamily
-                    && ((reason == QStringLiteral("startup") && !lastUsed && !family)
-                        || reason == QStringLiteral("search"))) {
+                if (hasFamily && (reason == QStringLiteral("startup") || reason == QStringLiteral("restart"))
+                    && !lastUsed && !family) {
                     m_lockedAccounts.insert(accountId);
                     co_return;
                 }
                 QVariantMap arguments { { QStringLiteral("reason"),
-                                            linked                                   ? QStringLiteral("linked")
-                                                : family                             ? QStringLiteral("family")
-                                                : reason == QStringLiteral("search") ? QStringLiteral("startup")
-                                                                                     : reason },
+                                            linked                                    ? QStringLiteral("linked")
+                                                : family                              ? QStringLiteral("family")
+                                                : reason == QStringLiteral("restart") ? QStringLiteral("startup")
+                                                                                      : reason },
                     { QStringLiteral("lastUsed"), lastUsed } };
                 if (family && cached.value.isValid())
                     arguments.insert(QStringLiteral("grant"), cached.value);
@@ -548,6 +585,12 @@ QCoro::Task<void> ProviderRegistry::start(
                         const QVariant picker = result.value(QStringLiteral("pick"));
                         if (picker.metaType().id() != QMetaType::QVariantMap)
                             throw std::runtime_error("invalid_activation");
+                        // Background restore never interrupts Home with a profile/PIN
+                        // chooser. Protected viewers stay locked until explicitly chosen.
+                        if (reason == QStringLiteral("startup")) {
+                            m_lockedAccounts.insert(accountId);
+                            co_return;
+                        }
                         const auto answer = co_await pickResult(preparedId, picker.toMap(), true);
                         if (!current())
                             co_return;
@@ -586,11 +629,17 @@ QCoro::Task<void> ProviderRegistry::start(
         } else {
             nativeCandidate.reset(native(accountId, candidate.configuration, this));
         }
-    } catch (const std::exception&) {
+    } catch (const std::exception& error) {
         if (!current())
             co_return;
+        const bool signIn = requiresSignIn(error);
+        if (signIn)
+            m_expired.insert(accountId);
+        m_accountErrors.insert(accountId,
+            signIn ? QStringLiteral("Sign in again to reconnect this server.")
+                   : QStringLiteral("Couldn't switch profile. Try again or reconnect this server."));
         if (!m_running.value(accountId).provider) {
-            if (!candidate.activationFamily.isEmpty())
+            if (!signIn && !candidate.activationFamily.isEmpty())
                 m_lockedAccounts.insert(accountId);
             else
                 m_failedAccounts.insert(accountId);
@@ -633,7 +682,9 @@ QCoro::Task<void> ProviderRegistry::start(
         m_activationGrants.insert(familyKey(candidate), { candidate.activationIdentity, runtime, generation, grant });
     }
     m_lockedAccounts.remove(accountId);
+    m_unavailableConfigurations.remove(accountId);
     m_expired.remove(accountId);
+    m_accountErrors.remove(accountId);
     if (auto *provider = qobject_cast<PortableProvider *>(m_running[accountId].provider.data()))
         provider->setExtensionSpeedTest(
             m_running[accountId].extensions.value(QStringLiteral("spool.speed-test")).toInt() == 1);
@@ -641,6 +692,7 @@ QCoro::Task<void> ProviderRegistry::start(
     emit sourceStarted(m_running[accountId].provider);
     emit extensionsChanged(accountId);
     emit accountsChanged();
+    selected = select;
     if (linked || !hadAccount || (select && replacement))
         emit accountAdded(accountId);
     if (!pendingOptions.isEmpty())
@@ -714,6 +766,10 @@ void ProviderRegistry::persist(bool credentials)
     QHash<QString, QString> secrets;
     for (const ProviderAccount& account : m_accounts) {
         rows.append(toJson(account));
+        // Never replace a temporarily unreadable keyring entry with {} when
+        // another account starts, changes settings, or is removed.
+        if (m_unavailableConfigurations.contains(account.id))
+            continue;
         secrets.insert(account.id,
             QString::fromUtf8(
                 QJsonDocument(QJsonObject::fromVariantMap(account.configuration)).toJson(QJsonDocument::Compact)));
@@ -818,7 +874,7 @@ QCoro::Task<T> ProviderRegistry::guarded(QString sourceId, Call call, QString ex
     } catch (const std::exception& error) {
         // The server no longer accepts this account's credentials: say so
         // once, and let the accounts page offer to sign in again.
-        if (guard && m_running.value(sourceId).generation == generation && QByteArray(error.what()) == "http_401"
+        if (guard && m_running.value(sourceId).generation == generation && requiresSignIn(error)
             && !m_expired.contains(sourceId)) {
             m_expired.insert(sourceId);
             if (const ProviderAccount *entry = account(sourceId))
@@ -1230,7 +1286,9 @@ QVariantList ProviderRegistry::accounts() const
                                                                                         : QStringLiteral("locked") },
             { QStringLiteral("extensions"), extensions(account.id) },
             { QStringLiteral("missingHostExtensions"), missingHostExtensions(account.module) },
-            { QStringLiteral("needsSignIn"), m_expired.contains(account.id) },
+            { QStringLiteral("needsSignIn"),
+                m_expired.contains(account.id) || m_unavailableConfigurations.contains(account.id) },
+            { QStringLiteral("errorText"), m_accountErrors.value(account.id) },
             { QStringLiteral("hasSettings"), owner && owner->manifest.ui.contains(QStringLiteral("settings")) } });
     }
     return list;
@@ -1509,7 +1567,7 @@ void ProviderRegistry::restartAccount(const QString& accountId, const QVariantMa
         candidate.configuration.insert(changes);
         clearGrants(entry->module, entry->activationFamily);
         Async::runScoped(
-            this, start(accountId, QStringLiteral("startup"), false, candidate), [] { },
+            this, start(accountId, QStringLiteral("restart"), false, candidate), [] { },
             [](const std::exception_ptr&) { }, "provider restart");
     }
 }
@@ -1583,6 +1641,11 @@ void ProviderRegistry::useAccount(const QString& accountId)
     const auto *chosen = account(accountId);
     if (!chosen)
         return;
+    if (m_expired.contains(accountId)) {
+        emit problem(QStringLiteral("Sign in to %1 again").arg(chosen->label));
+        emit accountSelectionFinished(accountId, false);
+        return;
+    }
     if (m_running.value(accountId).provider) {
         ProviderAccount selected = *chosen;
         selected.enabled = true;
@@ -1594,28 +1657,12 @@ void ProviderRegistry::useAccount(const QString& accountId)
             *entry = selected;
         persist();
         emit accountsChanged();
+        emit accountSelectionFinished(accountId, true);
         return;
     }
     Async::runScoped(
         this, start(accountId, QStringLiteral("switch"), true), [] { }, [](const std::exception_ptr&) { },
         "provider activation");
-}
-
-void ProviderRegistry::startSetAside()
-{
-    for (const ProviderAccount& entry : m_accounts) {
-        if (entry.enabled || entry.group.isEmpty() || m_running.contains(entry.id) || m_preparing.contains(entry.id)
-            || m_expired.contains(entry.id) || !entry.activationFamily.isEmpty())
-            continue;
-        const bool groupInUse = std::any_of(m_accounts.begin(), m_accounts.end(), [&](const ProviderAccount& other) {
-            return other.enabled && other.module == entry.module && other.group == entry.group;
-        });
-        const ProviderModule *owner = module(entry.module);
-        if (groupInUse && owner && (capabilitiesOf(owner->manifest) & Provider::Search))
-            Async::runScoped(
-                this, start(entry.id, QStringLiteral("search")), [] { }, [](const std::exception_ptr&) { },
-                "provider search");
-    }
 }
 
 void ProviderRegistry::setAccountEnabled(const QString& accountId, bool enabled)
@@ -1646,7 +1693,9 @@ void ProviderRegistry::removeAccount(const QString& accountId)
         stop(accountId);
         std::erase_if(m_accounts, [&](const ProviderAccount& account) { return account.id == accountId; });
         m_failedAccounts.remove(accountId);
+        m_accountErrors.remove(accountId);
         m_lockedAccounts.remove(accountId);
+        m_unavailableConfigurations.remove(accountId);
         m_removedAccounts.append(accountId);
         persist(true);
         emit accountsChanged();

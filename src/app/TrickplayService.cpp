@@ -7,6 +7,7 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QQuickTextureFactory>
+#include <QQuickWindow>
 #include <QRunnable>
 #include <cmath>
 #include <limits>
@@ -45,7 +46,7 @@ public:
     }
     QQuickTextureFactory *textureFactory() const override
     {
-        return m_image.isNull() ? nullptr : QQuickTextureFactory::textureFactoryForImage(m_image);
+        return m_image ? new TrickplayTextureFactory(m_image) : nullptr;
     }
     QString errorString() const override
     {
@@ -64,22 +65,45 @@ public:
             },
             Qt::QueuedConnection);
     }
-    void finish(QImage image, QString error)
+    void finish(std::shared_ptr<const TrickplayTexture> image, QString error)
     {
         if (m_finished.exchange(true))
             return;
-        m_image = m_cancelled ? QImage() : std::move(image);
+        m_image = m_cancelled ? nullptr : std::move(image);
         m_error = m_cancelled ? QStringLiteral("Cancelled") : std::move(error);
         emit finished();
     }
 
 private:
     QPointer<TrickplayService> m_service;
-    QImage m_image;
+    std::shared_ptr<const TrickplayTexture> m_image;
     QString m_error;
     std::atomic_bool m_cancelled = false;
     std::atomic_bool m_finished = false;
 };
+
+TrickplayTextureFactory::TrickplayTextureFactory(std::shared_ptr<const TrickplayTexture> frame)
+    : texture(std::move(frame))
+{
+}
+
+QSGTexture *TrickplayTextureFactory::createTexture(QQuickWindow *window) const
+{
+    return window->createTextureFromImage(image());
+}
+
+QSize TrickplayTextureFactory::textureSize() const
+{
+    return texture->size;
+}
+int TrickplayTextureFactory::textureByteCount() const
+{
+    return int(qint64(texture->size.width()) * texture->size.height() * 4);
+}
+QImage TrickplayTextureFactory::image() const
+{
+    return texture->image();
+}
 
 TrickplayService::TrickplayService(const ArtworkSource *source, TlsTrustController *trust, QObject *parent)
     : QObject(parent)
@@ -120,6 +144,15 @@ void TrickplayService::clear()
     m_bif = {};
     m_info = {};
     emit changed();
+}
+
+void TrickplayService::setAccurateDecoding(bool accurate)
+{
+    if (m_accurateDecoding == accurate)
+        return;
+    m_accurateDecoding = accurate;
+    const TrickplayInfo info = m_info;
+    setSession(info, m_startSeconds);
 }
 
 void TrickplayService::setSession(const TrickplayInfo& info, double startSeconds)
@@ -280,7 +313,7 @@ void TrickplayService::request(int index, TrickplayImageResponse *response)
         return;
     }
     supersede(index);
-    if (const QImage *image = m_images.object(index)) {
+    if (const auto *image = m_images.object(index)) {
         if (m_reply && !m_fetchSpeculative && m_fetchIndex != index)
             abortFetch();
         m_pendingIndex = -1;
@@ -402,7 +435,8 @@ void TrickplayService::fetch(int index, bool speculative)
             const int sheet = index / (m_info.tileWidth * m_info.tileHeight);
             m_sheets.insert(sheet, new QByteArray(bytes), int(bytes.size()));
             if (speculative) {
-                const qint64 cost = qint64(m_info.width) * m_info.height * m_info.tileWidth * m_info.tileHeight * 4;
+                const qint64 cost
+                    = trickplayTextureCost(QSize(m_info.width * m_info.tileWidth, m_info.height * m_info.tileHeight));
                 if (residentSheet() && !m_decoding && m_images.totalCost() + cost <= TrickplayDecodedByteBudget)
                     decode(index, std::move(bytes), true);
             } else if (m_decoding)
@@ -446,7 +480,7 @@ void TrickplayService::decode(int index, QByteArray bytes, bool speculative, qsi
             m_info.height);
     }
     const QSize outputSize = resident || bif ? expected : crop.size();
-    const qint64 cost = qint64(outputSize.width()) * outputSize.height() * 4;
+    const qint64 cost = trickplayTextureCost(outputSize);
     // Reserve before allocating the foreground image, rather than temporarily
     // retaining a full old cache alongside the new sheet.
     if (!speculative && m_images.totalCost() + cost > TrickplayDecodedByteBudget)
@@ -454,14 +488,15 @@ void TrickplayService::decode(int index, QByteArray bytes, bool speculative, qsi
     const quint64 generation = m_generation;
     const auto cancelled = m_cancelled;
     const auto decodeCancelled = m_decodeCancelled;
+    const bool accurate = m_accurateDecoding;
     m_pool.start(QRunnable::create([this, generation, cancelled, decodeCancelled, index, crop, expected, resident,
-                                       offset, length, bytes = std::move(bytes)] {
+                                       accurate, offset, length, bytes = std::move(bytes)] {
         QString error;
-        QImage image;
+        std::shared_ptr<const TrickplayTexture> image;
         if (!cancelled->load() && !decodeCancelled->load()) {
             const QByteArray view
                 = QByteArray::fromRawData(bytes.constData() + offset, length < 0 ? bytes.size() : length);
-            image = decodeTrickplayFrame(view, crop, expected, resident, &error);
+            image = decodeTrickplayTexture(view, crop, expected, resident, accurate, &error);
         }
         if (cancelled->load())
             return;
@@ -509,7 +544,7 @@ void TrickplayService::prefetch()
             return;
         if (bif) {
             const QSize size = m_bif.frameSize(key);
-            const qint64 cost = qint64(size.width()) * size.height() * 4;
+            const qint64 cost = trickplayTextureCost(size);
             if (size.isValid() && cost > 0 && cost <= 4 * 1024 * 1024
                 && m_images.totalCost() + cost <= TrickplayDecodedByteBudget)
                 startDecode(key, true);
@@ -517,7 +552,8 @@ void TrickplayService::prefetch()
         }
         const int sheet = int(neighbour);
         if (m_sheets.contains(sheet)) {
-            const qint64 cost = qint64(m_info.width) * m_info.height * m_info.tileWidth * m_info.tileHeight * 4;
+            const qint64 cost
+                = trickplayTextureCost(QSize(m_info.width * m_info.tileWidth, m_info.height * m_info.tileHeight));
             if (residentSheet() && m_images.totalCost() + cost <= TrickplayDecodedByteBudget)
                 startDecode(key, true);
         } else
@@ -526,12 +562,14 @@ void TrickplayService::prefetch()
     }
 }
 
-void TrickplayService::complete(int index, QImage image, const QString& error, bool speculative)
+void TrickplayService::complete(
+    int index, std::shared_ptr<const TrickplayTexture> image, const QString& error, bool speculative)
 {
-    if (!image.isNull()) {
-        // Speculation must never evict the foreground texture.
-        if (!speculative || m_images.totalCost() + image.sizeInBytes() <= TrickplayDecodedByteBudget)
-            m_images.insert(index, new QImage(image), int(image.sizeInBytes()));
+    if (image) {
+        // Charge RGB-equivalent bytes: smaller planes do not expand the cache.
+        const qint64 cost = trickplayTextureCost(image->size);
+        if (!speculative || m_images.totalCost() + cost <= TrickplayDecodedByteBudget)
+            m_images.insert(index, new std::shared_ptr<const TrickplayTexture>(image), int(cost));
     } else if (!error.isEmpty() && !speculative)
         qWarning() << "trickplay:" << error;
     const auto waiters = m_waiters.take(index);
