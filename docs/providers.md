@@ -377,6 +377,12 @@ Directional prefetch is limited to one neighbouring sheet or two BIF frames
 and yields to foreground requests. Both preview surfaces consume the latest
 selection once per rendered frame and clip resident sheets to the selected tile.
 
+Raw JPEG decoding links the codec selected by the Qt toolchain. Official SDKs
+using Qt's bundled libjpeg expose its C API at `QtJpeg/jpeglib.h`, through
+`Qt6::BundledLibjpeg` and `Qt6::JpegPrivate`; system-codec builds use `jpeglib.h`
+and `JPEG::JPEG`. Keep the headers paired with their selected library—do not
+copy unrelated JPEG headers or disable planar decoding for a platform.
+
 These adapters do not implement Plex watch-together or native SpoolLink peer
 enhancements. Protocol/loopback verification does not imply live-device support
 for an unadvertised backend command.

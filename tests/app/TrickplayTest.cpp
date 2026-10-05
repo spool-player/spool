@@ -22,7 +22,7 @@
 
 #include <cstdio>
 #if defined(SPOOL_QT_BUNDLED_JPEG)
-#include <QtJpeg/private/jpeglib.h>
+#include <QtJpeg/jpeglib.h>
 #else
 #include <jpeglib.h>
 #endif
