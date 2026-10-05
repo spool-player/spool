@@ -7,11 +7,11 @@ the pieces fit; `sdk/README.md` and `sdk/provider.d.ts` are the provider author'
 
 ## Release installation flow
 
-Spool 0.8.2 bundles only Jellyfin 0.2.3. Keeping that older bundle is intentional:
-it exercises updating a preinstalled provider from the official catalogue.
-Emby and Plex appear alongside Jellyfin in the startup provider chooser. Selecting
-an uninstalled provider downloads, verifies and installs it, then opens sign-in.
-Selecting an available update from that chooser likewise continues into sign-in.
+Spool 0.8.12 bundles Jellyfin 0.2.9, Emby 0.1.5 and Plex 0.1.6, pinned to their
+published release archives. Saved accounts normally open Home. The provider
+chooser is used to add a server or sign in as another viewer. Selecting an
+uninstalled provider downloads, verifies and installs it, then opens sign-in;
+selecting an available update likewise continues into sign-in.
 A modal reports download progress and the verification/installation stage, then
 closes automatically on success or failure. Settings retain the existing provider
 update policy; background updates use the same progress display.

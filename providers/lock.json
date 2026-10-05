@@ -3,21 +3,21 @@
   "providers": [
     {
       "id": "spool.jellyfin",
-      "version": "0.2.8",
-      "archive": "bundled/spool.jellyfin-0.2.8.tar.zst",
-      "sha256": "17913a9c887edd29c5a886d5fc9af80d7659e1559c8e06aa86a8ad88aa2e4d08"
+      "version": "0.2.9",
+      "archive": "bundled/spool.jellyfin-0.2.9.tar.zst",
+      "sha256": "5c9d88a21624ffe4bd924615d8bf9ad859173eae38e72cd59882e80f250a2044"
     },
     {
       "id": "spool.emby",
-      "version": "0.1.4",
-      "archive": "bundled/spool.emby-0.1.4.tar.zst",
-      "sha256": "437db9ab69491c8f3b93627afa7e475a6c6cef95d0c134faa580df9237f3e6fb"
+      "version": "0.1.5",
+      "archive": "bundled/spool.emby-0.1.5.tar.zst",
+      "sha256": "ae588ffdb33f9c0887151b888f0bddab11e6d83a30fb3cb097348e832727f150"
     },
     {
       "id": "spool.plex",
-      "version": "0.1.5",
-      "archive": "bundled/spool.plex-0.1.5.tar.zst",
-      "sha256": "10ffbe71e182177bf07035c3c025ccf14872bacff31c03653c76a4e6dcf166fa"
+      "version": "0.1.6",
+      "archive": "bundled/spool.plex-0.1.6.tar.zst",
+      "sha256": "d03c77ca5c8d768682d7dbca69efa986e6ae1c8618b739eba217e47051c35543"
     }
   ]
 }

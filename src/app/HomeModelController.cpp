@@ -423,7 +423,7 @@ void HomeModelController::upsertResumeItem(MovieItem item, qint64 positionTicks)
     }
     m_locallyPlayed.remove(item.id);
 
-    const auto current = m_resumeItems.movies();
+    const auto& current = m_resumeItems.movies();
     if (!current.empty() && current.front().id == item.id) {
         m_resumeItems.updateResumeTicks(item.id, item.resumeTicks);
         return;
