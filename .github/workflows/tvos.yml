@@ -27,7 +27,7 @@ jobs:
           submodules: recursive
           persist-credentials: false
       - name: Install native build tools
-        run: brew install cmake ninja meson pkg-config bash python imagemagick
+        run: brew install cmake ninja meson pkg-config bash python imagemagick gpatch
       - name: Install pinned macOS Qt host tools
         run: |
           python3 -m venv "$RUNNER_TEMP/aqt"

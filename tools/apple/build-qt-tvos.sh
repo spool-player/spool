@@ -17,7 +17,7 @@ case "$APPLE_SDK:$APPLE_ARCH" in
   *) echo "error: unsupported tvOS SDK/architecture: $APPLE_SDK/$APPLE_ARCH" >&2; exit 1 ;;
 esac
 xcrun --sdk "$APPLE_SDK" --show-sdk-path >/dev/null
-for tool in cmake ninja curl python3; do
+for tool in cmake ninja curl python3 gpatch; do
   command -v "$tool" >/dev/null || { echo "error: missing $tool" >&2; exit 1; }
 done
 manifest="$ROOT/tools/manifests/toolchain.json"
@@ -45,9 +45,9 @@ for module in qtbase qtshadertools qttasktree qtdeclarative qtsvg qtimageformats
   extract_verified_source "$archive" "$sha" "$source_root/$module"
   if [[ "$module" == qtbase ]]; then
     for patch_file in "$ROOT"/tools/apple/patches/qt-tvos-*.patch; do
-      if patch --dry-run --forward --silent -d "$source_root/$module" -p1 <"$patch_file" >/dev/null 2>&1; then
-        patch --forward -d "$source_root/$module" -p1 <"$patch_file"
-      elif ! patch --dry-run --reverse --silent -d "$source_root/$module" -p1 <"$patch_file" >/dev/null 2>&1; then
+      if gpatch --dry-run --forward --silent -d "$source_root/$module" -p1 <"$patch_file" >/dev/null 2>&1; then
+        gpatch --forward -d "$source_root/$module" -p1 <"$patch_file"
+      elif ! gpatch --dry-run --reverse --silent -d "$source_root/$module" -p1 <"$patch_file" >/dev/null 2>&1; then
         echo "error: pinned Qt tvOS patch no longer applies: $patch_file" >&2
         exit 1
       fi
@@ -58,10 +58,11 @@ for module in qtbase qtshadertools qttasktree qtdeclarative qtsvg qtimageformats
     # otherwise scans deliberately invalid Qt parser fixtures under build/.
     series="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["qt"]["series"])' "$manifest")"
     patch_file="$ROOT/tools/webos-native/patches/qtdeclarative-$series-qmlimportscanner-exclude-subtrees.patch"
-    if patch --dry-run --forward --silent -d "$source_root/$module" -p1 <"$patch_file" >/dev/null 2>&1; then
-      patch --forward -d "$source_root/$module" -p1 <"$patch_file"
-    elif ! patch --dry-run --reverse --silent -d "$source_root/$module" -p1 <"$patch_file" >/dev/null 2>&1; then
+    if gpatch --dry-run --forward --silent -d "$source_root/$module" -p1 <"$patch_file" >/dev/null 2>&1; then
+      gpatch --forward -d "$source_root/$module" -p1 <"$patch_file"
+    elif ! gpatch --dry-run --reverse --silent -d "$source_root/$module" -p1 <"$patch_file" >/dev/null 2>&1; then
       echo 'error: pinned host scanner patch no longer applies' >&2
+      gpatch --dry-run --forward -d "$source_root/$module" -p1 <"$patch_file" >&2 || true
       exit 1
     fi
     "$QT_HOST_PATH/bin/qt-cmake" -S "$ROOT/tools/apple/qmlimportscanner" \
