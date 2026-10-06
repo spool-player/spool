@@ -73,6 +73,20 @@ cpu_family = '$cpu_family'
 cpu = '$APPLE_ARCH'
 endian = 'little'
 EOF
+NATIVE_FILE="$BUILD_ROOT/native.ini"
+NATIVE_CC="$(xcrun --sdk macosx --find clang)"
+NATIVE_CXX="$(xcrun --sdk macosx --find clang++)"
+NATIVE_SDK="$(xcrun --sdk macosx --show-sdk-path)"
+cat >"$NATIVE_FILE" <<EOF
+[binaries]
+c = ['$NATIVE_CC', '-isysroot', '$NATIVE_SDK']
+cpp = ['$NATIVE_CXX', '-isysroot', '$NATIVE_SDK']
+[built-in options]
+c_args = []
+cpp_args = []
+c_link_args = []
+cpp_link_args = []
+EOF
 cmake_cross=(-DCMAKE_SYSTEM_NAME="$APPLE_SYSTEM" -DCMAKE_OSX_SYSROOT="$APPLE_SDK"
   -DCMAKE_OSX_ARCHITECTURES="$APPLE_ARCH" -DCMAKE_OSX_DEPLOYMENT_TARGET="$APPLE_DEPLOYMENT_TARGET"
   -DCMAKE_INSTALL_PREFIX="$PREFIX" -DCMAKE_PREFIX_PATH="$PREFIX"
@@ -107,9 +121,9 @@ meson_build() {
   local name="$1"; shift
   local build="$BUILD_ROOT/$name"
   if [[ -f "$build/meson-private/coredata.dat" ]]; then
-    meson setup --reconfigure "$build" "$SOURCE_ROOT/$name" --cross-file "$CROSS_FILE" --prefix "$PREFIX" --default-library static "$@"
+    meson setup --reconfigure "$build" "$SOURCE_ROOT/$name" --cross-file "$CROSS_FILE" --native-file "$NATIVE_FILE" --prefix "$PREFIX" --default-library static "$@"
   else
-    meson setup "$build" "$SOURCE_ROOT/$name" --cross-file "$CROSS_FILE" --prefix "$PREFIX" --default-library static "$@"
+    meson setup "$build" "$SOURCE_ROOT/$name" --cross-file "$CROSS_FILE" --native-file "$NATIVE_FILE" --prefix "$PREFIX" --default-library static "$@"
   fi
   meson compile -C "$build" -j "$JOBS"
   meson install -C "$build"
@@ -130,7 +144,7 @@ while IFS= read -r flag; do feature_flags+=("$flag"); done <"$ffmpeg_build/flags
 python3 "$ROOT/tools/ffmpeg-capabilities.py" audit-config --platform macos "$ffmpeg_build/config.h"
 python3 "$ROOT/tools/ffmpeg-capabilities.py" audit-components --platform macos "$ffmpeg_build/config_components.h"
 mpv_build="$BUILD_ROOT/mpv"
-mpv_args=(--cross-file "$CROSS_FILE" --prefix "$PREFIX" --default-library static --buildtype release
+mpv_args=(--cross-file "$CROSS_FILE" --native-file "$NATIVE_FILE" --prefix "$PREFIX" --default-library static --buildtype release
   -Dcplayer=false -Dlibmpv=true -Dbuild-date=false -Dtests=false -Dlua=disabled -Djavascript=disabled
   -Dmanpage-build=disabled -Dlibarchive=disabled -Dlibbluray=disabled -Dlibcurl=enabled -Dgl=enabled
   -Dios-gl=enabled -Dvideotoolbox-gl=disabled -Dvideotoolbox-pl=disabled -Dvulkan=disabled
