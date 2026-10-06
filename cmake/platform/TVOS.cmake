@@ -1,4 +1,8 @@
 function(spool_configure_tvos_targets native_target core_target)
+    set(SPOOL_APPLE_BUNDLE_IDENTIFIER "com.sachk.spool" CACHE STRING "Apple TV application identifier")
+    if(NOT SPOOL_APPLE_BUNDLE_IDENTIFIER MATCHES "^[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)+$")
+        message(FATAL_ERROR "SPOOL_APPLE_BUNDLE_IDENTIFIER must be a reverse-DNS application identifier")
+    endif()
     spool_configure_apple_mobile_targets(${native_target} ${core_target})
     target_sources(${native_target} PRIVATE
         src/platform/tvos/TvOSRemoteInput.mm
@@ -9,7 +13,7 @@ function(spool_configure_tvos_targets native_target core_target)
     set_target_properties(${native_target} PROPERTIES
         MACOSX_BUNDLE TRUE
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/app/tvos/Info.plist.in"
-        MACOSX_BUNDLE_GUI_IDENTIFIER "com.sachk.spool"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "${SPOOL_APPLE_BUNDLE_IDENTIFIER}"
         MACOSX_BUNDLE_BUNDLE_NAME "Spool"
         MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
         MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
@@ -27,6 +31,7 @@ function(spool_configure_tvos_targets native_target core_target)
     qt_add_executable(spool-tvos-playback-smoke
         tests/TestRunner.cpp
         tests/player/MpvVideoItemTest.cpp
+        tests/platform/TvOSRuntimeSmoke.mm
     )
     target_include_directories(spool-tvos-playback-smoke PRIVATE src tests "${CMAKE_CURRENT_BINARY_DIR}/generated")
     target_link_libraries(spool-tvos-playback-smoke PRIVATE ${core_target})
@@ -36,4 +41,5 @@ function(spool_configure_tvos_targets native_target core_target)
         XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "3"
     )
     install(TARGETS spool-tvos-playback-smoke BUNDLE DESTINATION smoke)
+    set_source_files_properties(tests/platform/TvOSRuntimeSmoke.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
 endfunction()

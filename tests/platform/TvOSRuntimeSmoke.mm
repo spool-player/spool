@@ -1,0 +1,108 @@
+#include "TestMain.h"
+#include "platform/CredentialStore.h"
+#include "platform/PlatformPaths.h"
+
+#include <QDir>
+#include <QElapsedTimer>
+#include <QGuiApplication>
+#include <QTemporaryFile>
+#include <QThread>
+#include <QUuid>
+
+#include <cmath>
+#include <cstring>
+#include <cstdio>
+
+#import <AVFoundation/AVFoundation.h>
+extern "C" {
+#include <mpv/client.h>
+}
+
+SPOOL_TEST_MAIN("tvos-audio")
+{
+    QGuiApplication app(argc, argv);
+    QTemporaryFile audio(QDir::tempPath() + QStringLiteral("/spool-audio-XXXXXX.wav"));
+    if (!audio.open())
+        return 1;
+    constexpr int rate = 48000;
+    constexpr int bytes = rate * 2;
+    QByteArray wav(44 + bytes, '\0');
+    const auto le32 = [&wav](int offset, quint32 value) {
+        for (int index = 0; index < 4; ++index)
+            wav[offset + index] = static_cast<char>(value >> (index * 8));
+    };
+    std::memcpy(wav.data(), "RIFF", 4);
+    le32(4, 36 + bytes);
+    std::memcpy(wav.data() + 8, "WAVEfmt ", 8);
+    le32(16, 16);
+    wav[20] = 1;
+    wav[22] = 1;
+    le32(24, rate);
+    le32(28, rate * 2);
+    wav[32] = 2;
+    wav[34] = 16;
+    std::memcpy(wav.data() + 36, "data", 4);
+    le32(40, bytes);
+    for (int sample = 0; sample < rate; ++sample) {
+        const auto value = static_cast<qint16>(800 * std::sin(sample * (440.0 * 6.283185307179586 / rate)));
+        wav[44 + sample * 2] = static_cast<char>(value);
+        wav[45 + sample * 2] = static_cast<char>(value >> 8);
+    }
+    if (audio.write(wav) != wav.size() || !audio.flush())
+        return 1;
+    mpv_handle *handle = mpv_create();
+    if (!handle)
+        return 1;
+    const auto finish = [handle](int result) { mpv_terminate_destroy(handle); return result; };
+    if (mpv_set_option_string(handle, "vo", "null") < 0
+        || mpv_set_option_string(handle, "ao", "audiounit") < 0
+        || mpv_set_option_string(handle, "audio-exclusive", "yes") < 0
+        || mpv_set_option_string(handle, "audio-fallback-to-null", "no") < 0
+        || mpv_set_option_string(handle, "loop-file", "inf") < 0
+        || mpv_initialize(handle) < 0)
+        return finish(1);
+    const QByteArray path = QFile::encodeName(audio.fileName());
+    const char *load[] = { "loadfile", path.constData(), nullptr };
+    if (mpv_command(handle, load) < 0)
+        return finish(1);
+    bool output = false;
+    QElapsedTimer timer;
+    timer.start();
+    while (!output && timer.elapsed() < 10000) {
+        app.processEvents(QEventLoop::AllEvents, 20);
+        char *ao = mpv_get_property_string(handle, "current-ao");
+        double position = 0;
+        output = ao && QByteArray(ao) == "audiounit"
+            && mpv_get_property(handle, "time-pos", MPV_FORMAT_DOUBLE, &position) == 0 && position > 0.1;
+        mpv_free(ao);
+        QThread::msleep(10);
+    }
+    const bool session = [AVAudioSession.sharedInstance.category isEqualToString:AVAudioSessionCategoryPlayback]
+        && !(AVAudioSession.sharedInstance.categoryOptions & AVAudioSessionCategoryOptionMixWithOthers);
+    if (!output || !session) {
+        std::fprintf(stderr, "tvOS audio smoke: realOutput=%d exclusivePlaybackSession=%d\n", output, session);
+        return finish(1);
+    }
+    std::fprintf(stderr, "tvOS audio smoke: AudioUnit output advanced with exclusive playback session\n");
+    return finish(0);
+}
+
+namespace {
+int secureStoreSmoke(int argc, char **argv)
+{
+    QGuiApplication app(argc, argv);
+    const QString account = QStringLiteral("smoke-") + QUuid::createUuid().toString(QUuid::WithoutBraces);
+    const QString value = QUuid::createUuid().toString();
+    const bool saved = Spool::CredentialStore::save(account, value);
+    const bool loaded = saved && Spool::CredentialStore::load(account) == value;
+    Spool::CredentialStore::remove(account);
+    const bool removed = Spool::CredentialStore::load(account).isEmpty();
+    QTemporaryFile data(QDir(Spool::persistentDataRoot()).filePath(QStringLiteral("smoke-XXXXXX")));
+    const bool writable = data.open() && data.write("sandbox") == 7 && data.flush();
+    if (!saved || !loaded || !removed || !writable)
+        return 1;
+    std::fprintf(stderr, "tvOS credentials smoke: Keychain roundtrip and sandbox file persistence passed\n");
+    return 0;
+}
+[[maybe_unused]] const bool secureRegistered = SpoolTests::registerTest("tvos-credentials", &secureStoreSmoke);
+}

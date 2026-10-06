@@ -25,6 +25,10 @@ checks = [
     ("com.sachk.spool", ["--launch-test"], "launch test: application UI rendered"),
     ("com.sachk.spool.playback-smoke", ["mpv-video-item"],
      "mpv video smoke: upright frames and OSD rendered across detach and resize"),
+    ("com.sachk.spool.playback-smoke", ["tvos-audio"],
+     "tvOS audio smoke: AudioUnit output advanced with exclusive playback session"),
+    ("com.sachk.spool.playback-smoke", ["tvos-credentials"],
+     "tvOS credentials smoke: Keychain roundtrip and sandbox file persistence passed"),
 ]
 smoke = Path(app).parent / "smoke" / "spool-tvos-playback-smoke.app"
 subprocess.run(["xcrun", "simctl", "install", device, str(smoke)], check=True)
@@ -33,14 +37,15 @@ for bundle, arguments, expected in checks:
     process = subprocess.run(["xcrun", "simctl", "launch", "--console", device, bundle, *arguments],
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=90)
     passed = process.returncode == 0 and expected in process.stdout
-    results[bundle] = passed
-    print(f"{bundle}: {'passed' if passed else 'FAILED'}")
+    results[arguments[0]] = passed
+    print(f"{arguments[0]}: {'passed' if passed else 'FAILED'}")
     if not passed:
         # Report only controlled native smoke diagnostics; URLs/auth are absent
         # from these test result lines and provider logs are deliberately omitted.
         for line in process.stdout.splitlines():
             if any(marker in line for marker in ["launch test:", "video result:", "orientation:",
-                                                "render context was not ready", "failed to initialize mpv"]):
+                                                "render context was not ready", "failed to initialize mpv",
+                                                "tvOS audio smoke:", "tvOS credentials smoke:"]):
                 print(line)
         (output / "result.json").write_text(json.dumps(results, indent=2) + "\n")
         raise SystemExit(1)

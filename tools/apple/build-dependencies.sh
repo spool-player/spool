@@ -106,7 +106,7 @@ case "$APPLE_SDK:$APPLE_ARCH" in
 esac
 # Only the TLS libraries belong in the application closure. OpenSSL's command
 # line HTTP server uses fork(), which tvOS explicitly prohibits.
-(cd "$openssl_build"; "$SOURCE_ROOT/openssl/Configure" "$openssl_target" no-shared no-tests no-asm --prefix="$PREFIX"; make -j"$JOBS" build_libs; make install_dev)
+(cd "$openssl_build"; "$SOURCE_ROOT/openssl/Configure" "$openssl_target" no-apps no-shared no-tests no-asm --prefix="$PREFIX"; make -j"$JOBS" build_libs; make install_dev)
 cmake -S "$SOURCE_ROOT/curl" -B "$BUILD_ROOT/curl" -GNinja "${cmake_cross[@]}" \
   -DBUILD_SHARED_LIBS=OFF -DBUILD_STATIC_LIBS=ON -DBUILD_CURL_EXE=OFF -DBUILD_TESTING=OFF \
   -DCURL_USE_OPENSSL=ON -DCURL_USE_SECTRUST=ON -DOPENSSL_ROOT_DIR="$PREFIX" -DOPENSSL_USE_STATIC_LIBS=ON \

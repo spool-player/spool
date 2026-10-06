@@ -14,9 +14,13 @@ concurrency:
 
 jobs:
   simulator:
-    name: Qt mpv tvOS simulator build and launch
+    name: Qt mpv tvOS ${{ matrix.sdk }} build and smoke
     runs-on: macos-15
     timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        sdk: [appletvsimulator, appletvos]
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -34,18 +38,19 @@ jobs:
           echo "QT_HOST_PATH=$RUNNER_TEMP/Qt/$version/macos" >> "$GITHUB_ENV"
       - name: Build Qt and media libraries for Apple TV simulator
         env:
-          APPLE_SDK: appletvsimulator
+          APPLE_SDK: ${{ matrix.sdk }}
           APPLE_ARCH: arm64
           JOBS: 3
           BUILD_JOBS: 3
         run: bash tools/build-tvos.sh
       - name: Launch isolated Apple TV simulator smoke
+        if: matrix.sdk == 'appletvsimulator'
         run: bash tools/apple/smoke-tvos.sh build/tvos/appletvsimulator-arm64/install/Spool.app
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
-          name: spool-tvos-simulator
+          name: internal-tvos-${{ matrix.sdk }}-arm64
           path: |
-            build/tvos/appletvsimulator-arm64/install/Spool.app
+            build/tvos/${{ matrix.sdk }}-arm64/install/Spool.app
             build/tvos/smoke/*.png
             build/tvos/smoke/result.json
