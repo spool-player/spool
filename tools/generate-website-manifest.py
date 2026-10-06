@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Describe the complete set of final, installable release assets for the website."""
+"""Describe every final release download, including unsigned/signing-required IPAs."""
 
 import argparse
 import hashlib
@@ -33,6 +33,9 @@ PLATFORMS = (
         ("portable", "Portable tarball", "x86_64", "tar.zst", "Spool-{version}-linux-x86_64.tar.zst"),
         ("arch", "Arch Linux package", "x86_64", "pkg.tar.zst", "spool-bin-{version}-*-x86_64.pkg.tar.zst"),
     )),
+    ("tvos", "Apple TV (tvOS)", (
+        ("arm64", "Unsigned IPA · ARM64 (signing required)", "arm64", "ipa", "Spool-{version}-tvOS-arm64.ipa"),
+    )),
 )
 
 
@@ -64,7 +67,7 @@ def generate_manifest(assets: Path, tag: str, repository: str) -> dict:
                 raise ValueError(f"{platform_id}/{package_id} final package is empty")
             with package.open("rb") as source:
                 checksum = hashlib.file_digest(source, "sha256").hexdigest()
-            downloads.append({
+            download = {
                 "id": package_id,
                 "label": label,
                 "architecture": architecture,
@@ -73,10 +76,15 @@ def generate_manifest(assets: Path, tag: str, repository: str) -> dict:
                 "url": f"{download_base}/{quote(package.name, safe='')}",
                 "sha256": checksum,
                 "size": size,
-            })
+            }
+            if platform_id == "tvos":
+                # The archive audit verifies a device bundle, not Apple signing.
+                download["signing"] = "unsigned"
+                download["note"] = "Requires your own Apple signing and provisioning to install. Not on the App Store."
+            downloads.append(download)
             selected.add(package)
         platforms.append({"id": platform_id, "label": platform_label, "downloads": downloads})
-    installable_suffixes = (".ipk", ".apk", ".exe", ".dmg", ".AppImage", ".tar.zst")
+    installable_suffixes = (".ipk", ".apk", ".exe", ".dmg", ".AppImage", ".tar.zst", ".ipa")
     if any(path not in selected and path.name.endswith(installable_suffixes) for path in assets.iterdir()):
         raise ValueError("an unrecognized installable final package would be omitted from website metadata")
     return {
