@@ -1,0 +1,74 @@
+--- a/src/plugins/platforms/ios/qiostheme.mm
++++ b/src/plugins/platforms/ios/qiostheme.mm
+@@ -30,8 +30,8 @@
+ #include "qiosfontdialog.h"
+ #include "qiosmessagedialog.h"
+ #include "qiosscreen.h"
+-#include "quiwindow.h"
+ #endif
++#include "quiwindow.h"
+ 
+ QT_BEGIN_NAMESPACE
+ 
+@@ -61,19 +61,27 @@
+ 
+     const auto disabledText = qt_mac_toQBrush(UIColor.tertiaryLabelColor.CGColor);
+ 
++#ifndef Q_OS_TVOS
+     s_systemPalette.setBrush(QPalette::Window, qt_mac_toQBrush(UIColor.systemGroupedBackgroundColor.CGColor));
++#endif
+     s_systemPalette.setBrush(QPalette::Active, QPalette::WindowText, qt_mac_toQBrush(UIColor.labelColor.CGColor));
+     s_systemPalette.setBrush(QPalette::Disabled, QPalette::WindowText, disabledText);
+ 
++#ifndef Q_OS_TVOS
+     s_systemPalette.setBrush(QPalette::Base, qt_mac_toQBrush(UIColor.secondarySystemGroupedBackgroundColor.CGColor));
++#endif
+     s_systemPalette.setBrush(QPalette::Active, QPalette::Text, qt_mac_toQBrush(UIColor.labelColor.CGColor));
+     s_systemPalette.setBrush(QPalette::Disabled, QPalette::Text, disabledText);
+ 
++#ifndef Q_OS_TVOS
+     s_systemPalette.setBrush(QPalette::Button, qt_mac_toQBrush(UIColor.secondarySystemBackgroundColor.CGColor));
++#endif
+     s_systemPalette.setBrush(QPalette::Active, QPalette::ButtonText, qt_mac_toQBrush(UIColor.labelColor.CGColor));
+     s_systemPalette.setBrush(QPalette::Disabled, QPalette::ButtonText, disabledText);
+ 
++#ifndef Q_OS_TVOS
+     s_systemPalette.setBrush(QPalette::Active, QPalette::BrightText, qt_mac_toQBrush(UIColor.lightTextColor.CGColor));
++#endif
+     s_systemPalette.setBrush(QPalette::Active, QPalette::PlaceholderText, qt_mac_toQBrush(UIColor.placeholderTextColor.CGColor));
+ 
+     s_systemPalette.setBrush(QPalette::Active, QPalette::Link, qt_mac_toQBrush(UIColor.linkColor.CGColor));
+--- a/src/plugins/platforms/ios/quiview.mm
++++ b/src/plugins/platforms/ios/quiview.mm
+@@ -84,6 +84,7 @@
+         self.multipleTouchEnabled = YES;
+ #endif
+ 
++#ifndef Q_OS_TVOS
+         auto scrollGestureRecognizer = [[UIPanGestureRecognizer alloc]
+             initWithTarget:self action:@selector(handleScroll:)];
+         // The gesture recognizer should only care about scroll gestures (for now)
+@@ -109,6 +110,7 @@
+         pencilHoverGestureRecognizer.allowedTouchTypes = @[ @(UITouchTypePencil) ];
+         [self addGestureRecognizer:[pencilHoverGestureRecognizer autorelease]];
+ #endif
++#endif
+ 
+         // Set up layer
+         if ([self.layer isKindOfClass:CAMetalLayer.class]) {
+@@ -596,6 +598,7 @@
+         self.platformWindow->window(), timestamp, iosIntegration->touchDevice());
+ }
+ 
++#ifndef Q_OS_TVOS
+ - (void)handleMouseHover:(UIHoverGestureRecognizer *)recognizer
+ {
+     if (!self.platformWindow)
+@@ -623,6 +626,7 @@
+         qCWarning(lcQpaMouse) << "Unknown hover state for" << recognizer;
+     }
+ }
++#endif
+ 
+ - (int)mapPressTypeToKey:(UIPress*)press withModifiers:(Qt::KeyboardModifiers)qtModifiers text:(QString &)text
+ {
