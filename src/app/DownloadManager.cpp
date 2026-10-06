@@ -2,6 +2,7 @@
 #include "../common/TlsTrust.h"
 #include "../platform/AndroidDownloadStorage.h"
 #include "../provider/SourceHub.h"
+#include <QByteArrayView>
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
@@ -87,7 +88,7 @@ QVariantList DownloadManager::destinationChoices()
 #if defined(Q_OS_ANDROID)
     choices.push_back(QVariantMap { { QStringLiteral("label"), QStringLiteral("Internal app storage") },
         { QStringLiteral("url"), QUrl::fromLocalFile(defaultDestination()) } });
-    const auto context = QNativeInterface::QAndroidApplication::context();
+    const QJniObject context = QNativeInterface::QAndroidApplication::context();
     const auto external
         = context.callObjectMethod("getExternalFilesDir", "(Ljava/lang/String;)Ljava/io/File;", nullptr);
     if (external.isValid()) {
@@ -231,7 +232,7 @@ void DownloadManager::start(const QString& itemId, const QVariantMap& option)
         [guard = QPointer<DownloadManager>(this), job](const std::exception& error) {
             if (!guard || job->stopped)
                 return;
-            if (QByteArray(error.what()) == "download_cancelled")
+            if (QByteArrayView(error.what()) == "download_cancelled")
                 guard->cancel(job->id);
             else
                 guard->finish(job, guard->tr("Could not prepare download. Check the account and server, then retry."));
