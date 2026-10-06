@@ -61,6 +61,10 @@ export interface Device {
     locale: string;
 }
 
+export type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error';
+/** Flat diagnostic metadata, never authentication, request bodies or media URLs. */
+export type LogFields = Readonly<Record<string, null | boolean | number | string>>;
+
 /**
  * Given to createSource and lives as long as the account: use it for
  * connections that outlast an operation. Everything stops when the account
@@ -70,6 +74,10 @@ export interface SourceHost {
     device: Device;
     /** Frozen host-supported exact versions requested in manifest.extensions. */
     readonly extensions?: Extensions;
+    /** Native category guard; check before constructing expensive diagnostic fields. */
+    isLogEnabled(level: LogLevel): boolean;
+    /** Lazy message runs only when enabled. Native redaction/bounds always apply. */
+    log(level: LogLevel, message: string | (() => string), fields?: LogFields): void;
     /** Only origins the account was set up with (or manifest `origins`). */
     http(url: string, options?: HttpOptions): Promise<HttpResponse>;
     /** 0–60000 ms. */

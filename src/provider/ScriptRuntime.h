@@ -32,7 +32,8 @@ public:
         std::function<QList<QHostAddress>()> lanTargets;
     };
 
-    ScriptRuntime(QString entryPoint, QVariantMap device, NetworkHooks hooks = {}, QObject *parent = nullptr);
+    ScriptRuntime(QString entryPoint, QVariantMap device, NetworkHooks hooks = {}, QObject *parent = nullptr,
+        QString providerId = {});
     ~ScriptRuntime() override;
 
     // An origin of "*" lets the source reach any HTTP(S) origin.
