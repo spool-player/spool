@@ -139,6 +139,14 @@ downloaded JS/QML still needs review against Apple's downloaded-software rules a
 of guideline 4.7, including native-API exposure. Initial Apple submissions should use bundled
 providers, with provider code changes delivered through application updates.
 
+Apple App Store builds additionally set `-DSPOOL_APPLE_APP_STORE=ON`. This forces
+`bundled` provider loading and includes only pins whose `appleAppStore` field is
+explicitly `true`; missing or false approval excludes a provider. Checkout overrides
+are rejected, so a local checkout cannot bypass the reviewed release pin.
+The curated catalogue maintains the same required boolean independently of provider
+release feeds; pin updates must copy that reviewed value into `providers/lock.json`.
+Jellyfin, Emby and Plex are included. Stremio is excluded by default.
+
 ## Catalogue continuation and queues
 
 Browse pages retain provider cursors verbatim through the catalogue, hub, browse session
