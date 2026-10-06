@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - "**"
+      - "!feature/tvos"
   pull_request:
   workflow_dispatch:
     inputs:
