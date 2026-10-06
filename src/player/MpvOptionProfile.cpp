@@ -581,7 +581,11 @@ std::vector<MpvOption> MpvOptionProfile::applicationOptions(Platform platform, b
             options.push_back({ "ao", "audiotrack,opensles,null" });
     } else {
         options.push_back({ "vo", needsVideoSurface ? "libmpv" : "null" });
+#if defined(SPOOL_APPLE_MOBILE)
+        options.push_back({ "audio-fallback-to-null", "no" });
+#else
         options.push_back({ "audio-fallback-to-null", "yes" });
+#endif
         // Everything above this line ran at libplacebo's defaults before,
         // which is a great deal of work for a Mali-class part to do sixty
         // times a second.
@@ -602,6 +606,12 @@ std::vector<MpvOption> MpvOptionProfile::applicationOptions(Platform platform, b
             options.push_back({ "hwdec", "auto-safe" });
 #endif
         }
+#if defined(SPOOL_APPLE_MOBILE)
+        options.push_back({ "ao", "audiounit" });
+        // AudioUnit otherwise changes AVAudioSession to MixWithOthers,
+        // bypassing the system interruption policy owned by our lifecycle.
+        options.push_back({ "audio-exclusive", "yes" });
+#else
         if (normalizedAudioOutput != QStringLiteral("auto")) {
             options.push_back({ "ao", normalizedAudioOutput.toUtf8() });
         } else if (android) {
@@ -611,6 +621,7 @@ std::vector<MpvOption> MpvOptionProfile::applicationOptions(Platform platform, b
             // mature Android backend and restarts cleanly.
             options.push_back({ "ao", "audiotrack,opensles,null" });
         }
+#endif
     }
 
     const MpvOption applicationOptions[] = {
