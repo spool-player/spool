@@ -285,6 +285,7 @@ set(SPOOL_SHELL_SOURCES
     src/provider/ProviderExtensions.h
     src/provider/ProviderExtensionData.cpp
     src/provider/ProviderExtensionData.h
+    src/provider/ProviderLogging.h
     src/provider/ProviderMediaPage.cpp
     src/provider/ProviderMediaPage.h
     src/provider/ProviderPackage.cpp
@@ -882,6 +883,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     set(SPOOL_TESTS_providers
         local-provider tests/providers/LocalProviderTest.cpp
         script-runtime tests/providers/ScriptRuntimeTest.cpp
+        provider-logging tests/providers/ProviderLoggingTest.cpp
         script-runtime-network tests/providers/ScriptRuntimeNetworkTest.cpp
         provider-legacy-contract tests/providers/LegacyProviderContractTest.cpp
         provider-media-page tests/providers/ProviderMediaPageTest.cpp
