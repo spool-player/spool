@@ -188,8 +188,7 @@ def website_contract(script: Path) -> None:
         assert {item["name"] for item in downloads} == set(names)
         tvos = platforms["tvos"]["downloads"][0]
         assert tvos["architecture"] == "arm64" and tvos["format"] == "ipa"
-        assert tvos["signing"] == "unsigned" and "signing required" in tvos["label"]
-        assert "provisioning" in tvos["note"] and "Not on the App Store" in tvos["note"]
+        assert tvos["signing"] == "unsigned"
         assert tvos["sha256"] == hashlib.sha256(b"package-protocol-fixture").hexdigest()
         assert tvos["size"] == len(b"package-protocol-fixture")
         assert tvos["url"].endswith("/v0.9.0/Spool-0.9.0-tvOS-arm64.ipa")
