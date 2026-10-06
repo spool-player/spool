@@ -161,9 +161,28 @@ existing schema validation and persisted user-change transaction. Local UI
 scale changes do not make this device-specific setting remotely syncable.
 Seek preview size is relative to interface scale and does not change the
 server's thumbnail resolution; the two scale settings are independent.
-The CLI exposes only the four settings shown above, not credentials or arbitrary
+The CLI exposes only the five settings shown above, not credentials or arbitrary
 configuration. `state` is a small allowlisted route/playback/visual snapshot,
 not unrestricted QObject inspection or script evaluation.
+
+Download automation uses the same provider negotiation, quality options and
+native transfer manager as the UI:
+
+```sh
+"$SPOOLET" downloads options ACCOUNT_PREFIX:ITEM_ID
+"$SPOOLET" downloads start ACCOUNT_PREFIX:ITEM_ID 0
+"$SPOOLET" downloads list
+"$SPOOLET" downloads cancel JOB_ID
+"$SPOOLET" downloads retry JOB_ID
+"$SPOOLET" downloads play JOB_ID
+"$SPOOLET" downloads remove JOB_ID
+```
+
+Choose the index returned by `downloads options`; zero is Original.
+Starting is asynchronous and can open the provider's edition/stream picker.
+Poll `downloads list` for job state and transferred/total bytes. The output
+excludes destination paths, media URLs, credentials and server cleanup data.
+`downloads play` launches a completed local copy without remote playback relay.
 
 For pointer testing, `pointer press X Y`, frame-paced `pointer move X Y`,
 and `pointer release X Y` perform a real held-button drag; `pointer right-click

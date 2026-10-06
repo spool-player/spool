@@ -1210,7 +1210,7 @@ int main(int argc, char **argv)
 
     QTimer::singleShot(1000, router.get(), [router = router.get()] { router->beginSession(false); });
 #if !defined(SPOOL_ANDROID) && !defined(SPOOL_WEBOS)
-    Spool::LocalCommandServer localCommands(controller.get(), router.get(), &window);
+    Spool::LocalCommandServer localCommands(controller.get(), router.get(), &window, &downloads, &hub);
     if (!app.arguments().contains(QStringLiteral("--no-local-control"))) {
         QString error;
         const QString instance = optionValue(app.arguments(), QStringLiteral("--instance"), "SPOOL_INSTANCE");

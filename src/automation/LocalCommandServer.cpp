@@ -1,10 +1,12 @@
 #include "LocalCommandServer.h"
 #include "LocalControlProtocol.h"
 #include "app/AppController.h"
+#include "app/DownloadManager.h"
 #include "app/RouterController.h"
 #include "app/SettingsSchema.h"
 #include "common/AsyncTask.h"
 #include "platform/NativeAppWindow.h"
+#include "provider/SourceHub.h"
 
 #include <QCoreApplication>
 #include <QDateTime>
@@ -36,10 +38,13 @@ namespace {
     }
 }
 
-LocalCommandServer::LocalCommandServer(AppController *app, RouterController *router, NativeAppWindow *window)
+LocalCommandServer::LocalCommandServer(AppController *app, RouterController *router, NativeAppWindow *window,
+    DownloadManager *downloads, SourceHub *sources)
     : m_app(app)
     , m_router(router)
     , m_window(window)
+    , m_downloads(downloads)
+    , m_sources(sources)
 {
     m_inputClock.start();
     m_server.setSocketOptions(QLocalServer::UserAccessOption);
@@ -326,6 +331,78 @@ void LocalCommandServer::dispatch(QLocalSocket *socket, const QJsonObject& reque
             return;
         }
         done(items(args));
+    } else if (command == QStringLiteral("downloads")) {
+        const QString action = args.value(QStringLiteral("action")).toString(QStringLiteral("list"));
+        if (action == QStringLiteral("list")) {
+            QJsonArray jobs;
+            for (const QVariant& value : m_downloads->jobs()) {
+                const QVariantMap row = value.toMap();
+                QJsonObject job;
+                for (const auto& key : { "id", "itemId", "title", "state", "received", "total", "quality" })
+                    job.insert(QLatin1String(key), QJsonValue::fromVariant(row.value(QLatin1String(key))));
+                job.insert(QStringLiteral("failed"),
+                    row.value(QStringLiteral("state")).toString() == QStringLiteral("failed"));
+                jobs.append(job);
+            }
+            done({ { QStringLiteral("jobs"), jobs } });
+        } else if (action == QStringLiteral("options") || action == QStringLiteral("start")) {
+            const QString itemId = args.value(QStringLiteral("itemId")).toString();
+            const QVariantList options = m_sources->downloadOptions(itemId);
+            if (options.isEmpty()) {
+                invalid(QStringLiteral("Select an item from a download-capable account"));
+                return;
+            }
+            if (action == QStringLiteral("options")) {
+                QJsonArray rows;
+                for (qsizetype index = 0; index < options.size(); ++index) {
+                    QJsonObject row = QJsonObject::fromVariantMap(options.at(index).toMap());
+                    row.insert(QStringLiteral("index"), int(index));
+                    rows.append(row);
+                }
+                done({ { QStringLiteral("options"), rows } });
+            } else {
+                const int index = args.value(QStringLiteral("index")).toInt(-1);
+                if (index < 0 || index >= options.size()) {
+                    invalid(QStringLiteral("Select an index from downloads options"));
+                    return;
+                }
+                m_downloads->start(itemId, options.at(index).toMap());
+                done({ { QStringLiteral("accepted"), true },
+                    { QStringLiteral("completion"),
+                        QStringLiteral("Poll downloads list; provider choice may be required") } });
+            }
+        } else if (action == QStringLiteral("cancel") || action == QStringLiteral("retry")
+            || action == QStringLiteral("remove") || action == QStringLiteral("play")) {
+            const QString jobId = args.value(QStringLiteral("jobId")).toString();
+            bool found = false;
+            for (const QVariant& value : m_downloads->jobs()) {
+                if (value.toMap().value(QStringLiteral("id")).toString() == jobId) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                invalid(QStringLiteral("Select a job ID from downloads list"));
+                return;
+            }
+            if (action == QStringLiteral("play")) {
+                const QString itemId = m_downloads->offlineItemId(jobId);
+                if (itemId.isEmpty()) {
+                    invalid(QStringLiteral("Download is not available for offline playback"));
+                    return;
+                }
+                m_app->playLocalItemId(itemId);
+            } else if (action == QStringLiteral("cancel")) {
+                m_downloads->cancel(jobId);
+            } else if (action == QStringLiteral("retry")) {
+                m_downloads->retry(jobId);
+            } else {
+                m_downloads->remove(jobId);
+            }
+            done({ { QStringLiteral("accepted"), true } });
+        } else {
+            invalid(QStringLiteral("Unknown downloads action"));
+        }
     } else if (command == QStringLiteral("qualities")) {
         const QVariantList inventory = m_app->streamingQualityOptions();
         QJsonArray options;
