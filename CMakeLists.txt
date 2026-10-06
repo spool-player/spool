@@ -899,7 +899,6 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         script-runtime tests/providers/ScriptRuntimeTest.cpp
         provider-logging tests/providers/ProviderLoggingTest.cpp
         script-runtime-network tests/providers/ScriptRuntimeNetworkTest.cpp
-        provider-legacy-contract tests/providers/LegacyProviderContractTest.cpp
         provider-media-page tests/providers/ProviderMediaPageTest.cpp
         provider-registry tests/providers/ProviderRegistryTest.cpp
         provider-activation tests/providers/ProviderActivationTest.cpp
@@ -1003,10 +1002,6 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         endforeach()
     endforeach()
 
-    add_test(NAME provider-legacy-contract-interpreter COMMAND providers-tests provider-legacy-contract)
-    set_tests_properties(provider-legacy-contract provider-legacy-contract-interpreter PROPERTIES SKIP_RETURN_CODE 77)
-    set_tests_properties(provider-legacy-contract-interpreter PROPERTIES
-        ENVIRONMENT "${SPOOL_TEST_ENV};QV4_FORCE_INTERPRETER=1;QML_DISABLE_DISK_CACHE=1")
 
     add_test(NAME provider-media-page-interpreter COMMAND providers-tests provider-media-page)
     set_tests_properties(provider-media-page-interpreter PROPERTIES ENVIRONMENT "QV4_FORCE_INTERPRETER=1;${SPOOL_TEST_ENV}")

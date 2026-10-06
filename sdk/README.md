@@ -321,8 +321,8 @@ namespaced IDs of at most 128 characters. Unknown valid IDs or majors do not
 prevent baseline loading; malformed declarations are rejected.
 
 Both source and operation hosts expose the same frozen `host.extensions` map
-of supported declared versions. An older API 0.2 host has no such property:
-treat that as no optional support, never infer it from the application version.
+of supported declared versions. Negotiate exact feature versions from this map,
+never infer support from the application version.
 Return account/server offers in `describe().extensions`; effective support is
 the exact intersection of declarations, host support and account offers.
 `host.emit('extensionsChanged', {extensions})` replaces only that account's
@@ -330,15 +330,14 @@ offers; support loss cancels affected calls and updates controls.
 
 Optional operations are checked before provider execution and fail with
 `unsupported_extension` when unavailable. Providers must also check support.
-New speed-test implementations declare `spool.speed-test` instead of adding
-the old unversioned capability. Inherited artwork owners require
-`spool.artwork-owners`; omit inherited child tags on old hosts while retaining
-own artwork and ordinary series/album fallback.
+Speed-test implementations declare `spool.speed-test`; inherited artwork owners
+require `spool.artwork-owners`. When that feature is unavailable, retain own artwork
+and ordinary series/album fallback without inherited child tags.
 
-Keep `extensionStatus` baseline-callable and ship provider-owned notices for
-old hosts. Missing host features show “Update Spool to use all features of this
-provider.” Server permissions and missing endpoints are separate conditions,
-not reasons to request an application update.
+Provider and host builds are released together against the current prerelease
+contract. Older host compatibility is not supported; do not add aliases or logging
+fallbacks to make current providers run on frozen host glue. Missing declared host
+features and server permission/endpoint failures remain distinct conditions.
 
 ### Optional network facilities
 

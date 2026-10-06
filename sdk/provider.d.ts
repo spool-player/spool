@@ -15,7 +15,7 @@
 
 export type Value = null | boolean | number | string | Value[] | { [key: string]: Value };
 
-/** Optional wire-major negotiation; absence on an API 0.2 host means no extensions. */
+/** Exact wire-major negotiation for optional declared features on the current host. */
 export type Extensions = Readonly<Record<string, number>>;
 
 export interface HttpOptions {
