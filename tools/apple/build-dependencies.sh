@@ -140,15 +140,15 @@ meson_build libass -Dtest=disabled -Dcompare=disabled -Dprofile=disabled -Dfuzz=
 meson_build libplacebo -Ddemos=false -Dtests=false -Dbench=false -Dfuzz=false -Dvulkan=disabled -Dvk-proc-addr=disabled -Dd3d11=disabled -Dshaderc=disabled -Dglslang=disabled -Dlcms=disabled -Ddovi=disabled -Dlibdovi=disabled -Dxxhash=disabled -Dopengl=enabled -Dgl-proc-addr=enabled
 ffmpeg_build="$BUILD_ROOT/ffmpeg"
 mkdir -p "$ffmpeg_build"
-python3 "$ROOT/tools/ffmpeg-capabilities.py" configure --platform macos >"$ffmpeg_build/flags"
+python3 "$ROOT/tools/ffmpeg-capabilities.py" configure --platform "$target_os" >"$ffmpeg_build/flags"
 feature_flags=()
 while IFS= read -r flag; do feature_flags+=("$flag"); done <"$ffmpeg_build/flags"
 (cd "$ffmpeg_build"; "$SOURCE_ROOT/ffmpeg/configure" --prefix="$PREFIX" --target-os=darwin --arch="$ffmpeg_arch" \
   --enable-cross-compile --cc="$CC" --cxx="$CXX" --ar="$AR" --ranlib="$RANLIB" --sysroot="$SDKROOT" \
   --enable-static --disable-shared --enable-pic --pkg-config=pkg-config \
   --extra-cflags="$CFLAGS -I$PREFIX/include" --extra-ldflags="$LDFLAGS" "${feature_flags[@]}"; make -j"$JOBS"; make install)
-python3 "$ROOT/tools/ffmpeg-capabilities.py" audit-config --platform macos "$ffmpeg_build/config.h"
-python3 "$ROOT/tools/ffmpeg-capabilities.py" audit-components --platform macos "$ffmpeg_build/config_components.h"
+python3 "$ROOT/tools/ffmpeg-capabilities.py" audit-config --platform "$target_os" "$ffmpeg_build/config.h"
+python3 "$ROOT/tools/ffmpeg-capabilities.py" audit-components --platform "$target_os" "$ffmpeg_build/config_components.h"
 mpv_build="$BUILD_ROOT/mpv"
 mpv_args=(--cross-file "$CROSS_FILE" --native-file "$NATIVE_FILE" --prefix "$PREFIX" --default-library static --buildtype release
   -Dcplayer=false -Dlibmpv=true -Dbuild-date=false -Dtests=false -Dlua=disabled -Djavascript=disabled
