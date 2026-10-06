@@ -349,15 +349,24 @@ QCoro::Task<QVariantMap> PortableProvider::call(QString operation, QVariantMap a
 
 QCoro::Task<DownloadPlan> PortableProvider::negotiateDownload(DownloadRequest request, QString scope)
 {
+    QPointer<PortableProvider> guard(this);
+    QPointer<ProviderRegistry> registry(m_registry);
+    const QString accountId = m_accountId;
     QVariantMap args { { QStringLiteral("itemId"), request.itemId },
         { QStringLiteral("mode"), request.transcode ? QStringLiteral("transcoded") : QStringLiteral("original") } };
+    if (!request.variantId.isEmpty())
+        args.insert(QStringLiteral("variantId"), request.variantId);
     if (request.maxBitrate > 0)
         args.insert(QStringLiteral("maxBitrate"), request.maxBitrate);
     if (request.maxHeight > 0)
         args.insert(QStringLiteral("maxHeight"), request.maxHeight);
-    QVariantMap result = co_await m_registry->callSource(m_accountId, QStringLiteral("download"), args, scope);
+    QVariantMap result = co_await registry->callSource(accountId, QStringLiteral("download"), args, scope);
+    if (!guard || !registry)
+        throw std::runtime_error("source_unavailable");
     if (result.contains(QStringLiteral("pick"))) {
-        const QVariantMap choice = co_await m_registry->pick(m_accountId, result.value(QStringLiteral("pick")).toMap());
+        const QVariantMap choice = co_await registry->pick(accountId, result.value(QStringLiteral("pick")).toMap());
+        if (!guard || !registry)
+            throw std::runtime_error("source_unavailable");
         if (choice.isEmpty())
             throw std::runtime_error("download_cancelled");
         args.insert(choice);
@@ -365,11 +374,13 @@ QCoro::Task<DownloadPlan> PortableProvider::negotiateDownload(DownloadRequest re
         args.insert(QStringLiteral("itemId"), request.itemId);
         args.insert(
             QStringLiteral("mode"), request.transcode ? QStringLiteral("transcoded") : QStringLiteral("original"));
+        args.remove(QStringLiteral("maxBitrate"));
+        args.remove(QStringLiteral("maxHeight"));
         if (request.maxBitrate > 0)
             args.insert(QStringLiteral("maxBitrate"), request.maxBitrate);
         if (request.maxHeight > 0)
             args.insert(QStringLiteral("maxHeight"), request.maxHeight);
-        result = co_await m_registry->callSource(m_accountId, QStringLiteral("download"), args, scope);
+        result = co_await registry->callSource(accountId, QStringLiteral("download"), args, scope);
     }
     co_return DownloadPlan { QUrl(result.value(QStringLiteral("url")).toString()),
         result.value(QStringLiteral("container")).toString().toLower(), result.value(QStringLiteral("headers")).toMap(),

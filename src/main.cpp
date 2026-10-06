@@ -20,6 +20,7 @@
 #if !defined(SPOOL_ANDROID) && !defined(SPOOL_WEBOS)
 #include "automation/LocalCommandServer.h"
 #endif
+#include "app/DownloadManager.h"
 #include "diagnostics/Diagnostics.h"
 #include "diagnostics/InputLatencyMonitor.h"
 #include "diagnostics/RenderBenchmark.h"
@@ -724,6 +725,17 @@ int main(int argc, char **argv)
     }
 #endif
     Spool::SourceHub hub(&providers);
+    Spool::DownloadManager downloads(&hub, Spool::persistentDataRoot(), &tlsTrust);
+    std::unique_ptr<Spool::LocalProvider> offlineLibrary;
+    const auto refreshOfflineLibrary = [&] {
+        hub.removeSource(QStringLiteral("spool-downloads"));
+        offlineLibrary
+            = std::make_unique<Spool::LocalProvider>(QStringLiteral("spool-downloads"), QStringList {}, nullptr,
+                downloads.libraryFiles(), QDir(Spool::persistentDataRoot()).filePath(QStringLiteral("offline-state")));
+        hub.addSource(offlineLibrary.get());
+    };
+    QObject::connect(&downloads, &Spool::DownloadManager::libraryChanged, &app, refreshOfflineLibrary);
+    refreshOfflineLibrary();
     Spool::CollectionEditingController collectionEditing(&hub);
     Spool::ProviderCapabilities providerCapabilities;
     QObject::connect(&hub, &Spool::Provider::capabilitiesChanged, &providerCapabilities,
@@ -978,6 +990,8 @@ int main(int argc, char **argv)
         &Spool::ApplicationHooks::diagnosticsReportSaved);
     QObject::connect(&applicationHooks, &Spool::ApplicationHooks::toastRequested, controller.get(),
         &Spool::AppController::toastMessage);
+    QObject::connect(
+        &downloads, &Spool::DownloadManager::toastRequested, controller.get(), &Spool::AppController::toastMessage);
     Spool::PlatformApplicationServices platformServices(app, window, applicationHooks, *router);
     platformServices.start();
     QQmlPropertyMap *platformInfo = QQmlPropertyMap::create(&app);
@@ -1011,6 +1025,7 @@ int main(int argc, char **argv)
     qmlRegisterSingletonInstance("Spool", 1, 0, "App", controller.get());
     qmlRegisterSingletonInstance("Spool", 1, 0, "ProviderCapabilities", &providerCapabilities);
     qmlRegisterSingletonInstance("Spool", 1, 0, "Providers", &providers);
+    qmlRegisterSingletonInstance("Spool", 1, 0, "Downloads", &downloads);
     qmlRegisterSingletonInstance("Spool", 1, 0, "Sources", &hub);
     qmlRegisterSingletonInstance("Spool", 1, 0, "CollectionEditing", &collectionEditing);
     qmlRegisterSingletonInstance("Spool", 1, 0, "SettingsSync", &settingsSync);

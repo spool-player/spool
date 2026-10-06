@@ -18,6 +18,10 @@
 #include <QTimer>
 #include <QVariant>
 
+#ifdef Q_OS_ANDROID
+#include <QFile>
+#endif
+
 #include <atomic>
 #include <utility>
 #include <vector>
@@ -343,6 +347,10 @@ private:
     TrickplayService *m_trickplay = nullptr;
     PlaybackSession m_session;
     PlaybackReporter m_reporter;
+#ifdef Q_OS_ANDROID
+    // Declared before the lifecycle so its destructor also runs after mpv's.
+    QFile m_contentPlaybackFile;
+#endif
     MpvLifecycle m_mpvLifecycle;
     quint64 m_mpvTeardownGeneration = 0;
     quint64 m_mpvEventGeneration = 0;

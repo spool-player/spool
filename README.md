@@ -62,6 +62,31 @@ succeeded. Protected profiles that need interaction stay locked on startup.
 Search uses only the viewers selected for Home, never the combined permissions
 of an adult and child profile saved on the same server.
 
+### Offline downloads
+
+Open an item's menu and choose **Download…**. Original media is offered where
+the item's provider supports it; **Server-converted** quality choices appear
+only when that provider offers a complete server-encoded file. Spool never
+encodes media on the device or saves an online playlist as an offline movie.
+**Settings → Downloads** shows preparation, byte progress, completion and
+actionable errors, with Cancel, Retry, Play offline and Remove actions.
+
+Completed media and its local metadata persist across restarts and account
+removal. The built-in **Downloads** LocalProvider library plays the local copy
+without server headers or an active connection; offline resume/played state is
+stored locally. Interrupted operations become retryable failures after restart
+and discard incomplete files. A retry negotiates fresh access with the provider.
+
+Desktop defaults to `Movies/Spool` and has a native folder chooser. On Android,
+the destination control is under Advanced: choose internal/external app storage
+or a Storage Access Framework folder with a persisted read/write grant.
+Document providers must permit creation/rename and provide seekable media;
+revoked grants or unavailable storage surface errors rather than buffering a
+copy into memory. iOS/tvOS use app-managed sandbox storage without an unsupported
+folder chooser; webOS defaults to app-managed writable storage and accepts an
+accessible folder path. Changing destination affects new downloads only.
+Downloaded media can be large: check free space and remove copies when finished.
+
 ### Built-in local automation (`spoolet`)
 
 Native desktop builds also build/install `spoolet`, a small Qt Core/Network CLI

@@ -13,6 +13,7 @@ FocusScope {
     readonly property string kind: provider ? String(provider.arguments.kind || "") : ""
     readonly property bool choosing: kind === "playlist" || kind === "collection"
     readonly property bool naming: choosing || kind === "rename" || kind === "renameCollection"
+    readonly property var downloadVariants: kind === "download" && provider ? provider.arguments.variants || [] : []
     property bool busy: false
     property bool exhausted: true
     property string cursor: ""
@@ -49,20 +50,54 @@ FocusScope {
         else if (item && typeof item.clicked === "function")
             item.clicked()
     }
+    function routeKey(key, phase, repeat) {
+        if (kind !== "download")
+            return false
+        if (InputKeys.isBack(key, false, false)) {
+            if (phase === "release")
+                provider.close()
+            return true
+        }
+        if (InputKeys.isAccept(key))
+            return true
+        if (!InputKeys.isDirection(key))
+            return false
+        if (phase === "press" && (key === Qt.Key_Up || key === Qt.Key_Down)) {
+            if (downloadList.activeFocus) {
+                const next = downloadList.currentIndex + (key === Qt.Key_Down ? 1 : -1)
+                if (next >= 0 && next < downloadList.count) {
+                    downloadList.currentIndex = next
+                    downloadList.positionViewAtIndex(next, ListView.Contain)
+                } else {
+                    InputKeys.focus(cancelButton)
+                }
+            } else if (downloadList.count > 0) {
+                InputKeys.focus(downloadList)
+            }
+        }
+        return true
+    }
     Component.onCompleted: {
         if (choosing)
             loadTargets(false)
         if (kind === "rename" || kind === "renameCollection")
             name.text = String(provider.arguments.title || "")
-        Qt.callLater(() => kind === "homePin" ? pin.focusRow() : choosing ? InputKeys.focus(list) : naming
-                                                                            ? name.focusRow() : kind
-                                                                              === "collectionSort" && sortButtons.count
-                                                                              ? InputKeys.focus(sortButtons.itemAt(0)) :
-                                                                                kind === "remoteControls"
-                                                                                && remoteLoader.item ? InputKeys.focus(
-                                                                                                           remoteLoader.item) :
-                                                                                                       InputKeys.focus(
-                                                                                                           cancel))
+        Qt.callLater(() => {
+            if (kind === "homePin")
+                pin.focusRow()
+            else if (kind === "download")
+                InputKeys.focus(downloadList.count > 0 ? downloadList : cancelButton)
+            else if (choosing)
+                InputKeys.focus(list)
+            else if (naming)
+                name.focusRow()
+            else if (kind === "collectionSort" && sortButtons.count)
+                InputKeys.focus(sortButtons.itemAt(0))
+            else if (kind === "remoteControls" && remoteLoader.item)
+                InputKeys.focus(remoteLoader.item)
+            else
+                InputKeys.focus(cancelButton)
+        })
     }
     ColumnLayout {
         anchors.fill: root.kind === "homePin" ? undefined : parent
@@ -74,6 +109,7 @@ FocusScope {
         AppText {
             Layout.fillWidth: true
             text: ({
+                       download: "Choose version",
                        playlist: "Add to playlist",
                        collection: "Add to collection",
                        rename: "Rename",
@@ -143,6 +179,32 @@ FocusScope {
                     currentItem.activated()
             }
         }
+        ListView {
+            id: downloadList
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            visible: root.kind === "download"
+            clip: true
+            model: root.downloadVariants
+            keyNavigationEnabled: true
+            delegate: MenuRow {
+                required property var modelData
+                required property int index
+                width: downloadList.width
+                label: String(modelData.label || "")
+                detail: String(modelData.detail || "")
+                iconName: "download"
+                highlighted: ListView.isCurrentItem && downloadList.activeFocus
+                onHovered: downloadList.currentIndex = index
+                onActivated: root.provider.complete({
+                                                        variantId: modelData.id
+                                                    })
+            }
+            function activate() {
+                if (currentItem)
+                    currentItem.activated()
+            }
+        }
         ActionButton {
             visible: root.choosing && !root.exhausted
             enabled: !root.busy
@@ -175,7 +237,7 @@ FocusScope {
         RowLayout {
             Layout.alignment: Qt.AlignRight
             ActionButton {
-                id: cancel
+                id: cancelButton
                 text: root.kind === "remoteControls" ? "Close" : "Cancel"
                 kind: "flat"
                 onClicked: root.provider.close()

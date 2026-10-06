@@ -166,7 +166,7 @@ KeyRouter {
     readonly property var routeArgs: Router.args || ({})
     // Routes that stand outside browsing: no rail, no now-playing chrome.
     readonly property bool setupRoute: chromeRoute === "addProvider" || chromeRoute === "providerScreen"
-    readonly property bool signedIn: Providers.hasAccounts
+    readonly property bool signedIn: Providers.hasAccounts || Downloads.jobs.some(job => job.state === "complete")
     onRouteChanged: root.exitArmedAt = 0
 
     // Back is how an Android app is left, and at the top of the stack there is
@@ -197,6 +197,8 @@ KeyRouter {
     property var mediaInfoItem: ({})
     // A provider screen asked for while something plays (a release picker).
     property var providerOverlay: null
+    property var downloadsReturnFocus: null
+    property bool downloadsDestinationRequested: false
     property var personItem: ({})
     property var pendingPlaybackBackItem: ({})
     textInputActive: Qt.inputMethod.visible || InputKeys.isTextInputItem(root.Window.window
@@ -210,12 +212,14 @@ KeyRouter {
                                                                            ? remoteGroupConfirmationLoader.item :
                                                                              providerOverlay
                                                                              ? providerOverlayLoader.item :
-                                                                               itemMenuOpen
-                                                                               ? itemContextMenuLoader.item :
-                                                                                 mediaInfoVisible
-                                                                                 ? mediaInfoOverlayLoader.item :
-                                                                                   hasPlayer && player.visible
-                                                                                   ? videoSurface : navigationTarget
+                                                                               Downloads.opened
+                                                                               ? downloadsDialogLoader.item :
+                                                                                 itemMenuOpen
+                                                                                 ? itemContextMenuLoader.item :
+                                                                                   mediaInfoVisible
+                                                                                   ? mediaInfoOverlayLoader.item :
+                                                                                     hasPlayer && player.visible
+                                                                                     ? videoSurface : navigationTarget
     backHandler: function () {
         return root.back()
     }
@@ -703,6 +707,16 @@ KeyRouter {
             RemoteTargets.confirmLeaveGroup(false)
             return true
         }
+        if (providerOverlay) {
+            providerOverlay.close()
+            return true
+        }
+        if (Downloads.opened) {
+            if (downloadsDialogLoader.item)
+                return downloadsDialogLoader.item.back()
+            Downloads.close()
+            return true
+        }
         if (textInputActive) {
             releaseTextInput()
             return true
@@ -717,10 +731,6 @@ KeyRouter {
         }
         if (itemMenuOpen && itemContextMenuLoader.item) {
             itemContextMenuLoader.item.closeMenu()
-            return true
-        }
-        if (providerOverlay) {
-            providerOverlay.close()
             return true
         }
         if (mediaInfoVisible) {
@@ -771,7 +781,8 @@ KeyRouter {
 
     function forward() {
         if (networkConsentPending || tlsTrustPending || textInputActive || (navBar.visible && navBar.menuOpen)
-                || diagnosticsVisible || itemMenuOpen || providerOverlay || mediaInfoVisible || playerSessionActive)
+                || diagnosticsVisible || itemMenuOpen || providerOverlay || Downloads.opened || mediaInfoVisible
+                || playerSessionActive)
             return true
         if (!Router.canForward)
             return false
@@ -794,6 +805,30 @@ KeyRouter {
                                                                                    context || ({})) : false
     }
 
+    function openDownloads(itemId, returnFocus, destination) {
+        downloadsReturnFocus = returnFocus || navigationTarget
+        downloadsDestinationRequested = Boolean(destination)
+        Downloads.open(itemId || "")
+    }
+
+    Connections {
+        target: Downloads
+        function onOpenedChanged() {
+            if (Downloads.opened) {
+                if (!root.downloadsReturnFocus)
+                    root.downloadsReturnFocus = root.navigationTarget
+            } else {
+                const target = root.downloadsReturnFocus
+                root.downloadsReturnFocus = null
+                root.downloadsDestinationRequested = false
+                Qt.callLater(() => InputKeys.focus(root.providerOverlay || root.itemMenuOpen ? root.activeTarget :
+                                                                                               target && target.visible
+                                                                                               ? target :
+                                                                                                 root.activeTarget))
+            }
+        }
+    }
+
     function openLibraryMenu(library, anchorItem, context) {
         const options = Object.assign({}, context || ({}), {
                                           "library": true
@@ -807,7 +842,7 @@ KeyRouter {
     }
 
     function restoreFocusAfterItemMenu() {
-        if (providerOverlay || mediaInfoVisible || diagnosticsVisible || player.visible)
+        if (providerOverlay || Downloads.opened || mediaInfoVisible || diagnosticsVisible || player.visible)
             return
         navigationTarget = routeStack
         InputKeys.focus(routeStack)
@@ -1210,14 +1245,14 @@ KeyRouter {
         Loader {
             id: providerOverlayLoader
             anchors.fill: parent
-            z: 57
+            z: 59
             active: root.providerOverlay !== null
             sourceComponent: ProviderSurface {
                 context: root.providerOverlay
                 overlay: true
                 onFinished: {
                     root.providerOverlay = null
-                    InputKeys.focus(routeStack)
+                    InputKeys.focus(root.activeTarget)
                 }
             }
         }
@@ -1259,6 +1294,17 @@ KeyRouter {
             sourceComponent: ItemContextMenu {
                 shell: root
                 onClosed: Qt.callLater(root.restoreFocusAfterItemMenu)
+            }
+        }
+
+        Loader {
+            id: downloadsDialogLoader
+            anchors.fill: parent
+            z: 58.5
+            active: Downloads.opened
+            sourceComponent: DownloadsDialog {
+                destinationExpanded: root.downloadsDestinationRequested
+                inputActive: root.activeTarget === downloadsDialogLoader.item
             }
         }
 
