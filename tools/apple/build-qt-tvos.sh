@@ -59,8 +59,12 @@ for module in qtbase qtshadertools qtdeclarative qtsvg qtimageformats qtwebsocke
     -DCMAKE_OSX_DEPLOYMENT_TARGET="$APPLE_DEPLOYMENT_TARGET"
     -DQT_HOST_PATH="$QT_HOST_PATH" -DQT_BUILD_TESTS=OFF -DQT_BUILD_EXAMPLES=OFF)
   if [[ "$module" == qtbase ]]; then
+    # Spool does not request camera/contacts/calendar/microphone permissions.
+    # Qt's optional permission plugins require Contacts/EventKit, frameworks
+    # which tvOS does not provide; omit this unused module, not fake frameworks.
     cmake "${args[@]}" -DBUILD_SHARED_LIBS=OFF -DQT_QMAKE_TARGET_MKSPEC=macx-ios-clang \
-      -DFEATURE_opengl=ON -DINPUT_opengl=es2 -DFEATURE_dbus=OFF -DFEATURE_printsupport=OFF
+      -DFEATURE_opengl=ON -DINPUT_opengl=es2 -DFEATURE_dbus=OFF -DFEATURE_printsupport=OFF \
+      -DFEATURE_permissions=OFF
   else
     "$prefix/bin/qt-cmake" "${args[@]}" \
       -DQt6_DIR="$prefix/lib/cmake/Qt6" \
