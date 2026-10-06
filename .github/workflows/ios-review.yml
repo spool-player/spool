@@ -6,10 +6,18 @@ on:
 permissions:
   contents: read
 jobs:
-  simulator:
+  native:
     if: github.ref == 'refs/heads/feature/ios'
     runs-on: macos-15-intel
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sdk: iphonesimulator
+            arch: x86_64
+          - sdk: iphoneos
+            arch: arm64
     steps:
       - uses: actions/checkout@v4
         with:
@@ -26,14 +34,15 @@ jobs:
           "$RUNNER_TEMP/aqt/bin/aqt" install-qt mac ios "$qt_version" ios -O "$RUNNER_TEMP/Qt" -m qtshadertools qtwebsockets qtimageformats qttasktree
           echo "QT_HOST_PATH=$RUNNER_TEMP/Qt/$qt_version/macos" >> "$GITHUB_ENV"
           echo "QT_TARGET_PREFIX=$RUNNER_TEMP/Qt/$qt_version/ios" >> "$GITHUB_ENV"
-      - name: Build native iOS simulator application
+      - name: Build native iOS application
         shell: bash
         env:
-          APPLE_SDK: iphonesimulator
-          APPLE_ARCH: x86_64
+          APPLE_SDK: ${{ matrix.sdk }}
+          APPLE_ARCH: ${{ matrix.arch }}
           BUILD_JOBS: '4'
         run: tools/build-ios.sh
       - name: Smoke native startup on simulator
+        if: matrix.sdk == 'iphonesimulator'
         shell: bash
         run: |
           device="$(xcrun simctl list devices available --json | python3 -c 'import json,sys; print(next(d["udid"] for ds in json.load(sys.stdin)["devices"].values() for d in ds if d["name"].startswith("iPhone")))')"
@@ -44,5 +53,5 @@ jobs:
           xcrun simctl launch --console "$device" com.sachk.spool --launch-test
       - uses: actions/upload-artifact@v4
         with:
-          name: ios-review-simulator
-          path: build/apple/iphonesimulator-x86_64/app/Release-iphonesimulator/Spool.app
+          name: ios-review-${{ matrix.sdk }}-${{ matrix.arch }}
+          path: build/apple/${{ matrix.sdk }}-${{ matrix.arch }}/app/Release-${{ matrix.sdk }}/Spool.app
