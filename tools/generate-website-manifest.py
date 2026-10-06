@@ -33,8 +33,8 @@ PLATFORMS = (
         ("portable", "Portable tarball", "x86_64", "tar.zst", "Spool-{version}-linux-x86_64.tar.zst"),
         ("arch", "Arch Linux package", "x86_64", "pkg.tar.zst", "spool-bin-{version}-*-x86_64.pkg.tar.zst"),
     )),
-    ("tvos", "Apple TV (tvOS)", (
-        ("arm64", "Unsigned IPA · ARM64 (signing required)", "arm64", "ipa", "Spool-{version}-tvOS-arm64.ipa"),
+    ("tvos", "Apple TV", (
+        ("arm64", "Unsigned ARM64 IPA", "arm64", "ipa", "Spool-{version}-tvOS-arm64.ipa"),
     )),
 )
 
@@ -80,7 +80,7 @@ def generate_manifest(assets: Path, tag: str, repository: str) -> dict:
             if platform_id == "tvos":
                 # The archive audit verifies a device bundle, not Apple signing.
                 download["signing"] = "unsigned"
-                download["note"] = "Requires your own Apple signing and provisioning to install. Not on the App Store."
+                download["note"] = "Installing needs your own Apple signing and provisioning. It is not on the App Store."
             downloads.append(download)
             selected.add(package)
         platforms.append({"id": platform_id, "label": platform_label, "downloads": downloads})
