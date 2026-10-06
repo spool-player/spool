@@ -168,7 +168,8 @@ meson compile -C "$mpv_build" -j "$JOBS"
 meson install -C "$mpv_build"
 cmake -S "$SOURCE_ROOT/qcoro" -B "$BUILD_ROOT/qcoro" -GNinja "${cmake_cross[@]}" \
   -DCMAKE_TOOLCHAIN_FILE="$QT_TARGET_PREFIX/lib/cmake/Qt6/qt.toolchain.cmake" -DQT_HOST_PATH="$QT_HOST_PATH" \
-  -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTING=OFF -DQCORO_BUILD_EXAMPLES=OFF -DQCORO_WITH_QTDBUS=OFF
+  -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTING=OFF -DQCORO_BUILD_EXAMPLES=OFF -DQCORO_WITH_QTDBUS=OFF \
+  -DQCORO_WITH_QTTEST=OFF
 cmake --build "$BUILD_ROOT/qcoro" --parallel "$JOBS"
 cmake --install "$BUILD_ROOT/qcoro"
 printf 'Apple media prefix: %s\n' "$PREFIX"
