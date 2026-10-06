@@ -55,8 +55,14 @@ FocusScope {
         if (kind === "rename" || kind === "renameCollection")
             name.text = String(provider.arguments.title || "")
         Qt.callLater(() => kind === "homePin" ? pin.focusRow() : choosing ? InputKeys.focus(list) : naming
-                                                                            ? name.focusRow() : InputKeys.focus(
-                                                                                  confirm))
+                                                                            ? name.focusRow() : kind
+                                                                              === "collectionSort" && sortButtons.count
+                                                                              ? InputKeys.focus(sortButtons.itemAt(0)) :
+                                                                                kind === "remoteControls"
+                                                                                && remoteLoader.item ? InputKeys.focus(
+                                                                                                           remoteLoader.item) :
+                                                                                                       InputKeys.focus(
+                                                                                                           cancel))
     }
     ColumnLayout {
         anchors.fill: root.kind === "homePin" ? undefined : parent
@@ -65,10 +71,6 @@ FocusScope {
         width: Math.min(parent.width - Metrics.pageMarginPx * 2, Metrics.scaled(520))
         height: root.kind === "homePin" ? implicitHeight : parent.height - Metrics.pageMarginPx * 2
         spacing: Metrics.scaled(12)
-        ProviderCompatibilityNotice {
-            Layout.fillWidth: true
-            provider: root.kind === "homePin" ? null : root.provider
-        }
         AppText {
             Layout.fillWidth: true
             text: ({
@@ -93,6 +95,7 @@ FocusScope {
             wrapMode: Text.WordWrap
         }
         Loader {
+            id: remoteLoader
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: active
@@ -147,6 +150,7 @@ FocusScope {
             onClicked: root.loadTargets(true)
         }
         Repeater {
+            id: sortButtons
             model: root.kind === "collectionSort" ? root.sortChoices : []
             delegate: ActionButton {
                 required property var modelData
@@ -171,6 +175,7 @@ FocusScope {
         RowLayout {
             Layout.alignment: Qt.AlignRight
             ActionButton {
+                id: cancel
                 text: root.kind === "remoteControls" ? "Close" : "Cancel"
                 kind: "flat"
                 onClicked: root.provider.close()

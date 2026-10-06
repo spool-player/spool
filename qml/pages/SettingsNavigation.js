@@ -143,13 +143,7 @@ function reconcileRows(model, nextRows) {
     }
 }
 
-// One focus owner per row. Subfocus is logical, never another tab/vertical stop.
-function normalizeSyncMode(mode, hasSync) {
-    return mode === "sync-action" && !hasSync ? "row" : mode
-}
-
-function syncRoute(mode, action, hasSync, editsValue) {
-    mode = normalizeSyncMode(mode, hasSync)
+function valueRoute(mode, action, editsValue) {
     if (action === "up" || action === "down")
         return { "mode": "row", "effect": action === "up" ? "move-up" : "move-down" }
     if (mode === "value-editing") {
@@ -157,20 +151,11 @@ function syncRoute(mode, action, hasSync, editsValue) {
             return { "mode": "row", "effect": "end-edit" }
         return { "mode": mode, "effect": action === "left" || action === "right" ? "value" : "none" }
     }
-    if (mode === "sync-action") {
-        if (action === "left" || action === "back")
-            return { "mode": "row", "effect": "none" }
-        return { "mode": mode, "effect": action === "activate" ? "toggle-sync" : "none" }
-    }
-    if (action === "right" && hasSync)
-        return { "mode": "sync-action", "effect": "none" }
     if (action === "activate")
         return editsValue ? { "mode": "value-editing", "effect": "begin-edit" }
                           : { "mode": "row", "effect": "activate" }
     if (action === "back")
         return { "mode": "row", "effect": "back" }
-    if (action === "left" && hasSync && editsValue)
-        return { "mode": "row", "effect": "none" }
     return { "mode": "row", "effect": action === "left" || action === "right" ? "value" : "none" }
 }
 
@@ -206,20 +191,4 @@ function subtitleReachableKeys(schema, platform, hdrPlayback, valueForKey) {
             result.push(row.key)
     }
     return result
-}
-
-// Value editors retain their dependency/HDR rules. Sync controls deliberately
-// ignore those rules, but never cross a platform or Never-policy boundary.
-function extraSyncRows(schema, platform, reachableKeys) {
-    const reachable = {}
-    for (let index = 0; index < reachableKeys.length; ++index)
-        reachable[reachableKeys[index]] = true
-    const rows = []
-    for (let index = 0; index < schema.length; ++index) {
-        const spec = schema[index]
-        if (!reachable[spec.key] && platformSupported(spec, platform)
-                && (spec.syncPolicy === "portable" || spec.syncPolicy === "device"))
-            rows.push(spec)
-    }
-    return rows
 }

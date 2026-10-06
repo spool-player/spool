@@ -334,17 +334,29 @@ suspended/off/locked sources do not poll. Editing rows defer remote applications
 active playback defers the four track defaults until idle or the next explicit
 new-item handoff. Existing session and remembered-series selections remain prior.
 
-Settings starts with Interface scale, Language, Sync settings and Sync account.
-Native preferences use `sync`; application storage uses Material `cloud_sync`
-and explicitly says “Spool-specific sync.” Green filled dots mean confirmed
-sync, not an attempted write. Local-only, pending/saving, offline and error states
-have distinct labels. Focus and hover show body-sized channel/account help.
+Settings presents one **Settings sync** entry in Accounts rather than repeating
+connection badges beside each preference. Its dedicated page shows the selected
+account, one overall status, and an appropriate sign-in, profile switch, account
+selection or retry action. Switching profiles explicitly warns that it changes
+who is watching on that server; account changes retain the existing confirmation.
+The account picker includes inactive capable accounts using their manifest
+declarations, with a state label, without pretending retry can reconnect them.
 
-Each setting remains one vertical navigation stop. Right enters its sync action;
-OK toggles sync; Left/Back returns. Slider/text rows use OK to enter value editing,
-where horizontal keys adjust the value/caret rather than move to sync. More sync
-controls exposes opt-outs for eligible dependency/HDR-hidden and player-only
-settings without duplicating reachable value editors.
+The **Recommended** preset includes portable preferences. Streaming limits, like
+other device-specific settings, require opt-in. **What syncs** discloses category
+toggles only on request; category updates invalidate and persist once, retaining
+per-account consent. **Use recommended settings** clears that account's overrides
+and performs a fresh remote-first bootstrap for affected keys. Hidden/playback
+preferences are included by category without duplicate value editors.
+
+Normal settings and subtitle appearance retain one vertical navigation stop per
+value. Horizontal keys edit values rather than entering a sync badge. OK/Back
+enter/leave slider or text editing; edit locks still defer remote applications.
+The sync page's recovery buttons support D-pad traversal into and out of its
+settings list. Buttons and setting/toggle rows expose accessible names, state
+and activation. Host login uses one primary action with local feedback and
+secondary alternatives. Account/provider removal requires a Cancel-first
+confirmation; destructive provider action pickers also start on Cancel.
 
 
 ## Outbound playback devices

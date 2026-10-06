@@ -59,10 +59,6 @@ FocusScope {
         width: Math.min(parent.width - Metrics.pageMarginPx * 2, Metrics.scaled(720))
         height: Math.min(implicitHeight, parent.height - Metrics.pageMarginPx * 2)
         spacing: Metrics.scaled(16)
-        ProviderCompatibilityNotice {
-            Layout.fillWidth: true
-            provider: root.provider
-        }
         AppText {
             Layout.fillWidth: true
             Layout.bottomMargin: Metrics.scaled(4)

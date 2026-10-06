@@ -552,6 +552,7 @@ qt_add_qml_module(spool
         qml/pages/OpenSourceNoticesPage.qml
         qml/pages/PersonDetailsPage.qml
         qml/pages/PlayerBrowsePanel.qml
+        qml/pages/SettingsSyncPage.qml
         qml/pages/PlayerAudioSyncPanel.qml
         qml/pages/PlayerMusicStage.qml
         qml/pages/PlayerOverlayChrome.qml
@@ -631,7 +632,6 @@ qt_add_qml_module(spool
         qml/shell/ProviderCompatibilityNotice.qml
         qml/shell/ProviderActionPicker.qml
         qml/shell/ProviderRemoteControls.qml
-        qml/shell/SettingSyncControl.qml
         qml/shell/RemoteNowPlaying.qml
         qml/shell/ProviderUpdatePrompt.qml
         qml/shell/PageReadiness.js
@@ -1129,7 +1129,6 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
             hold-navigation-controller tests/qml/tst_HoldNavigationController.qml
             library-navigation tests/qml/tst_LibraryNavigation.qml
             settings-navigation tests/qml/tst_SettingsNavigation.qml
-            setting-sync-control tests/qml/tst_SettingSyncControl.qml
             remote-control-page tests/qml/tst_RemoteControlPage.qml
             provider-install-dialog tests/qml/tst_ProviderInstallDialog.qml
             provider-shell tests/qml/tst_ProviderShell.qml
@@ -1174,7 +1173,6 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
             PREFIX "/qt/qml/Spool"
             FILES
                 tests/qml/tst_MediaRow.qml
-                tests/qml/tst_SettingSyncControl.qml
                 tests/qml/tst_SubtitleSettingsPanel.qml
                 tests/qml/tst_RemoteControlPage.qml
                 tests/qml/tst_ProviderInstallDialog.qml
@@ -1214,7 +1212,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
             math(EXPR qml_source_index "${qml_index} + 1")
             list(GET SPOOL_QML_TESTS ${qml_index} qml_test_name)
             list(GET SPOOL_QML_TESTS ${qml_source_index} qml_test_source)
-            if(qml_test_name STREQUAL "setting-sync-control" OR qml_test_name STREQUAL "subtitle-settings-panel"
+            if(qml_test_name STREQUAL "subtitle-settings-panel"
                 OR qml_test_name STREQUAL "remote-control-page" OR qml_test_name STREQUAL "provider-install-dialog"
                 OR qml_test_name STREQUAL "provider-shell" OR qml_test_name STREQUAL "player-seek-bar-hover"
                 OR qml_test_name STREQUAL "media-row")
