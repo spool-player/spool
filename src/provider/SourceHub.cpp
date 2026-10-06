@@ -933,6 +933,14 @@ void SourceHub::setPlaybackQueue(std::vector<ReportingQueueEntry> items, int ind
     }
 }
 
+void SourceHub::setVideoPreviewsEnabled(bool enabled)
+{
+    if (m_videoPreviewsEnabled == enabled)
+        return;
+    m_videoPreviewsEnabled = enabled;
+    pushPlaybackContext();
+}
+
 void SourceHub::pushPlaybackContext()
 {
     // The viewer's pick in the player wins over the standing preference.
@@ -941,6 +949,7 @@ void SourceHub::pushPlaybackContext()
     context.insert(QStringLiteral("maxHeight"), m_height);
     context.insert(QStringLiteral("videoCodecs"), m_videoCodecs);
     context.insert(QStringLiteral("restrictVideoCodecs"), m_restrictVideoCodecs);
+    context.insert(QStringLiteral("videoPreviews"), m_videoPreviewsEnabled);
     for (const Entry& entry : std::as_const(m_entries)) {
         if (auto *portable = qobject_cast<PortableProvider *>(entry.provider.data())) {
             context.insert(QStringLiteral("measuredBitrate"), entry.measuredBitrate);
@@ -1398,6 +1407,8 @@ ArtworkSource::ImageResource SourceHub::resolveImage(const QUrl& url) const
     if (entry == m_entries.cend() || !entry->provider)
         return {};
     if (url.path().startsWith(QLatin1String("/preview/"))) {
+        if (!m_videoPreviewsEnabled)
+            return {};
         const auto preview = entry->playbackPreviews.constFind(url.path().mid(9));
         bool ok = false;
         const int index = QUrlQuery(url).queryItemValue(QStringLiteral("index")).toInt(&ok);
@@ -1414,6 +1425,8 @@ ArtworkSource::ImageResource SourceHub::resolveImage(const QUrl& url) const
         return { resource, preview->headers };
     }
     if (url.path().startsWith(QLatin1String("/remote/"))) {
+        if (!m_videoPreviewsEnabled)
+            return {};
         const QString target = QString::fromUtf8(QByteArray::fromBase64(
             url.path().mid(8).toLatin1(), QByteArray::Base64UrlEncoding | QByteArray::AbortOnBase64DecodingErrors));
         const auto preview = entry->remotePreviews.constFind(target);

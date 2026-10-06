@@ -44,6 +44,7 @@ public:
     }
     void clear();
     void setAccurateDecoding(bool accurate);
+    void setEnabled(bool enabled);
     bool available() const;
     QVariantMap frame(double seconds);
     QQuickImageResponse *requestImageResponse(const QString& id);
@@ -93,6 +94,7 @@ private:
     int m_prefetchAttempts = 0;
     double m_startSeconds = 0;
     bool m_accurateDecoding = false;
+    bool m_enabled = true;
 };
 
 class TrickplayImageProvider final : public QQuickAsyncImageProvider {

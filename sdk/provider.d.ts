@@ -195,6 +195,8 @@ export interface PlaybackContext {
     measuredBitrate: number;
     /** Native playback range-request budget selected by the probe; two before measurement. */
     parallelRequests: 1 | 2 | 4;
+    /** Global seek-preview preference, default true. When false, omit preview descriptors and skip preview-only metadata requests/prefetch. */
+    videoPreviews: boolean;
 }
 
 export interface Resolved {
@@ -300,8 +302,9 @@ export type RemoteTargetCommand =
     | { action: 'queueMove'; entryId: string; index: number; afterEntryId: string | null };
 export interface RemoteTargetExtensions {
     remoteTargets?: Operation<{}, { targets: RemoteTarget[] }>;
-    remoteConnect?: Operation<{ targetId: string }, RemoteState>;
-    remoteState?: Operation<{ targetId: string }, RemoteState>;
+    /** Global preview preference is also supplied when inspecting another player. */
+    remoteConnect?: Operation<{ targetId: string; videoPreviews: boolean }, RemoteState>;
+    remoteState?: Operation<{ targetId: string; videoPreviews: boolean }, RemoteState>;
     remoteQueue?: Operation<PageArgs & { targetId: string }, Page>;
     remoteCommand?: Operation<{ targetId: string; command: RemoteTargetCommand }, { commandSequence?: number }>;
 }
@@ -332,7 +335,8 @@ export interface Source extends CatalogueExtensions, PreferenceExtensions, Appli
         studio?: string; sortBy?: SortBy; sortOrder?: 'Ascending' | 'Descending'; filters?: BrowseFilters }, Page>;
     items?: Operation<PageArgs & { ids: string[] }, Page>;
     search?: Operation<PageArgs & { query: string }, Page>;
-    details?: Operation<{ itemId: string }, { item: Item }>;
+    /** Omit preview-only metadata fields/prefetch when videoPreviews is false. */
+    details?: Operation<{ itemId: string; videoPreviews: boolean }, { item: Item }>;
     seasons?: Operation<PageArgs & { seriesId: string }, Page>;
     episodes?: Operation<PageArgs & { seriesId: string; seasonId?: string }, Page>;
     resume?: Operation<PageArgs, Page>;

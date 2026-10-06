@@ -25,9 +25,9 @@
 
 namespace Spool {
 namespace {
-    const QStringList SettingKeys { QStringLiteral("playback/accurateTrickplay"),
-        QStringLiteral("playback/trickplayPreviewScalePercent"), QStringLiteral("appearance/uiScalePercent"),
-        QStringLiteral("playback/renderQuality") };
+    const QStringList SettingKeys { QStringLiteral("playback/seekPreviews"),
+        QStringLiteral("playback/accurateTrickplay"), QStringLiteral("playback/trickplayPreviewScalePercent"),
+        QStringLiteral("appearance/uiScalePercent"), QStringLiteral("playback/renderQuality") };
     QJsonObject itemJson(const MovieItem& item, int index)
     {
         return { { QStringLiteral("index"), index }, { QStringLiteral("id"), item.id },
@@ -423,7 +423,8 @@ void LocalCommandServer::dispatch(QLocalSocket *socket, const QJsonObject& reque
     } else if (command == QStringLiteral("settings-get") || command == QStringLiteral("settings-set")) {
         const QString key = args.value(QStringLiteral("key")).toString();
         if (!key.isEmpty() && !SettingKeys.contains(key)) {
-            invalid(QStringLiteral("Only preview quality/scale, UI scale and render quality settings are exposed"));
+            invalid(QStringLiteral(
+                "Only seek preview enable/quality/scale, UI scale and render quality settings are exposed"));
             return;
         }
         if (command == QStringLiteral("settings-get")) {

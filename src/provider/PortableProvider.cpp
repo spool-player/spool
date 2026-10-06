@@ -1,5 +1,6 @@
 #include "PortableProvider.h"
 
+#include "ProviderLogging.h"
 #include "ProviderRegistry.h"
 
 #include <QCoroFuture>
@@ -192,6 +193,22 @@ public:
         session.mediaStreams.append(externalSubtitles);
         session.segments = segmentsFrom(result.value(QStringLiteral("segments")).toList());
         const QVariantMap trickplay = result.value(QStringLiteral("trickplay")).toMap();
+        const bool previewsEnabled = m_owner->m_playbackContext.value(QStringLiteral("videoPreviews"), true).toBool();
+        if (providerLogEnabled(ProviderLogLevel::Trace)) {
+            const QString format = trickplay.value(QStringLiteral("format")).toString();
+            const bool supported
+                = format.isEmpty() || format == QLatin1String("sprites") || format == QLatin1String("bif");
+            writeProviderLog(ProviderLogLevel::Trace,
+                QStringLiteral("preview metadata item=%1 enabled=%2 availability=%3 format=%4")
+                    .arg(item.id)
+                    .arg(previewsEnabled)
+                    .arg(trickplay.isEmpty() ? QStringLiteral("missing")
+                            : supported      ? QStringLiteral("supported")
+                                             : QStringLiteral("unsupported"))
+                    .arg(format.isEmpty() ? QStringLiteral("sprites")
+                            : supported   ? format
+                                          : QStringLiteral("unknown")));
+        }
         session.trickplay.width = trickplay.value(QStringLiteral("width")).toInt();
         session.trickplay.height = trickplay.value(QStringLiteral("height")).toInt();
         session.trickplay.tileWidth = trickplay.value(QStringLiteral("columns")).toInt();
@@ -440,7 +457,9 @@ QCoro::Task<PagedMovieItems> PortableProvider::fetchBrowsePage(
 
 QCoro::Task<MovieItem> PortableProvider::fetchItemDetails(QString itemId)
 {
-    return m_registry->callSourceItem(m_accountId, QStringLiteral("details"), { { QStringLiteral("itemId"), itemId } });
+    return m_registry->callSourceItem(m_accountId, QStringLiteral("details"),
+        { { QStringLiteral("itemId"), itemId },
+            { QStringLiteral("videoPreviews"), m_playbackContext.value(QStringLiteral("videoPreviews"), true) } });
 }
 
 QCoro::Task<std::vector<MovieItem>> PortableProvider::fetchSeasons(QString seriesId)

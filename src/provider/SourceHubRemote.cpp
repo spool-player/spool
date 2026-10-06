@@ -185,8 +185,9 @@ QCoro::Task<QVariantMap> SourceHub::remoteState(QString targetId, bool connect, 
         throw std::runtime_error("unsupported_extension");
     QPointer<SourceHub> guard(this);
     QPointer<Provider> owner(source(account));
-    const auto response = co_await m_registry->callExtension(
-        account, Extension, connect ? "remoteConnect" : "remoteState", { { "targetId", rawId(targetId) } }, scope);
+    const auto response
+        = co_await m_registry->callExtension(account, Extension, connect ? "remoteConnect" : "remoteState",
+            { { "targetId", rawId(targetId) }, { "videoPreviews", m_videoPreviewsEnabled } }, scope);
     if (!guard || !owner || owner != source(account) || !remoteAvailable(account))
         throw std::runtime_error("cancelled");
     const auto status = text(response.value("state"), 32, true);
@@ -269,7 +270,7 @@ QCoro::Task<QVariantMap> SourceHub::remoteState(QString targetId, bool connect, 
     const QString prefix = targetId.section(QLatin1Char(':'), 0, 0);
     auto& previews = m_entries[prefix].remotePreviews;
     previews.remove(rawId(targetId));
-    if (present(response, "preview") && state.contains("item")) {
+    if (m_videoPreviewsEnabled && present(response, "preview") && state.contains("item")) {
         const auto preview = object(response.value("preview"));
         QVariantMap descriptor;
         const bool bif = preview.value("format").toString() == QLatin1String("bif");

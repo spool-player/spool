@@ -80,6 +80,24 @@ the pins in `providers/lock.json`.
 - The image-diagnostics equivalents remain `nix run .#image-debug-build` followed by `nix run .#image-debug`.
 - Batch coherent edits, then run one build and one `qmlformat`/`clang-format` invocation over all touched files; don't build or format file-by-file.
 
+### Filtered preview diagnostics
+
+- Trace is opt-in: `QT_LOGGING_RULES='spool.provider.trace.debug=true'`.
+  Enable it only for the shortest necessary inspection, then unset it.
+- Never print or share unfiltered app logs, diagnostics JSON, provider responses,
+  credential stores, URLs, request headers, or account configuration. Restoration
+  must use the real app's existing credential path, never pasted tokens.
+- Always filter trace output before displaying it: select only `preview metadata`,
+  `preview session`, `preview fetch failed`, and `preview load failed` messages
+  from `spool.provider.trace`. Prefer an explicit field allowlist (item ID,
+  enabled, availability, format, dimensions/count, numeric network/status codes,
+  frame/speculative). Redact authentication, URL/query, user/account and path
+  values even if upstream logging is already sanitized.
+- `spoolet` may inspect restored-account library rows and drive an explicitly
+  requested offscreen preview smoke. Filter JSON to the required titles, IDs,
+  player/preview state and dimensions. Never dump raw provider payloads or
+  support reports to discover preview availability.
+
 ## webOS
 
 - Do not build, install, launch, deploy, or test on a TV unless the user explicitly requests it. "Deploy" means install-only; never launch unless separately asked.

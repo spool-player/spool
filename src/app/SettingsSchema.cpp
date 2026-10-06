@@ -337,15 +337,19 @@ const QVector<SettingSpec>& settingSpecs()
                 .onDesktop(),
             sliderSpec("playback/controlFadeDelaySeconds", "Playback", "Hide player controls after", "", "4", 1, 10, 1,
                 "s", SettingTarget::External),
+            toggleSpec("playback/seekPreviews", "Playback", "Seek previews",
+                "Thumbnails while seeking. Off hides them and stops downloading them", true, SettingTarget::External),
             toggleSpec("playback/accurateTrickplay", "Playback", "Accurate seek previews",
                 "Uses a slower, accurate JPEG transform. Off uses the faster transform; both preserve encoded "
                 "resolution",
                 false, SettingTarget::External)
-                .advanced(),
+                .advanced()
+                .whenSetTo("playback/seekPreviews", "true"),
             sliderSpec("playback/trickplayPreviewScalePercent", "Playback", "Seek preview size",
                 "Relative to the interface scale, independent of the server's thumbnail resolution", "100", 25, 200, 5,
                 "%", SettingTarget::External)
-                .advanced(),
+                .advanced()
+                .whenSetTo("playback/seekPreviews", "true"),
             selectSpec("playback/videoOutput", "Playback", "Video output",
                 "Enhanced processes each frame on the GPU. Direct sends it straight to the display", "enhanced",
                 kVideoOutputChoices, SettingTarget::VideoOutputMode)
@@ -601,19 +605,19 @@ const QVector<SettingSpec>& settingSpecs()
         const QStringList device { QStringLiteral("artwork/format"), QStringLiteral("artwork/webpQuality"),
             QStringLiteral("artwork/jpegQuality"), QStringLiteral("settings/audioDelayMs"),
             QStringLiteral("playback/showVolumeSlider"), QStringLiteral("playback/controlFadeDelaySeconds"),
-            QStringLiteral("playback/accurateTrickplay"), QStringLiteral("playback/trickplayPreviewScalePercent"),
-            QStringLiteral("playback/videoOutput"), QStringLiteral("playback/softwareRenderer"),
-            QStringLiteral("playback/hardwareDecoding"), QStringLiteral("playback/renderQuality"),
-            QStringLiteral("playback/autoAdjustQuality"), QStringLiteral("playback/graphicsApi"),
-            QStringLiteral("playback/hdrOutput"), QStringLiteral("playback/hdrPeakNits"),
-            QStringLiteral("settings/audioOutputMode"), QStringLiteral("playback/forwardCacheSizeMiB"),
-            QStringLiteral("subtitles/hdrBrightnessPercent"), QStringLiteral("input/redButton"),
-            QStringLiteral("input/greenButton"), QStringLiteral("input/yellowButton"),
-            QStringLiteral("input/blueButton"), QStringLiteral("updates/automatic"),
-            QStringLiteral("providers/updates"), QStringLiteral("shell/diagnostics"),
-            QStringLiteral("settings/toneMappingVisualization"), QStringLiteral("shell/latencyGuard"),
-            QStringLiteral("shell/latencyOverlay"), QStringLiteral("theme/antialiasedText"),
-            QStringLiteral("theme/renderMode") };
+            QStringLiteral("playback/seekPreviews"), QStringLiteral("playback/accurateTrickplay"),
+            QStringLiteral("playback/trickplayPreviewScalePercent"), QStringLiteral("playback/videoOutput"),
+            QStringLiteral("playback/softwareRenderer"), QStringLiteral("playback/hardwareDecoding"),
+            QStringLiteral("playback/renderQuality"), QStringLiteral("playback/autoAdjustQuality"),
+            QStringLiteral("playback/graphicsApi"), QStringLiteral("playback/hdrOutput"),
+            QStringLiteral("playback/hdrPeakNits"), QStringLiteral("settings/audioOutputMode"),
+            QStringLiteral("playback/forwardCacheSizeMiB"), QStringLiteral("subtitles/hdrBrightnessPercent"),
+            QStringLiteral("input/redButton"), QStringLiteral("input/greenButton"),
+            QStringLiteral("input/yellowButton"), QStringLiteral("input/blueButton"),
+            QStringLiteral("updates/automatic"), QStringLiteral("providers/updates"),
+            QStringLiteral("shell/diagnostics"), QStringLiteral("settings/toneMappingVisualization"),
+            QStringLiteral("shell/latencyGuard"), QStringLiteral("shell/latencyOverlay"),
+            QStringLiteral("theme/antialiasedText"), QStringLiteral("theme/renderMode") };
         for (SettingSpec& spec : rows) {
             const QString key = QString::fromLatin1(spec.key);
             if (portable.contains(key))
