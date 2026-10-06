@@ -450,9 +450,10 @@ QVariantList SourceHub::downloadOptions(const QString& itemId) const
             const auto& rung = rungs[index];
             if (rung.height > 1080 || (index + 1 < rungs.size() && rungs[index + 1].height == rung.height))
                 continue;
-            options.push_back(QVariantMap { { QStringLiteral("label"), QStringLiteral("Converted · ") + rung.label },
-                { QStringLiteral("mode"), QStringLiteral("transcoded") },
-                { QStringLiteral("maxBitrate"), rung.bitrate }, { QStringLiteral("maxHeight"), rung.height } });
+            options.push_back(
+                QVariantMap { { QStringLiteral("label"), QStringLiteral("Server-converted · ") + rung.label },
+                    { QStringLiteral("mode"), QStringLiteral("transcoded") },
+                    { QStringLiteral("maxBitrate"), rung.bitrate }, { QStringLiteral("maxHeight"), rung.height } });
         }
     }
     return options;
@@ -474,9 +475,17 @@ QCoro::Task<DownloadPlan> SourceHub::negotiateDownload(DownloadRequest request, 
 
 QCoro::Task<void> SourceHub::releaseDownload(QVariantMap cleanup)
 {
-    Provider *provider = source(cleanup.value(QStringLiteral("account")).toString());
-    if (provider && provider->downloads())
-        co_await provider->downloads()->releaseDownload(cleanup.value(QStringLiteral("payload")).toMap());
+    const QString account = cleanup.value(QStringLiteral("account")).toString();
+    const QVariantMap payload = cleanup.value(QStringLiteral("payload")).toMap();
+    QPointer<Provider> provider = source(account);
+    if (provider && provider->downloads() && !payload.isEmpty()) {
+        // The registry owns asynchronous call lifetime and source invalidation.
+        if (qobject_cast<PortableProvider *>(provider.data()))
+            co_await m_registry->callSource(
+                account, QStringLiteral("downloadRelease"), { { QStringLiteral("cleanup"), payload } });
+        else
+            co_await provider->downloads()->releaseDownload(payload);
+    }
 }
 
 bool SourceHub::downloadOriginAllowed(const QString& itemId, const QUrl& url) const

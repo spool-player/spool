@@ -88,6 +88,8 @@ public:
     bool downloadOriginAllowed(const QString& itemId, const QUrl& url) const;
     void cancelDownloadNegotiation(const QString& itemId, const QString& scope);
     bool ready() const override;
+    void addSource(Provider *provider);
+    void removeSource(const QString& accountId);
 
     // Where a scoped item comes from, for telling libraries on different
     // servers apart: provider name and icon, server name and address.
@@ -219,8 +221,6 @@ private:
     };
     struct SearchRun;
 
-    void addSource(Provider *provider);
-    void removeSource(const QString& accountId);
     void refresh();
     void pushPlaybackContext();
     void startNextSpeedTest();

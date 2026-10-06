@@ -97,6 +97,10 @@ FocusScope {
     function rowAvailable(row) {
         if (row.key === "action/connectionSpeed" && !ProviderCapabilities.speedTest)
             return false
+        if (row.key === "action/downloadDestination")
+            return Downloads.supported && !Downloads.mobile && Downloads.canChooseFolder
+        if (row.key === "action/mobileDownloadDestination")
+            return Downloads.supported && Downloads.mobile && Downloads.canChooseFolder
         return SettingsNavigation.rowAvailable(row, Platform, Player.hdrPlayback, function (key) {
             return settingsValue({
                                      "key": key,
@@ -389,6 +393,11 @@ FocusScope {
             return "Value editor is available during playback or when its related options are enabled"
         if (row.key === "action/connectionSpeed")
             return App.connectionSpeedDescription
+        if (row.key === "action/downloads")
+            return Downloads.jobs.length ? Downloads.jobs.length + " downloads · Play saved files offline" :
+                                           "Manage downloads and play saved files offline"
+        if (row.key === "action/downloadDestination" || row.key === "action/mobileDownloadDestination")
+            return Downloads.destination + " · Applies only to new downloads"
         if (row.key === "action/accounts") {
             const count = Providers.accounts.length
             return count === 1 ? "1 account" : count + " accounts"
@@ -442,6 +451,10 @@ FocusScope {
             return SettingsSync.busy ? "Syncing" : "Retry"
         if (row.key === "action/connectionSpeed")
             return "Measure again"
+        if (row.key === "action/downloads")
+            return "Manage"
+        if (row.key === "action/downloadDestination" || row.key === "action/mobileDownloadDestination")
+            return "Change…"
         if (row.key === "action/accounts" || row.key === "action/providers")
             return "Manage"
         if (row.key === "action/openSourceNotices" || row.key === "action/exportDiagnostics" || row.key
@@ -578,6 +591,12 @@ FocusScope {
                 shell.pushRoute("accounts")
             else if (row.key === "action/providers" && shell)
                 shell.pushRoute("addProvider")
+            else if (row.key === "action/downloads" && shell)
+                shell.openDownloads("", settingsList)
+            else if ((row.key === "action/downloadDestination" || row.key === "action/mobileDownloadDestination")
+                     && shell)
+
+                shell.openDownloads("", settingsList, true)
             else if (row.key === "action/manageCertificates")
                 certificateManagerVisible = true
             else if (row.key === "action/clearLatencyStatistics")

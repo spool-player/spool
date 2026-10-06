@@ -218,6 +218,10 @@ set(SPOOL_SHELL_SOURCES
     src/app/ContentModelController.h
     src/app/CollectionEditingController.cpp
     src/app/CollectionEditingController.h
+    src/app/DownloadManager.cpp
+    src/app/DownloadManager.h
+    src/platform/AndroidDownloadStorage.cpp
+    src/platform/AndroidDownloadStorage.h
     src/app/RemoteTargetsController.cpp
     src/app/RemoteTargetsController.h
     src/app/HomeModelController.cpp
@@ -306,6 +310,7 @@ set(SPOOL_SHELL_SOURCES
     src/provider/SpeedTest.cpp
     src/provider/SpeedTest.h
     src/provider/SearchSource.h
+    src/provider/DownloadSource.h
     src/provider/SourceHub.cpp
     src/provider/SourceHubRemote.cpp
     src/provider/SourceHub.h
@@ -615,6 +620,7 @@ qt_add_qml_module(spool
         qml/shell/GroupMenu.qml
         qml/shell/InputLatencyWarning.qml
         qml/shell/ItemContextMenu.qml
+        qml/shell/DownloadsDialog.qml
         qml/shell/RememberedCertificatesDialog.qml
         qml/shell/MediaInfoOverlay.qml
         qml/shell/OverlayDialog.qml
@@ -807,6 +813,9 @@ target_link_libraries(spool-core PUBLIC
     Qt6::OpenGL
     Qt6::WebSockets
 )
+if(ANDROID)
+    target_link_libraries(spool-core PUBLIC Qt6::CorePrivate)
+endif()
 if(NOT ANDROID)
     target_link_libraries(spool-core PUBLIC Qt6::GuiPrivate)
 endif()
@@ -846,6 +855,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         library-list-model tests/app/LibraryListModelTest.cpp
         content-model-controller tests/app/ContentModelControllerTest.cpp
         collection-editing tests/app/CollectionEditingControllerTest.cpp
+        download-manager tests/app/DownloadManagerTest.cpp
         remote-targets tests/app/RemoteTargetsControllerTest.cpp
         search-controller tests/app/SearchControllerTest.cpp
         group-clock tests/app/GroupClockTest.cpp

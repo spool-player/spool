@@ -39,6 +39,10 @@ extern "C" {
 #include <cstring>
 #include <utility>
 
+#ifdef Q_OS_ANDROID
+#include <unistd.h>
+#endif
+
 namespace Spool {
 
 namespace {
@@ -321,10 +325,18 @@ void PlayerController::teardownMpv(bool async)
     // The deferred post-stop teardown must not stall the GUI thread; shutdown
     // and the stale-core path before a new play() stay synchronous so the new
     // pipeline never races the old core for media resources.
+#ifdef Q_OS_ANDROID
+    // fd:// borrows QFile's descriptor. Keep it open until mpv has actually
+    // finished destroying the stream, not merely dispatched destroyAsync().
+    async = async && !m_contentPlaybackFile.isOpen();
+#endif
     if (async)
         m_mpvLifecycle.destroyAsync();
     else
         m_mpvLifecycle.destroy();
+#ifdef Q_OS_ANDROID
+    m_contentPlaybackFile.close();
+#endif
     m_embeddedVideoOutput = false;
     m_videoWidth = 0;
     m_videoHeight = 0;
@@ -1265,7 +1277,7 @@ void PlayerController::play(const PlaybackSession& session, bool startPaused)
         return;
     }
 
-    const QByteArray urlBytes = session.url.toUtf8();
+    QByteArray urlBytes = session.url.toUtf8();
     if (!MpvOptionProfile::applyRequestHeaders(handle, m_api ? m_api->mediaRequestHeaders() : QByteArray {})) {
         m_mpvLifecycle.cancelFileLoad();
         m_errorText = QStringLiteral("libmpv rejected the authenticated media request.");
@@ -1316,12 +1328,32 @@ void PlayerController::play(const PlaybackSession& session, bool startPaused)
         }
         qInfo() << "player: resume source seconds=" << startSeconds << "stream seconds=" << streamStartSeconds;
     }
+#ifdef Q_OS_ANDROID
+    const QUrl contentUrl(session.url);
+    if (contentUrl.scheme() == QLatin1String("content")) {
+        m_contentPlaybackFile.setFileName(contentUrl.toString(QUrl::FullyEncoded));
+        if (!m_contentPlaybackFile.open(QIODevice::ReadOnly) || m_contentPlaybackFile.handle() < 0
+            || lseek(m_contentPlaybackFile.handle(), 0, SEEK_SET) == static_cast<off_t>(-1)) {
+            m_contentPlaybackFile.close();
+            m_mpvLifecycle.cancelFileLoad();
+            m_errorText
+                = QStringLiteral("The downloaded file could not be opened for seekable playback. Check folder access.");
+            stopProgressReporting(true);
+            return;
+        }
+        urlBytes = QByteArrayLiteral("fd://") + QByteArray::number(m_contentPlaybackFile.handle());
+    }
+#endif
     const QByteArray loadFileOptions = MpvOptionProfile::loadFileOptions(session);
     const char *loadCommand[] = { "loadfile", urlBytes.constData(), "replace", "-1",
         loadFileOptions.isEmpty() ? nullptr : loadFileOptions.constData(), nullptr };
     if (mpv_command(handle, loadCommand) < 0) {
         m_mpvLifecycle.cancelFileLoad();
         m_errorText = QStringLiteral("libmpv rejected the playback URL.");
+#ifdef Q_OS_ANDROID
+        if (m_contentPlaybackFile.isOpen())
+            scheduleMpvTeardown();
+#endif
         stopProgressReporting(true);
         return;
     }

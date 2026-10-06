@@ -547,6 +547,14 @@ const QVector<SettingSpec>& settingSpecs()
                 .onAndroid(),
 #endif
 
+            pageSpec("action/downloads", "Downloads", "Downloads", "Manage downloads and play saved files offline",
+                SettingType::Action),
+            pageSpec("action/downloadDestination", "Downloads", "Download folder", "Applies only to new downloads",
+                SettingType::Action),
+            pageSpec("action/mobileDownloadDestination", "Downloads", "Download storage",
+                "Applies only to new downloads", SettingType::Action)
+                .advanced(),
+
             pageSpec("action/accounts", "Accounts", "Accounts", "", SettingType::Action),
             pageSpec("action/providers", "Accounts", "Providers", "", SettingType::Action),
             selectSpec("providers/updates", "Accounts", "Provider updates", "", "ask", kProviderUpdateChoices,

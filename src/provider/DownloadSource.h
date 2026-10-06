@@ -11,6 +11,7 @@ struct DownloadRequest {
     bool transcode = false;
     qint64 maxBitrate = 0;
     int maxHeight = 0;
+    QString variantId;
 };
 
 // A finite complete media file. Providers must not negotiate a live stream,

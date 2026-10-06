@@ -28,14 +28,28 @@ update policy; background updates use the same progress display.
 | `ProviderStore` | `official.json` and `index.json` from spool-player/spool-providers (Pages), install by link, update checks and the `providers/updates` policy |
 | `app/GroupPlaybackController` | Watching together over whichever account the group is on: clock, drift, buffering, queue handoff. Providers translate their protocol into `group` events |
 
-`src/providers/local/LocalProvider` is the one native provider (desktop only): explicitly
-selected folders combined into a library, with no implicit Movies-folder account.
+`src/providers/local/LocalProvider` is the one native provider: explicitly
+selected desktop folders form a library, with no implicit Movies-folder account.
+The download service also supplies a dedicated **Downloads** instance on every
+platform, using its durable inventory (including Android content documents)
+and credential-free media metadata. That inventory remains usable offline and
+after removing the originating account; local playback progress persists in
+the application data directory.
 Native modules may register a compiled QML root for setup/settings; their drafts do
 not create a JavaScript runtime. Canonical-path item IDs distinguish same-named files
 and deduplicate overlapping roots; the local cache scope is versioned for this cutover.
 Local video artwork is extracted on demand through `ArtworkService`'s serial thumbnail
 worker using libmpv software rendering and Qt image encoding.
 Core never includes `src/providers/`; `tools/check-module-seam.sh` (ctest `module-seam`) enforces it.
+
+`DownloadSource` negotiates original or finite server-transcoded media independently
+of playback `resolve` and reporting. Manifest `downloads` and `downloadTranscode`
+capabilities gate choices per owning account; the latter is not inferred from
+ordinary streaming quality. `DownloadManager` streams bounded native chunks into
+incomplete files/documents, cancels requests, applies account origin/TLS policy,
+rejects redirects/playlists, and commits a complete offline inventory only at EOF.
+Server session cleanup is memory-only and calls `downloadRelease` after terminal
+transfers. See `sdk/README.md` for the exact operation and picker contract.
 
 Library grids request rendered artwork only for tiles intersecting the viewport.
 Buffered and pooled delegates do not occupy the render queue; scrolling cancels
