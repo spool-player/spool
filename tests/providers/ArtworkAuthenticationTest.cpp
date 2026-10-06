@@ -218,13 +218,6 @@ export function createSource(config) {
     remoteUrl.replace("{index}", "0");
     require(fetch(remoteUrl, true).pixelColor(8, 8) == QColor(Qt::green),
         "remote previews authenticate as their owner without selecting its local playback");
-    hub.setVideoPreviewsEnabled(false);
-    require(hub.resolveImage(QUrl(alice.second)).url.isEmpty() && hub.resolveImage(QUrl(remoteUrl)).url.isEmpty(),
-        "global preview opt-out revokes local and remote protected resources already issued");
-    const auto disabledRemote = QCoro::waitFor(hub.remoteState(hub.scoped(alice.first, "target"), false, "preview"));
-    require(!disabledRemote.contains("preview"), "remote metadata cannot expose previews while disabled");
-    hub.setVideoPreviewsEnabled(true);
-    QCoro::waitFor(hub.remoteState(hub.scoped(alice.first, "target"), false, "preview"));
     artwork.releaseMemory(false);
     require(fetch(bob.second, true).pixelColor(8, 8) == QColor(Qt::red),
         "protected previews bypass the URL-only disk cache after memory eviction");
@@ -285,6 +278,13 @@ export function createSource(config) {
             && nativeFetch(nativeRemote, true).pixelColor(8, 8) == QColor(Qt::red),
         "unchanged remote resources preserve scoped identity and decoded cache reuse");
     remoteUrl = credentialUrl;
+    hub.setVideoPreviewsEnabled(false);
+    require(hub.resolveImage(QUrl(alice.second)).url.isEmpty() && hub.resolveImage(QUrl(remoteUrl)).url.isEmpty(),
+        "global preview opt-out revokes local and remote protected resources already issued");
+    const auto disabledRemote = QCoro::waitFor(hub.remoteState(hub.scoped(alice.first, "target"), false, "preview"));
+    require(!disabledRemote.contains("preview"), "remote metadata cannot expose previews while disabled");
+    hub.setVideoPreviewsEnabled(true);
+    QCoro::waitFor(hub.remoteState(hub.scoped(alice.first, "target"), false, "preview"));
     const auto foreign
         = add("foreign-secret", QStringLiteral("http://127.0.0.1:%1/steal/{index}").arg(foreignServer.serverPort()));
     require(foreign.second.isEmpty(), "a provider cannot describe a preview on a foreign media origin");
