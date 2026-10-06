@@ -427,7 +427,8 @@ QString normalizedAudioOutputMode(const QString& mode);
 void setDiagnosticUrlsUnredacted(bool enabled);
 bool diagnosticUrlsUnredacted();
 QString sanitizedDiagnosticUrl(QString url, qsizetype maxLength = -1);
-QString sanitizedLogMessage(QString message);
+// Provider diagnostics pass false: URL disclosure never applies to provider text.
+QString sanitizedLogMessage(QString message, bool allowDiagnosticUrls = true);
 QUrl serverUrlWithPath(const QString& serverUrl, const QStringList& segments);
 bool isMeaningfulResumePosition(qint64 resumeTicks, qint64 runtimeTicks);
 qint64 normalizedResumeTicks(qint64 resumeTicks, qint64 runtimeTicks);

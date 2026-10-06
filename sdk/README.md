@@ -72,6 +72,45 @@ no Node or browser globals, and Qt's engine lacks some newer built-ins such as `
 
 This is a reviewed, in-process profile, not a sandbox: install providers you trust.
 
+### Provider logging
+
+Both hosts expose `isLogEnabled(level)` and `log(level, message, fields?)` for
+`trace`, `debug`, `info`, `warn`, and `error`. Messages may be strings or lazy
+zero-argument functions returning strings. The native guard runs before the
+function, field access, conversion, redaction, or JSON encoding. There is no
+`console` shim and providers must not build a separate logger or log sink.
+
+```js
+host.log('debug', function() { return 'Catalogue request completed'; });
+if (host.isLogEnabled('trace')) {
+    host.log('trace', 'Catalogue page', { count: items.length, status: response.status });
+}
+```
+
+Use the guard before expensive formatting or constructing `fields`; JavaScript
+evaluates ordinary arguments before calling `log`. Fields are flat JSON scalars:
+at most 16 identifier-like keys (48 characters), string values up to 256
+characters, and a 1,536-character aggregate budget. Non-scalar fields are ignored.
+Messages exceeding 2,048 UTF-16 units are replaced with a limit marker; final
+native lines are limited to 4,096 units and control characters are flattened.
+
+Logs use the same Qt filtering and application log sink as native diagnostics:
+`spool.provider` maps debug/info/warn/error to Qt debug/info/warning/critical.
+Info and above are enabled by default. Trace uses Qt debug severity on the
+separate, default-off `spool.provider.trace` category, with a `trace:` label.
+For example, `QT_LOGGING_RULES='spool.provider.debug=true;spool.provider.trace.debug=true'`
+enables both diagnostic levels; `spool.provider.info=false` disables info.
+Filters are checked for every call, so no per-provider cached enablement flags.
+
+Spool adds the trusted provider ID and a short opaque account fingerprint, not
+account labels, usernames, server addresses or configuration. URLs, recognizable
+credentials and personal fields are always redacted, even with
+`--unredacted-urls`. Known credentials in source configuration are also removed
+when present as bare message/field text. This is defense in depth, not permission
+to log secrets: never log credentials, cookies, authentication/request/response
+bodies, signed stream URLs, titles or torrent hashes. Use stable event descriptions,
+counts, timing and HTTP status codes instead.
+
 ## Connection speed
 
 Declare `speedTest` when the service offers a bounded download endpoint, then

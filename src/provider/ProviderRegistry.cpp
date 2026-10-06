@@ -259,8 +259,8 @@ ScriptRuntime *ProviderRegistry::runtimeFor(ProviderModule& module)
 {
     if (!module.runtime && !module.native) {
         const QUrl entry = module.file(module.manifest.entry);
-        module.runtime
-            = new ScriptRuntime(entry.isLocalFile() ? entry.toLocalFile() : entry.toString(), m_device, m_hooks, this);
+        module.runtime = new ScriptRuntime(
+            entry.isLocalFile() ? entry.toLocalFile() : entry.toString(), m_device, m_hooks, this, module.manifest.id);
         const QString id = module.manifest.id;
         connect(module.runtime, &ScriptRuntime::event, this, &ProviderRegistry::handleEvent);
         connect(module.runtime, &ScriptRuntime::interrupted, this, [this, id] { handleInterrupted(id); });
