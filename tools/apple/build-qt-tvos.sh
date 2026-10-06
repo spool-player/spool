@@ -72,7 +72,7 @@ for module in qtbase qtshadertools qttasktree qtdeclarative qtsvg qtimageformats
       -DQt6BuildInternals_DIR="$prefix/lib/cmake/Qt6BuildInternals" \
       -DINPUT_webp=qt -DINPUT_tiff=qt -DINPUT_jasper=no -DINPUT_mng=no
   fi
-  cmake --build "$build_root/$module" --parallel "$jobs"
+  cmake --build "$build_root/$module" --parallel "$jobs" -- -k 0
   cmake --install "$build_root/$module"
 done
 printf 'Built source Qt %s for %s/%s at %s\n' "$version" "$APPLE_SDK" "$APPLE_ARCH" "$prefix"

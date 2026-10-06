@@ -1,0 +1,18 @@
+--- a/src/plugins/platforms/ios/qiosscreen.mm
++++ b/src/plugins/platforms/ios/qiosscreen.mm
+@@ -197,6 +197,7 @@
+     [m_displayLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSDefaultRunLoopMode];
+ 
+ 
++#ifndef Q_OS_TVOS
+     // The screen brightness might affect the EDR headroom of the display,
+     // which might affect the rendering of windows that opt in to EDR.
+     m_screenBrightnessObserver = QMacNotificationObserver(m_uiScreen,
+@@ -216,6 +217,7 @@
+                 }
+             }
+         });
++#endif
+ 
+     if (shouldPauseDisplayLinkWhenInactive()) {
+         // We're pausing the display link if the application moves out of the active state,
