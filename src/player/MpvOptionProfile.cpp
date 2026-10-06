@@ -596,7 +596,9 @@ std::vector<MpvOption> MpvOptionProfile::applicationOptions(Platform platform, b
             // hardware and read the frames back.
             options.push_back({ "hwdec", "mediacodec-copy" });
         } else {
-#if defined(Q_OS_LINUX)
+#if defined(SPOOL_APPLE_MOBILE)
+            options.push_back({ "hwdec", "videotoolbox-copy" });
+#elif defined(Q_OS_LINUX)
             options.push_back({ "hwdec", "auto-copy" });
 #else
             options.push_back({ "hwdec", "auto-safe" });
@@ -612,6 +614,10 @@ std::vector<MpvOption> MpvOptionProfile::applicationOptions(Platform platform, b
             options.push_back({ "ao", "audiotrack,opensles,null" });
         }
     }
+#if defined(SPOOL_APPLE_MOBILE)
+        // Only the sandbox-compatible RemoteIO AudioUnit output is built.
+        options.push_back({ "ao", "audiounit" });
+#endif
 
     const MpvOption applicationOptions[] = {
         { "osd-bar", "no" },

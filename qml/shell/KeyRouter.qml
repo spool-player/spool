@@ -9,6 +9,7 @@ FocusScope {
     property bool textInputActive: false
     property bool backspaceNavigatesInTextInput: false
     property bool webOsScanCodes: false
+    property bool tvOsRemote: false
     property var backHandler: null
     property var globalHandler: null
     property int longPressInterval: 520
@@ -186,6 +187,11 @@ FocusScope {
     }
 
     function normalizedKey(event) {
+        // Qt's UIKit plugin reports Siri Remote Back/Menu as Menu. Normalize
+        // both phases so a handled Back cannot leak its release to UIKit.
+        // An unhandled root Back remains unaccepted for the system launcher.
+        if (tvOsRemote && event.key === Qt.Key_Menu)
+            return Qt.Key_Back
         if (webOsScanCodes && event.key === 0) {
             // LG's Wayland stack can lose the Qt key on physical remote
             // releases while retaining the XKB scan code. Recover directions

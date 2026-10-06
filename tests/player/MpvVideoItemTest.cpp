@@ -18,7 +18,9 @@
 #include <QThread>
 #include <algorithm>
 #include <atomic>
+#if SPOOL_MPV_ITEM_RHI
 #include <rhi/qrhi.h>
+#endif
 
 #include <clocale>
 #include <cstdio>
@@ -132,10 +134,14 @@ SPOOL_TEST_MAIN("mpv-video-item")
     if (api == "vulkan")
         std::fprintf(stderr, "requested Vulkan scene graph\n");
     QSurfaceFormat format;
+#ifdef Q_OS_TVOS
+    format.setRenderableType(QSurfaceFormat::OpenGLES);
+    format.setVersion(3, 0);
+#else
     format.setRenderableType(QSurfaceFormat::OpenGL);
     format.setVersion(3, 3);
+#endif
     format.setAlphaBufferSize(0);
-    QSurfaceFormat::setDefaultFormat(format);
     QGuiApplication app(argc, argv);
 
     QTemporaryFile video(QDir::tempPath() + QStringLiteral("/mpv-video-item-XXXXXX.mkv"));
@@ -144,12 +150,15 @@ SPOOL_TEST_MAIN("mpv-video-item")
         return 1;
     }
 
+#if SPOOL_MPV_ITEM_RHI
     std::atomic_int textureFormat { -1 };
+#endif
     QQuickWindow window;
     window.setColor(Qt::black);
     window.resize(320, 180);
     Spool::MpvVideoItem videoItem(window.contentItem());
     videoItem.setSize(QSizeF(window.size()));
+#if SPOOL_MPV_ITEM_RHI
     QObject::connect(
         &window, &QQuickWindow::afterRendering, &videoItem,
         [&] {
@@ -159,6 +168,7 @@ SPOOL_TEST_MAIN("mpv-video-item")
                 textureFormat.store(int(target->format()));
         },
         Qt::DirectConnection);
+#endif
     window.show();
     app.processEvents();
 
@@ -238,10 +248,12 @@ SPOOL_TEST_MAIN("mpv-video-item")
         // The legacy OpenGL renderer does not expose video-target-params.
         // Inspect the actual RHI texture on both APIs, and additionally the
         // mpv handover descriptor on Vulkan.
+#if SPOOL_MPV_ITEM_RHI
         const bool sdrTarget
             = textureFormat.load() == int(QRhiTexture::RGBA8) && (api != "vulkan" || actualFormat == "rgba8");
         std::fprintf(stderr, "rendered SDR target: RHI=%d mpv=%s\n", textureFormat.load(),
             actualFormat.isEmpty() ? "(legacy renderer)" : actualFormat.constData());
+#endif
         const QImage beforeOsd = window.grabWindow();
         const char *osdCommand[] = { "show-text", "SDR white", "10000", nullptr };
         bool neutralOsd = false;
@@ -255,12 +267,17 @@ SPOOL_TEST_MAIN("mpv-video-item")
         }
         const bool released = videoItem.releaseMpvHandle();
         mpv_terminate_destroy(handle);
-        if (!rendered || !upright || !released || !sdrTarget || !neutralOsd) {
-            std::fprintf(stderr, "video result: rendered=%d upright=%d released=%d SDR=%d neutralOSD=%d\n", rendered,
-                upright, released, sdrTarget, neutralOsd);
+        if (!rendered || !upright || !released || !neutralOsd
+#if SPOOL_MPV_ITEM_RHI
+            || !sdrTarget
+#endif
+        ) {
+            std::fprintf(stderr, "video result: rendered=%d upright=%d released=%d neutralOSD=%d\n",
+                rendered, upright, released, neutralOsd);
             return 1;
         }
     }
+    std::fprintf(stderr, "mpv video smoke: upright frames and OSD rendered across detach and resize\n");
     return 0;
 }
 

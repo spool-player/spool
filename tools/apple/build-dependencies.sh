@@ -131,7 +131,8 @@ mpv_args=(--cross-file "$CROSS_FILE" --prefix "$PREFIX" --default-library static
   -Dcplayer=false -Dlibmpv=true -Dbuild-date=false -Dtests=false -Dlua=disabled -Djavascript=disabled
   -Dmanpage-build=disabled -Dlibarchive=disabled -Dlibbluray=disabled -Dlibcurl=enabled -Dgl=enabled
   -Dios-gl=enabled -Dvideotoolbox-gl=disabled -Dvideotoolbox-pl=disabled -Dvulkan=disabled
-  -Dcocoa=disabled -Dcoreaudio=disabled -Davfoundation=enabled -Daudiounit=enabled)
+  -Dcocoa=disabled -Dcoreaudio=disabled -Davfoundation=disabled -Daudiounit=enabled
+  -Dgl-cocoa=disabled)
 if [[ -f "$mpv_build/meson-private/coredata.dat" ]]; then
   meson setup --reconfigure "$mpv_build" "$ROOT/mpv" "${mpv_args[@]}"
 else

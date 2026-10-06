@@ -47,6 +47,9 @@
 #if defined(SPOOL_ANDROID)
 #include <QJniObject>
 #endif
+#ifdef Q_OS_TVOS
+#include "platform/tvos/TvOSRemoteInput.h"
+#endif
 
 #include <QCoreApplication>
 #include <QDateTime>
@@ -566,6 +569,9 @@ int main(int argc, char **argv)
     window.rootContext()->setContextProperty(QStringLiteral("startupSplashCoreWidthDp"), splashCoreWidthDp());
     window.rootContext()->setContextProperty(QStringLiteral("startupSplashPixelsPerDp"), splashPixelsPerDp());
     Spool::configurePlatformWindow(window);
+#ifdef Q_OS_TVOS
+    Spool::installTvOSRemoteInput(window);
+#endif
     inputLatencyMonitor.attachWindow(&window);
     window.setInputLatencyMonitor(&inputLatencyMonitor);
     const auto directSingleShot = static_cast<Qt::ConnectionType>(Qt::DirectConnection | Qt::SingleShotConnection);
@@ -981,6 +987,11 @@ int main(int argc, char **argv)
     platformInfo->insert(QStringLiteral("isWebOS"), capabilities.isWebOS);
     platformInfo->insert(QStringLiteral("isAndroid"), capabilities.isAndroid);
     platformInfo->insert(QStringLiteral("isMobile"), capabilities.isMobile);
+#ifdef Q_OS_TVOS
+    platformInfo->insert(QStringLiteral("isTVOS"), true);
+#else
+    platformInfo->insert(QStringLiteral("isTVOS"), false);
+#endif
 #ifdef TOUCHSCREEN
     platformInfo->insert(QStringLiteral("touchscreen"), !capabilities.isTV);
 #else

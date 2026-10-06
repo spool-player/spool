@@ -11,6 +11,53 @@
   10-foot / remote navigation: build around GridView / ListView + FocusScope + KeyNavigation + Keys. KeyNavigation is specifically for arrow/tab-based focus jumps, and FocusScope exists to keep reusable focus regions sane, which is exactly the problem space for D-pad TV UIs.
   HTTP asset caching: QNetworkDiskCache for posters, backdrops, and image responses. It is basic, but it plugs directly into QNetworkAccessManager; just remember it is basic by design and defaults to a 50 MB limit, so you will probably want to raise that.
 
+## Apple TV review branch
+
+`feature/tvos` contains the Apple TV target independently of the iOS target.
+Qt does **not** list tvOS among its officially supported/tested platforms.
+The branch source-builds the pinned Qt UIKit port for `CMAKE_SYSTEM_NAME=tvOS`;
+an iOS binary kit or macOS Qt library cannot be substituted. See the upstream
+[platform matrix](https://doc.qt.io/qt-6/supported-platforms.html) and
+[UIKit platform source](https://github.com/qt/qtbase/tree/6.11/src/plugins/platforms/ios).
+
+On macOS with Xcode's Apple TV SDK installed:
+
+```sh
+nix build .#native-qt-cache --out-link build/tvos-host-qt
+export QT_HOST_PATH="$(realpath build/tvos-host-qt)"
+APPLE_SDK=appletvsimulator APPLE_ARCH=arm64 \
+  nix develop .#native -c bash tools/build-tvos.sh
+bash tools/apple/smoke-tvos.sh \
+  build/tvos/appletvsimulator-arm64/install/Spool.app
+```
+
+The build verifies source digests, builds Qt and the static mpv/media closure
+for the selected SDK, generates the Apple TV layered icon/Top Shelf artwork,
+and packages `Spool.app`. Set `APPLE_SDK=appletvos`, `APPLE_ARCH=arm64`,
+`CODE_SIGNING_ALLOWED=YES`, and `APPLE_DEVELOPMENT_TEAM` for a signed device
+build. Archive/export using Xcode with your provisioning profile; a simulator
+bundle is not an App Store artifact. The dedicated `tvOS source build`
+workflow builds and runs the existing UI and video-render consumer smoke tests
+in an isolated Apple TV simulator. Simulator success does not establish
+physical-device decoder/audio performance, Siri Remote gesture feel, VoiceOver,
+HDR/frame-rate matching, signing, or App Store acceptance.
+
+The target reuses TV focus, hold-to-open-options, and directional navigation.
+Clickpad directions/Select arrive through Qt's UIKit mapping; indirect swipes
+step focus without turning the remote into a pointer. Back/Menu dismisses
+overlays or navigates back and remains unhandled at the root for tvOS to return
+to the launcher. Play/Pause toggles playback. Siri, TV/Home, and volume remain
+system-owned. Video pauses when hidden/suspended; audio uses the playback
+session and system Now Playing/remote controls. Idle inhibition applies only
+while media is active. Account secrets use device-only Keychain records.
+Database/artwork/log storage is purgeable on tvOS; local filesystem browsing
+and self-updating are not enabled.
+
+Every tvOS build enables `SPOOL_APPLE_APP_STORE`: only provider pins explicitly
+approved with `appleAppStore: true` are embedded, all local overrides are
+rejected, and runtime provider-code downloads are disabled. Provider updates
+therefore arrive only with app updates, not through a curated download store.
+
 ## Local sibling providers
 
 Keep the app checkout and provider repositories together, for example

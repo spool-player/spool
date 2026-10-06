@@ -85,6 +85,9 @@ TestCase {
         keyRouter.textInputActive = false
         keyRouter.backspaceNavigatesInTextInput = false
         keyRouter.webOsScanCodes = false
+        keyRouter.tvOsRemote = false
+        keyRouter.activeTarget = target
+        keyRouter.backHandler = null
         keyRouter.globalHandler = null
         keyRouter.platformSendsRepeats = false
         keyRouter.platformSilent = false
@@ -94,6 +97,30 @@ TestCase {
         keyRouter.lastReleaseAt = 0
         keyRouter.heldReleaseKey = 0
         keyRouter.stopSustaining()
+    }
+
+    function test_siriRemoteBackHandlesBothPhasesWithoutOpeningContextMenu() {
+        keyRouter.tvOsRemote = true
+        routeResult = false
+        keyRouter.globalHandler = function (key, phase, repeat, modifiers) {
+            compare(key, Qt.Key_Back)
+            return false
+        }
+        const event = {"key": Qt.Key_Menu, "text": "", "modifiers": Qt.NoModifier, "isAutoRepeat": false}
+        verify(keyRouter.dispatch(event, "press"))
+        compare(backCalls, 1)
+        verify(keyRouter.dispatch(event, "release"))
+        compare(backCalls, 1)
+        compare(fallbackCalls, 0)
+    }
+
+    function test_siriRemoteRootBackIsUnacceptedForSystemLauncher() {
+        keyRouter.tvOsRemote = true
+        keyRouter.activeTarget = null
+        keyRouter.backHandler = function () { return false }
+        const event = {"key": Qt.Key_Menu, "text": "", "modifiers": Qt.NoModifier, "isAutoRepeat": false}
+        verify(!keyRouter.dispatch(event, "press"))
+        verify(!keyRouter.dispatch(event, "release"))
     }
 
     function test_directionUsesRouterHelper() {

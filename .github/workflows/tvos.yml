@@ -1,0 +1,52 @@
+name: tvOS source build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/tvos]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tvos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  simulator:
+    name: Qt mpv tvOS simulator build and launch
+    runs-on: macos-15
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: ./.github/actions/install-nix
+        with:
+          nix_conf: |
+            experimental-features = nix-command flakes
+            connect-timeout = 30
+      - name: Resolve checked-out media source
+        run: |
+          nix flake lock --override-input mpv-src "git+file:$PWD/mpv?rev=$(git -C mpv rev-parse HEAD)&shallow=1"
+      - name: Install pinned host Qt tools
+        run: nix build .#native-qt-cache --out-link build/tvos-host-qt
+      - name: Build Qt and media libraries for Apple TV simulator
+        env:
+          APPLE_SDK: appletvsimulator
+          APPLE_ARCH: arm64
+          JOBS: 3
+        run: |
+          export QT_HOST_PATH="$(realpath build/tvos-host-qt)"
+          nix develop .#native --no-write-lock-file -c bash tools/build-tvos.sh
+      - name: Launch isolated Apple TV simulator smoke
+        run: bash tools/apple/smoke-tvos.sh build/tvos/appletvsimulator-arm64/install/Spool.app
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: spool-tvos-simulator
+          path: |
+            build/tvos/appletvsimulator-arm64/install/Spool.app
+            build/tvos/smoke/*.png
+            build/tvos/smoke/result.json
