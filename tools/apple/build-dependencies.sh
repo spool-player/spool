@@ -40,16 +40,9 @@ export CFLAGS="-target $TRIPLE -isysroot $SDKROOT -fPIC"
 export CXXFLAGS="$CFLAGS"
 export LDFLAGS="-target $TRIPLE -isysroot $SDKROOT -L$PREFIX/lib"
 export CC CXX AR RANLIB SDKROOT
-for name in openssl curl qcoro fribidi harfbuzz libass libplacebo; do
+for name in openssl curl freetype qcoro fribidi harfbuzz libass libplacebo; do
   prepare_manifest_source "$ROOT" "$MANIFEST" "$name" "$SOURCE_ROOT/$name"
 done
-# Savannah's redirect host is unreachable from the macOS runner. FreeType's
-# official SourceForge mirror carries the same release; retain the exact pin.
-freetype_version="$(manifest_source_field "$MANIFEST" freetype version)"
-freetype_sha="$(manifest_source_field "$MANIFEST" freetype sha256)"
-freetype_archive="$ROOT/build/downloads/freetype-$freetype_sha.archive"
-download_verified "https://downloads.sourceforge.net/project/freetype/freetype2/$freetype_version/freetype-$freetype_version.tar.xz" "$freetype_sha" "$freetype_archive"
-extract_verified_source "$freetype_archive" "$freetype_sha" "$SOURCE_ROOT/freetype"
 prepare_toolchain_ffmpeg "$ROOT" "$SOURCE_ROOT/ffmpeg"
 while IFS=$'\t' read -r path url sha; do
   archive="$ROOT/build/downloads/apple-libplacebo-${path//\//-}-$sha.archive"
