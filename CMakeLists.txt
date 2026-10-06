@@ -796,6 +796,11 @@ if(SPOOL_WEBOS)
             -exclude qml/pages/DesktopFolderDialog.qml
     )
 endif()
+if(TARGET spool-tvos-playback-smoke)
+    get_target_property(SPOOL_APPLE_SMOKE_SCAN_ARGS spool QT_QML_IMPORT_SCANNER_EXTRA_ARGS)
+    set_property(TARGET spool-tvos-playback-smoke PROPERTY
+        QT_QML_IMPORT_SCANNER_EXTRA_ARGS ${SPOOL_APPLE_SMOKE_SCAN_ARGS})
+endif()
 
 
 get_target_property(SPOOL_INCLUDE_DIRS spool INCLUDE_DIRECTORIES)
