@@ -389,12 +389,18 @@ namespace {
                            ":emby|plex)-token)\\\"?)"
                            "\\s*[:=]\\s*)(?:\\\"[^\\\"]*\\\"|'[^']*'|[^\\\",}\\s]+)"),
             QRegularExpression::CaseInsensitiveOption);
-        static const QRegularExpression authorizationHeader(
-            QStringLiteral("((?:Authorization|X-Emby-Token|X-Plex-Token)\\s*[:=]\\s*)[^,\\r\\n}]+"),
+        static const QRegularExpression credentialHeader(
+            QStringLiteral(
+                R"(((?<![A-Za-z0-9_-])["']?(?:Authorization|Proxy-Authorization|Cookie|Set-Cookie|X-Emby-Token|X-Plex-Token)["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|(?:(?!["']\s*[,}])[^\r\n}])+))"),
             QRegularExpression::CaseInsensitiveOption);
+        // Quoted header values stop at their own closing quote, preserving
+        // neighboring JSON metadata. Plain Cookie/Set-Cookie headers consume
+        // the whole line, including additional cookies and Expires commas.
+        // A closing JSON string delimiter also bounds header text nested in
+        // ordinary metadata strings when the native sink sanitizes it again.
+        url.replace(credentialHeader, QStringLiteral("\\1<redacted:credential>"));
         url.replace(credentialQuery, QStringLiteral("\\1<redacted:credential>"));
         url.replace(credentialField, QStringLiteral("\\1<redacted:credential>"));
-        url.replace(authorizationHeader, QStringLiteral("\\1<redacted:credential>"));
         return url;
     }
 

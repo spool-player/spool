@@ -115,6 +115,24 @@ SPOOL_TEST_MAIN("provider-logging")
         require(
             lines.at(2).text.contains("<dropped:message-limit>") && lines.at(3).text.contains("<dropped:field-limit>"),
             "oversized values are replaced without exposing a credential prefix");
+        const auto late = QCoro::waitFor(runtime.call("private-account-name", "lateCredentials"));
+        lines = takeMessages();
+        require(
+            lines.size() == late.value("count").toInt(), "all late credential cases reach the real native log sink");
+        const QStringList lateSecrets { "late-cookie-value", "late-renewal-value", "late-setcookie-value",
+            "late-auth-value", "late-basic-value", "late-jsoncookie-value", "late-jsonrenewal-value",
+            "late-jsonsetcookie-value", "late-proxy-value" };
+        for (const auto& line : lines) {
+            for (const auto& secret : lateSecrets)
+                require(
+                    !line.text.contains(secret), "late credentials must be redacted in messages and safe-key fields");
+            require(line.text.contains("<redacted:credential>") && line.text.contains("\"status\":200"),
+                "late credential redaction retains ordinary diagnostic metadata");
+        }
+        for (qsizetype index = 2; index < lines.size(); ++index)
+            require(lines.at(index).text.contains(QStringLiteral("count"))
+                    && lines.at(index).text.contains(QString::number(index + 5)),
+                "quoted sensitive values must not erase neighboring JSON metadata");
         QCoro::waitFor(runtime.addSource("another-private-account", configuration, {}));
         lines = takeMessages();
         require(lines.size() == 1 && !lines.front().text.startsWith(firstContext)
