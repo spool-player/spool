@@ -14,13 +14,6 @@ FocusScope {
     property var uiTransitionToken: 0
     property var settingsController: Settings
     property var syncController: typeof SettingsSync !== "undefined" ? SettingsSync : null
-    property string syncSourceLabel: {
-        if (!syncController)
-            return ""
-        const accounts = syncController.accounts || []
-        const account = accounts.find(candidate => candidate.id === syncController.accountId)
-        return account ? String(account.syncLabel || "") : ""
-    }
     property var platformInfo: Platform
     property bool hdrPlayback: Player.hdrPlayback
     property string navigationMode: "row"
@@ -192,20 +185,6 @@ FocusScope {
         return delegate ? delegate.control : null
     }
 
-    function syncState(spec) {
-        return syncController && spec ? syncController.states[spec.key] || null : null
-    }
-
-    function hasSync(spec) {
-        const state = syncState(spec)
-        return state !== null && state.eligible === true
-    }
-
-    function toggleSync(spec) {
-        if (hasSync(spec))
-            syncController.setSettingEnabled(spec.key, !syncState(spec).enabled)
-    }
-
     function beginEdit(spec, pointer) {
         if (editingKey === spec.key)
             return
@@ -247,17 +226,12 @@ FocusScope {
         const entry = list.entryAt(list.currentIndex)
         const spec = entry && !entry.section ? entry.spec : null
         const previousMode = navigationMode
-        const result = SettingsNavigation.syncRoute(navigationMode, action, hasSync(spec), spec && (spec.type
-                                                                                                    === "slider"
-                                                                                                    || spec.type
-                                                                                                    === "text"))
+        const result = SettingsNavigation.valueRoute(navigationMode, action, spec && (spec.type === "slider"
+                                                                                      || spec.type === "text"))
         if (previousMode === "value-editing" && result.mode !== "value-editing")
             finishEdit()
         navigationMode = result.mode
         switch (result.effect) {
-        case "toggle-sync":
-            toggleSync(spec)
-            return true
         case "begin-edit":
             beginEdit(spec, false)
             return true
@@ -286,10 +260,10 @@ FocusScope {
 
     function rowDescription(spec, selected) {
         const description = spec ? String(spec.description || "") : ""
-        if (!selected || !hasSync(spec))
-            return description
-        return description + (description ? " " : "") + (spec.type === "slider" || spec.type === "text"
-                                                         ? "OK to edit; Right for sync." : "Right for sync.")
+        if (spec && spec.key === "subtitles/font" && String(specValue(spec)).startsWith("system:"))
+            return description + (description ? " " : "")
+                    + "System fonts stay on this device unless explicitly included in sync."
+        return description
     }
 
     function focusRow(index) {
@@ -475,15 +449,6 @@ FocusScope {
 
     onHdrPlaybackChanged: Qt.callLater(root.rebuildRows)
 
-    Connections {
-        target: root.syncController
-        function onStatesChanged() {
-            const entry = list.entryAt(list.currentIndex)
-            if (root.navigationMode === "sync-action" && (!entry || !root.hasSync(entry.spec)))
-                root.navigationMode = "row"
-        }
-    }
-
     Surface {
         anchors.left: list.left
         anchors.right: list.right
@@ -591,8 +556,7 @@ FocusScope {
             readonly property bool rowCurrent: ListView.isCurrentItem && list.activeFocus
 
             width: list.width
-            implicitHeight: isSection ? sectionHeader.implicitHeight + Metrics.scaled(18) : Math.max(rowLoader.implicitHeight,
-                                                                                                     syncControl.implicitHeight)
+            implicitHeight: isSection ? sectionHeader.implicitHeight + Metrics.scaled(18) : rowLoader.implicitHeight
             height: implicitHeight
 
             GroupHeader {
@@ -607,8 +571,7 @@ FocusScope {
             Loader {
                 id: rowLoader
                 anchors.left: parent.left
-                anchors.right: syncControl.visible ? syncControl.left : parent.right
-                anchors.rightMargin: syncControl.visible ? Metrics.scaled(8) : 0
+                anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
                 active: !delegateItem.isSection
                 // Bound rather than assigned once at load: the loaded row
@@ -625,25 +588,6 @@ FocusScope {
                                                                                                          === "select"
                                                                                                          ? selectComponent :
                                                                                                            actionComponent
-            }
-
-            SettingSyncControl {
-                id: syncControl
-                objectName: "subtitleSync/" + settingKey
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-                visible: !delegateItem.isSection && root.hasSync(delegateItem.spec)
-                settingKey: delegateItem.spec.key || ""
-                settingTitle: delegateItem.spec.title || ""
-                syncState: root.syncState(delegateItem.spec)
-                sourceLabel: root.syncSourceLabel
-                actionFocused: delegateItem.rowCurrent && root.navigationMode === "sync-action"
-                helpFocused: delegateItem.rowCurrent
-                onToggled: {
-                    root.focusRow(delegateItem.index)
-                    root.finishEdit()
-                    root.toggleSync(delegateItem.spec)
-                }
             }
         }
     }

@@ -580,8 +580,6 @@ const QVector<SettingSpec>& settingSpecs()
             QStringLiteral("theme/reducedMotion"), QStringLiteral("theme/technicalMetadata"),
             QStringLiteral("theme/railLabels"), QStringLiteral("audio/language"), QStringLiteral("audio/trackMode"),
             QStringLiteral("playback/rememberSeriesAudioTrack"), QStringLiteral("settings/nightMode"),
-            QStringLiteral("playback/maxStreamingHeight"), QStringLiteral("playback/manualStreamingBitrate"),
-            QStringLiteral("playback/maxStreamingBitrateMbps"), QStringLiteral("playback/unlimitedLocalBitrate"),
             QStringLiteral("playback/preferRemux"), QStringLiteral("subtitles/language"),
             QStringLiteral("subtitles/mode"), QStringLiteral("subtitles/styling"),
             QStringLiteral("subtitles/scalePercent"), QStringLiteral("subtitles/verticalPositionPercent"),
@@ -599,6 +597,8 @@ const QVector<SettingSpec>& settingSpecs()
             QStringLiteral("subtitles/bitmapShadowSpreadOpacityPercent"),
             QStringLiteral("subtitles/bitmapShadowDither") };
         const QStringList device { QStringLiteral("artwork/format"), QStringLiteral("artwork/webpQuality"),
+            QStringLiteral("playback/maxStreamingHeight"), QStringLiteral("playback/manualStreamingBitrate"),
+            QStringLiteral("playback/maxStreamingBitrateMbps"), QStringLiteral("playback/unlimitedLocalBitrate"),
             QStringLiteral("artwork/jpegQuality"), QStringLiteral("settings/audioDelayMs"),
             QStringLiteral("playback/showVolumeSlider"), QStringLiteral("playback/controlFadeDelaySeconds"),
             QStringLiteral("playback/accurateTrickplay"), QStringLiteral("playback/trickplayPreviewScalePercent"),

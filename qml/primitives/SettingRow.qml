@@ -22,6 +22,12 @@ T.Control {
     rightPadding: Metrics.scaled(14)
     topPadding: Metrics.scaled(14)
     bottomPadding: Metrics.scaled(14)
+    Accessible.role: Accessible.Button
+    Accessible.name: title
+    Accessible.description: description + (valueTextVisible && valueText.length ? ". " + valueText : "")
+    Accessible.focused: rowFocus
+    Accessible.onPressAction: if (enabled && pointerActivationEnabled)
+                                  clicked()
 
     background: Surface {
         focused: root.rowFocus

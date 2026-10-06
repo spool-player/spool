@@ -19,7 +19,8 @@ namespace {
     {
         static const QSet<QString> routes = { QStringLiteral("home"), QStringLiteral("libraryGrid"),
             QStringLiteral("itemDetails"), QStringLiteral("personDetails"), QStringLiteral("search"),
-            QStringLiteral("settings"), QStringLiteral("subtitleSettings"), QStringLiteral("openSourceNotices") };
+            QStringLiteral("settings"), QStringLiteral("settingsSync"), QStringLiteral("subtitleSettings"),
+            QStringLiteral("openSourceNotices") };
         return routes.contains(route);
     }
 

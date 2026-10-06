@@ -10,6 +10,11 @@ SettingRow {
 
     // The switch itself says on or off; the word next to it only repeats it.
     valueTextVisible: false
+    Accessible.role: Accessible.CheckBox
+    Accessible.checkable: true
+    Accessible.checked: checked
+    Accessible.onToggleAction: if (enabled)
+                                   toggle()
 
     function toggle() {
         animateChange = true

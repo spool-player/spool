@@ -16,6 +16,7 @@ FocusScope {
     property string pendingSetup: ""
     property bool linkEditing: false
     property var menuEntry: null
+    property var removingEntry: null
 
     // Section headers only once there is more than one section.
     readonly property var rows: {
@@ -161,7 +162,7 @@ FocusScope {
         else if (action === "update")
             Store.update(entry.id)
         else if (action === "remove")
-            Store.uninstall(entry.id)
+            removingEntry = entry
     }
 
     function closeMenu() {
@@ -170,6 +171,8 @@ FocusScope {
     }
 
     function activate() {
+        if (removeConfirmation.item)
+            return removeConfirmation.item.activate()
         if (menuLoader.item)
             return menuLoader.item.activate()
         activateRow(list.currentIndex)
@@ -180,6 +183,11 @@ FocusScope {
     }
 
     function back() {
+        if (removingEntry) {
+            removingEntry = null
+            InputKeys.focus(list)
+            return true
+        }
         if (menuLoader.item) {
             closeMenu()
             return true
@@ -193,6 +201,8 @@ FocusScope {
     }
 
     function routeKey(key, phase, repeat) {
+        if (removeConfirmation.item)
+            return removeConfirmation.item.routeKey(key, phase, repeat)
         if (menuLoader.item)
             return menuLoader.item.routeKey(key, phase, repeat)
         if (linkEditing)
@@ -265,6 +275,14 @@ FocusScope {
                 color: Theme.textSecondary
                 font.pixelSize: Metrics.scaled(20)
                 wrapMode: Text.WordWrap
+            }
+            AppText {
+                Layout.fillWidth: true
+                visible: Store.error.length > 0
+                text: Store.error
+                color: Theme.errorText
+                font.pixelSize: Metrics.bodySizePx
+                wrapMode: Text.Wrap
             }
         }
 
@@ -508,16 +526,6 @@ FocusScope {
                 }
             }
         }
-
-        AppText {
-            anchors.horizontalCenter: parent.horizontalCenter
-            anchors.bottom: parent.bottom
-            anchors.bottomMargin: Metrics.pageMarginPx
-            visible: Store.error.length > 0
-            text: Store.error
-            color: Theme.textMuted
-            font.pixelSize: Metrics.bodySizePx
-        }
     }
 
     Loader {
@@ -531,6 +539,28 @@ FocusScope {
             options: root.menuActions.map(action => action.label)
             onSelected: index => root.choose(index)
             onDismissed: root.closeMenu()
+        }
+    }
+    Loader {
+        id: removeConfirmation
+        anchors.fill: parent
+        active: Boolean(root.removingEntry)
+        z: 210
+        sourceComponent: ConfirmationDialog {
+            title: "Remove provider?"
+            message: "Remove " + root.removingEntry.name
+                     + " and its saved accounts from this device? Your server accounts and media will not be deleted."
+            confirmText: "Remove provider"
+            destructive: true
+            onAccepted: {
+                Store.uninstall(root.removingEntry.id)
+                root.removingEntry = null
+                InputKeys.focus(list)
+            }
+            onDismissed: {
+                root.removingEntry = null
+                InputKeys.focus(list)
+            }
         }
     }
 }

@@ -321,10 +321,6 @@ FocusScope {
             x: (parent.width - width) / 2
             y: Math.max(Metrics.pageMarginPx, (parent.height - implicitHeight) / 2)
             spacing: Metrics.scaled(14)
-            ProviderCompatibilityNotice {
-                Layout.fillWidth: true
-                provider: root.provider
-            }
             // The page header already names the provider; this says what to do.
             AppText {
                 Layout.fillWidth: true
@@ -377,14 +373,29 @@ FocusScope {
                 Layout.fillWidth: true
                 Layout.preferredHeight: Metrics.scaled(56)
                 visible: root.step === "server"
-                text: "Connect"
+                text: root.busy ? "Connecting…" : "Connect"
                 iconName: "arrow_forward"
-                kind: "blue"
+                kind: "primary"
                 enabled: root.validAddress && !root.busy
                 onClicked: root.connect(address.text)
             }
+            SecondaryText {
+                Layout.fillWidth: true
+                font.pixelSize: Metrics.bodySizePx
+                visible: root.step === "server" && address.text.length > 0 && !root.validAddress && !root.busy
+                text: "Enter a server address, such as https://media.example.com or 192.168.1.20."
+                wrapMode: Text.WordWrap
+            }
+            SecondaryText {
+                Layout.fillWidth: true
+                font.pixelSize: Metrics.bodySizePx
+                visible: root.step === "server" && root.error.length > 0
+                text: root.error
+                color: Theme.errorText
+                wrapMode: Text.WordWrap
+            }
             ActionButton {
-                kind: "blue"
+                kind: "secondary"
                 Layout.fillWidth: true
                 visible: root.step === "server" && root.lanAvailable
                 iconName: root.lanSearching ? "close" : "search"
@@ -392,7 +403,7 @@ FocusScope {
                 onClicked: root.searchLocalNetwork()
             }
             ActionButton {
-                kind: "blue"
+                kind: "secondary"
                 Layout.fillWidth: true
                 visible: root.step === "server" && !!root.alternateScreen
                 text: root.alternateLabel
@@ -462,14 +473,22 @@ FocusScope {
                 Layout.fillWidth: true
                 Layout.preferredHeight: Metrics.scaled(56)
                 visible: root.step === "account"
-                text: "Sign in"
+                text: root.busy ? "Signing in…" : "Sign in"
                 iconName: "login"
-                kind: "blue"
+                kind: "primary"
                 enabled: !root.busy && !!usernameField.text.trim()
                 onClicked: root.signIn(usernameField.text, password.text)
             }
+            SecondaryText {
+                Layout.fillWidth: true
+                font.pixelSize: Metrics.bodySizePx
+                visible: root.step === "account" && root.error.length > 0
+                text: root.error
+                color: Theme.errorText
+                wrapMode: Text.WordWrap
+            }
             ActionButton {
-                kind: "blue"
+                kind: "secondary"
                 Layout.fillWidth: true
                 visible: root.step === "account" && !!root.codeLabel && root.server[root.codeAvailableField] === false
                 text: "Retry " + root.codeLabel + " availability"
@@ -495,7 +514,7 @@ FocusScope {
                 }
             }
             ActionButton {
-                kind: "blue"
+                kind: "secondary"
                 Layout.fillWidth: true
                 visible: root.step === "account" && !!root.codeLabel && root.server[root.codeEnabledField] === true
                 text: root.code ? "Cancel " + root.codeLabel : "Use " + root.codeLabel
@@ -515,13 +534,6 @@ FocusScope {
                 Layout.preferredHeight: Metrics.scaled(24)
                 running: root.busy
                 visible: running
-            }
-            SecondaryText {
-                Layout.fillWidth: true
-                visible: !!root.error
-                text: root.error
-                color: Theme.errorText
-                wrapMode: Text.WordWrap
             }
         }
     }
