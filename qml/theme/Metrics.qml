@@ -52,10 +52,10 @@ QtObject {
     // Its unit is whatever Qt calls a logical pixel, and that is not the same
     // thing everywhere: on a desktop it is roughly a 96dpi pixel, so the
     // default is sqrt(1920 * 1080), the viewport this file was drawn against.
-    // On Android it is exactly an Android dp, which is a different and better
-    // yardstick -- the platform has already accounted for how far away the
-    // panel is held -- so the shell substitutes Android's own. Set by
-    // AppShell; see the binding there for why.
+    // Android dp and iOS points are already distance-corrected units, so the
+    // shell substitutes their mobile yardstick. Android TV shares the dp
+    // baseline; tvOS reports desktop-shaped points and retains the TV one.
+    // Set by AppShell; see the binding there for why.
     property real baselinePx: 1440
     readonly property real viewportRatio: Math.sqrt(Math.max(1, viewportWidth) * Math.max(1, viewportHeight))
                                           / baselinePx
