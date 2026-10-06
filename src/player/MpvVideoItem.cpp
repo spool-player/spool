@@ -1,4 +1,7 @@
 #include "MpvVideoItem.h"
+#if defined(SPOOL_APPLE_MOBILE)
+#include "platform/apple/AppleMobileRuntime.h"
+#endif
 
 #include <QColor>
 #include <QEventLoop>
@@ -259,6 +262,10 @@ namespace {
 
         void render() override
         {
+#if defined(SPOOL_APPLE_MOBILE)
+            if (!appleMobileRenderingAllowed())
+                return;
+#endif
             if (!m_lifecycle.item())
                 return;
 

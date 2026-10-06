@@ -17,7 +17,7 @@
 #include "common/AsyncTask.h"
 #include "common/LogRotation.h"
 #include "common/TlsTrust.h"
-#if !defined(SPOOL_ANDROID) && !defined(SPOOL_WEBOS)
+#if !defined(SPOOL_ANDROID) && !defined(SPOOL_WEBOS) && !defined(SPOOL_APPLE_MOBILE)
 #include "automation/LocalCommandServer.h"
 #endif
 #include "diagnostics/Diagnostics.h"
@@ -345,7 +345,7 @@ void logQmlWarnings(const QList<QQmlError>& warnings)
         logLine("[qml] %s", qPrintable(warning.toString()));
 }
 
-#if !defined(SPOOL_WEBOS) && !defined(SPOOL_ANDROID)
+#if !defined(SPOOL_WEBOS) && !defined(SPOOL_ANDROID) && !defined(SPOOL_APPLE_MOBILE)
 QIcon applicationIcon(bool playerSelected)
 {
     const QString variant = playerSelected ? QStringLiteral("spool-film") : QStringLiteral("spool");
@@ -603,7 +603,7 @@ int main(int argc, char **argv)
 
     if (!registerBundledFonts(appRootPath))
         return 1;
-#if !defined(SPOOL_WEBOS) && !defined(SPOOL_ANDROID)
+#if !defined(SPOOL_WEBOS) && !defined(SPOOL_ANDROID) && !defined(SPOOL_APPLE_MOBILE)
     const QIcon defaultApplicationIcon = applicationIcon(false);
     const QIcon playerApplicationIcon = applicationIcon(true);
     app.setWindowIcon(defaultApplicationIcon);
@@ -703,7 +703,7 @@ int main(int argc, char **argv)
     if (providerSources != Spool::ProviderSources::Bundled)
         providers.setInstallDirectory(QDir(Spool::persistentDataRoot()).filePath(QStringLiteral("providers")));
     providers.loadModules();
-#if !defined(SPOOL_WEBOS) && !defined(SPOOL_ANDROID)
+#if !defined(SPOOL_WEBOS) && !defined(SPOOL_ANDROID) && !defined(SPOOL_APPLE_MOBILE)
     {
         Spool::ProviderManifest folder;
         folder.id = QStringLiteral("spool.local");
@@ -762,7 +762,7 @@ int main(int argc, char **argv)
     };
     QObject::connect(player.get(), &Spool::PlayerController::playbackStateChanged, &app, updateScreenSaver);
     QObject::connect(player.get(), &Spool::PlayerController::sessionActiveChanged, &app, updateScreenSaver);
-#if !defined(SPOOL_WEBOS) && !defined(SPOOL_ANDROID)
+#if !defined(SPOOL_WEBOS) && !defined(SPOOL_ANDROID) && !defined(SPOOL_APPLE_MOBILE)
     const auto updateApplicationIcon
         = [&app, &window, player = player.get(), &defaultApplicationIcon, &playerApplicationIcon] {
               const QIcon& icon = player->sessionActive() ? playerApplicationIcon : defaultApplicationIcon;
@@ -1190,7 +1190,7 @@ int main(int argc, char **argv)
     }
 
     QTimer::singleShot(1000, router.get(), [router = router.get()] { router->beginSession(false); });
-#if !defined(SPOOL_ANDROID) && !defined(SPOOL_WEBOS)
+#if !defined(SPOOL_ANDROID) && !defined(SPOOL_WEBOS) && !defined(SPOOL_APPLE_MOBILE)
     Spool::LocalCommandServer localCommands(controller.get(), router.get(), &window);
     if (!app.arguments().contains(QStringLiteral("--no-local-control"))) {
         QString error;
