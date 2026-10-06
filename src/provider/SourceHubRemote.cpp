@@ -185,9 +185,10 @@ QCoro::Task<QVariantMap> SourceHub::remoteState(QString targetId, bool connect, 
         throw std::runtime_error("unsupported_extension");
     QPointer<SourceHub> guard(this);
     QPointer<Provider> owner(source(account));
-    const auto response
-        = co_await m_registry->callExtension(account, Extension, connect ? "remoteConnect" : "remoteState",
-            { { "targetId", rawId(targetId) }, { "videoPreviews", m_videoPreviewsEnabled } }, scope);
+    QVariantMap arguments { { "targetId", rawId(targetId) } };
+    arguments.insert("videoPreviews", m_videoPreviewsEnabled);
+    const auto response = co_await m_registry->callExtension(
+        account, Extension, connect ? "remoteConnect" : "remoteState", std::move(arguments), scope);
     if (!guard || !owner || owner != source(account) || !remoteAvailable(account))
         throw std::runtime_error("cancelled");
     const auto status = text(response.value("state"), 32, true);
