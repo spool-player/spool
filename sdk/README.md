@@ -206,6 +206,30 @@ bounded endpoint, omit `speedTest`; retain explicit quality/source choices
 instead of inventing a measurement. Per-account measurements are appropriate
 for a fixed media server, not interchangeable across arbitrary stream origins.
 
+## Offline downloads
+
+Declare `downloads` for original media and additionally `downloadTranscode` only
+when the server can produce a finite, complete encoded media file. Implement
+`download({itemId, mode, maxBitrate?, maxHeight?, variantId?}, host)` and return
+`{url, container, headers?, size?, cleanup?}`. `mode` is `original` or `transcoded`;
+encoding is performed by the server, never on the viewer's device. `container`
+is a local-playable media suffix, such as `mp4`, `mkv`, or `flac`.
+
+The endpoint must finish at EOF and contain the whole item from its beginning.
+An HLS/DASH manifest, live resource, or saved online playlist is not a download.
+Progressive finite server endpoints are supported, including responses without
+a known length. The host streams bounded chunks to a temporary file and publishes
+the copy only after success. URLs must be approved account origins; native requests
+reuse account TLS trust, reject redirects, omit cookies, and use only the returned
+headers. Do not put credentials in filenames or metadata.
+
+A provider-owned release/file picker can return `PickRequest`; the host repeats
+`download` with the submitted choice merged in, preserving the selected item,
+mode and quality ceilings. A `cleanup` object is opaque and lives only in memory.
+Implement `downloadRelease({cleanup}, host)` when server-session cleanup is needed;
+it is called on completion, cancellation and failure. Interrupted downloads are
+shown as retryable failures after restart, not silently resumed with stale URLs.
+
 ## Artwork ownership
 
 An image tag belongs to an item, not necessarily the row that displays it.

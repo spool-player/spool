@@ -48,6 +48,8 @@ namespace {
             { QStringLiteral("streamQuality"), Provider::StreamQuality },
             { QStringLiteral("trickplay"), Provider::Trickplay },
             { QStringLiteral("speedTest"), Provider::SpeedTest },
+            { QStringLiteral("downloads"), Provider::Downloads },
+            { QStringLiteral("downloadTranscode"), Provider::DownloadTranscode },
         };
         return names;
     }
