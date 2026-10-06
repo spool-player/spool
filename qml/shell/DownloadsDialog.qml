@@ -93,7 +93,7 @@ OverlayDialog {
         const received = bytes(job.received)
         switch (job.state) {
         case "preparing":
-            return "Preparing on server…"
+            return "Preparing download…"
         case "downloading":
             return Number(job.total) > 0 ? Math.min(100, Math.floor(Number(job.received) / Number(job.total) * 100))
                                            + "% · " + received + " of " + bytes(job.total) : received

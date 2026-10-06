@@ -228,8 +228,12 @@ void DownloadManager::start(const QString& itemId, const QVariantMap& option)
     }
     emit changed();
     prepare(job).then([] {},
-        [guard = QPointer<DownloadManager>(this), job](const std::exception&) {
-            if (guard && !job->stopped)
+        [guard = QPointer<DownloadManager>(this), job](const std::exception& error) {
+            if (!guard || job->stopped)
+                return;
+            if (QByteArray(error.what()) == "download_cancelled")
+                guard->cancel(job->id);
+            else
                 guard->finish(job, guard->tr("Could not prepare download. Check the account and server, then retry."));
         });
 }

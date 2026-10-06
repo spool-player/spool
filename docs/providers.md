@@ -53,6 +53,8 @@ transfers. See `sdk/README.md` for the exact operation and picker contract.
 Download negotiation scopes also own pending provider pickers. Cancelling a
 download closes only its picker and rejects stale answers before any second
 server operation; ordinary playback and concurrent download pickers are unchanged.
+Closing the provider's own choice screen also produces a terminal Cancelled job,
+not a server failure. Preparing status covers both viewer choice and negotiation.
 
 Library grids request rendered artwork only for tiles intersecting the viewport.
 Buffered and pooled delegates do not occupy the render queue; scrolling cancels
@@ -115,8 +117,8 @@ On first launch after upgrading, sign-ins saved by the old native Jellyfin clien
 
 ## Where providers come from
 
-- **Bundled**: `providers/lock.json` pins each package by SHA-256 (Jellyfin, Emby and Plex, from
-  spool-player/spool-jellyfin, spool-emby and spool-plex); CMake checks and unpacks it into
+- **Bundled**: `providers/lock.json` pins each package by SHA-256 (Jellyfin, Emby, Plex and
+  Stremio, from their `spool-player/spool-*` repositories); CMake checks and unpacks it into
   a resource at configure time. `-DSPOOL_PROVIDER_OVERRIDES=id=/path/to/checkout` replaces matching
   pins with working trees and adds supplied provider IDs absent from the lock. Unspecified pins
   remain unchanged; empty overrides preserve release behavior. Pin published release assets.
@@ -127,6 +129,14 @@ On first launch after upgrading, sign-ins saved by the old native Jellyfin clien
 
 Every download is installed only when its SHA-256 matches the entry. Installing a newer version
 restarts that module's accounts in place.
+
+Stremio owns its add-on setup/settings and stream/torrent-file picker. It reads
+trusted Stremio add-on catalogues and metadata; HTTP streams play directly,
+while torrent choices require a configured external Stremio-compatible streaming
+server. Spool does not embed a torrent engine. Connection origins are approved
+explicitly, including discovered add-on catalogue redirects, without wildcard
+grants. Stremio offers Original downloads only for finite files, not HLS/DASH
+playlists or server-converted quality options.
 
 Downloaded code is interpreted JS and QML in the app's process, not a sandbox. No store forbids
 the interpreter itself (Qt runs QML without a JIT on iOS), but store review decides what downloaded

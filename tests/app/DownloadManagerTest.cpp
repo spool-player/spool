@@ -262,6 +262,14 @@ export function createSource(config, sourceHost) {
             "independent picker still starts and completes its transfer");
         require(createdSessions == 1, "only the submitted live download creates a server session");
         downloads.remove(downloads.statusFor(pickerOtherItem).value("id").toString());
+        const QString pickerUserCancelledItem = hub.scoped(account, "picker-user-cancelled");
+        const qsizetype beforeUserCancel = pickers.size();
+        downloads.start(pickerUserCancelledItem, hub.downloadOptions(pickerUserCancelledItem).front().toMap());
+        waitUntil([&] { return pickers.size() > beforeUserCancel; }, "viewer file picker opens");
+        pickers.back()->close();
+        waitUntil([&] { return downloads.statusFor(pickerUserCancelledItem).value("state").toString() == "cancelled"; },
+            "provider picker Cancel is a cancelled download, not a server failure");
+        require(createdSessions == 1, "viewer cancellation never creates a server conversion session");
         const auto options = hub.downloadOptions(movie);
         require(options.size() > 1, "server quality offered for this account");
         const auto quality = options[1].toMap();
@@ -303,8 +311,10 @@ export function createSource(config, sourceHost) {
         waitUntil(
             [&] { return releases >= 6; }, "every negotiated session releases after success cancellation and failure");
         const QString removedItem = hub.scoped(account, "picker-account-removed");
+        const qsizetype beforeAccountRemoval = pickers.size();
         downloads.start(removedItem, hub.downloadOptions(removedItem).front().toMap());
-        waitUntil([&] { return pickers.size() == 4; }, "download picker waits when account is removed");
+        waitUntil(
+            [&] { return pickers.size() > beforeAccountRemoval; }, "download picker waits when account is removed");
         const QPointer<ProviderUiContext> removedPicker = pickers.back();
         registry.removeAccount(account);
         // Account removal first awaits best-effort server sign-out.
