@@ -538,7 +538,7 @@ python3 -m venv build/apple/aqt
 build/apple/aqt/bin/pip install aqtinstall
 build/apple/aqt/bin/aqt install-qt mac desktop "$QT_VERSION" clang_64 \
   -O "$PWD/build/apple/host-qt" \
-  -m qtshadertools qtwebsockets qtimageformats
+  -m qtshadertools qttasktree qtwebsockets qtimageformats
 export QT_HOST_PATH="$PWD/build/apple/host-qt/$QT_VERSION/macos"
 APPLE_SDK=appletvos APPLE_ARCH=arm64 bash tools/build-tvos.sh
 bash tools/package-tvos.sh build/tvos/appletvos-arm64/install/Spool.app dist/tvos
