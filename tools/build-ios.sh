@@ -15,7 +15,7 @@ export PKG_CONFIG_PATH="$APPLE_DEPS_PREFIX/lib/pkgconfig"
 export PKG_CONFIG_LIBDIR="$PKG_CONFIG_PATH"
 ASSETS="$BASE/Spool.xcassets"
 mkdir -p "$ASSETS/AppIcon.appiconset"
-cp "$ROOT/app/icons/png/spool/1024.png" "$ASSETS/AppIcon.appiconset/icon.png"
+magick "$ROOT/app/icons/png/spool/1024.png" -background black -alpha remove -alpha off "$ASSETS/AppIcon.appiconset/icon.png"
 printf '%s\n' '{"images":[{"filename":"icon.png","idiom":"universal","platform":"ios","size":"1024x1024"}],"info":{"author":"xcode","version":1}}' >"$ASSETS/AppIcon.appiconset/Contents.json"
 cmake -S "$ROOT" -B "$BASE/app" -GXcode \
   -DCMAKE_TOOLCHAIN_FILE="$QT_TARGET_PREFIX/lib/cmake/Qt6/qt.toolchain.cmake" \

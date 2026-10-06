@@ -15,7 +15,7 @@ jobs:
         with:
           submodules: recursive
       - name: Install native build tools
-        run: brew install cmake ninja meson pkg-config bash python
+        run: brew install cmake ninja meson pkg-config bash python imagemagick
       - name: Install pinned Qt host and iOS kits
         shell: bash
         run: |
