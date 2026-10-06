@@ -23,7 +23,7 @@ done
 manifest="$ROOT/tools/manifests/toolchain.json"
 version="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["qt"]["version"])' "$manifest")"
 base_url="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["qt"]["baseUrl"])' "$manifest")"
-if [[ "$("$QT_HOST_PATH/bin/qtpaths" --qt-version)" != "$version" ]]; then
+if [[ "$("$QT_HOST_PATH/bin/qtpaths" --query QT_VERSION)" != "$version" ]]; then
   echo "error: QT_HOST_PATH must supply Qt $version host tools" >&2
   exit 1
 fi

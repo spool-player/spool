@@ -23,10 +23,10 @@ an iOS binary kit or macOS Qt library cannot be substituted. See the upstream
 On macOS with Xcode's Apple TV SDK installed:
 
 ```sh
-nix build .#native-qt-cache --out-link build/tvos-host-qt
-export QT_HOST_PATH="$(realpath build/tvos-host-qt)"
-APPLE_SDK=appletvsimulator APPLE_ARCH=arm64 \
-  nix develop .#native -c bash tools/build-tvos.sh
+brew install cmake ninja meson pkg-config bash python imagemagick
+# Install matching pinned macOS host Qt tools (Qt Online Installer or aqt).
+export QT_HOST_PATH=/absolute/path/to/Qt/macos
+APPLE_SDK=appletvsimulator APPLE_ARCH=arm64 bash tools/build-tvos.sh
 bash tools/apple/smoke-tvos.sh \
   build/tvos/appletvsimulator-arm64/install/Spool.app
 ```

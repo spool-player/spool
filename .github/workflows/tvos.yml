@@ -22,24 +22,23 @@ jobs:
         with:
           submodules: recursive
           persist-credentials: false
-      - uses: ./.github/actions/install-nix
-        with:
-          nix_conf: |
-            experimental-features = nix-command flakes
-            connect-timeout = 30
-      - name: Resolve checked-out media source
+      - name: Install native build tools
+        run: brew install cmake ninja meson pkg-config bash python imagemagick
+      - name: Install pinned macOS Qt host tools
         run: |
-          nix flake lock --override-input mpv-src "git+file:$PWD/mpv?rev=$(git -C mpv rev-parse HEAD)&shallow=1"
-      - name: Install pinned host Qt tools
-        run: nix build .#native-qt-cache --out-link build/tvos-host-qt
+          python3 -m venv "$RUNNER_TEMP/aqt"
+          "$RUNNER_TEMP/aqt/bin/pip" install aqtinstall
+          version="$(python3 -c 'import json;print(json.load(open("tools/manifests/toolchain.json"))["qt"]["version"])')"
+          "$RUNNER_TEMP/aqt/bin/aqt" install-qt mac desktop "$version" clang_64 \
+            -O "$RUNNER_TEMP/Qt" -m qtshadertools qtwebsockets qtimageformats
+          echo "QT_HOST_PATH=$RUNNER_TEMP/Qt/$version/macos" >> "$GITHUB_ENV"
       - name: Build Qt and media libraries for Apple TV simulator
         env:
           APPLE_SDK: appletvsimulator
           APPLE_ARCH: arm64
           JOBS: 3
-        run: |
-          export QT_HOST_PATH="$(realpath build/tvos-host-qt)"
-          nix develop .#native --no-write-lock-file -c bash tools/build-tvos.sh
+          BUILD_JOBS: 3
+        run: bash tools/build-tvos.sh
       - name: Launch isolated Apple TV simulator smoke
         run: bash tools/apple/smoke-tvos.sh build/tvos/appletvsimulator-arm64/install/Spool.app
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

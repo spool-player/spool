@@ -235,8 +235,10 @@ Item {
             return true
         }
         if (InputKeys.isMedia(key) && overlay.hasPlayer) {
-            overlay.togglePlayback()
-            overlay.showControls("actions")
+            if (!repeat) {
+                overlay.togglePlayback()
+                overlay.showControls("actions")
+            }
             return true
         }
         if (key === Qt.Key_S) {
