@@ -20,6 +20,13 @@ an iOS binary kit or macOS Qt library cannot be substituted. See the upstream
 [platform matrix](https://doc.qt.io/qt-6/supported-platforms.html) and
 [UIKit platform source](https://github.com/qt/qtbase/tree/6.11/src/plugins/platforms/ios).
 
+**Validation status:** this is not yet a working or shippable tvOS build.
+The native Xcode CI attempt currently fails while compiling Qt's UIKit
+platform plugin because it references iOS-only orientation APIs. QtCore,
+QtGui, QtNetwork, and QtOpenGL compilation alone is not application/playback
+proof. There is no successful Apple TV application link or simulator/device
+smoke result, and this target must not be included in release support claims.
+
 On macOS with Xcode's Apple TV SDK installed:
 
 ```sh
