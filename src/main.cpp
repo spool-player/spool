@@ -472,6 +472,8 @@ int main(int argc, char **argv)
         }
         if (strcmp(argv[i], "--launch-test") == 0)
             launchTest = true;
+        if (strcmp(argv[i], "--unredacted-urls") == 0)
+            Spool::setDiagnosticUrlsUnredacted(true);
     }
 
     const QString appRootPath = Spool::resolveAppRoot(argv[0]);
@@ -484,6 +486,9 @@ int main(int argc, char **argv)
         static_cast<long long>(processStartupTiming.execToMainMs), processStartupTiming.staticInitializationMs);
     if (!g_logPath.isEmpty())
         logLine("log file: %s", g_logPath.constData());
+    if (Spool::diagnosticUrlsUnredacted())
+        logLine("WARNING: --unredacted-urls exposes full URLs and URL credentials in local logs. "
+                "Keep these logs private; do not share them without redacting secrets.");
 
     // libmpv parses option strings (and many internal numeric values) with the
     // C locale assumption — under any other LC_NUMERIC playback fails to start

@@ -248,6 +248,7 @@ private:
     QString m_playbackAccount;
     quint64 m_speedTestGeneration = 0;
     bool m_playbackActive = false;
+    bool m_explicitSpeedTest = false;
     QString m_lastDetailsAccount;
     quint64 m_searchSerial = 0;
     int m_itemActionsRequest = 0;

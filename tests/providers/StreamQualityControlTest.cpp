@@ -71,13 +71,20 @@ SPOOL_TEST_MAIN("stream-quality-control")
         require(rung.height <= 1080, "all rungs must have height at or below source height");
     }
 
-    // Default ladder with both bitrate and height constraints
+    // Known resolution is not capped by the stored average bitrate.
     const auto constrainedBoth = StreamQualityControl::defaultLadder(10'000'000, 720);
-    require(!constrainedBoth.empty(), "constrained ladder should have rungs matching both constraints");
-    for (const auto& rung : constrainedBoth) {
-        require(rung.bitrate < 10'000'000 && rung.height <= 720,
-            "all rungs must satisfy both bitrate and height constraints");
+    require(!constrainedBoth.empty(), "known-resolution ladder should retain useful resolution ceilings");
+    for (const auto& rung : constrainedBoth)
+        require(rung.height <= 720, "known-resolution ladder must not offer upscaling");
+    const auto compressed4K = StreamQualityControl::defaultLadder(5'935'000, 2160);
+    require(compressed4K.front().height == 2160, "compressed 4K must retain 4K quality choices");
+    bool has1080 = false;
+    bool has720 = false;
+    for (const auto& rung : compressed4K) {
+        has1080 |= rung.height == 1080;
+        has720 |= rung.height == 720;
     }
+    require(has1080 && has720, "compressed 4K must not lose HD choices because its average bitrate is low");
 
     return EXIT_SUCCESS;
 }

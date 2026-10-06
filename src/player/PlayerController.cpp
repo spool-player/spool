@@ -1,7 +1,6 @@
 #include "PlayerController.h"
 #include "../app/TrickplayService.h"
 
-#include "../common/LogRotation.h"
 #include "../common/TlsTrust.h"
 #include "../diagnostics/Diagnostics.h"
 #include "../media/MediaTypes.h"
@@ -55,8 +54,6 @@ namespace {
         return level.constData();
     }
 
-    constexpr auto kMpvLogFileName = "spool-mpv.log";
-
     constexpr uint64_t kTimePosRefreshReply = 0x6a666e7074730001ULL;
     constexpr auto kNightModeFilter
         = "lavfi=[pan=stereo|FL<0.5*FL+1.0*FC+0.25*BL|FR<0.5*FR+1.0*FC+0.25*BR,"
@@ -91,21 +88,6 @@ namespace {
         default:
             return "unknown";
         }
-    }
-
-    QByteArray mpvLogPath()
-    {
-        const QByteArray logDir = qgetenv("SPOOL_LOG_DIR");
-        if (logDir.isEmpty()) {
-            const QString fallback = startupCacheRoot({});
-            return QFile::encodeName(QDir(fallback).filePath(QString::fromLatin1(kMpvLogFileName)));
-        }
-
-        QByteArray path = logDir;
-        if (!path.endsWith('/'))
-            path += '/';
-        path += QByteArray(kMpvLogFileName);
-        return path;
     }
 
     QByteArray mpvShaderCachePath()
@@ -375,8 +357,6 @@ void PlayerController::prepareIdleMpv()
 
     QElapsedTimer startupTimer;
     startupTimer.start();
-    const QByteArray logPath = mpvLogPath();
-    rotateLogFile(logPath.constData());
     mpv_handle *handle = mpv_create();
     if (!handle) {
         qWarning() << "player: idle mpv_create failed";
@@ -433,8 +413,10 @@ bool PlayerController::configureAndInitializeMpv(mpv_handle *handle, bool needsV
         certificateBundle = MpvOptionProfile::systemCertificateBundle();
     if (certificateBundle.isEmpty())
         qWarning() << "player: no certificate bundle; playback TLS will use libcurl's built-in trust";
-    auto applicationOptions = MpvOptionProfile::applicationOptions(platform, needsVideoSurface, m_audioOutputMode,
-        mpvLogPath(), m_demuxerMaxBytes, m_demuxerMaxBackBytes, parallelRequests, embeddedVideo, mpvShaderCachePath(),
+    // mpv's own file sink bypasses Qt redaction. Route its events through the
+    // application log instead, including opt-in full-URL diagnostics.
+    auto applicationOptions = MpvOptionProfile::applicationOptions(platform, needsVideoSurface, m_audioOutputMode, {},
+        m_demuxerMaxBytes, m_demuxerMaxBackBytes, parallelRequests, embeddedVideo, mpvShaderCachePath(),
         certificateBundle, m_renderQuality);
     applicationOptions.push_back({ "sub-fonts-dir", m_subtitleFontsPath });
     // mpv's OSD — the performance stats overlay among it — is drawn by libass
@@ -1061,8 +1043,6 @@ bool PlayerController::ensureMpv(bool needsVideoSurface, bool embeddedVideo)
     mpv_handle *handle = takeIdleMpvHandle();
     const bool idlePrepared = handle != nullptr;
     if (!handle) {
-        const QByteArray logPath = mpvLogPath();
-        rotateLogFile(logPath.constData());
         handle = mpv_create();
         if (!handle) {
             m_errorText = QStringLiteral("mpv_create failed.");

@@ -9,6 +9,7 @@
 #include <QUrl>
 
 #include <algorithm>
+#include <atomic>
 #include <stdexcept>
 
 namespace Spool {
@@ -16,6 +17,7 @@ namespace Spool {
 namespace {
 
     constexpr qint64 kTicksPerSecond = 10000000;
+    std::atomic_bool g_diagnosticUrlsUnredacted { false };
 
     bool streamLanguagesMatch(const QString& requested, const QString& available)
     {
@@ -373,45 +375,96 @@ QString normalizedAudioOutputMode(const QString& mode)
     return normalizedPlatformAudioOutputMode(mode);
 }
 
+namespace {
+
+    QString redactedCredentialText(QString url)
+    {
+        static const QRegularExpression credentialQuery(
+            QStringLiteral(
+                "((?:[?&]|%26)(?:secret|code|password|pw|api[_-]?key|access[_-]?token|token|x-(?:emby|plex)-token)"
+                "(?:=|%3d))[^&\\s]+"),
+            QRegularExpression::CaseInsensitiveOption);
+        static const QRegularExpression credentialField(
+            QStringLiteral(
+                "((?:\\\"?(?:secret|code|password|pw|api[_-]?key|access[_-]?token|token|x-(?:emby|plex)-token)\\\"?)"
+                "\\s*[:=]\\s*\\\"?)[^\\\",}\\s]+"),
+            QRegularExpression::CaseInsensitiveOption);
+        static const QRegularExpression authorizationHeader(
+            QStringLiteral("((?:Authorization|X-Emby-Token|X-Plex-Token)\\s*[:=]\\s*)[^,\\r\\n}]+"),
+            QRegularExpression::CaseInsensitiveOption);
+        url.replace(credentialQuery, QStringLiteral("\\1<redacted:credential>"));
+        url.replace(credentialField, QStringLiteral("\\1<redacted:credential>"));
+        url.replace(authorizationHeader, QStringLiteral("\\1<redacted:credential>"));
+        return url;
+    }
+
+    QString sanitizedLogText(QString message)
+    {
+        message = redactedCredentialText(std::move(message));
+        static const QRegularExpression personalField(
+            QStringLiteral(
+                "((?:\\\"?(?:title|episode[_-]?name|library[_-]?name|user[_-]?name|server[_-]?url|address|"
+                "item[_-]?id|profile[_-]?id|cache[_-]?key|device[_-]?id)\\\"?)\\s*[:=]\\s*\\\"?)[^\\\",}\\s]+"),
+            QRegularExpression::CaseInsensitiveOption);
+        static const QRegularExpression url(
+            QStringLiteral("\\bhttps?://[^\\s\\\"'<>]+"), QRegularExpression::CaseInsensitiveOption);
+        static const QRegularExpression ipv4(
+            QStringLiteral("(?<![0-9])(?:[0-9]{1,3}\\.){3}[0-9]{1,3}(?::[0-9]{1,5})?(?![0-9])"));
+        static const QRegularExpression bracketedIpv6(QStringLiteral("\\[[0-9A-Fa-f:]+\\](?::[0-9]{1,5})?"));
+        static const QRegularExpression stableId(
+            QStringLiteral("\\b(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})\\b"));
+        message.replace(personalField, QStringLiteral("\\1<redacted:personal>"));
+        message.replace(url, QStringLiteral("<redacted:url>"));
+        message.replace(ipv4, QStringLiteral("<redacted:address>"));
+        message.replace(bracketedIpv6, QStringLiteral("<redacted:address>"));
+        message.replace(stableId, QStringLiteral("<redacted:id>"));
+        return message;
+    }
+
+} // namespace
+
+void setDiagnosticUrlsUnredacted(bool enabled)
+{
+    g_diagnosticUrlsUnredacted.store(enabled, std::memory_order_relaxed);
+}
+
+bool diagnosticUrlsUnredacted()
+{
+    return g_diagnosticUrlsUnredacted.load(std::memory_order_relaxed);
+}
+
 QString sanitizedDiagnosticUrl(QString url, qsizetype maxLength)
 {
-    static const QRegularExpression credentialQuery(
-        QStringLiteral("((?:[?&]|%26)(?:secret|code|password|pw|api[_-]?key|access[_-]?token|token|x-emby-token)"
-                       "(?:=|%3d))[^&%\\s]+"),
-        QRegularExpression::CaseInsensitiveOption);
-    static const QRegularExpression credentialField(
-        QStringLiteral("((?:\\\"?(?:secret|code|password|pw|api[_-]?key|access[_-]?token|token|x-emby-token)\\\"?)"
-                       "\\s*[:=]\\s*\\\"?)[^\\\",}\\s]+"),
-        QRegularExpression::CaseInsensitiveOption);
-    static const QRegularExpression authorizationHeader(
-        QStringLiteral("((?:Authorization|X-Emby-Token)\\s*[:=]\\s*)[^,\\r\\n}]+"),
-        QRegularExpression::CaseInsensitiveOption);
-    url.replace(credentialQuery, QStringLiteral("\\1<redacted:credential>"));
-    url.replace(credentialField, QStringLiteral("\\1<redacted:credential>"));
-    url.replace(authorizationHeader, QStringLiteral("\\1<redacted:credential>"));
+    if (diagnosticUrlsUnredacted()
+        && (url.startsWith(QLatin1String("https://")) || url.startsWith(QLatin1String("http://"))))
+        return url;
+    url = redactedCredentialText(std::move(url));
     return maxLength >= 0 ? url.left(maxLength) : url;
 }
 
 QString sanitizedLogMessage(QString message)
 {
-    message = sanitizedDiagnosticUrl(std::move(message));
-    static const QRegularExpression personalField(
-        QStringLiteral("((?:\\\"?(?:title|episode[_-]?name|library[_-]?name|user[_-]?name|server[_-]?url|address|"
-                       "item[_-]?id|profile[_-]?id|cache[_-]?key|device[_-]?id)\\\"?)\\s*[:=]\\s*\\\"?)[^\\\",}\\s]+"),
-        QRegularExpression::CaseInsensitiveOption);
+    if (!diagnosticUrlsUnredacted())
+        return sanitizedLogText(std::move(message));
+
+    // Preserve URLs verbatim, including encoded credentials/profile parameters;
+    // unrelated password/header fields and personal data remain redacted.
     static const QRegularExpression url(
         QStringLiteral("\\bhttps?://[^\\s\\\"'<>]+"), QRegularExpression::CaseInsensitiveOption);
-    static const QRegularExpression ipv4(
-        QStringLiteral("(?<![0-9])(?:[0-9]{1,3}\\.){3}[0-9]{1,3}(?::[0-9]{1,5})?(?![0-9])"));
-    static const QRegularExpression bracketedIpv6(QStringLiteral("\\[[0-9A-Fa-f:]+\\](?::[0-9]{1,5})?"));
-    static const QRegularExpression stableId(
-        QStringLiteral("\\b(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})\\b"));
-    message.replace(personalField, QStringLiteral("\\1<redacted:personal>"));
-    message.replace(url, QStringLiteral("<redacted:url>"));
-    message.replace(ipv4, QStringLiteral("<redacted:address>"));
-    message.replace(bracketedIpv6, QStringLiteral("<redacted:address>"));
-    message.replace(stableId, QStringLiteral("<redacted:id>"));
-    return message;
+    auto matches = url.globalMatch(message);
+    if (!matches.hasNext())
+        return sanitizedLogText(std::move(message));
+    QString result;
+    result.reserve(message.size());
+    qsizetype offset = 0;
+    while (matches.hasNext()) {
+        const auto match = matches.next();
+        result += sanitizedLogText(message.mid(offset, match.capturedStart() - offset));
+        result += match.capturedView();
+        offset = match.capturedEnd();
+    }
+    result += sanitizedLogText(message.mid(offset));
+    return result;
 }
 
 QUrl serverUrlWithPath(const QString& serverUrl, const QStringList& segments)

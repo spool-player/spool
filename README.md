@@ -177,6 +177,32 @@ Without Nix, use `spoolet` beside `spool` in the native build directory or insta
 `build/macos-local-providers/run-install/bin/spoolet`); the `.#spoolet` launcher
 uses these exact checkout outputs.
 
+### Local playback URL diagnostics
+
+URL logging is redacted by default. To inspect the complete failed playback URL
+from a local checkout, explicitly opt in for that process:
+
+```sh
+nix run .#local-providers -- --unredacted-urls
+```
+
+The launcher forwards this flag to the real app, which warns at startup.
+Playback failure and mpv/curl messages in `spool.log` retain the full URL,
+including the server address, encoded client-profile parameters and any URL
+credentials. On Linux this log is normally
+`~/.local/share/spool/Spool/logs/spool.log`; startup prints the actual location.
+Other password/token fields and authorization headers stay redacted. The
+unsanitized standalone mpv file sink is disabled: mpv messages use the same Qt
+sanitizer and application log. Existing `spool-mpv.log` files from older runs are
+not sanitized retroactively.
+
+**Keep opted-in logs private. URLs may contain working credentials.** Do not
+upload or share them without removing secrets, addresses and identifiers.
+Restart without the flag to restore default URL redaction. For providers that
+authenticate media through HTTP headers (including Plex), reproducing the
+request also requires the account's private media headers; a URL alone is not
+an authenticated request.
+
 ## Sign-in controls
 
 Passwords and account PINs start hidden. Select the eye beside the input to show

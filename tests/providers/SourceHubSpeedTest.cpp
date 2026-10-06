@@ -101,27 +101,26 @@ export function createSource(configuration) {
             if (interrupt) {
                 interrupt = false;
                 hub.setPlaybackActive(true);
-                --inFlight;
             }
         } else if (type == "probeFinished") {
             ++finishes;
             --inFlight;
         }
     });
-    hub.refreshSpeedTests();
-    QCoreApplication::processEvents();
-    require(starts == 0, "playback defers explicit speed tests");
     hub.setPlaybackActive(false);
     hub.refreshSpeedTests();
-    waitUntil([&] { return starts == 1; }, "idle starts a probe");
-    // Let the cancelled operation's original completion time pass.
-    QElapsedTimer cancelled;
-    cancelled.start();
-    waitUntil([&] { return cancelled.elapsed() >= 100; }, "cancelled deadline passes");
-    require(finishes == 0 && starts == 1, "starting playback aborts the probe and does not start another account");
-    hub.setPlaybackActive(false);
+    waitUntil([&] { return finishes == 2 && !hub.speedTestDescription().contains(QStringLiteral("Measuring")); },
+        "in-flight probes finish even when playback starts");
+    require(starts == 2 && inFlight == 0, "explicit account probes finish serially without cancellation or restart");
+    require(hub.speedTestDescription().contains(QStringLiteral("Measured limit")),
+        "completed probes replace the deferred status with their measurement");
+    const int beforeRefresh = finishes;
     hub.refreshSpeedTests();
-    waitUntil([&] { return finishes == 2; }, "deferred probes complete after playback stops");
+    waitUntil(
+        [&] {
+            return finishes == beforeRefresh + 2 && !hub.speedTestDescription().contains(QStringLiteral("Measuring"));
+        },
+        "explicit refresh can finish during playback");
     waitUntil(
         [&] {
             return hub.source(a)->playback()->playbackParallelRequests() == 1
@@ -148,15 +147,13 @@ export function createSource(configuration) {
     AppController controller(&database, &hub, &artwork, &player);
     hub.setPlaybackActive(false);
     controller.browse()->setLoadingMore(true);
-    const int beforeBrowse = starts;
+    const int beforeBrowse = finishes;
     hub.refreshSpeedTests();
-    QElapsedTimer browsing;
-    browsing.start();
-    waitUntil([&] { return browsing.elapsed() >= 100; }, "foreground browse remains in flight");
-    require(starts == beforeBrowse, "foreground catalogue loading defers bandwidth traffic");
+    waitUntil(
+        [&] {
+            return finishes == beforeBrowse + 1 && !hub.speedTestDescription().contains(QStringLiteral("Measuring"));
+        },
+        "explicit measurement also finishes while foreground catalogue work is active");
     controller.browse()->setLoadingMore(false);
-    const int beforeIdle = finishes;
-    hub.refreshSpeedTests();
-    waitUntil([&] { return finishes == beforeIdle + 1; }, "bandwidth traffic resumes after foreground work");
     return 0;
 }

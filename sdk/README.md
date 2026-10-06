@@ -114,6 +114,9 @@ Spool schedules probes while idle and passes each account's result back in
 `parallelRequests` (two before measurement). Use the measured ceiling only
 when the viewer has not chosen a session or settings limit. Spool shows the
 result under Quality → Auto and in Streaming settings.
+An in-flight bounded probe finishes even if playback starts. New automatic
+probes wait for idle; an explicit refresh may measure during playback.
+
 
 ## Quality policy
 

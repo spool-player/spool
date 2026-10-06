@@ -79,7 +79,9 @@ public:
         std::vector<Rung> options;
         options.reserve(std::size(kStandardRungs));
         for (const auto& rung : kStandardRungs) {
-            if (sourceBitrate > 0 && rung.bitrate >= sourceBitrate)
+            // A highly compressed 4K source can have a lower bitrate than a
+            // 720p rung. Its bitrate must not hide resolution choices.
+            if (sourceHeight <= 0 && sourceBitrate > 0 && rung.bitrate >= sourceBitrate)
                 continue;
             if (sourceHeight > 0 && rung.height > sourceHeight)
                 continue;

@@ -970,9 +970,11 @@ void SourceHub::setPlaybackActive(bool active)
     if (m_playbackActive == active)
         return;
     m_playbackActive = active;
+    // A started bounded probe is allowed to finish; cancelling it here made
+    // every quick Play leave Auto permanently without a measurement.
     if (active)
-        cancelSpeedTest();
-    else
+        m_speedTestTimer.stop();
+    else if (m_speedTestAccount.isEmpty())
         m_speedTestTimer.start(5000);
     emit streamingQualityChanged();
 }
@@ -982,14 +984,14 @@ void SourceHub::refreshSpeedTests()
     cancelSpeedTest();
     for (Entry& entry : m_entries)
         entry.speedState = Entry::SpeedState::Pending;
-    if (!m_playbackActive)
-        m_speedTestTimer.start(0);
+    m_explicitSpeedTest = true;
+    m_speedTestTimer.start(0);
     emit streamingQualityChanged();
 }
 
 void SourceHub::startNextSpeedTest()
 {
-    if (m_playbackActive || !m_speedTestAccount.isEmpty())
+    if ((m_playbackActive && !m_explicitSpeedTest) || !m_speedTestAccount.isEmpty())
         return;
     for (Provider *provider : sources()) {
         if (!provider->capabilities().testFlag(Provider::SpeedTest))
@@ -1027,6 +1029,7 @@ void SourceHub::startNextSpeedTest()
             finish, [finish](const std::exception_ptr&) { finish({}); }, "provider speed test");
         return;
     }
+    m_explicitSpeedTest = false;
 }
 
 QString SourceHub::speedDescription(const Entry& entry) const

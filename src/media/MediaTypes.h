@@ -424,6 +424,8 @@ struct PlaybackSession {
 
 QString exceptionMessage(const std::exception_ptr& exception);
 QString normalizedAudioOutputMode(const QString& mode);
+void setDiagnosticUrlsUnredacted(bool enabled);
+bool diagnosticUrlsUnredacted();
 QString sanitizedDiagnosticUrl(QString url, qsizetype maxLength = -1);
 QString sanitizedLogMessage(QString message);
 QUrl serverUrlWithPath(const QString& serverUrl, const QStringList& segments);

@@ -39,6 +39,14 @@ SPOOL_TEST_MAIN("diagnostic-redaction")
         = sanitizedDiagnosticUrl(QStringLiteral("Authorization: Bearer auth-secret\nX-Emby-Token=header-secret"));
     require(!headers.contains(QStringLiteral("auth-secret")), "authorization value should be removed");
     require(!headers.contains(QStringLiteral("header-secret")), "token header should be removed");
+    const QString plex = sanitizedDiagnosticUrl(QStringLiteral(
+        "https://server.plex.direct:32400/start.m3u8?X-Plex-Token=first%2Fsecret&token=second%2Bsecret"));
+    require(!plex.contains(QStringLiteral("first")) && !plex.contains(QStringLiteral("second"))
+            && !plex.contains(QStringLiteral("secret")),
+        "Plex and percent-encoded URL credentials must be fully removed by default");
+    require(!sanitizedDiagnosticUrl(QStringLiteral("X-Plex-Token: plex-header-secret"))
+                .contains(QStringLiteral("plex-header-secret")),
+        "Plex token headers must be removed");
 
     const QString json = sanitizedDiagnosticUrl(
         QStringLiteral(R"({"Password":"json-password","access_TOKEN":"json-token","Code":"123456"})"));
@@ -53,6 +61,24 @@ SPOOL_TEST_MAIN("diagnostic-redaction")
     require(!personal.contains(QStringLiteral("Recognisable")), "media title should be removed");
     require(!personal.contains(QStringLiteral("0123456789abcdef")), "stable item ID should be removed");
     require(!personal.contains(QStringLiteral("192.168.1.25")), "network address should be removed");
+    const QString rawUrl = QStringLiteral(
+        "https://192.168.1.25:32400/video/:/transcode/universal/start.m3u8?X-Plex-Token=url-secret%2Fencoded"
+        "&X-Plex-Client-Identifier=0123456789abcdef0123456789abcdef"
+        "&X-Plex-Client-Profile-Extra=add-limitation%28scope%3DvideoCodec%26value%3D720%29");
+    Spool::setDiagnosticUrlsUnredacted(true);
+    require(sanitizedDiagnosticUrl(rawUrl, 20) == rawUrl,
+        "explicit URL diagnostics preserve the entire reproducible URL, not a truncated prefix");
+    const QString optIn = sanitizedLogMessage(QStringLiteral("mpv/curl failed url=\"") + rawUrl
+        + QStringLiteral("\" Password=private-password\n"
+                         "Authorization: Bearer private-auth\nX-Plex-Token: private-header"));
+    require(optIn.contains(rawUrl), "global Qt log sanitization must preserve an opted-in URL verbatim");
+    require(!optIn.contains(QStringLiteral("private-password")) && !optIn.contains(QStringLiteral("private-auth"))
+            && !optIn.contains(QStringLiteral("private-header")),
+        "URL disclosure must not expose unrelated password or authorization headers");
+    Spool::setDiagnosticUrlsUnredacted(false);
+    require(!sanitizedLogMessage(rawUrl).contains(QStringLiteral("192.168.1.25"))
+            && !sanitizedLogMessage(rawUrl).contains(QStringLiteral("url-secret")),
+        "normal diagnostics remain private after URL disclosure is disabled");
     const QJsonObject report = QJsonDocument::fromJson(Spool::Diagnostics::supportReportPreview().toUtf8()).object();
     QStringList keys = report.keys();
     keys.sort();
