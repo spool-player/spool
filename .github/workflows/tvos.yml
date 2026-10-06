@@ -34,7 +34,7 @@ jobs:
           "$RUNNER_TEMP/aqt/bin/pip" install aqtinstall
           version="$(python3 -c 'import json;print(json.load(open("tools/manifests/toolchain.json"))["qt"]["version"])')"
           "$RUNNER_TEMP/aqt/bin/aqt" install-qt mac desktop "$version" clang_64 \
-            -O "$RUNNER_TEMP/Qt" -m qtshadertools qtwebsockets qtimageformats
+            -O "$RUNNER_TEMP/Qt" -m qtshadertools qtwebsockets qtimageformats qttasktree
           echo "QT_HOST_PATH=$RUNNER_TEMP/Qt/$version/macos" >> "$GITHUB_ENV"
       - name: Build Qt and media libraries for Apple TV simulator
         env:

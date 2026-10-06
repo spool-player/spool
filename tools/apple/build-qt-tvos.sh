@@ -53,6 +53,22 @@ for module in qtbase qtshadertools qttasktree qtdeclarative qtsvg qtimageformats
       fi
     done
   fi
+  if [[ "$module" == qtdeclarative ]]; then
+    # Reuse the project's existing scanner subtree fix. The official host kit
+    # otherwise scans deliberately invalid Qt parser fixtures under build/.
+    series="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["qt"]["series"])' "$manifest")"
+    patch_file="$ROOT/tools/webos-native/patches/qtdeclarative-$series-qmlimportscanner-exclude-subtrees.patch"
+    if patch --dry-run --forward --silent -d "$source_root/$module" -p1 <"$patch_file" >/dev/null 2>&1; then
+      patch --forward -d "$source_root/$module" -p1 <"$patch_file"
+    elif ! patch --dry-run --reverse --silent -d "$source_root/$module" -p1 <"$patch_file" >/dev/null 2>&1; then
+      echo 'error: pinned host scanner patch no longer applies' >&2
+      exit 1
+    fi
+    "$QT_HOST_PATH/bin/qt-cmake" -S "$ROOT/tools/apple/qmlimportscanner" \
+      -B "$ROOT/build/apple/qmlimportscanner" -G Ninja \
+      -DCMAKE_BUILD_TYPE=Release -DSPOOL_QTDECLARATIVE_SOURCE="$source_root/$module"
+    cmake --build "$ROOT/build/apple/qmlimportscanner" --parallel "$jobs"
+  fi
   args=(-S "$source_root/$module" -B "$build_root/$module" -G Ninja
     -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$prefix"
     -DCMAKE_SYSTEM_NAME=tvOS -DCMAKE_OSX_SYSROOT="$APPLE_SDK"

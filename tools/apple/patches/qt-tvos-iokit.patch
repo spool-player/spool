@@ -1,0 +1,20 @@
+--- a/src/corelib/CMakeLists.txt
++++ b/src/corelib/CMakeLists.txt
+@@ -708,8 +708,6 @@
+     LIBRARIES
+         ${FWCoreFoundation}
+         ${FWFoundation}
+-    PUBLIC_LIBRARIES
+-        ${FWIOKit}
+     DEFINES
+         _DARWIN_C_SOURCE    # This resolves two issues,
+                             #   - Provide DT_* macros to qfilesystemengine_unix.cpp
+@@ -732,6 +730,8 @@
+ endif()
+ 
+ qt_internal_extend_target(Core CONDITION MACOS
++    PUBLIC_LIBRARIES
++        ${FWIOKit}
+     LIBRARIES
+         ${FWAppKit}
+         ${FWApplicationServices}

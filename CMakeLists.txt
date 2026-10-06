@@ -106,6 +106,18 @@ else()
     endif()
 endif()
 find_package(Qt6 ${SPOOL_QT_MIN_VERSION} REQUIRED COMPONENTS ${SPOOL_QT_COMPONENTS})
+if(SPOOL_APPLE_MOBILE)
+    set(SPOOL_APPLE_QML_IMPORT_SCANNER "" CACHE FILEPATH "Patched pinned macOS QML import scanner")
+    if(NOT EXISTS "${SPOOL_APPLE_QML_IMPORT_SCANNER}")
+        message(FATAL_ERROR "Build tvOS with tools/build-tvos.sh to supply the patched host QML import scanner")
+    endif()
+    set_target_properties(Qt6::qmlimportscanner PROPERTIES
+        IMPORTED_LOCATION "${SPOOL_APPLE_QML_IMPORT_SCANNER}"
+        IMPORTED_LOCATION_RELEASE "${SPOOL_APPLE_QML_IMPORT_SCANNER}"
+        IMPORTED_LOCATION_DEBUG "${SPOOL_APPLE_QML_IMPORT_SCANNER}"
+        IMPORTED_LOCATION_RELWITHDEBINFO "${SPOOL_APPLE_QML_IMPORT_SCANNER}"
+        IMPORTED_LOCATION_MINSIZEREL "${SPOOL_APPLE_QML_IMPORT_SCANNER}")
+endif()
 find_package(QCoro6 0.13 REQUIRED COMPONENTS Core Network)
 
 qt_standard_project_setup(
