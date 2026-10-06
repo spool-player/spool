@@ -154,6 +154,11 @@ namespace {
             return Object.freeze({
                 device: device,
                 extensions: extensions,
+                isLogEnabled: function(level) { return bridge.isLogEnabled(level); },
+                log: function(level, message, fields) {
+                    if (bridge.isLogEnabled(level))
+                        bridge.log(level, typeof message === 'function' ? message() : message, fields);
+                },
                 http: function(url, options) {
                     return promised(function(ok, no) { bridge.http(String(url), options || {}, ok, no); });
                 },
@@ -183,6 +188,11 @@ namespace {
                 const host = Object.freeze({
                     device: device,
                     extensions: extensions,
+                    isLogEnabled: function(level) { return bridge.isLogEnabled(level); },
+                    log: function(level, message, fields) {
+                        if (bridge.isLogEnabled(level))
+                            bridge.log(level, typeof message === 'function' ? message() : message, fields);
+                    },
                     http: function(url, options) {
                         return promised(function(ok, no) { operation.http(String(url), options || {}, ok, no); });
                     },
@@ -222,9 +232,10 @@ class ScriptWorker final : public QObject {
 public:
     using EventSink = std::function<void(const QString&, quint64, const QString&, const QVariantMap&)>;
 
-    ScriptWorker(QString entryPoint, QVariantMap device, ScriptRuntime::NetworkHooks hooks, EventSink events,
-        std::function<void()> interrupted)
+    ScriptWorker(QString entryPoint, QString providerId, QVariantMap device, ScriptRuntime::NetworkHooks hooks,
+        EventSink events, std::function<void()> interrupted)
         : m_entryPoint(std::move(entryPoint))
+        , m_providerId(std::move(providerId))
         , m_device(std::move(device))
         , m_hooks(std::move(hooks))
         , m_events(std::move(events))
@@ -261,7 +272,7 @@ public:
             access,
             [events = m_events, id, generation](
                 const QString& type, const QVariantMap& payload) { events(id, generation, type, payload); },
-            this);
+            m_providerId, id, configuration, this);
         QJSEngine::setObjectOwnership(host, QJSEngine::CppOwnership);
         const QJSValue bridge = m_engine->newQObject(host);
         m_watchdog->arm();
@@ -488,6 +499,7 @@ private:
     }
 
     QString m_entryPoint;
+    QString m_providerId;
     QVariantMap m_device;
     ScriptRuntime::NetworkHooks m_hooks;
     EventSink m_events;
@@ -534,12 +546,13 @@ struct ScriptRuntime::Private {
     }
 };
 
-ScriptRuntime::ScriptRuntime(QString entryPoint, QVariantMap device, NetworkHooks hooks, QObject *parent)
+ScriptRuntime::ScriptRuntime(
+    QString entryPoint, QVariantMap device, NetworkHooks hooks, QObject *parent, QString providerId)
     : QObject(parent)
     , d(std::make_unique<Private>())
 {
     d->worker = new ScriptWorker(
-        std::move(entryPoint), std::move(device), std::move(hooks),
+        std::move(entryPoint), std::move(providerId), std::move(device), std::move(hooks),
         [this](const QString& sourceId, quint64 generation, const QString& type, const QVariantMap& payload) {
             QMetaObject::invokeMethod(
                 this,

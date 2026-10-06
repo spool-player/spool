@@ -37,6 +37,7 @@ FocusScope {
     readonly property int tileSize: Metrics.scaled(Metrics.laneAtLeast(width, "wide") ? 148 : Metrics.laneAtLeast(width, "regular") ? 132 :
                                                                                                                                       104)
     property var menuAccount: null
+    property var removingAccount: null
     property string pendingAccountId: ""
     property string selectionMessage: ""
     property bool choosingServer: false
@@ -98,6 +99,8 @@ FocusScope {
     }
 
     function activate() {
+        if (removeConfirmation.item)
+            return removeConfirmation.item.activate()
         if (menuLoader.item)
             return menuLoader.item.activate()
         if (serverButton.activeFocus) {
@@ -109,14 +112,24 @@ FocusScope {
                 shell.openProviderScreen(Providers.beginSetup(selectedAccount.moduleId))
             return
         }
+        if (optionsButton.activeFocus) {
+            openMenu(grid.currentIndex)
+            return
+        }
         activateAt(grid.currentIndex)
     }
 
     function longPress() {
-        return !serverButton.activeFocus && !addProfileButton.activeFocus && openMenu(grid.currentIndex)
+        return !serverButton.activeFocus && !addProfileButton.activeFocus && !optionsButton.activeFocus && openMenu(
+                    grid.currentIndex)
     }
 
     function back() {
+        if (removingAccount) {
+            removingAccount = null
+            InputKeys.focus(grid)
+            return true
+        }
         if (!menuLoader.item)
             return false
         menuLoader.active = false
@@ -125,21 +138,24 @@ FocusScope {
     }
 
     function routeKey(key, phase, repeat) {
+        if (removeConfirmation.item)
+            return removeConfirmation.item.routeKey(key, phase, repeat)
         if (menuLoader.item)
             return menuLoader.item.routeKey(key, phase, repeat)
         if (phase !== "press")
             return InputKeys.isDirection(key)
-        if (serverButton.activeFocus || addProfileButton.activeFocus) {
+        const buttons = [serverButton, addProfileButton, optionsButton].filter(button => button.visible
+                                                                                         && button.enabled)
+
+        const focusedButton = buttons.findIndex(button => button.activeFocus)
+        if (focusedButton >= 0) {
             if (key === Qt.Key_Down) {
-                if (serverButton.activeFocus && addProfileButton.visible && addProfileButton.enabled)
-                    InputKeys.focus(addProfileButton)
-                else
-                    InputKeys.focus(grid)
+                InputKeys.focus(focusedButton + 1 < buttons.length ? buttons[focusedButton + 1] : grid)
                 return true
             }
             if (key === Qt.Key_Up) {
-                if (addProfileButton.activeFocus && serverButton.visible)
-                    InputKeys.focus(serverButton)
+                if (focusedButton > 0)
+                    InputKeys.focus(buttons[focusedButton - 1])
                 else if (shell)
                     shell.focusNavBar()
                 return true
@@ -154,10 +170,8 @@ FocusScope {
         else if (key === Qt.Key_Down)
             grid.currentIndex = Math.min(count - 1, grid.currentIndex + columns)
         else if (key === Qt.Key_Up) {
-            if (grid.currentIndex < columns && addProfileButton.visible && addProfileButton.enabled)
-                InputKeys.focus(addProfileButton)
-            else if (grid.currentIndex < columns && serverButton.visible)
-                InputKeys.focus(serverButton)
+            if (grid.currentIndex < columns && buttons.length)
+                InputKeys.focus(buttons[buttons.length - 1])
             else if (grid.currentIndex < columns && shell)
                 shell.focusNavBar()
             else
@@ -216,6 +230,25 @@ FocusScope {
             kind: "secondary"
             onClicked: root.shell.openProviderScreen(Providers.beginSetup(root.selectedAccount.moduleId))
         }
+        ActionButton {
+            id: optionsButton
+            Layout.alignment: Qt.AlignHCenter
+            visible: Boolean(root.selectedAccount)
+            enabled: !root.selecting
+            text: "Account options"
+            kind: "secondary"
+            onClicked: root.openMenu(grid.currentIndex)
+        }
+
+        SecondaryText {
+            Layout.fillWidth: true
+            visible: Boolean(root.selectedAccount && root.selectedAccount.errorText)
+            text: root.selectedAccount ? String(root.selectedAccount.errorText || "") : ""
+            font.pixelSize: Metrics.bodySizePx
+            color: Theme.errorText
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
+        }
 
         AppText {
             Layout.fillWidth: true
@@ -259,22 +292,25 @@ FocusScope {
                 readonly property var account: root.accountAt(index)
                 readonly property string connectionState: account ? String(account.connectionState || "starting") : ""
                 readonly property string stateLabel: !account ? "" : account.needsSignIn ? "Sign in to reconnect" :
-                                                                                           connectionState
-                                                                                           === "starting" && (
-                                                                                               account.enabled
-                                                                                               || account.pendingEnabled)
-                                                                                           ? "Connecting…" :
+                                                                                           !account.enabled &&
+                                                                                           !account.pendingEnabled
+                                                                                           ? "Switch profile" :
                                                                                              connectionState
-                                                                                             === "failed"
-                                                                                             ? "Unavailable · select to retry" :
-                                                                                               account.enabled
-                                                                                               && connectionState
-                                                                                               === "active"
-                                                                                               ? "Watching" :
-                                                                                                 connectionState
-                                                                                                 === "locked"
-                                                                                                 ? "Select profile / unlock" :
-                                                                                                   "Switch profile"
+                                                                                             === "starting" && (
+                                                                                                 account.enabled
+                                                                                                 || account.pendingEnabled)
+                                                                                             ? "Connecting…" :
+                                                                                               connectionState
+                                                                                               === "failed"
+                                                                                               ? "Unavailable · select to retry" :
+                                                                                                 account.enabled
+                                                                                                 && connectionState
+                                                                                                 === "active"
+                                                                                                 ? "Watching" :
+                                                                                                   connectionState
+                                                                                                   === "locked"
+                                                                                                   ? "Select profile / unlock" :
+                                                                                                     "Switch profile"
                 width: grid.cellWidth
                 height: grid.cellHeight
 
@@ -378,7 +414,7 @@ FocusScope {
         else if (action === "toggle")
             Providers.setAccountEnabled(account.id, !(account.enabled || account.pendingEnabled))
         else if (action === "remove")
-            Providers.removeAccount(account.id)
+            removingAccount = account
     }
 
     Loader {
@@ -407,6 +443,32 @@ FocusScope {
             onDismissed: {
                 menuLoader.active = false
                 InputKeys.focus(root)
+            }
+        }
+    }
+
+    Loader {
+        id: removeConfirmation
+        anchors.fill: parent
+        active: Boolean(root.removingAccount)
+        z: 210
+        sourceComponent: ConfirmationDialog {
+            title: "Remove account?"
+            message: "Remove " + root.removingAccount.label
+                     + " from Spool on this device? Your server account and media will not be deleted." + (
+                         typeof SettingsSync !== "undefined" && root.removingAccount.id === SettingsSync.accountId
+                         ? " This is your settings sync account. Sync will pause until you choose another account." :
+                           "")
+            confirmText: "Remove account"
+            destructive: true
+            onAccepted: {
+                Providers.removeAccount(root.removingAccount.id)
+                root.removingAccount = null
+                InputKeys.focus(grid)
+            }
+            onDismissed: {
+                root.removingAccount = null
+                InputKeys.focus(grid)
             }
         }
     }

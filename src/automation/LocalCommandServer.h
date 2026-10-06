@@ -12,12 +12,15 @@ class QLockFile;
 
 namespace Spool {
 class AppController;
+class DownloadManager;
+class SourceHub;
 class NativeAppWindow;
 class RouterController;
 
 class LocalCommandServer final : public QObject {
 public:
-    LocalCommandServer(AppController *app, RouterController *router, NativeAppWindow *window);
+    LocalCommandServer(AppController *app, RouterController *router, NativeAppWindow *window,
+        DownloadManager *downloads, SourceHub *sources);
     ~LocalCommandServer() override;
     bool start(const QString& instance, QString *error);
     void stop();
@@ -34,6 +37,8 @@ private:
     AppController *m_app;
     RouterController *m_router;
     NativeAppWindow *m_window;
+    DownloadManager *m_downloads;
+    SourceHub *m_sources;
     QLocalServer m_server;
     QSet<QLocalSocket *> m_connections;
     std::unique_ptr<QLockFile> m_lock;

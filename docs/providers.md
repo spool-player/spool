@@ -28,14 +28,33 @@ update policy; background updates use the same progress display.
 | `ProviderStore` | `official.json` and `index.json` from spool-player/spool-providers (Pages), install by link, update checks and the `providers/updates` policy |
 | `app/GroupPlaybackController` | Watching together over whichever account the group is on: clock, drift, buffering, queue handoff. Providers translate their protocol into `group` events |
 
-`src/providers/local/LocalProvider` is the one native provider (desktop only): explicitly
-selected folders combined into a library, with no implicit Movies-folder account.
+`src/providers/local/LocalProvider` is the one native provider: explicitly
+selected desktop folders form a library, with no implicit Movies-folder account.
+The download service also supplies a dedicated **Downloads** instance on every
+platform, using its durable inventory (including Android content documents)
+and credential-free media metadata. That inventory remains usable offline and
+after removing the originating account; local playback progress persists in
+the application data directory.
 Native modules may register a compiled QML root for setup/settings; their drafts do
 not create a JavaScript runtime. Canonical-path item IDs distinguish same-named files
 and deduplicate overlapping roots; the local cache scope is versioned for this cutover.
 Local video artwork is extracted on demand through `ArtworkService`'s serial thumbnail
 worker using libmpv software rendering and Qt image encoding.
 Core never includes `src/providers/`; `tools/check-module-seam.sh` (ctest `module-seam`) enforces it.
+
+`DownloadSource` negotiates original or finite server-transcoded media independently
+of playback `resolve` and reporting. Manifest `downloads` and `downloadTranscode`
+capabilities gate choices per owning account; the latter is not inferred from
+ordinary streaming quality. `DownloadManager` streams bounded native chunks into
+incomplete files/documents, cancels requests, applies account origin/TLS policy,
+rejects redirects/playlists, and commits a complete offline inventory only at EOF.
+Server session cleanup is memory-only and calls `downloadRelease` after terminal
+transfers. See `sdk/README.md` for the exact operation and picker contract.
+Download negotiation scopes also own pending provider pickers. Cancelling a
+download closes only its picker and rejects stale answers before any second
+server operation; ordinary playback and concurrent download pickers are unchanged.
+Closing the provider's own choice screen also produces a terminal Cancelled job,
+not a server failure. Preparing status covers both viewer choice and negotiation.
 
 Library grids request rendered artwork only for tiles intersecting the viewport.
 Buffered and pooled delegates do not occupy the render queue; scrolling cancels
@@ -98,8 +117,8 @@ On first launch after upgrading, sign-ins saved by the old native Jellyfin clien
 
 ## Where providers come from
 
-- **Bundled**: `providers/lock.json` pins each package by SHA-256 (Jellyfin, Emby and Plex, from
-  spool-player/spool-jellyfin, spool-emby and spool-plex); CMake checks and unpacks it into
+- **Bundled**: `providers/lock.json` pins each package by SHA-256 (Jellyfin, Emby, Plex and
+  Stremio, from their `spool-player/spool-*` repositories); CMake checks and unpacks it into
   a resource at configure time. `-DSPOOL_PROVIDER_OVERRIDES=id=/path/to/checkout` replaces matching
   pins with working trees and adds supplied provider IDs absent from the lock. Unspecified pins
   remain unchanged; empty overrides preserve release behavior. Pin published release assets.
@@ -110,6 +129,14 @@ On first launch after upgrading, sign-ins saved by the old native Jellyfin clien
 
 Every download is installed only when its SHA-256 matches the entry. Installing a newer version
 restarts that module's accounts in place.
+
+Stremio owns its add-on setup/settings and stream/torrent-file picker. It reads
+trusted Stremio add-on catalogues and metadata; HTTP streams play directly,
+while torrent choices require a configured external Stremio-compatible streaming
+server. Spool does not embed a torrent engine. Connection origins are approved
+explicitly, including discovered add-on catalogue redirects, without wildcard
+grants. Stremio offers Original downloads only for finite files, not HLS/DASH
+playlists or server-converted quality options.
 
 Downloaded code is interpreted JS and QML in the app's process, not a sandbox. No store forbids
 the interpreter itself (Qt runs QML without a JIT on iOS), but store review decides what downloaded
@@ -334,17 +361,29 @@ suspended/off/locked sources do not poll. Editing rows defer remote applications
 active playback defers the four track defaults until idle or the next explicit
 new-item handoff. Existing session and remembered-series selections remain prior.
 
-Settings starts with Interface scale, Language, Sync settings and Sync account.
-Native preferences use `sync`; application storage uses Material `cloud_sync`
-and explicitly says “Spool-specific sync.” Green filled dots mean confirmed
-sync, not an attempted write. Local-only, pending/saving, offline and error states
-have distinct labels. Focus and hover show body-sized channel/account help.
+Settings presents one **Settings sync** entry in Accounts rather than repeating
+connection badges beside each preference. Its dedicated page shows the selected
+account, one overall status, and an appropriate sign-in, profile switch, account
+selection or retry action. Switching profiles explicitly warns that it changes
+who is watching on that server; account changes retain the existing confirmation.
+The account picker includes inactive capable accounts using their manifest
+declarations, with a state label, without pretending retry can reconnect them.
 
-Each setting remains one vertical navigation stop. Right enters its sync action;
-OK toggles sync; Left/Back returns. Slider/text rows use OK to enter value editing,
-where horizontal keys adjust the value/caret rather than move to sync. More sync
-controls exposes opt-outs for eligible dependency/HDR-hidden and player-only
-settings without duplicating reachable value editors.
+The **Recommended** preset includes portable preferences. Streaming limits, like
+other device-specific settings, require opt-in. **What syncs** discloses category
+toggles only on request; category updates invalidate and persist once, retaining
+per-account consent. **Use recommended settings** clears that account's overrides
+and performs a fresh remote-first bootstrap for affected keys. Hidden/playback
+preferences are included by category without duplicate value editors.
+
+Normal settings and subtitle appearance retain one vertical navigation stop per
+value. Horizontal keys edit values rather than entering a sync badge. OK/Back
+enter/leave slider or text editing; edit locks still defer remote applications.
+The sync page's recovery buttons support D-pad traversal into and out of its
+settings list. Buttons and setting/toggle rows expose accessible names, state
+and activation. Host login uses one primary action with local feedback and
+secondary alternatives. Account/provider removal requires a Cancel-first
+confirmation; destructive provider action pickers also start on Cancel.
 
 
 ## Outbound playback devices

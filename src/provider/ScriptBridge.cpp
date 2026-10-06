@@ -1,8 +1,14 @@
 #include "ScriptBridge.h"
 #include "LanProbe.h"
+#include "ProviderLogging.h"
 #include "SpeedTest.h"
+#include "media/MediaTypes.h"
 
+#include <QCryptographicHash>
 #include <QJSValueIterator>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QLoggingCategory>
 #include <QNetworkAccessManager>
 #include <QNetworkDatagram>
 #include <QNetworkInterface>
@@ -15,6 +21,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 
 #ifdef Q_OS_WIN
@@ -22,6 +29,56 @@
 #endif
 namespace Spool {
 
+Q_LOGGING_CATEGORY(providerMessages, "spool.provider", QtInfoMsg)
+Q_LOGGING_CATEGORY(providerTrace, "spool.provider.trace", QtWarningMsg)
+
+bool providerLogEnabled(ProviderLogLevel level)
+{
+    switch (level) {
+    case ProviderLogLevel::Trace:
+        return providerTrace().isDebugEnabled();
+    case ProviderLogLevel::Debug:
+        return providerMessages().isDebugEnabled();
+    case ProviderLogLevel::Info:
+        return providerMessages().isInfoEnabled();
+    case ProviderLogLevel::Warn:
+        return providerMessages().isWarningEnabled();
+    case ProviderLogLevel::Error:
+        return providerMessages().isCriticalEnabled();
+    }
+    return false;
+}
+
+void writeProviderLog(ProviderLogLevel level, const QString& message)
+{
+    if (!providerLogEnabled(level))
+        return;
+    // This boundary also protects native provider diagnostics. Never honor
+    // --unredacted-urls here, and never allow a provider to inject log lines.
+    QString safe = sanitizedLogMessage(message, false).left(4096);
+    for (QChar& character : safe) {
+        if (character.unicode() < 0x20 || character == QChar(0x7f) || character == QChar(0x2028)
+            || character == QChar(0x2029))
+            character = QLatin1Char(' ');
+    }
+    switch (level) {
+    case ProviderLogLevel::Trace:
+        qCDebug(providerTrace).noquote() << "trace:" << safe;
+        break;
+    case ProviderLogLevel::Debug:
+        qCDebug(providerMessages).noquote() << safe;
+        break;
+    case ProviderLogLevel::Info:
+        qCInfo(providerMessages).noquote() << safe;
+        break;
+    case ProviderLogLevel::Warn:
+        qCWarning(providerMessages).noquote() << safe;
+        break;
+    case ProviderLogLevel::Error:
+        qCCritical(providerMessages).noquote() << safe;
+        break;
+    }
+}
 namespace {
     constexpr qsizetype kMaxResponseBytes = 8 * 1024 * 1024;
     constexpr qsizetype kMaxRequestBytes = 1024 * 1024;
@@ -29,6 +86,55 @@ namespace {
     constexpr int kMaxTimers = 16;
     constexpr int kMaxSockets = 4;
     constexpr int kMaxDiscoveryReplies = 64;
+
+    std::optional<ProviderLogLevel> logLevel(const QString& level)
+    {
+        if (level == QLatin1String("trace"))
+            return ProviderLogLevel::Trace;
+        if (level == QLatin1String("debug"))
+            return ProviderLogLevel::Debug;
+        if (level == QLatin1String("info"))
+            return ProviderLogLevel::Info;
+        if (level == QLatin1String("warn"))
+            return ProviderLogLevel::Warn;
+        if (level == QLatin1String("error"))
+            return ProviderLogLevel::Error;
+        return {};
+    }
+
+    bool credentialField(const QString& key)
+    {
+        const QString normalized = key.toLower().remove(QLatin1Char('_')).remove(QLatin1Char('-'));
+        return normalized.contains(QLatin1String("token")) || normalized.contains(QLatin1String("secret"))
+            || normalized.contains(QLatin1String("password")) || normalized.contains(QLatin1String("apikey"))
+            || normalized.contains(QLatin1String("authorization")) || normalized.contains(QLatin1String("cookie"))
+            || normalized == QLatin1String("pw") || normalized == QLatin1String("code")
+            || normalized == QLatin1String("pin");
+    }
+
+    bool privateField(const QString& key)
+    {
+        const QString normalized = key.toLower().remove(QLatin1Char('_')).remove(QLatin1Char('-'));
+        return normalized.contains(QLatin1String("name")) || normalized.contains(QLatin1String("title"))
+            || normalized.contains(QLatin1String("url")) || normalized.contains(QLatin1String("address"))
+            || normalized.contains(QLatin1String("path")) || normalized.contains(QLatin1String("header"))
+            || normalized.contains(QLatin1String("body")) || normalized.contains(QLatin1String("response"))
+            || normalized.contains(QLatin1String("hash")) || normalized.endsWith(QLatin1String("id"));
+    }
+
+    void collectLogSecrets(const QVariant& value, QStringList& secrets, bool sensitive = false)
+    {
+        if (value.metaType().id() == QMetaType::QVariantMap) {
+            const auto map = value.toMap();
+            for (auto it = map.cbegin(); it != map.cend(); ++it)
+                collectLogSecrets(it.value(), secrets, sensitive || credentialField(it.key()));
+        } else if (value.metaType().id() == QMetaType::QVariantList) {
+            for (const auto& child : value.toList())
+                collectLogSecrets(child, secrets, sensitive);
+        } else if (sensitive && value.metaType().id() == QMetaType::QString && !value.toString().isEmpty()) {
+            secrets.append(value.toString());
+        }
+    }
 
 #ifdef Q_OS_WIN
     void *openWorkerThread()
@@ -572,12 +678,22 @@ void ScriptOperation::release()
     deleteLater();
 }
 
-ScriptSourceHost::ScriptSourceHost(ScriptAccess access, EventSink events, QObject *parent)
+ScriptSourceHost::ScriptSourceHost(ScriptAccess access, EventSink events, QString providerId, QString sourceId,
+    const QVariantMap& configuration, QObject *parent)
     : QObject(parent)
     , m_access(std::move(access))
     , m_events(std::move(events))
     , m_requests(&m_access, this)
 {
+    static const QRegularExpression identifier(QStringLiteral("^[a-z][a-z0-9.-]{0,95}$"));
+    if (!identifier.match(providerId).hasMatch())
+        providerId = QStringLiteral("unknown");
+    const QByteArray account = QCryptographicHash::hash(sourceId.toUtf8(), QCryptographicHash::Sha256).toHex().left(12);
+    m_logContext = QStringLiteral("provider=%1 account=%2").arg(providerId, QString::fromLatin1(account));
+    collectLogSecrets(configuration, m_logSecrets);
+    // Replace longer credentials first when one token is another's prefix.
+    std::sort(m_logSecrets.begin(), m_logSecrets.end(),
+        [](const QString& left, const QString& right) { return left.size() > right.size(); });
 }
 
 ScriptSourceHost::~ScriptSourceHost()
@@ -589,6 +705,66 @@ ScriptSourceHost::~ScriptSourceHost()
             delete socket;
         }
     }
+}
+
+bool ScriptSourceHost::isLogEnabled(const QString& level) const
+{
+    const auto parsed = logLevel(level);
+    return parsed && providerLogEnabled(*parsed);
+}
+
+void ScriptSourceHost::log(const QString& level, const QJSValue& message, const QJSValue& fields)
+{
+    const auto parsed = logLevel(level);
+    // QJSValue arguments are not converted/serialized before this guard.
+    if (!parsed || !providerLogEnabled(*parsed) || !message.isString())
+        return;
+    const auto redact = [this](QString text) {
+        for (const auto& secret : m_logSecrets)
+            text.replace(secret, QStringLiteral("<redacted:credential>"));
+        return sanitizedLogMessage(std::move(text), false);
+    };
+    const QString text = message.toString();
+    QString safe = text.size() <= 2048 ? redact(text) : QStringLiteral("<dropped:message-limit>");
+    QJsonObject metadata;
+    if (fields.isObject() && !fields.isArray() && !fields.isCallable()) {
+        QJSValueIterator iterator(fields);
+        int count = 0;
+        qsizetype bytes = 0;
+        static const QRegularExpression keyPattern(QStringLiteral("^[a-zA-Z][a-zA-Z0-9_]{0,47}$"));
+        while (iterator.hasNext() && count++ < 16) {
+            iterator.next();
+            const QString key = iterator.name();
+            if (!keyPattern.match(key).hasMatch())
+                continue;
+            QJsonValue value;
+            if (credentialField(key))
+                value = QStringLiteral("<redacted:credential>");
+            else if (privateField(key))
+                value = QStringLiteral("<redacted:personal>");
+            else {
+                const QJSValue child = iterator.value();
+                if (child.isString()) {
+                    const QString string = child.toString();
+                    value = string.size() <= 256 ? redact(string) : QStringLiteral("<dropped:field-limit>");
+                } else if (child.isBool())
+                    value = child.toBool();
+                else if (child.isNull())
+                    value = QJsonValue(QJsonValue::Null);
+                else if (child.isNumber() && std::isfinite(child.toNumber()))
+                    value = child.toNumber();
+                else
+                    continue;
+            }
+            bytes += key.size() + (value.isString() ? value.toString().size() : 24);
+            if (bytes > 1536)
+                break;
+            metadata.insert(key, value);
+        }
+    }
+    if (!metadata.isEmpty())
+        safe += QLatin1Char(' ') + QString::fromUtf8(QJsonDocument(metadata).toJson(QJsonDocument::Compact));
+    writeProviderLog(*parsed, m_logContext + QLatin1Char(' ') + safe);
 }
 
 void ScriptSourceHost::emitEvent(const QString& type, const QJSValue& payload)

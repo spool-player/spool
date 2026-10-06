@@ -2,6 +2,7 @@
 
 #include "ArtworkSource.h"
 #include "Catalog.h"
+#include "DownloadSource.h"
 #include "PlaybackSource.h"
 #include "Provider.h"
 #include "SearchSource.h"
@@ -38,7 +39,8 @@ class SourceHub final : public Provider,
                         public SearchSource,
                         public UserItemStateSink,
                         public ArtworkSource,
-                        public StreamQualityControl {
+                        public StreamQualityControl,
+                        public DownloadSource {
     Q_OBJECT
     Q_PROPERTY(bool multipleSources READ multipleSources NOTIFY browseSourcesChanged)
 
@@ -76,7 +78,18 @@ public:
     {
         return this;
     }
+    DownloadSource *downloads() override
+    {
+        return this;
+    }
+    QCoro::Task<DownloadPlan> negotiateDownload(DownloadRequest request, QString scope) override;
+    QCoro::Task<void> releaseDownload(QVariantMap cleanup) override;
+    Q_INVOKABLE QVariantList downloadOptions(const QString& itemId) const;
+    bool downloadOriginAllowed(const QString& itemId, const QUrl& url) const;
+    void cancelDownloadNegotiation(const QString& itemId, const QString& scope);
     bool ready() const override;
+    void addSource(Provider *provider);
+    void removeSource(const QString& accountId);
 
     // Where a scoped item comes from, for telling libraries on different
     // servers apart: provider name and icon, server name and address.
@@ -93,6 +106,7 @@ public:
     // Calls an operation on the account behind a scoped or account ID.
     QCoro::Task<QVariantMap> call(QString accountId, QString operation, QVariantMap arguments = {});
     void setVideoCodecs(QStringList codecs, bool restrict);
+    void setVideoPreviewsEnabled(bool enabled);
 
     // Menu policy is fetched only on opening; results are tied to this request.
     Q_INVOKABLE int requestItemActions(
@@ -189,6 +203,7 @@ signals:
     void extensionSupportChanged(const QString& accountId);
 
 private:
+    bool m_videoPreviewsEnabled = true;
     class Playback;
     struct Entry {
         QString accountId;
@@ -208,8 +223,6 @@ private:
     };
     struct SearchRun;
 
-    void addSource(Provider *provider);
-    void removeSource(const QString& accountId);
     void refresh();
     void pushPlaybackContext();
     void startNextSpeedTest();

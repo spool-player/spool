@@ -9,6 +9,7 @@ namespace Spool {
 
 class ArtworkSource;
 class Catalog;
+class DownloadSource;
 class PlaybackSource;
 class SearchSource;
 class StreamQualityControl;
@@ -42,6 +43,8 @@ public:
         Trickplay = 1u << 7,
         // A provider-owned download endpoint for measuring the playback route.
         SpeedTest = 1u << 8,
+        Downloads = 1u << 9,
+        DownloadTranscode = 1u << 10,
     };
     Q_DECLARE_FLAGS(Capabilities, Capability)
     Q_FLAG(Capabilities)
@@ -64,6 +67,10 @@ public:
         return nullptr;
     }
     virtual StreamQualityControl *streamQuality()
+    {
+        return nullptr;
+    }
+    virtual DownloadSource *downloads()
     {
         return nullptr;
     }

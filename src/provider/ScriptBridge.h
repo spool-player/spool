@@ -9,6 +9,7 @@
 #include <QObject>
 #include <QPointer>
 #include <QSet>
+#include <QStringList>
 #include <QTimer>
 #include <QUrl>
 #include <QVariantMap>
@@ -154,13 +155,16 @@ class ScriptSourceHost final : public QObject {
     Q_OBJECT
 public:
     using EventSink = std::function<void(const QString& type, const QVariantMap& payload)>;
-    ScriptSourceHost(ScriptAccess access, EventSink events, QObject *parent);
+    ScriptSourceHost(ScriptAccess access, EventSink events, QString providerId, QString sourceId,
+        const QVariantMap& configuration, QObject *parent);
     ~ScriptSourceHost() override;
     ScriptAccess *access()
     {
         return &m_access;
     }
     Q_INVOKABLE void emitEvent(const QString& type, const QJSValue& payload);
+    Q_INVOKABLE bool isLogEnabled(const QString& level) const;
+    Q_INVOKABLE void log(const QString& level, const QJSValue& message, const QJSValue& fields);
     Q_INVOKABLE void http(const QString& url, const QVariantMap& options, QJSValue resolve, QJSValue reject);
     Q_INVOKABLE void delay(int milliseconds, QJSValue resolve, QJSValue reject);
     Q_INVOKABLE int socket(
@@ -170,6 +174,8 @@ public:
 
 private:
     ScriptAccess m_access;
+    QString m_logContext;
+    QStringList m_logSecrets;
     EventSink m_events;
     ScriptRequests m_requests;
     QHash<int, QPointer<QWebSocket>> m_sockets;

@@ -6,6 +6,9 @@
 #include <QDirIterator>
 #include <QFileInfo>
 #include <QFutureWatcher>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QSaveFile>
 #include <QSet>
 #include <QUrl>
 
@@ -84,26 +87,32 @@ public:
     {
         co_return;
     }
-    QCoro::Task<void> reportPlaybackProgress(PlaybackSession, qint64, bool, double, int, bool) override
+    QCoro::Task<void> reportPlaybackProgress(PlaybackSession session, qint64 position, bool, double, int, bool) override
     {
-        co_return;
+        co_await m_provider->setItemPlaybackPosition(session.itemId, position);
     }
-    QCoro::Task<void> reportPlaybackStopped(PlaybackSession, qint64, bool, double) override
+    QCoro::Task<void> reportPlaybackStopped(PlaybackSession session, qint64 position, bool failed, double) override
     {
-        co_return;
+        if (!failed && session.runtimeTicks > 0 && position >= session.runtimeTicks - 10'000'000)
+            co_await m_provider->setItemPlayed(session.itemId, true);
+        else
+            co_await m_provider->setItemPlaybackPosition(session.itemId, position);
     }
 
 private:
     LocalProvider *m_provider;
 };
 
-LocalProvider::LocalProvider(QString accountId, QStringList libraryRoots, QObject *parent)
+LocalProvider::LocalProvider(
+    QString accountId, QStringList libraryRoots, QObject *parent, QVariantList downloadedFiles, QString stateRoot)
     : Provider(parent)
     , m_accountId(std::move(accountId))
     , m_roots(std::move(libraryRoots))
+    , m_downloadedFiles(std::move(downloadedFiles))
+    , m_stateRoot(std::move(stateRoot))
     , m_playback(new Playback(this))
 {
-    if (m_roots.isEmpty())
+    if (m_roots.isEmpty() && m_downloadedFiles.isEmpty() && m_stateRoot.isEmpty())
         throw std::runtime_error("Choose at least one media folder.");
     for (QString& folder : m_roots) {
         const QUrl url(folder);
@@ -112,7 +121,9 @@ LocalProvider::LocalProvider(QString accountId, QStringList libraryRoots, QObjec
             throw std::runtime_error("A selected media folder is unavailable.");
     }
     m_roots.removeDuplicates();
-    m_libraryName = m_roots.size() == 1 ? QDir(m_roots.front()).dirName() : QStringLiteral("Local files");
+    m_libraryName = !m_stateRoot.isEmpty() ? QStringLiteral("Downloads")
+        : m_roots.size() == 1              ? QDir(m_roots.front()).dirName()
+                                           : QStringLiteral("Local files");
     // A large folder takes a while to walk; do it off the GUI thread and
     // announce the library once it is known.
     auto *watcher = new QFutureWatcher<std::vector<Record>>(this);
@@ -138,7 +149,8 @@ QString LocalProvider::displayName() const
 
 Provider::Capabilities LocalProvider::capabilities() const
 {
-    return Search | UserItemState;
+    return m_stateRoot.isEmpty() ? Capabilities(Search | UserItemState)
+                                 : Capabilities(Search | UserItemState | PlaybackReporting);
 }
 
 PlaybackSource *LocalProvider::playback()
@@ -153,10 +165,81 @@ void LocalProvider::scan()
 
 void LocalProvider::setRecords(std::vector<Record> records)
 {
+    QSet<QString> existing;
+    for (const Record& record : records)
+        existing.insert(record.path);
+    for (const QVariant& value : m_downloadedFiles) {
+        const QVariantMap file = value.toMap();
+        QString path = file.value(QStringLiteral("path")).toString();
+        const QUrl url(path);
+        const bool content = url.scheme() == QStringLiteral("content");
+        if (!content)
+            path = QFileInfo(path).canonicalFilePath();
+        if (path.isEmpty() || existing.contains(path))
+            continue;
+        const QVariantMap meta = file.value(QStringLiteral("metadata")).toMap();
+        Record record;
+        record.path = path;
+        record.modified = QFileInfo(path).lastModified();
+        MovieItem& item = record.item;
+        item.id = QString::fromLatin1(QCryptographicHash::hash(path.toUtf8(), QCryptographicHash::Sha256).toHex());
+        item.title = meta.value(QStringLiteral("title")).toString();
+        item.itemType = meta.value(QStringLiteral("type"), QStringLiteral("Movie")).toString();
+        item.overview = meta.value(QStringLiteral("overview")).toString();
+        item.year = meta.value(QStringLiteral("year")).toInt();
+        item.seriesName = meta.value(QStringLiteral("seriesName")).toString();
+        item.seasonNumber = meta.value(QStringLiteral("seasonNumber")).toInt();
+        item.episodeNumber = meta.value(QStringLiteral("episodeNumber")).toInt();
+        item.runtimeTicks = meta.value(QStringLiteral("runtimeTicks")).toLongLong();
+        item.resumeTicks = meta.value(QStringLiteral("resumeTicks")).toLongLong();
+        item.path = path;
+        MediaSourceInfo source;
+        source.id = item.id;
+        source.path = path;
+        source.name = item.title;
+        source.protocol = content ? QStringLiteral("Content") : QStringLiteral("File");
+        source.container = meta.value(QStringLiteral("container"), QFileInfo(path).suffix()).toString();
+        source.size = file.value(QStringLiteral("size")).toLongLong();
+        item.mediaSources.push_back(source);
+        restoreState(record);
+        records.push_back(std::move(record));
+        existing.insert(path);
+    }
     m_records = std::move(records);
     m_index.clear();
     for (size_t index = 0; index < m_records.size(); ++index)
         m_index.insert(m_records[index].item.id, index);
+}
+
+void LocalProvider::restoreState(Record& record) const
+{
+    if (m_stateRoot.isEmpty())
+        return;
+    QFile file(QDir(m_stateRoot).filePath(record.item.id + QStringLiteral(".json")));
+    if (!file.open(QIODevice::ReadOnly) || file.size() > 4096)
+        return;
+    const auto data = QJsonDocument::fromJson(file.readAll()).object();
+    record.item.resumeTicks = data.value(QStringLiteral("resumeTicks")).toString().toLongLong();
+    record.item.played = data.value(QStringLiteral("played")).toBool();
+    record.item.favorite = data.value(QStringLiteral("favorite")).toBool();
+    record.item.playCount = data.value(QStringLiteral("playCount")).toInt();
+}
+
+void LocalProvider::persistState(const Record& record) const
+{
+    if (m_stateRoot.isEmpty())
+        return;
+    QDir().mkpath(m_stateRoot);
+    const auto& item = record.item;
+    const QByteArray data
+        = QJsonDocument(QJsonObject { { QStringLiteral("resumeTicks"), QString::number(item.resumeTicks) },
+                            { QStringLiteral("played"), item.played }, { QStringLiteral("favorite"), item.favorite },
+                            { QStringLiteral("playCount"), item.playCount } })
+              .toJson(QJsonDocument::Compact);
+    QSaveFile file(QDir(m_stateRoot).filePath(item.id + QStringLiteral(".json")));
+    if (!file.open(QIODevice::WriteOnly) || file.write(data) != data.size() || !file.commit())
+        emit const_cast<LocalProvider *>(this)->errorOccurred(
+            QStringLiteral("Could not save offline playback progress."));
 }
 
 std::vector<LocalProvider::Record> LocalProvider::scanFolders(const QStringList& folders)
@@ -360,8 +443,10 @@ QCoro::Task<std::vector<MovieItem>> LocalProvider::fetchSearchSuggestions(int li
 
 QCoro::Task<void> LocalProvider::setItemFavorite(QString itemId, bool favorite)
 {
-    if (Record *entry = record(itemId))
+    if (Record *entry = record(itemId)) {
         entry->item.favorite = favorite;
+        persistState(*entry);
+    }
     co_return;
 }
 
@@ -373,14 +458,17 @@ QCoro::Task<void> LocalProvider::setItemPlayed(QString itemId, bool played)
             entry->item.resumeTicks = 0;
             ++entry->item.playCount;
         }
+        persistState(*entry);
     }
     co_return;
 }
 
 QCoro::Task<void> LocalProvider::setItemPlaybackPosition(QString itemId, qint64 positionTicks)
 {
-    if (Record *entry = record(itemId))
+    if (Record *entry = record(itemId)) {
         entry->item.resumeTicks = std::max<qint64>(0, positionTicks);
+        persistState(*entry);
+    }
     co_return;
 }
 
@@ -404,7 +492,8 @@ PlaybackSession LocalProvider::playbackSession(const QString& itemId) const
     session.itemId = entry->item.id;
     session.title = entry->item.title;
     session.itemType = entry->item.itemType;
-    session.url = QUrl::fromLocalFile(entry->path).toString();
+    session.url = entry->path.startsWith(QStringLiteral("content://")) ? entry->path
+                                                                       : QUrl::fromLocalFile(entry->path).toString();
     session.mediaSourceId = entry->item.id;
     session.container = entry->item.mediaSources.front().container;
     session.startTimeTicks = entry->item.resumeTicks;

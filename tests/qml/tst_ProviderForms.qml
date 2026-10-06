@@ -23,6 +23,7 @@ TestCase {
         property var completions: []
         property var pendingAuthentication: null
         property var pendingPoll: null
+        property int closes: 0
         function request(operation, args) {
             if (operation === "extensionStatus")
                 return Promise.resolve({
@@ -62,6 +63,9 @@ TestCase {
         }
         function cancelLanDiscovery() {
         }
+        function close() {
+            ++closes
+        }
     }
     Component {
         id: login
@@ -71,6 +75,12 @@ TestCase {
             codeStartOperation: "codeStart"
             codePollOperation: "codePoll"
             codeEnabledField: "codeEnabled"
+        }
+    }
+    Component {
+        id: actionPicker
+        ProviderActionPicker {
+            provider: testCase.providerContext
         }
     }
     Component {
@@ -90,6 +100,11 @@ TestCase {
         provider.completions = []
         provider.pendingAuthentication = null
         provider.pendingPoll = null
+        provider.closes = 0
+        provider.arguments = {
+            kind: "homePin",
+            title: "Protected account"
+        }
     }
     function form(component) {
         const result = createTemporaryObject(component, testCase, {
@@ -98,6 +113,17 @@ TestCase {
                                              })
         verify(result)
         return result
+    }
+    function test_destructivePickerStartsOnCancel() {
+        provider.arguments = {
+            kind: "confirm",
+            title: "An item"
+        }
+        const view = form(actionPicker)
+        wait(20)
+        view.activate()
+        compare(provider.closes, 1)
+        compare(provider.completions.length, 0)
     }
     function test_backCancelsPendingPasswordLogin() {
         const view = form(login)

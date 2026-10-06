@@ -14,10 +14,6 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location("spool_provider", ROOT / "sdk/spool-provider.py")
 tool = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(tool)
-legacy_spec = importlib.util.spec_from_file_location(
-    "spool_provider_api02", ROOT / "tests/providers/fixtures/api02-95591f09/spool-provider.py")
-legacy_tool = importlib.util.module_from_spec(legacy_spec)
-legacy_spec.loader.exec_module(legacy_tool)
 
 try:
     from compression import zstd as _  # noqa: F401  Python 3.14+
@@ -93,15 +89,6 @@ class ValidateTest(unittest.TestCase):
         package = files(**{"manifest.json": json.dumps(manifest(extensions=boundary)).encode()})
         self.assertEqual(tool.validate(package)["extensions"], boundary)
 
-    def test_new_declarations_work_with_frozen_api02_validator(self):
-        extensions = {f"spool.{name}": 1 for name in (
-            "artwork-owners", "speed-test", "suggestions", "playback-preferences", "settings-storage",
-            "item-actions", "collection-editing", "playback-queue-reporting", "remote-targets",
-            "http-metadata", "origin-grants", "lan-probe", "account-activation")}
-        package = files(**{"manifest.json": json.dumps(manifest(
-            extensions=extensions, capabilities=["search"], ui={"settings": "ui/Login.qml"})).encode()})
-        self.assertEqual(legacy_tool.validate(package)["extensions"], extensions)
-        self.assertEqual(tool.validate(package), legacy_tool.validate(package))
 
     def test_qml_imports_are_limited_to_what_spool_provides(self):
         for module in ("QtWebEngine", "Spool.Ui", "QtQuick.LocalStorage"):

@@ -148,7 +148,7 @@ public:
     Q_INVOKABLE QObject *openPicker(const QString& accountId, const QVariantMap& arguments);
     // Shows the account's picker component and waits for the viewer's
     // choice; empty when they back out.
-    QCoro::Task<QVariantMap> pick(QString accountId, QVariantMap arguments);
+    QCoro::Task<QVariantMap> pick(QString accountId, QVariantMap arguments, QString scope = {});
     Q_INVOKABLE QUrl componentUrl(const QString& moduleId, const QString& role) const;
     Q_INVOKABLE void useAccount(const QString& accountId);
     Q_INVOKABLE void setAccountEnabled(const QString& accountId, bool enabled);
@@ -177,6 +177,7 @@ signals:
     void networkConsentChanged();
     void sourceStarted(Spool::Provider *provider);
     void sourceStopped(const QString& accountId);
+    void sourceScopeCancelled(const QString& sourceId, const QString& scope);
     void accountIdentityRevoked(const QString& accountId);
     void activationConfigurationChanged(const QString& accountId);
     void accountAdded(const QString& accountId);
@@ -229,7 +230,8 @@ private:
         bool submitted = false;
         QVariantMap values;
     };
-    QCoro::Task<PickerResult> pickResult(QString sourceId, QVariantMap arguments, bool activation = false);
+    QCoro::Task<PickerResult> pickResult(
+        QString sourceId, QVariantMap arguments, bool activation = false, QString scope = {});
     struct ActivationGrant {
         QString identity;
         QPointer<ScriptRuntime> runtime;

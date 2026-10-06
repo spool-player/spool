@@ -116,6 +116,13 @@ QString fixture(QTemporaryDir& directory, const char *name, const QByteArray& by
     return QUrl::fromLocalFile(path).toString();
 }
 class FixtureSource final : public ArtworkSource {
+public:
+    mutable int resolutions = 0;
+    ImageResource resolveImage(const QUrl& url) const override
+    {
+        ++resolutions;
+        return { url, {} };
+    }
     QString imageUrl(const ImageRequest&) const override
     {
         return {};
@@ -237,12 +244,23 @@ SPOOL_TEST_MAIN("trickplay")
     color(frame(service, 4.499), Qt::green);
     require(service.frame(4.5).value("url") == service.frame(8.7).value("url"), "BIF URL identifies discrete frame");
     const QString stale = QUrl(service.frame(4.5).value("url").toString()).path().mid(1);
-    service.clear();
+    service.setEnabled(false);
+    const int disabledResolutions = source.resolutions;
+    require(!service.available() && !service.frame(4.5).value("available").toBool(),
+        "disabled previews immediately withdraw the active frame");
     std::unique_ptr<QQuickImageResponse> staleResponse(service.requestImageResponse(stale));
     bool staleFinished = false;
     QObject::connect(staleResponse.get(), &QQuickImageResponse::finished, [&] { staleFinished = true; });
     waitUntil([&] { return staleFinished; });
     require(!staleResponse->errorString().isEmpty(), "old session cannot deliver a cached BIF image");
+    require(source.resolutions == disabledResolutions, "disabled image requests never resolve a resource");
+    service.setSession(info, 4.5);
+    require(!service.available() && source.resolutions == disabledResolutions,
+        "disabled session setup does not fetch or prefetch its BIF");
+    service.setEnabled(true);
+    waitUntil([&] { return service.available(); });
+    color(frame(service, 4.5), Qt::blue);
+    service.clear();
 
     QImage sheet(3200, 1800, QImage::Format_RGB32);
     QPainter painter(&sheet);

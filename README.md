@@ -62,6 +62,31 @@ succeeded. Protected profiles that need interaction stay locked on startup.
 Search uses only the viewers selected for Home, never the combined permissions
 of an adult and child profile saved on the same server.
 
+### Offline downloads
+
+Open an item's menu and choose **Download…**. Original media is offered where
+the item's provider supports it; **Server-converted** quality choices appear
+only when that provider offers a complete server-encoded file. Spool never
+encodes media on the device or saves an online playlist as an offline movie.
+**Settings → Downloads** shows preparation, byte progress, completion and
+actionable errors, with Cancel, Retry, Play offline and Remove actions.
+
+Completed media and its local metadata persist across restarts and account
+removal. The built-in **Downloads** LocalProvider library plays the local copy
+without server headers or an active connection; offline resume/played state is
+stored locally. Interrupted operations become retryable failures after restart
+and discard incomplete files. A retry negotiates fresh access with the provider.
+
+Desktop defaults to `Movies/Spool` and has a native folder chooser. On Android,
+the destination control is under Advanced: choose internal/external app storage
+or a Storage Access Framework folder with a persisted read/write grant.
+Document providers must permit creation/rename and provide seekable media;
+revoked grants or unavailable storage surface errors rather than buffering a
+copy into memory. iOS/tvOS use app-managed sandbox storage without an unsupported
+folder chooser; webOS defaults to app-managed writable storage and accepts an
+accessible folder path. Changing destination affects new downloads only.
+Downloaded media can be large: check free space and remove copies when finished.
+
 ### Built-in local automation (`spoolet`)
 
 Native desktop builds also build/install `spoolet`, a small Qt Core/Network CLI
@@ -121,6 +146,8 @@ SPOOLET=./build/linux-release-local-providers/install/bin/spoolet
 # and visual.previewTexture.ready is true, then capture immediately:
 "$SPOOLET" --instance plex-check screenshot /tmp/spool-preview.png
 "$SPOOLET" --instance plex-check settings get
+"$SPOOLET" --instance plex-check settings set playback/seekPreviews false
+"$SPOOLET" --instance plex-check settings set playback/seekPreviews true
 "$SPOOLET" --instance plex-check settings set playback/accurateTrickplay true
 "$SPOOLET" --instance plex-check settings set playback/trickplayPreviewScalePercent 150
 "$SPOOLET" --instance plex-check settings set appearance/uiScalePercent 125
@@ -134,9 +161,28 @@ existing schema validation and persisted user-change transaction. Local UI
 scale changes do not make this device-specific setting remotely syncable.
 Seek preview size is relative to interface scale and does not change the
 server's thumbnail resolution; the two scale settings are independent.
-The CLI exposes only the four settings shown above, not credentials or arbitrary
+The CLI exposes only the five settings shown above, not credentials or arbitrary
 configuration. `state` is a small allowlisted route/playback/visual snapshot,
 not unrestricted QObject inspection or script evaluation.
+
+Download automation uses the same provider negotiation, quality options and
+native transfer manager as the UI:
+
+```sh
+"$SPOOLET" downloads options ACCOUNT_PREFIX:ITEM_ID
+"$SPOOLET" downloads start ACCOUNT_PREFIX:ITEM_ID 0
+"$SPOOLET" downloads list
+"$SPOOLET" downloads cancel JOB_ID
+"$SPOOLET" downloads retry JOB_ID
+"$SPOOLET" downloads play JOB_ID
+"$SPOOLET" downloads remove JOB_ID
+```
+
+Choose the index returned by `downloads options`; zero is Original.
+Starting is asynchronous and can open the provider's edition/stream picker.
+Poll `downloads list` for job state and transferred/total bytes. The output
+excludes destination paths, media URLs, credentials and server cleanup data.
+`downloads play` launches a completed local copy without remote playback relay.
 
 For pointer testing, `pointer press X Y`, frame-paced `pointer move X Y`,
 and `pointer release X Y` perform a real held-button drag; `pointer right-click
@@ -404,6 +450,15 @@ quad: no full-sheet RGB framebuffer, mipmap chain or resampling pass exists.
 Its footprint does not widen at strong minification, deliberately bounding
 cost; it is not an ideal scale-adaptive low-pass filter for extreme shrinking.
 Software/backend fallback uses that backend's RGB filter, not Lanczos.
+
+**Playback → Seek previews** (`playback/seekPreviews`, default on) controls
+thumbnails globally, including the remote-player timeline. Turning it off
+immediately hides existing previews, cancels preview fetch/decode work, clears
+preview caches, and tells providers to skip preview-only metadata requests.
+Turning it on restores the current descriptor when one is available; a provider
+that omitted metadata while disabled supplies it on the next playback resolve
+or remote-state refresh. The advanced accuracy and size controls are hidden
+while previews are off. This preference persists as a device default.
 
 Local and remote previews share a nominal **320 dp** layout width, independent
 of encoded thumbnail resolution, preserving the actual source aspect ratio

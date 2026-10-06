@@ -241,6 +241,14 @@ FocusScope {
                              label: favoriteState ? "Remove favourite" : "Add favourite",
                              checked: favoriteState
                          })
+            if (Downloads.supported && queueable && (Downloads.statusFor(itemId).id || Sources.downloadOptions(
+                                                         itemId).length > 0))
+                options.push({
+                                 action: "download",
+                                 icon: "download",
+                                 label: "Download…",
+                                 checked: false
+                             })
             if (editorContainerId && Sources.collectionEditingAvailable(editorContainerId))
                 options.push({
                                  action: "collectionEditor",
@@ -405,6 +413,8 @@ FocusScope {
         } else if (action === "favorite") {
             favoriteState = !favoriteState
             ItemState.setFavorite(itemId, favoriteState)
+        } else if (action === "download") {
+            shell.openDownloads(itemId, anchorItem)
         } else if (action === "collectionEditor") {
             shell.openCollectionEditor(editorContainerId, itemType === "Playlist" || itemType === "BoxSet" ? String(
                                                                                                                  item.title

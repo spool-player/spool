@@ -225,6 +225,10 @@ set(SPOOL_SHELL_SOURCES
     src/app/ContentModelController.h
     src/app/CollectionEditingController.cpp
     src/app/CollectionEditingController.h
+    src/app/DownloadManager.cpp
+    src/app/DownloadManager.h
+    src/platform/AndroidDownloadStorage.cpp
+    src/platform/AndroidDownloadStorage.h
     src/app/RemoteTargetsController.cpp
     src/app/RemoteTargetsController.h
     src/app/HomeModelController.cpp
@@ -292,6 +296,7 @@ set(SPOOL_SHELL_SOURCES
     src/provider/ProviderExtensions.h
     src/provider/ProviderExtensionData.cpp
     src/provider/ProviderExtensionData.h
+    src/provider/ProviderLogging.h
     src/provider/ProviderMediaPage.cpp
     src/provider/ProviderMediaPage.h
     src/provider/ProviderPackage.cpp
@@ -313,6 +318,7 @@ set(SPOOL_SHELL_SOURCES
     src/provider/SpeedTest.cpp
     src/provider/SpeedTest.h
     src/provider/SearchSource.h
+    src/provider/DownloadSource.h
     src/provider/SourceHub.cpp
     src/provider/SourceHubRemote.cpp
     src/provider/SourceHub.h
@@ -554,6 +560,7 @@ qt_add_qml_module(spool
         qml/pages/OpenSourceNoticesPage.qml
         qml/pages/PersonDetailsPage.qml
         qml/pages/PlayerBrowsePanel.qml
+        qml/pages/SettingsSyncPage.qml
         qml/pages/PlayerAudioSyncPanel.qml
         qml/pages/PlayerMusicStage.qml
         qml/pages/PlayerOverlayChrome.qml
@@ -622,6 +629,7 @@ qt_add_qml_module(spool
         qml/shell/GroupMenu.qml
         qml/shell/InputLatencyWarning.qml
         qml/shell/ItemContextMenu.qml
+        qml/shell/DownloadsDialog.qml
         qml/shell/RememberedCertificatesDialog.qml
         qml/shell/MediaInfoOverlay.qml
         qml/shell/OverlayDialog.qml
@@ -633,7 +641,6 @@ qt_add_qml_module(spool
         qml/shell/ProviderCompatibilityNotice.qml
         qml/shell/ProviderActionPicker.qml
         qml/shell/ProviderRemoteControls.qml
-        qml/shell/SettingSyncControl.qml
         qml/shell/RemoteNowPlaying.qml
         qml/shell/ProviderUpdatePrompt.qml
         qml/shell/PageReadiness.js
@@ -814,6 +821,9 @@ target_link_libraries(spool-core PUBLIC
     Qt6::OpenGL
     Qt6::WebSockets
 )
+if(ANDROID)
+    target_link_libraries(spool-core PUBLIC Qt6::CorePrivate)
+endif()
 if(NOT ANDROID)
     target_link_libraries(spool-core PUBLIC Qt6::GuiPrivate)
 endif()
@@ -853,6 +863,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         library-list-model tests/app/LibraryListModelTest.cpp
         content-model-controller tests/app/ContentModelControllerTest.cpp
         collection-editing tests/app/CollectionEditingControllerTest.cpp
+        download-manager tests/app/DownloadManagerTest.cpp
         remote-targets tests/app/RemoteTargetsControllerTest.cpp
         search-controller tests/app/SearchControllerTest.cpp
         group-clock tests/app/GroupClockTest.cpp
@@ -889,8 +900,8 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     set(SPOOL_TESTS_providers
         local-provider tests/providers/LocalProviderTest.cpp
         script-runtime tests/providers/ScriptRuntimeTest.cpp
+        provider-logging tests/providers/ProviderLoggingTest.cpp
         script-runtime-network tests/providers/ScriptRuntimeNetworkTest.cpp
-        provider-legacy-contract tests/providers/LegacyProviderContractTest.cpp
         provider-media-page tests/providers/ProviderMediaPageTest.cpp
         provider-registry tests/providers/ProviderRegistryTest.cpp
         provider-activation tests/providers/ProviderActivationTest.cpp
@@ -933,6 +944,8 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         # the test, so a machine with no Vulkan driver fails only this one.
         list(APPEND SPOOL_TESTS_player
             mpv-video-item-vulkan tests/player/MpvVideoItemTest.cpp
+            mpv-video-item-fullscreen tests/player/MpvFullscreenTest.cpp
+            mpv-video-item-fullscreen-vulkan tests/player/MpvFullscreenTest.cpp
         )
     endif()
 
@@ -992,10 +1005,6 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         endforeach()
     endforeach()
 
-    add_test(NAME provider-legacy-contract-interpreter COMMAND providers-tests provider-legacy-contract)
-    set_tests_properties(provider-legacy-contract provider-legacy-contract-interpreter PROPERTIES SKIP_RETURN_CODE 77)
-    set_tests_properties(provider-legacy-contract-interpreter PROPERTIES
-        ENVIRONMENT "${SPOOL_TEST_ENV};QV4_FORCE_INTERPRETER=1;QML_DISABLE_DISK_CACHE=1")
 
     add_test(NAME provider-media-page-interpreter COMMAND providers-tests provider-media-page)
     set_tests_properties(provider-media-page-interpreter PROPERTIES ENVIRONMENT "QV4_FORCE_INTERPRETER=1;${SPOOL_TEST_ENV}")
@@ -1128,7 +1137,6 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
             hold-navigation-controller tests/qml/tst_HoldNavigationController.qml
             library-navigation tests/qml/tst_LibraryNavigation.qml
             settings-navigation tests/qml/tst_SettingsNavigation.qml
-            setting-sync-control tests/qml/tst_SettingSyncControl.qml
             remote-control-page tests/qml/tst_RemoteControlPage.qml
             provider-install-dialog tests/qml/tst_ProviderInstallDialog.qml
             provider-shell tests/qml/tst_ProviderShell.qml
@@ -1173,7 +1181,6 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
             PREFIX "/qt/qml/Spool"
             FILES
                 tests/qml/tst_MediaRow.qml
-                tests/qml/tst_SettingSyncControl.qml
                 tests/qml/tst_SubtitleSettingsPanel.qml
                 tests/qml/tst_RemoteControlPage.qml
                 tests/qml/tst_ProviderInstallDialog.qml
@@ -1213,7 +1220,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
             math(EXPR qml_source_index "${qml_index} + 1")
             list(GET SPOOL_QML_TESTS ${qml_index} qml_test_name)
             list(GET SPOOL_QML_TESTS ${qml_source_index} qml_test_source)
-            if(qml_test_name STREQUAL "setting-sync-control" OR qml_test_name STREQUAL "subtitle-settings-panel"
+            if(qml_test_name STREQUAL "subtitle-settings-panel"
                 OR qml_test_name STREQUAL "remote-control-page" OR qml_test_name STREQUAL "provider-install-dialog"
                 OR qml_test_name STREQUAL "provider-shell" OR qml_test_name STREQUAL "player-seek-bar-hover"
                 OR qml_test_name STREQUAL "media-row")
