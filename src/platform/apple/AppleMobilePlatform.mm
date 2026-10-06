@@ -1,28 +1,39 @@
+#include "app/SettingsSchema.h"
+#include "platform/NativeAppWindow.h"
 #include "platform/PlatformCapabilities.h"
 #include "platform/PlatformSettingsPolicy.h"
 #include "platform/PlatformStartup.h"
 #include "platform/PlatformSystemProbes.h"
 #include "platform/ScreenSaverInhibitor.h"
-#include "platform/NativeAppWindow.h"
-#include "app/SettingsSchema.h"
 
 #include <QFontDatabase>
+#import <TargetConditionals.h>
+#import <UIKit/UIKit.h>
 #include <mach/mach.h>
 #include <sys/sysctl.h>
-#import <UIKit/UIKit.h>
-#import <TargetConditionals.h>
 
 namespace Spool {
 namespace {
     constexpr SettingChoice kAudioChoices[] = { { "auto", "Automatic" } };
     class IdleTimerBackend final : public ScreenSaverBackend {
     public:
-        bool acquire() override { set(true); return true; }
-        bool release() override { set(false); return true; }
+        bool acquire() override
+        {
+            set(true);
+            return true;
+        }
+        bool release() override
+        {
+            set(false);
+            return true;
+        }
+
     private:
         static void set(bool inhibited)
         {
-            dispatch_async(dispatch_get_main_queue(), ^{ UIApplication.sharedApplication.idleTimerDisabled = inhibited; });
+            dispatch_async(dispatch_get_main_queue(), ^{
+                UIApplication.sharedApplication.idleTimerDisabled = inhibited;
+            });
         }
     };
     qint64 physicalMemory()
@@ -59,7 +70,10 @@ const PlatformAudioOutputPolicy& platformAudioOutputPolicy()
     static const PlatformAudioOutputPolicy policy { kAudioChoices, 1, "auto" };
     return policy;
 }
-QString normalizedPlatformAudioOutputMode(const QString&) { return QStringLiteral("auto"); }
+QString normalizedPlatformAudioOutputMode(const QString&)
+{
+    return QStringLiteral("auto");
+}
 QStringList platformSystemSubtitleFonts()
 {
     auto fonts = QFontDatabase::families();
@@ -67,17 +81,50 @@ QStringList platformSystemSubtitleFonts()
     fonts.removeDuplicates();
     return fonts;
 }
-int platformDefaultUiScalePercent() { return 100; }
-const char *platformDefaultArtworkFormat() { return "webp"; }
-const char *platformDefaultRenderQuality() { return "balanced"; }
-bool platformSupportsDirectVideoOutput() { return false; }
-const char *platformDefaultVideoOutput() { return "enhanced"; }
-bool platformUsesPerOutputAudioDelay() { return false; }
-bool platformDefaultRemoteControlTargetEnabled() { return platformCapabilities().isTV; }
-QString normalizedPlatformAudioRoute(const QString& output) { return output; }
-QString platformAudioRouteDisplayName(const QString&) { return QStringLiteral("System output"); }
-QString platformAudioDelayStorageKey(const QString&) { return QStringLiteral("settings/audioDelayMs"); }
-int platformAutomaticAudioDelayMs(const QString&, int, int) { return 0; }
+int platformDefaultUiScalePercent()
+{
+    return 100;
+}
+const char *platformDefaultArtworkFormat()
+{
+    return "webp";
+}
+const char *platformDefaultRenderQuality()
+{
+    return "balanced";
+}
+bool platformSupportsDirectVideoOutput()
+{
+    return false;
+}
+const char *platformDefaultVideoOutput()
+{
+    return "enhanced";
+}
+bool platformUsesPerOutputAudioDelay()
+{
+    return false;
+}
+bool platformDefaultRemoteControlTargetEnabled()
+{
+    return platformCapabilities().isTV;
+}
+QString normalizedPlatformAudioRoute(const QString& output)
+{
+    return output;
+}
+QString platformAudioRouteDisplayName(const QString&)
+{
+    return QStringLiteral("System output");
+}
+QString platformAudioDelayStorageKey(const QString&)
+{
+    return QStringLiteral("settings/audioDelayMs");
+}
+int platformAutomaticAudioDelayMs(const QString&, int, int)
+{
+    return 0;
+}
 PlatformCpuProbe platformCpuProbe(int logicalCpus)
 {
     int physical = 0;
@@ -98,7 +145,10 @@ QString platformProcessMemoryDiagnostics()
         return {};
     return QStringLiteral("physicalFootprint=%1 resident=%2").arg(info.phys_footprint).arg(info.resident_size);
 }
-std::unique_ptr<ScreenSaverBackend> createPlatformScreenSaverBackend() { return std::make_unique<IdleTimerBackend>(); }
+std::unique_ptr<ScreenSaverBackend> createPlatformScreenSaverBackend()
+{
+    return std::make_unique<IdleTimerBackend>();
+}
 bool configurePlatformEnvironment(const QString&)
 {
     qputenv("QT_QUICK_CONTROLS_STYLE", "Basic");

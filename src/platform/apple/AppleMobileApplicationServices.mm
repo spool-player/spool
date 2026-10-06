@@ -1,23 +1,26 @@
-#include "platform/PlatformApplicationServices.h"
-#include "platform/NativeAppWindow.h"
-#include "player/PlayerController.h"
 #include "AppleMobileRuntime.h"
+#include "platform/NativeAppWindow.h"
+#include "platform/PlatformApplicationServices.h"
+#include "player/PlayerController.h"
 #include <atomic>
 
+#import <AVFoundation/AVFoundation.h>
+#import <MediaPlayer/MediaPlayer.h>
 #include <QGuiApplication>
 #include <QMetaObject>
 #include <QPointer>
 #include <QTimer>
-#import <AVFoundation/AVFoundation.h>
-#import <MediaPlayer/MediaPlayer.h>
-#import <UIKit/UIKit.h>
 #import <TargetConditionals.h>
+#import <UIKit/UIKit.h>
 
 namespace Spool {
 namespace {
     std::atomic_bool renderingAllowed { true };
 }
-bool appleMobileRenderingAllowed() { return renderingAllowed.load(std::memory_order_acquire); }
+bool appleMobileRenderingAllowed()
+{
+    return renderingAllowed.load(std::memory_order_acquire);
+}
 struct PlatformApplicationServices::PlatformData : QObject {
     ApplicationHooks& hooks;
     NativeAppWindow& window;
@@ -28,7 +31,11 @@ struct PlatformApplicationServices::PlatformData : QObject {
     QTimer nowPlayingTimer;
 
     PlatformData(ApplicationHooks& hooks, NativeAppWindow& window)
-        : hooks(hooks), window(window), player(hooks.player) { }
+        : hooks(hooks)
+        , window(window)
+        , player(hooks.player)
+    {
+    }
     ~PlatformData()
     {
         for (id observer in observers)
@@ -37,7 +44,8 @@ struct PlatformApplicationServices::PlatformData : QObject {
             [(MPRemoteCommand *)registration[0] removeTarget:registration[1]];
         MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo = nil;
         [AVAudioSession.sharedInstance setActive:NO
-            withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation error:nil];
+                                     withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation
+                                           error:nil];
     }
     void updateNowPlaying()
     {
@@ -46,11 +54,11 @@ struct PlatformApplicationServices::PlatformData : QObject {
             return;
         }
         MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo = @{
-            MPMediaItemPropertyTitle: [NSString stringWithUTF8String:player->title().toUtf8().constData()],
-            MPMediaItemPropertyPlaybackDuration: @(player->durationSeconds()),
-            MPNowPlayingInfoPropertyElapsedPlaybackTime: @(player->estimatedPositionSeconds()),
-            MPNowPlayingInfoPropertyPlaybackRate: @(player->paused() ? 0.0 : player->effectivePlaybackSpeed()),
-            MPNowPlayingInfoPropertyIsLiveStream: @(player->durationSeconds() <= 0),
+            MPMediaItemPropertyTitle : [NSString stringWithUTF8String:player->title().toUtf8().constData()],
+            MPMediaItemPropertyPlaybackDuration : @(player->durationSeconds()),
+            MPNowPlayingInfoPropertyElapsedPlaybackTime : @(player->estimatedPositionSeconds()),
+            MPNowPlayingInfoPropertyPlaybackRate : @(player->paused() ? 0.0 : player->effectivePlaybackSpeed()),
+            MPNowPlayingInfoPropertyIsLiveStream : @(player->durationSeconds() <= 0),
         };
     }
     void syncSession()
@@ -58,7 +66,10 @@ struct PlatformApplicationServices::PlatformData : QObject {
         NSError *error = nil;
         AVAudioSession *session = AVAudioSession.sharedInstance;
         if (player->sessionActive()) {
-            [session setCategory:AVAudioSessionCategoryPlayback mode:AVAudioSessionModeMoviePlayback options:0 error:&error];
+            [session setCategory:AVAudioSessionCategoryPlayback
+                            mode:AVAudioSessionModeMoviePlayback
+                         options:0
+                           error:&error];
             if (!error)
                 [session setActive:YES error:&error];
         } else {
@@ -74,7 +85,13 @@ struct PlatformApplicationServices::PlatformData : QObject {
         id token = [command addTargetWithHandler:^MPRemoteCommandHandlerStatus(MPRemoteCommandEvent *event) {
             if (!guard)
                 return MPRemoteCommandHandlerStatusCommandFailed;
-            QMetaObject::invokeMethod(this, [guard, action, event] { if (guard) action(event); }, Qt::QueuedConnection);
+            QMetaObject::invokeMethod(
+                this,
+                [guard, action, event] {
+                    if (guard)
+                        action(event);
+                },
+                Qt::QueuedConnection);
             return MPRemoteCommandHandlerStatusSuccess;
         }];
         [commands addObject:@[ command, token ]];
@@ -83,7 +100,9 @@ struct PlatformApplicationServices::PlatformData : QObject {
 };
 PlatformApplicationServices::PlatformApplicationServices(
     QGuiApplication&, NativeAppWindow& window, ApplicationHooks& hooks, RouterController&)
-    : m_platform(std::make_unique<PlatformData>(hooks, window)) { }
+    : m_platform(std::make_unique<PlatformData>(hooks, window))
+{
+}
 PlatformApplicationServices::~PlatformApplicationServices() = default;
 void PlatformApplicationServices::start()
 {
@@ -105,44 +124,86 @@ void PlatformApplicationServices::start()
         }
     });
     NSNotificationCenter *notifications = NSNotificationCenter.defaultCenter;
-    [p->observers addObject:[notifications addObserverForName:AVAudioSessionInterruptionNotification
-        object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
-            const auto type = [note.userInfo[AVAudioSessionInterruptionTypeKey] unsignedIntegerValue];
-            QMetaObject::invokeMethod(p, [p, type, note] {
-                if (type == AVAudioSessionInterruptionTypeBegan) {
-                    p->resumeAfterInterruption = p->player->sessionActive() && !p->player->paused();
-                    p->player->setPaused(true);
-                } else {
-                    const auto options = [note.userInfo[AVAudioSessionInterruptionOptionKey] unsignedIntegerValue];
-                    if (p->resumeAfterInterruption && (options & AVAudioSessionInterruptionOptionShouldResume)
-                        && (p->player->mediaKind() == QStringLiteral("audio") || qGuiApp->applicationState() == Qt::ApplicationActive)) {
-                        p->syncSession();
-                        p->player->setPaused(false);
-                    }
-                    p->resumeAfterInterruption = false;
-                }
-            }, Qt::QueuedConnection);
-        }]];
-    [p->observers addObject:[notifications addObserverForName:AVAudioSessionRouteChangeNotification
-        object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
-            if ([note.userInfo[AVAudioSessionRouteChangeReasonKey] unsignedIntegerValue] == AVAudioSessionRouteChangeReasonOldDeviceUnavailable)
-                QMetaObject::invokeMethod(p, [p] { p->player->setPaused(true); }, Qt::QueuedConnection);
-        }]];
+    [p->observers
+        addObject:[notifications
+                      addObserverForName:AVAudioSessionInterruptionNotification
+                                  object:nil
+                                   queue:NSOperationQueue.mainQueue
+                              usingBlock:^(NSNotification *note) {
+                                  const auto type =
+                                      [note.userInfo[AVAudioSessionInterruptionTypeKey] unsignedIntegerValue];
+                                  QMetaObject::invokeMethod(
+                                      p,
+                                      [p, type, note] {
+                                          if (type == AVAudioSessionInterruptionTypeBegan) {
+                                              p->resumeAfterInterruption
+                                                  = p->player->sessionActive() && !p->player->paused();
+                                              p->player->setPaused(true);
+                                          } else {
+                                              const auto options = [note.userInfo[AVAudioSessionInterruptionOptionKey]
+                                                  unsignedIntegerValue];
+                                              if (p->resumeAfterInterruption
+                                                  && (options & AVAudioSessionInterruptionOptionShouldResume)
+                                                  && (p->player->mediaKind() == QStringLiteral("audio")
+                                                      || qGuiApp->applicationState() == Qt::ApplicationActive)) {
+                                                  p->syncSession();
+                                                  p->player->setPaused(false);
+                                              }
+                                              p->resumeAfterInterruption = false;
+                                          }
+                                      },
+                                      Qt::QueuedConnection);
+                              }]];
+    [p->observers addObject:[notifications
+                                addObserverForName:AVAudioSessionRouteChangeNotification
+                                            object:nil
+                                             queue:NSOperationQueue.mainQueue
+                                        usingBlock:^(NSNotification *note) {
+                                            if ([note.userInfo[AVAudioSessionRouteChangeReasonKey] unsignedIntegerValue]
+                                                == AVAudioSessionRouteChangeReasonOldDeviceUnavailable)
+                                                QMetaObject::invokeMethod(
+                                                    p, [p] { p->player->setPaused(true); }, Qt::QueuedConnection);
+                                        }]];
     [p->observers addObject:[notifications addObserverForName:AVAudioSessionMediaServicesWereResetNotification
-        object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *) {
-            QMetaObject::invokeMethod(p, [p] { p->syncSession(); p->player->setPaused(true); }, Qt::QueuedConnection);
-        }]];
+                                                       object:nil
+                                                        queue:NSOperationQueue.mainQueue
+                                                   usingBlock:^(NSNotification *) {
+                                                       QMetaObject::invokeMethod(
+                                                           p,
+                                                           [p] {
+                                                               p->syncSession();
+                                                               p->player->setPaused(true);
+                                                           },
+                                                           Qt::QueuedConnection);
+                                                   }]];
     [p->observers addObject:[notifications addObserverForName:UIApplicationDidReceiveMemoryWarningNotification
-        object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *) {
-            QMetaObject::invokeMethod(p, [p] { if (p->hooks.memoryPressure) p->hooks.memoryPressure(QStringLiteral("critical")); }, Qt::QueuedConnection);
-        }]];
+                                                       object:nil
+                                                        queue:NSOperationQueue.mainQueue
+                                                   usingBlock:^(NSNotification *) {
+                                                       QMetaObject::invokeMethod(
+                                                           p,
+                                                           [p] {
+                                                               if (p->hooks.memoryPressure)
+                                                                   p->hooks.memoryPressure(QStringLiteral("critical"));
+                                                           },
+                                                           Qt::QueuedConnection);
+                                                   }]];
     auto *center = MPRemoteCommandCenter.sharedCommandCenter;
     p->command(center.playCommand, [p](auto *) { p->player->setPaused(false); });
     p->command(center.pauseCommand, [p](auto *) { p->player->setPaused(true); });
     p->command(center.togglePlayPauseCommand, [p](auto *) { p->player->togglePause(); });
-    p->command(center.stopCommand, [p](auto *) { if (p->hooks.stopPlayback) p->hooks.stopPlayback(); });
-    p->command(center.nextTrackCommand, [p](auto *) { if (p->hooks.playNext) p->hooks.playNext(); });
-    p->command(center.previousTrackCommand, [p](auto *) { if (p->hooks.playPrevious) p->hooks.playPrevious(); });
+    p->command(center.stopCommand, [p](auto *) {
+        if (p->hooks.stopPlayback)
+            p->hooks.stopPlayback();
+    });
+    p->command(center.nextTrackCommand, [p](auto *) {
+        if (p->hooks.playNext)
+            p->hooks.playNext();
+    });
+    p->command(center.previousTrackCommand, [p](auto *) {
+        if (p->hooks.playPrevious)
+            p->hooks.playPrevious();
+    });
     p->command(center.changePlaybackPositionCommand, [p](MPRemoteCommandEvent *event) {
         p->player->seek([(MPChangePlaybackPositionCommandEvent *)event positionTime]);
     });
@@ -153,17 +214,22 @@ void PlatformApplicationServices::start()
         dispatch_async(dispatch_get_main_queue(), ^{
             UIWindow *window = nil;
             for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
-                if ([scene isKindOfClass:UIWindowScene.class] && scene.activationState == UISceneActivationStateForegroundActive) {
+                if ([scene isKindOfClass:UIWindowScene.class]
+                    && scene.activationState == UISceneActivationStateForegroundActive) {
                     for (UIWindow *candidate in ((UIWindowScene *)scene).windows)
-                        if (candidate.isKeyWindow) window = candidate;
+                        if (candidate.isKeyWindow)
+                            window = candidate;
                 }
             }
             UIViewController *presenter = window.rootViewController;
-            while (presenter.presentedViewController) presenter = presenter.presentedViewController;
-            if (!presenter) return;
-            auto *share = [[UIActivityViewController alloc] initWithActivityItems:@[url] applicationActivities:nil];
+            while (presenter.presentedViewController)
+                presenter = presenter.presentedViewController;
+            if (!presenter)
+                return;
+            auto *share = [[UIActivityViewController alloc] initWithActivityItems:@[ url ] applicationActivities:nil];
             share.popoverPresentationController.sourceView = presenter.view;
-            share.popoverPresentationController.sourceRect = CGRectMake(CGRectGetMidX(presenter.view.bounds), CGRectGetMidY(presenter.view.bounds), 1, 1);
+            share.popoverPresentationController.sourceRect
+                = CGRectMake(CGRectGetMidX(presenter.view.bounds), CGRectGetMidY(presenter.view.bounds), 1, 1);
             [presenter presentViewController:share animated:YES completion:nil];
         });
     });

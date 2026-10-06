@@ -1,8 +1,8 @@
 #include "platform/PlatformPaths.h"
 
+#import <Foundation/Foundation.h>
 #include <QDir>
 #include <QStandardPaths>
-#import <Foundation/Foundation.h>
 
 namespace Spool {
 QString resolveAppRoot(const char *)

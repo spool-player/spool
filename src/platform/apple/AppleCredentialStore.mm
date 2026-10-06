@@ -7,8 +7,10 @@ namespace Spool::CredentialStore {
 namespace {
     NSMutableDictionary *query(const QString& profileId = {})
     {
-        auto *result = [@{ (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
-            (__bridge id)kSecAttrService: @SPOOL_APPLE_CREDENTIAL_SERVICE } mutableCopy];
+        auto *result = [@{
+            (__bridge id)kSecClass : (__bridge id)kSecClassGenericPassword,
+            (__bridge id)kSecAttrService : @SPOOL_APPLE_CREDENTIAL_SERVICE
+        } mutableCopy];
         if (!profileId.isEmpty())
             result[(__bridge id)kSecAttrAccount] = [NSString stringWithUTF8String:profileId.toUtf8().constData()];
         return result;
@@ -34,8 +36,10 @@ bool save(const QString& profileId, const QString& accessToken)
     const QByteArray token = accessToken.toUtf8();
     NSData *data = [NSData dataWithBytes:token.constData() length:token.size()];
     auto *request = query(profileId);
-    NSDictionary *attributes = @{ (__bridge id)kSecValueData: data,
-        (__bridge id)kSecAttrAccessible: (__bridge id)kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly };
+    NSDictionary *attributes = @ {
+        (__bridge id)kSecValueData : data,
+        (__bridge id)kSecAttrAccessible : (__bridge id)kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+    };
     OSStatus status = SecItemUpdate((__bridge CFDictionaryRef)request, (__bridge CFDictionaryRef)attributes);
     if (status == errSecItemNotFound) {
         [request addEntriesFromDictionary:attributes];
