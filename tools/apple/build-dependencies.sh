@@ -145,6 +145,7 @@ feature_flags=()
 while IFS= read -r flag; do feature_flags+=("$flag"); done <"$ffmpeg_build/flags"
 (cd "$ffmpeg_build"; "$SOURCE_ROOT/ffmpeg/configure" --prefix="$PREFIX" --target-os=darwin --arch="$ffmpeg_arch" \
   --enable-cross-compile --cc="$CC" --cxx="$CXX" --ar="$AR" --ranlib="$RANLIB" --sysroot="$SDKROOT" \
+  --host-cc="$NATIVE_CC" --host-cflags="-isysroot $NATIVE_SDK" --host-ldflags="-isysroot $NATIVE_SDK" \
   --enable-static --disable-shared --enable-pic --pkg-config=pkg-config \
   --extra-cflags="$CFLAGS -I$PREFIX/include" --extra-ldflags="$LDFLAGS" "${feature_flags[@]}"; make -j"$JOBS"; make install)
 python3 "$ROOT/tools/ffmpeg-capabilities.py" audit-config --platform "$target_os" "$ffmpeg_build/config.h"
