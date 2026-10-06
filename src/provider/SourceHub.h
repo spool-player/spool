@@ -93,6 +93,7 @@ public:
     // Calls an operation on the account behind a scoped or account ID.
     QCoro::Task<QVariantMap> call(QString accountId, QString operation, QVariantMap arguments = {});
     void setVideoCodecs(QStringList codecs, bool restrict);
+    void setVideoPreviewsEnabled(bool enabled);
 
     // Menu policy is fetched only on opening; results are tied to this request.
     Q_INVOKABLE int requestItemActions(
@@ -189,6 +190,7 @@ signals:
     void extensionSupportChanged(const QString& accountId);
 
 private:
+    bool m_videoPreviewsEnabled = true;
     class Playback;
     struct Entry {
         QString accountId;

@@ -781,8 +781,12 @@ int main(int argc, char **argv)
         &Spool::AppController::revokeAccountIdentity);
     controller->attachSettingsSync(&settingsSync);
     controller->settings()->attachSync(&settingsSync);
-    const auto updateTrickplayDecoding = [&trickplay, &remoteTrickplay, settings = controller->settings()] {
+    const auto updateTrickplayDecoding = [&hub, &trickplay, &remoteTrickplay, settings = controller->settings()] {
         const bool accurate = settings->value(QStringLiteral("playback/accurateTrickplay")).toBool();
+        const bool enabled = settings->value(QStringLiteral("playback/seekPreviews")).toBool();
+        hub.setVideoPreviewsEnabled(enabled);
+        trickplay.setEnabled(enabled);
+        remoteTrickplay.setEnabled(enabled);
         trickplay.setAccurateDecoding(accurate);
         remoteTrickplay.setAccurateDecoding(accurate);
     };

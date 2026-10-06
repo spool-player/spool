@@ -121,6 +121,8 @@ SPOOLET=./build/linux-release-local-providers/install/bin/spoolet
 # and visual.previewTexture.ready is true, then capture immediately:
 "$SPOOLET" --instance plex-check screenshot /tmp/spool-preview.png
 "$SPOOLET" --instance plex-check settings get
+"$SPOOLET" --instance plex-check settings set playback/seekPreviews false
+"$SPOOLET" --instance plex-check settings set playback/seekPreviews true
 "$SPOOLET" --instance plex-check settings set playback/accurateTrickplay true
 "$SPOOLET" --instance plex-check settings set playback/trickplayPreviewScalePercent 150
 "$SPOOLET" --instance plex-check settings set appearance/uiScalePercent 125
@@ -404,6 +406,15 @@ quad: no full-sheet RGB framebuffer, mipmap chain or resampling pass exists.
 Its footprint does not widen at strong minification, deliberately bounding
 cost; it is not an ideal scale-adaptive low-pass filter for extreme shrinking.
 Software/backend fallback uses that backend's RGB filter, not Lanczos.
+
+**Playback → Seek previews** (`playback/seekPreviews`, default on) controls
+thumbnails globally, including the remote-player timeline. Turning it off
+immediately hides existing previews, cancels preview fetch/decode work, clears
+preview caches, and tells providers to skip preview-only metadata requests.
+Turning it on restores the current descriptor when one is available; a provider
+that omitted metadata while disabled supplies it on the next playback resolve
+or remote-state refresh. The advanced accuracy and size controls are hidden
+while previews are off. This preference persists as a device default.
 
 Local and remote previews share a nominal **320 dp** layout width, independent
 of encoded thumbnail resolution, preserving the actual source aspect ratio

@@ -187,6 +187,14 @@ HTTP(S) template has one `{index}` substitution. BIF sequences use
 URL, not individual JPEGs: C++ parses its timestamp/offset index and decodes
 the selected frame. Missing server-generated previews mean omit `trickplay`.
 
+`PlaybackContext.videoPreviews` is the global seek-preview preference (default
+true). When false, omit `trickplay` and do not request/prefetch preview-only
+metadata. `details`, `remoteConnect` and `remoteState` receive the same
+`videoPreviews` boolean: skip preview-only metadata and omit `preview` when
+disabled. Metadata required for playback, tracks, or the ordinary catalogue remains independent.
+The native loader immediately cancels active preview work and clears decoded
+frames when the viewer turns previews off.
+
 Both formats use the account's `resolve().headers`; keep tokens out of URLs.
 The native loader prefetches the resume preview, caches bounded preview data
 separately from posters, and uploads only the requested frame. While loading

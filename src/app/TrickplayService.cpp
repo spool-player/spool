@@ -1,5 +1,6 @@
 #include "TrickplayService.h"
 #include "../common/TlsTrust.h"
+#include "../provider/ProviderLogging.h"
 
 #include <QCoreApplication>
 #include <QDebug>
@@ -155,11 +156,39 @@ void TrickplayService::setAccurateDecoding(bool accurate)
     setSession(info, m_startSeconds);
 }
 
+void TrickplayService::setEnabled(bool enabled)
+{
+    if (m_enabled == enabled)
+        return;
+    m_enabled = enabled;
+    const TrickplayInfo info = m_info;
+    setSession(info, m_startSeconds);
+}
+
 void TrickplayService::setSession(const TrickplayInfo& info, double startSeconds)
 {
     clear();
     m_info = info;
     m_startSeconds = startSeconds;
+    if (providerLogEnabled(ProviderLogLevel::Trace)) {
+        const bool bif = info.format == QLatin1String("bif");
+        const bool supported = bif || info.format.isEmpty() || info.format == QLatin1String("sprites");
+        const bool missing = info.url.isEmpty() && info.urlTemplate.isEmpty();
+        writeProviderLog(ProviderLogLevel::Trace,
+            QStringLiteral("preview session enabled=%1 availability=%2 format=%3 width=%4 height=%5 count=%6")
+                .arg(m_enabled)
+                .arg(missing        ? QStringLiteral("missing")
+                        : supported ? QStringLiteral("supported")
+                                    : QStringLiteral("unsupported"))
+                .arg(bif            ? QStringLiteral("bif")
+                        : supported ? QStringLiteral("sprites")
+                                    : QStringLiteral("unknown"))
+                .arg(info.width)
+                .arg(info.height)
+                .arg(info.thumbnailCount));
+    }
+    if (!m_enabled)
+        return;
     if (info.format == QLatin1String("bif") && !info.url.isEmpty())
         fetch(0);
     else if (available()) {
@@ -172,8 +201,12 @@ void TrickplayService::setSession(const TrickplayInfo& info, double startSeconds
 
 bool TrickplayService::available() const
 {
+    if (!m_enabled)
+        return false;
     if (m_info.format == QLatin1String("bif"))
         return !m_info.url.isEmpty() && m_bif.count() > 0 && m_info.width > 0 && m_info.height > 0;
+    if (!m_info.format.isEmpty() && m_info.format != QLatin1String("sprites"))
+        return false;
     return !m_info.urlTemplate.isEmpty() && m_info.intervalMs > 0 && m_info.width > 0 && m_info.height > 0
         && m_info.tileWidth > 0 && m_info.tileHeight > 0 && qint64(m_info.width) * m_info.height <= 1024 * 1024
         && qint64(m_info.width) * m_info.tileWidth <= 16384 && qint64(m_info.height) * m_info.tileHeight <= 16384
@@ -358,6 +391,8 @@ void TrickplayService::abortFetch()
 
 void TrickplayService::fetch(int index, bool speculative)
 {
+    if (!m_enabled)
+        return;
     const QString scoped = resourceUrl(index);
     if (m_reply && m_fetchUrl == scoped) {
         if (!speculative) {
@@ -411,6 +446,13 @@ void TrickplayService::fetch(int index, bool speculative)
         if (!authorize(index))
             return;
         if (!error.isEmpty()) {
+            if (providerLogEnabled(ProviderLogLevel::Trace))
+                writeProviderLog(ProviderLogLevel::Trace,
+                    QStringLiteral("preview fetch failed networkCode=%1 status=%2 frame=%3 speculative=%4")
+                        .arg(int(reply->error()))
+                        .arg(reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt())
+                        .arg(index)
+                        .arg(speculative));
             complete(index, {}, error, speculative);
             prefetch();
             return;
@@ -570,8 +612,13 @@ void TrickplayService::complete(
         const qint64 cost = trickplayTextureCost(image->size);
         if (!speculative || m_images.totalCost() + cost <= TrickplayDecodedByteBudget)
             m_images.insert(index, new std::shared_ptr<const TrickplayTexture>(image), int(cost));
-    } else if (!error.isEmpty() && !speculative)
-        qWarning() << "trickplay:" << error;
+    } else if (!error.isEmpty()) {
+        if (providerLogEnabled(ProviderLogLevel::Trace))
+            writeProviderLog(ProviderLogLevel::Trace,
+                QStringLiteral("preview load failed frame=%1 speculative=%2").arg(index).arg(speculative));
+        if (!speculative)
+            writeProviderLog(ProviderLogLevel::Warn, QStringLiteral("Preview frame unavailable"));
+    }
     const auto waiters = m_waiters.take(index);
     for (const auto& waiter : waiters)
         if (waiter)
