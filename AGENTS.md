@@ -67,6 +67,12 @@ compatibility shims for older provider/host builds.
 - `tools/manifests/toolchain.json` sets the Qt and FFmpeg versions for every
   platform. Nothing else may name one; `tools/toolchain-versions.sh --check`
   is what CI runs to keep the Qt module manifests honest.
+- Qt source manifests use the official-listed FAU archive mirror rather than a
+  geo-selected redirect. Mirror changes must preserve version/module SHA-256 pins;
+  verify the full archive digest before changing a source URL.
+- webOS GCC coroutine calls use named argument maps before `co_await`; nesting
+  a member expression inside a temporary argument aggregate triggered a compiler
+  internal error. Keep the wire arguments unchanged when restructuring such calls.
 - The launch screen carries the version, so it is rendered per build by
   `tools/generate-splash.sh` from `tools/manifests/splash.json` and is not
   committed. Configuring the app is enough to get it on every platform.
