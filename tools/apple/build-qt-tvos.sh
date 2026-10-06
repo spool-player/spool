@@ -44,13 +44,14 @@ for module in qtbase qtshadertools qtdeclarative qtsvg qtimageformats qtwebsocke
   download_verified "$base_url/$module-everywhere-src-$version.tar.xz" "$sha" "$archive"
   extract_verified_source "$archive" "$sha" "$source_root/$module"
   if [[ "$module" == qtbase ]]; then
-    patch_file="$ROOT/tools/apple/patches/qt-tvos-cmake-templates.patch"
-    if patch --dry-run --forward --silent -d "$source_root/$module" -p1 <"$patch_file" >/dev/null 2>&1; then
-      patch --forward -d "$source_root/$module" -p1 <"$patch_file"
-    elif ! patch --dry-run --reverse --silent -d "$source_root/$module" -p1 <"$patch_file" >/dev/null 2>&1; then
-      echo 'error: pinned Qt tvOS metadata patch no longer applies' >&2
-      exit 1
-    fi
+    for patch_file in "$ROOT"/tools/apple/patches/qt-tvos-*.patch; do
+      if patch --dry-run --forward --silent -d "$source_root/$module" -p1 <"$patch_file" >/dev/null 2>&1; then
+        patch --forward -d "$source_root/$module" -p1 <"$patch_file"
+      elif ! patch --dry-run --reverse --silent -d "$source_root/$module" -p1 <"$patch_file" >/dev/null 2>&1; then
+        echo "error: pinned Qt tvOS patch no longer applies: $patch_file" >&2
+        exit 1
+      fi
+    done
   fi
   args=(-S "$source_root/$module" -B "$build_root/$module" -G Ninja
     -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$prefix"

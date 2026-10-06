@@ -1,0 +1,34 @@
+--- a/src/corelib/io/qfilesystemengine_mac.mm
++++ b/src/corelib/io/qfilesystemengine_mac.mm
+@@ -24,13 +24,23 @@
+ //static
+ bool QFileSystemEngine::supportsMoveFileToTrash()
+ {
++#ifdef Q_OS_TVOS
++    return false;
++#else
+     return true;
++#endif
+ }
+ 
+ //static
+ bool QFileSystemEngine::moveFileToTrash(const QFileSystemEntry &source,
+                                         QFileSystemEntry &newLocation, QSystemError &error)
+ {
++#ifdef Q_OS_TVOS
++    Q_UNUSED(source);
++    Q_UNUSED(newLocation);
++    error = QSystemError(EOPNOTSUPP, QSystemError::StandardLibraryError);
++    return false;
++#else
+     QMacAutoReleasePool pool;
+ 
+     QFileInfo info(source.filePath());
+@@ -45,6 +55,7 @@
+     }
+     newLocation = QFileSystemEntry(QUrl::fromNSURL(resultingUrl).path());
+     return true;
++#endif
+ }
+ 
+ QT_END_NAMESPACE
