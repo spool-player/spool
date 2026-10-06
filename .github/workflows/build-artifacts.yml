@@ -740,13 +740,14 @@ jobs:
         with:
           path: |
             build/apple/host-qt
+            build/apple/qmlimportscanner
             build/apple/downloads
             build/apple/qt-sources
             build/apple/sources
             build/apple/qt-${{ matrix.sdk }}-arm64
             build/apple/${{ matrix.sdk }}-arm64
             build/downloads
-          key: tvos-source1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.sdk }}-16.0-${{ steps.apple-toolchain.outputs.key }}-${{ hashFiles('tools/manifests/toolchain.json', 'tools/manifests/android-third-party.json', 'tools/manifests/ffmpeg-capabilities.json', 'tools/apple/**', 'tools/build-tvos.sh', 'tools/ffmpeg-capabilities.py', 'tools/lib/manifest-sources.sh', 'third_party/**', 'mpv/meson.build', 'mpv/meson.options') }}
+          key: tvos-source1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.sdk }}-16.0-${{ steps.apple-toolchain.outputs.key }}-${{ hashFiles('tools/manifests/toolchain.json', 'tools/manifests/android-third-party.json', 'tools/manifests/ffmpeg-capabilities.json', 'tools/apple/**', 'tools/build-tvos.sh', 'tools/ffmpeg-capabilities.py', 'tools/lib/manifest-sources.sh', 'tools/webos-native/patches/qtdeclarative-*-qmlimportscanner-exclude-subtrees.patch', 'third_party/**', 'mpv/meson.build', 'mpv/meson.options') }}
       - name: Install matching macOS Qt host tools
         if: ${{ steps.tvos-source-cache.outputs.cache-hit != 'true' }}
         env:
@@ -756,7 +757,7 @@ jobs:
           "$RUNNER_TEMP/aqt/bin/pip" install aqtinstall
           "$RUNNER_TEMP/aqt/bin/aqt" install-qt mac desktop "$QT_VERSION" clang_64 \
             -O "$GITHUB_WORKSPACE/build/apple/host-qt" \
-            -m qtshadertools qtwebsockets qtimageformats
+            -m qtshadertools qttasktree qtwebsockets qtimageformats
       - name: Build actual source Qt, media closure, and tvOS app
         run: bash tools/build-tvos.sh
       - name: Exercise native Apple TV simulator UI and playback
@@ -794,6 +795,7 @@ jobs:
         with:
           path: |
             build/apple/host-qt
+            build/apple/qmlimportscanner
             build/apple/downloads
             build/apple/qt-sources
             build/apple/sources
