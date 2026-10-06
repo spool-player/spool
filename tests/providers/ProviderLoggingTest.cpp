@@ -47,7 +47,7 @@ SPOOL_TEST_MAIN("provider-logging")
 {
     QCoreApplication app(argc, argv);
     const auto previous = qInstallMessageHandler(capture);
-    QLoggingCategory::setFilterRules(QStringLiteral("spool.provider.*=false\nspool.provider.trace.*=false"));
+    QLoggingCategory::setFilterRules(QStringLiteral("spool.provider=false\nspool.provider.trace=false"));
     {
         Spool::ScriptRuntime runtime(QStringLiteral(TEST_SOURCE_DIR "/tests/providers/fixtures/logging.mjs"), {}, {},
             nullptr, QStringLiteral("fixture.logging"));
@@ -61,7 +61,7 @@ SPOOL_TEST_MAIN("provider-logging")
         require(takeMessages().isEmpty(), "disabled logging must not emit native messages");
         require(!disabled.value("invalid").toBool(), "unknown levels are disabled");
 
-        QLoggingCategory::setFilterRules(QStringLiteral("spool.provider.*=true\nspool.provider.trace.*=true"));
+        QLoggingCategory::setFilterRules(QStringLiteral("spool.provider=true\nspool.provider.trace=true"));
         const auto enabled = QCoro::waitFor(runtime.call("private-account-name", "exercise"));
         require(enabled.value("lazy").toInt() == 6 && enabled.value("reads").toInt() == 5,
             "enabled operation and retained source hosts use current native filters");
@@ -87,7 +87,7 @@ SPOOL_TEST_MAIN("provider-logging")
 
         // Trace remains off when ordinary provider debug is enabled.
         QLoggingCategory::setFilterRules(
-            QStringLiteral("spool.provider.*=false\nspool.provider.debug=true\nspool.provider.trace.*=false"));
+            QStringLiteral("spool.provider=false\nspool.provider.debug=true\nspool.provider.trace=false"));
         const auto debugOnly = QCoro::waitFor(runtime.call("private-account-name", "exercise"));
         require(debugOnly.value("enabled").toMap().value("debug").toBool()
                 && !debugOnly.value("enabled").toMap().value("trace").toBool(),
@@ -95,7 +95,7 @@ SPOOL_TEST_MAIN("provider-logging")
         require(takeMessages().size() == 2, "debug-only rules suppress every other severity");
 
         QLoggingCategory::setFilterRules(
-            QStringLiteral("spool.provider.*=false\nspool.provider.info=true\nspool.provider.trace.*=false"));
+            QStringLiteral("spool.provider=false\nspool.provider.info=true\nspool.provider.trace=false"));
         Spool::setDiagnosticUrlsUnredacted(true);
         QCoro::waitFor(runtime.call("private-account-name", "safety"));
         lines = takeMessages();
