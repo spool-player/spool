@@ -28,6 +28,13 @@
       "version": "0.1.1",
       "archive": "bundled/spool.stremio-0.1.1.tar.zst",
       "sha256": "4a71de7a02b8aad51676f977c02b852f4fa0f0e6de67979bbe97854ca1fdb4b4"
+    },
+    {
+      "id": "example.open-movies",
+      "appleAppStore": true,
+      "version": "1.1.0",
+      "archive": "bundled/example.open-movies-1.1.0.tar.zst",
+      "sha256": "68c8460941bb9182890869bd8b307a23a9fef5a970241b8295698c30fe22bb19"
     }
   ]
 }

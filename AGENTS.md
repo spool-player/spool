@@ -32,9 +32,10 @@
 The app knows no media backend. Every source is a provider package (JS logic
 and QML screens) run by `src/provider/`; `docs/providers.md` describes the
 pieces and `sdk/` is the provider contract (API 0.2). Jellyfin, Emby, Plex and
-Stremio live in their `spool-player/spool-*` repositories and are bundled from
-the published release pins in `providers/lock.json`. Providers and host cut over
-together; do not add compatibility shims for older provider/host builds.
+Stremio live in their `spool-player/spool-*` repositories; Open Movies lives in
+`spool-player/spool-provider-example`. All five are bundled from published release
+pins in `providers/lock.json`. Providers and host cut over together; do not add
+compatibility shims for older provider/host builds.
 
 - Core is everything under `src/` except `src/providers/` (native providers;
   only `LocalProvider` today) and `src/main.cpp`, the composition root. Core

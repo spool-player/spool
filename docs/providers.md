@@ -117,8 +117,8 @@ On first launch after upgrading, sign-ins saved by the old native Jellyfin clien
 
 ## Where providers come from
 
-- **Bundled**: `providers/lock.json` pins each package by SHA-256 (Jellyfin, Emby, Plex and
-  Stremio, from their `spool-player/spool-*` repositories); CMake checks and unpacks it into
+- **Bundled**: `providers/lock.json` pins each package by SHA-256 (Jellyfin, Emby, Plex,
+  Stremio and Open Movies, from their `spool-player` repositories); CMake checks and unpacks it into
   a resource at configure time. `-DSPOOL_PROVIDER_OVERRIDES=id=/path/to/checkout` replaces matching
   pins with working trees and adds supplied provider IDs absent from the lock. Unspecified pins
   remain unchanged; empty overrides preserve release behavior. Pin published release assets.
@@ -172,7 +172,7 @@ explicitly `true`; missing or false approval excludes a provider. Checkout overr
 are rejected, so a local checkout cannot bypass the reviewed release pin.
 The curated catalogue maintains the same required boolean independently of provider
 release feeds; pin updates must copy that reviewed value into `providers/lock.json`.
-Jellyfin, Emby and Plex are included. Stremio is excluded by default.
+Jellyfin, Emby, Plex and Open Movies are included. Stremio is excluded by default.
 
 ## Catalogue continuation and queues
 
