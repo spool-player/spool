@@ -926,6 +926,8 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         # the test, so a machine with no Vulkan driver fails only this one.
         list(APPEND SPOOL_TESTS_player
             mpv-video-item-vulkan tests/player/MpvVideoItemTest.cpp
+            mpv-video-item-fullscreen tests/player/MpvFullscreenTest.cpp
+            mpv-video-item-fullscreen-vulkan tests/player/MpvFullscreenTest.cpp
         )
     endif()
 
