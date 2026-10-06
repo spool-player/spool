@@ -42,7 +42,15 @@ QSGRendererInterface::GraphicsApi GraphicsStartup::configureBeforeApplication(bo
             qInfo("startup: graphics backend setting asks for %s", requestedApi.constData());
         }
     }
-    if (launchTest) {
+#if defined(SPOOL_APPLE_MOBILE)
+    // The UIKit simulator/device is a real native surface. Its smoke must
+    // exercise the GLES scene graph used by the embedded mpv framebuffer.
+    const bool softwareLaunchTest = false;
+    Q_UNUSED(launchTest);
+#else
+    const bool softwareLaunchTest = launchTest;
+#endif
+    if (softwareLaunchTest) {
         // Headless launch tests cannot assume any graphics adapter exists.
         graphicsApi = QSGRendererInterface::Software;
     } else if (requestedApi == "opengl") {
@@ -65,6 +73,9 @@ QSGRendererInterface::GraphicsApi GraphicsStartup::configureBeforeApplication(bo
         // QTBUG-149443: MoltenVK must present through a plain CAMetalLayer.
         qputenv("QT_MTL_NO_TRANSACTION", QByteArrayLiteral("1"));
     }
+#endif
+#if defined(SPOOL_APPLE_MOBILE)
+    graphicsApi = QSGRendererInterface::OpenGL;
 #endif
     QQuickWindow::setGraphicsApi(graphicsApi);
     qInfo("startup: scene graph on %s",
