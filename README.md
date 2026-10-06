@@ -563,18 +563,31 @@ archive paths before publishing the IPA. Its optional third argument must match
    with the Mac on the same network. On the TV, open **Settings → Remotes and
    Devices → Remote App and Devices**; use Xcode's **Manage Devices** (or
    **Window → Devices and Simulators** on older Xcode) to pair it.
-2. After the device build above, open
-   `build/tvos/appletvos-arm64/app/SpoolWebOS.xcodeproj` in Xcode and select the
-   `spool` application target, not the playback-smoke target.
+2. Generate the device project using a unique reverse-DNS identifier you control
+   (replace `com.yourname.spool` with your identifier):
+
+   ```sh
+   APPLE_SDK=appletvos APPLE_ARCH=arm64 \
+     APPLE_BUNDLE_IDENTIFIER=com.yourname.spool bash tools/build-tvos.sh
+   open build/tvos/appletvos-arm64/app/SpoolWebOS.xcodeproj
+   ```
+
+   The source build configures the app's bundle identifier and matching Keychain
+   service together; do not manually replace only the generated plist identifier.
+   Select the `spool` application target, not the playback-smoke target.
 3. In the application target's **Build Settings**, set **Code Signing Allowed**
    to **Yes**. Under **Signing & Capabilities**, enable **Automatically manage
-   signing** and choose your team. Use a unique bundle identifier you control;
-   ensure the generated app's `CFBundleIdentifier` agrees with the signing
-   identifier (the **Info.plist File** build setting identifies that file).
+   signing**, choose your team, and retain the identifier configured above.
 4. Select your paired Apple TV and the `spool` scheme, then **Product → Run**.
    Xcode creates the development provisioning profile and signs the app using
    your account. These generated-project changes are local; regenerating the
    project with the unsigned build command resets its build settings.
+
+Once Xcode has configured your signing identity and provisioning profile,
+command-line device rebuilds can use `CODE_SIGNING_ALLOWED=YES` and
+`APPLE_DEVELOPMENT_TEAM` set to your team ID. Keep `APPLE_BUNDLE_IDENTIFIER`
+set to the same identifier. The public release pipeline does not enable this
+signing path or obtain credentials from your account.
 
 Follow Apple's current [device signing and run directions](https://developer.apple.com/documentation/xcode/running-your-app-on-simulated-or-physical-devices)
 and [device pairing directions](https://developer.apple.com/documentation/xcode/managing-your-simulated-and-physical-devices-in-device-hub).
@@ -588,10 +601,12 @@ APPLE_SDK=appletvsimulator APPLE_ARCH=arm64 bash tools/build-tvos.sh
 bash tools/apple/smoke-tvos.sh build/tvos/appletvsimulator-arm64/install/Spool.app
 ```
 
-The isolated simulator smoke exercises the actual native app and playback
-consumer, writing proof to `build/tvos/smoke/`. The multi-platform workflow
-builds both device and simulator on normal branches and PRs under the existing
-duplicate-build policy; manual dispatch can select `build_tvos`. Reusable
+The isolated simulator smoke checks the native app UI, video orientation and
+OSD rendering, AudioUnit playback-time advancement and exclusive-session
+behavior, plus a real Keychain roundtrip and sandbox file persistence. It writes
+`result.json` and `simulator.png` under `build/tvos/smoke/`. The multi-platform
+workflow builds both device and simulator on normal branches and PRs under the
+existing duplicate-build policy; manual dispatch can select `build_tvos`. Reusable
 release builds always include both. Dependency caches are exact-keyed to source
 pins, patches, build policy, SDK, architecture, and compiler/build-tool identity;
 PRs restore without publishing caches. Only `spool-tvos-device-arm64` is a public
