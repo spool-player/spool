@@ -1046,6 +1046,10 @@ FocusScope {
     PlayerOverlayChrome {
         id: chrome
         anchors.fill: parent
+        anchors.leftMargin: overlay.touchscreenControls ? overlay.SafeArea.margins.left : 0
+        anchors.rightMargin: overlay.touchscreenControls ? overlay.SafeArea.margins.right : 0
+        anchors.topMargin: overlay.touchscreenControls ? overlay.SafeArea.margins.top : 0
+        anchors.bottomMargin: overlay.touchscreenControls ? overlay.SafeArea.margins.bottom : 0
         overlay: parent
     }
 }

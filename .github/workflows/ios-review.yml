@@ -1,0 +1,48 @@
+name: iOS review build
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/ios]
+permissions:
+  contents: read
+jobs:
+  simulator:
+    if: github.ref == 'refs/heads/feature/ios'
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install native build tools
+        run: brew install cmake ninja meson pkg-config bash python
+      - name: Install pinned Qt host and iOS kits
+        shell: bash
+        run: |
+          python3 -m venv "$RUNNER_TEMP/aqt"
+          "$RUNNER_TEMP/aqt/bin/pip" install aqtinstall
+          qt_version="$(python3 -c 'import json; print(json.load(open("tools/manifests/toolchain.json"))["qt"]["version"])')"
+          "$RUNNER_TEMP/aqt/bin/aqt" install-qt mac desktop "$qt_version" clang_64 -O "$RUNNER_TEMP/Qt" -m qtshadertools qtwebsockets qtimageformats
+          "$RUNNER_TEMP/aqt/bin/aqt" install-qt mac ios "$qt_version" ios -O "$RUNNER_TEMP/Qt" -m qtshadertools qtwebsockets qtimageformats
+          echo "QT_HOST_PATH=$RUNNER_TEMP/Qt/$qt_version/macos" >> "$GITHUB_ENV"
+          echo "QT_TARGET_PREFIX=$RUNNER_TEMP/Qt/$qt_version/ios" >> "$GITHUB_ENV"
+      - name: Build native iOS simulator application
+        shell: bash
+        env:
+          APPLE_SDK: iphonesimulator
+          APPLE_ARCH: arm64
+          BUILD_JOBS: '4'
+        run: tools/build-ios.sh
+      - name: Smoke native startup on simulator
+        shell: bash
+        run: |
+          device="$(xcrun simctl list devices available --json | python3 -c 'import json,sys; print(next(d["udid"] for ds in json.load(sys.stdin)["devices"].values() for d in ds if d["name"].startswith("iPhone")))')"
+          xcrun simctl boot "$device"
+          xcrun simctl bootstatus "$device" -b
+          bundle="build/apple/iphonesimulator-arm64/app/Release-iphonesimulator/Spool.app"
+          xcrun simctl install "$device" "$bundle"
+          xcrun simctl launch --console "$device" com.sachk.spool --launch-test
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-review-simulator
+          path: build/apple/iphonesimulator-arm64/app/Release-iphonesimulator/Spool.app

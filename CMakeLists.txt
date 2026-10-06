@@ -13,11 +13,14 @@ if(WIN32)
 endif()
 
 set(SPOOL_WEBOS_DEFAULT OFF)
-if(CMAKE_CROSSCOMPILING AND NOT ANDROID)
+if(CMAKE_CROSSCOMPILING AND NOT ANDROID AND NOT IOS)
     set(SPOOL_WEBOS_DEFAULT ON)
 endif()
 option(SPOOL_WEBOS "Build the webOS Starfish/native-surface client" ${SPOOL_WEBOS_DEFAULT})
 option(TOUCHSCREEN "Enable mobile touchscreen interactions (runtime-disabled on TVs)" ${ANDROID})
+if(IOS)
+    set(TOUCHSCREEN ON)
+endif()
 option(SPOOL_DEV_BUILD "Favor faster local development builds over smallest release artifacts" OFF)
 option(SPOOL_DIAGNOSTICS "Build debug lifecycle/process/watchdog diagnostics" OFF)
 option(SPOOL_DIAGNOSTICS_STACKDUMP "Allow diagnostics to request gdb stack dumps" OFF)
@@ -361,7 +364,7 @@ qt_add_executable(spool
     src/app/GraphicsStartup.h
 )
 
-if(NOT ANDROID AND NOT SPOOL_WEBOS)
+if(NOT ANDROID AND NOT IOS AND NOT SPOOL_WEBOS)
     target_sources(spool PRIVATE
         src/automation/LocalCommandServer.cpp
         src/automation/LocalCommandServer.h
@@ -465,7 +468,7 @@ endif()
 # translation unit against the new base class while leaving the moc output
 # generated for the old one in place. That mismatch fails the build with
 # `use of undeclared identifier 'QQuickFramebufferObject'`.
-if(ANDROID OR SPOOL_WEBOS)
+if(ANDROID OR IOS OR SPOOL_WEBOS)
     set(SPOOL_MPV_ITEM_RHI_ENABLED 0)
 else()
     set(SPOOL_MPV_ITEM_RHI_ENABLED 1)
@@ -1274,7 +1277,7 @@ install(TARGETS spool
     RUNTIME DESTINATION bin
 )
 
-if(NOT ANDROID)
+if(NOT ANDROID AND NOT IOS)
     set(SPOOL_FONT_INSTALL_DIRECTORY "fonts")
     if(APPLE)
         set(SPOOL_FONT_INSTALL_DIRECTORY "Spool.app/Contents/fonts")
