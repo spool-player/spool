@@ -4,13 +4,18 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
+import plistlib
 import re
 import stat
+import shutil
+import struct
 import subprocess
 import sys
+import tempfile
+import zipfile
 from collections import defaultdict, deque
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Iterable
 
 
@@ -243,21 +248,192 @@ def expand_macho_name(name: str, owner: MachOInfo, executable_dir: Path) -> Path
     return Path(name).resolve()
 
 
+def tvos_macho_info(path: Path) -> MachOInfo | None:
+    """Read device load commands directly, including on Linux release runners."""
+    with path.open("rb") as source:
+        magic = source.read(4)
+        if magic not in (b"\xcf\xfa\xed\xfe", b"\xfe\xed\xfa\xcf", b"\xce\xfa\xed\xfe",
+                         b"\xfe\xed\xfa\xce", b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca",
+                         b"\xca\xfe\xba\xbf", b"\xbf\xba\xfe\xca"):
+            return None
+        if magic != b"\xcf\xfa\xed\xfe":
+            raise AuditError(f"tvOS binary must be thin little-endian ARM64 Mach-O: {path}")
+        header = source.read(28)
+        if len(header) != 28:
+            raise AuditError(f"truncated Mach-O header: {path}")
+        cpu, subtype, filetype, count, size, flags, reserved = struct.unpack("<7I", header)
+        if cpu != 0x0100000C or subtype & 0x00FFFFFF != 0:
+            raise AuditError(f"wrong tvOS Mach-O architecture (expected arm64): {path}")
+        if filetype not in (2, 6, 8):
+            raise AuditError(f"unsupported tvOS Mach-O file type: {path}")
+        if size > path.stat().st_size - 32 or count > size // 8:
+            raise AuditError(f"invalid Mach-O load command bounds: {path}")
+        commands = source.read(size)
+    dependencies: list[str] = []
+    rpaths: list[str] = []
+    install_name = None
+    platforms: list[int] = []
+    offset = 0
+    for _ in range(count):
+        if offset + 8 > len(commands):
+            raise AuditError(f"truncated Mach-O load command: {path}")
+        command, length = struct.unpack_from("<2I", commands, offset)
+        if length < 8 or length % 8 or offset + length > len(commands):
+            raise AuditError(f"invalid Mach-O load command size: {path}")
+        data = commands[offset:offset + length]
+        if command == 0x32:  # LC_BUILD_VERSION: tvOS device is 3, simulator is 8.
+            if length < 24:
+                raise AuditError(f"invalid LC_BUILD_VERSION: {path}")
+            platforms.append(struct.unpack_from("<I", data, 8)[0])
+        elif command in (0xC, 0xD, 0x18 | 0x80000000, 0x1F | 0x80000000, 0x20,
+                         0x23 | 0x80000000, 0x1C | 0x80000000):
+            minimum = 12 if command == 0x1C | 0x80000000 else 24
+            if length < minimum:
+                raise AuditError(f"invalid Mach-O path command: {path}")
+            start = struct.unpack_from("<I", data, 8)[0]
+            if not minimum <= start < length or b"\0" not in data[start:]:
+                raise AuditError(f"invalid Mach-O path string: {path}")
+            try:
+                value = data[start:].split(b"\0", 1)[0].decode("utf-8")
+            except UnicodeDecodeError as error:
+                raise AuditError(f"invalid Mach-O path encoding: {path}") from error
+            if command == 0x1C | 0x80000000:
+                rpaths.append(value)
+            elif command == 0xD:
+                install_name = value
+            else:
+                dependencies.append(value)
+        offset += length
+    if offset != size or platforms != [3]:
+        raise AuditError(f"Mach-O must declare exactly one device tvOS LC_BUILD_VERSION: {path}")
+    kind = {2: "executable", 6: "library", 8: "bundle"}[filetype]
+    return MachOInfo(path, frozenset({"arm64"}), kind, install_name, tuple(dependencies), tuple(rpaths))
+
+
+def audit_tvos_ipa(args: argparse.Namespace) -> int:
+    """Validate an unsigned/signable device IPA, not Apple signing or runtime."""
+    if not re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", args.version):
+        raise AuditError("tvOS package version must be MAJOR.MINOR.PATCH")
+    expected = f"Spool-{args.version}-tvOS-arm64.ipa"
+    if args.ipa.name != expected or args.ipa.is_symlink() or not args.ipa.is_file():
+        raise AuditError(f"expected regular tvOS device package named {expected}")
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        try:
+            with zipfile.ZipFile(args.ipa) as archive:
+                names: set[str] = set()
+                links: dict[str, str] = {}
+                kinds: dict[str, int] = {}
+                entries = archive.infolist()
+                if not entries:
+                    raise AuditError("empty tvOS IPA")
+                for entry in entries:
+                    name = entry.filename.rstrip("/")
+                    parts = PurePosixPath(name).parts
+                    mode = entry.external_attr >> 16
+                    if (not name or "\\" in name or "\0" in name or name.startswith("/")
+                            or any(part in ("", ".", "..") for part in name.split("/"))
+                            or parts[:2] not in (("Payload",), ("Payload", "Spool.app"))
+                            or (parts == ("Payload",) and not entry.is_dir())
+                            or (parts == ("Payload", "Spool.app") and not entry.is_dir())):
+                        raise AuditError(f"unsafe or unexpected IPA member: {entry.filename}")
+                    if "_CodeSignature" in parts or "embedded.mobileprovision" in parts:
+                        raise AuditError(f"public tvOS IPA must be unsigned/unprovisioned: {name}")
+                    if name in names:
+                        raise AuditError(f"duplicate IPA member: {name}")
+                    names.add(name)
+                    kind = stat.S_IFMT(mode)
+                    if kind not in (0, stat.S_IFREG, stat.S_IFDIR, stat.S_IFLNK):
+                        raise AuditError(f"unsupported IPA member type: {name}")
+                    if kind == stat.S_IFDIR and not entry.is_dir():
+                        raise AuditError(f"invalid IPA directory: {name}")
+                    kinds[name] = stat.S_IFDIR if entry.is_dir() else kind
+                    if kind == stat.S_IFLNK:
+                        if entry.is_dir() or entry.file_size > 4096:
+                            raise AuditError(f"invalid IPA symlink: {name}")
+                        try:
+                            link = archive.read(entry).decode("utf-8")
+                        except UnicodeDecodeError as error:
+                            raise AuditError(f"invalid IPA symlink encoding: {name}") from error
+                        if not link or link.startswith("/") or "\\" in link or "\0" in link:
+                            raise AuditError(f"unsafe IPA symlink: {name}")
+                        links[name] = link
+                # Validate every path before extraction; never write through a link.
+                for name in names:
+                    for ancestor in PurePosixPath(name).parents:
+                        if ancestor.as_posix() in kinds and kinds[ancestor.as_posix()] != stat.S_IFDIR:
+                            raise AuditError(f"non-directory IPA ancestor: {ancestor}")
+                for entry in entries:
+                    name = entry.filename.rstrip("/")
+                    if name in links:
+                        continue
+                    mode = entry.external_attr >> 16
+                    target = root / name
+                    if entry.is_dir():
+                        target.mkdir(parents=True, exist_ok=True)
+                    else:
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        with archive.open(entry) as source, target.open("xb") as destination:
+                            shutil.copyfileobj(source, destination)
+                        target.chmod(mode & 0o777 or 0o644)
+                for name, link in links.items():
+                    target = root / name
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.symlink_to(link)
+                app_root = root / "Payload/Spool.app"
+                for name in links:
+                    target = root / name
+                    resolved = target.resolve()
+                    if not resolved.is_relative_to(app_root) or not resolved.exists():
+                        raise AuditError(f"escaping or dangling IPA symlink: {name}")
+        except (OSError, ValueError, RuntimeError, zipfile.BadZipFile) as error:
+            if isinstance(error, AuditError):
+                raise
+            raise AuditError(f"invalid tvOS IPA: {error}") from error
+        app = root / "Payload/Spool.app"
+        try:
+            with (app / "Info.plist").open("rb") as source:
+                metadata = plistlib.load(source)
+        except (OSError, ValueError, plistlib.InvalidFileException) as error:
+            raise AuditError(f"missing or invalid tvOS Info.plist: {error}") from error
+        if not isinstance(metadata, dict):
+            raise AuditError("tvOS Info.plist must be a dictionary")
+        if metadata.get("CFBundleExecutable") != "Spool" or metadata.get("CFBundlePackageType") != "APPL":
+            raise AuditError("tvOS Info.plist must describe the Spool application executable")
+        if (metadata.get("CFBundleSupportedPlatforms") != ["AppleTVOS"]
+                or metadata.get("UIDeviceFamily") != [3]):
+            raise AuditError("tvOS Info.plist must target AppleTVOS device family 3")
+        if any(metadata.get(key) != args.version for key in ("CFBundleShortVersionString", "CFBundleVersion")):
+            raise AuditError(f"tvOS embedded bundle version must match {args.version}")
+        closure = argparse.Namespace(app=app, tvos=True, architecture=["arm64"], root_binary=[])
+        audit_macho(closure)
+        if args.extract:
+            args.extract.mkdir(parents=True, exist_ok=True)
+            if any(args.extract.iterdir()):
+                raise AuditError("IPA extraction destination must be empty")
+            shutil.copytree(root / "Payload", args.extract / "Payload", symlinks=True)
+    print(f"tvOS device IPA passed: {expected} (signing/provisioning and runtime not verified).")
+    return 0
+
+
 def audit_macho(args: argparse.Namespace) -> int:
     app = args.app.resolve()
-    executable = app / "Contents/MacOS/Spool"
+    tvos = getattr(args, "tvos", False)
+    executable = app / ("Spool" if tvos else "Contents/MacOS/Spool")
     if not executable.is_file():
         raise AuditError(f"main Mach-O executable is missing: {executable}")
     files: list[MachOInfo] = []
     for path in app.rglob("*"):
         if path.is_file() and not path.is_symlink():
-            info = macho_info(path, args.file_tool, args.lipo, args.otool)
+            info = tvos_macho_info(path) if tvos else macho_info(path, args.file_tool, args.lipo, args.otool)
             if info:
                 files.append(info)
     by_path = {info.path.resolve(): info for info in files}
     main = by_path.get(executable.resolve())
     if not main:
         raise AuditError(f"main executable is not Mach-O: {executable}")
+    if main.kind != "executable":
+        raise AuditError(f"main Mach-O is not an executable: {executable}")
     expected = frozenset(args.architecture) if args.architecture else main.architectures
     errors: list[str] = []
     executable_dir = executable.parent
@@ -266,7 +442,9 @@ def audit_macho(args: argparse.Namespace) -> int:
         for info in files
         if info.path.resolve() == executable.resolve()
         or info.kind == "executable"
-        or relative(info.path, app).startswith(("Contents/PlugIns/", "Contents/Resources/qml/"))
+        or relative(info.path, app).startswith(
+            ("PlugIns/", "qml/") if tvos else ("Contents/PlugIns/", "Contents/Resources/qml/")
+        )
     }
     for root in args.root_binary:
         path = (app / root).resolve()
@@ -350,6 +528,11 @@ def parser() -> argparse.ArgumentParser:
     macho_parser.add_argument("--lipo", default="lipo")
     macho_parser.add_argument("--otool", default="otool")
     macho_parser.set_defaults(handler=audit_macho)
+    tvos_parser = commands.add_parser("tvos-ipa", help="Audit an unsigned/signable device tvOS IPA")
+    tvos_parser.add_argument("ipa", type=Path)
+    tvos_parser.add_argument("--version", required=True)
+    tvos_parser.add_argument("--extract", type=Path, help="Extract validated Payload into an empty directory")
+    tvos_parser.set_defaults(handler=audit_tvos_ipa)
     return result
 
 
