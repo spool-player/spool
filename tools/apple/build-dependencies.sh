@@ -114,7 +114,7 @@ cmake -S "$SOURCE_ROOT/curl" -B "$BUILD_ROOT/curl" -GNinja "${cmake_cross[@]}" \
 cmake --build "$BUILD_ROOT/curl" --parallel "$JOBS"
 cmake --install "$BUILD_ROOT/curl"
 cmake -S "$SOURCE_ROOT/freetype" -B "$BUILD_ROOT/freetype" -GNinja "${cmake_cross[@]}" \
-  -DBUILD_SHARED_LIBS=OFF -DFT_DISABLE_BZIP2=ON -DFT_DISABLE_PNG=ON -DFT_DISABLE_HARFBUZZ=ON -DFT_DISABLE_BROTLI=ON
+  -DBUILD_SHARED_LIBS=OFF -DFT_DISABLE_ZLIB=ON -DFT_DISABLE_BZIP2=ON -DFT_DISABLE_PNG=ON -DFT_DISABLE_HARFBUZZ=ON -DFT_DISABLE_BROTLI=ON
 cmake --build "$BUILD_ROOT/freetype" --parallel "$JOBS"
 cmake --install "$BUILD_ROOT/freetype"
 meson_build() {
@@ -129,7 +129,13 @@ meson_build() {
   meson install -C "$build"
 }
 meson_build fribidi -Ddocs=false -Dbin=false -Dtests=false
-meson_build harfbuzz -Dtests=disabled -Dutilities=disabled -Ddocs=disabled -Dglib=disabled -Dgobject=disabled -Dcairo=disabled -Dicu=disabled -Dfreetype=enabled -Dcoretext=enabled
+meson_build harfbuzz -Dtests=disabled -Dutilities=disabled -Ddocs=disabled \
+  -Dglib=disabled -Dgobject=disabled -Dcairo=disabled -Dchafa=disabled \
+  -Dpng=disabled -Dzlib=disabled -Dicu=disabled -Dgraphite=disabled \
+  -Dgraphite2=disabled -Dfreetype=enabled -Dfontations=disabled \
+  -Dgdi=disabled -Ddirectwrite=disabled -Dcoretext=enabled \
+  -Dharfrust=disabled -Dkbts=disabled -Dwasm=disabled -Draster=disabled \
+  -Dvector=disabled -Dgpu=disabled -Dsubset=disabled
 meson_build libass -Dtest=disabled -Dcompare=disabled -Dprofile=disabled -Dfuzz=disabled -Dfontconfig=disabled -Dlibunibreak=disabled -Dasm=disabled
 meson_build libplacebo -Ddemos=false -Dtests=false -Dbench=false -Dfuzz=false -Dvulkan=disabled -Dvk-proc-addr=disabled -Dd3d11=disabled -Dshaderc=disabled -Dglslang=disabled -Dlcms=disabled -Ddovi=disabled -Dlibdovi=disabled -Dxxhash=disabled -Dopengl=enabled -Dgl-proc-addr=enabled
 ffmpeg_build="$BUILD_ROOT/ffmpeg"
