@@ -8,7 +8,7 @@ permissions:
 jobs:
   simulator:
     if: github.ref == 'refs/heads/feature/ios'
-    runs-on: macos-15
+    runs-on: macos-15-intel
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -30,7 +30,7 @@ jobs:
         shell: bash
         env:
           APPLE_SDK: iphonesimulator
-          APPLE_ARCH: arm64
+          APPLE_ARCH: x86_64
           BUILD_JOBS: '4'
         run: tools/build-ios.sh
       - name: Smoke native startup on simulator
@@ -39,10 +39,10 @@ jobs:
           device="$(xcrun simctl list devices available --json | python3 -c 'import json,sys; print(next(d["udid"] for ds in json.load(sys.stdin)["devices"].values() for d in ds if d["name"].startswith("iPhone")))')"
           xcrun simctl boot "$device"
           xcrun simctl bootstatus "$device" -b
-          bundle="build/apple/iphonesimulator-arm64/app/Release-iphonesimulator/Spool.app"
+          bundle="build/apple/iphonesimulator-x86_64/app/Release-iphonesimulator/Spool.app"
           xcrun simctl install "$device" "$bundle"
           xcrun simctl launch --console "$device" com.sachk.spool --launch-test
       - uses: actions/upload-artifact@v4
         with:
           name: ios-review-simulator
-          path: build/apple/iphonesimulator-arm64/app/Release-iphonesimulator/Spool.app
+          path: build/apple/iphonesimulator-x86_64/app/Release-iphonesimulator/Spool.app

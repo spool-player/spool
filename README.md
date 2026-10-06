@@ -468,7 +468,12 @@ or App Store-approved platform. Its native build requires macOS, Xcode and
 matching host/iOS Qt kits at the version in `tools/manifests/toolchain.json`.
 Set `QT_HOST_PATH` and `QT_TARGET_PREFIX`, then run `tools/build-ios.sh`.
 `APPLE_SDK=iphonesimulator` selects the simulator; the default is `iphoneos`.
-`APPLE_ARCH` selects `arm64` or simulator `x86_64`. The shared
+The device architecture defaults to `arm64`, the official Qt simulator kit to
+`x86_64`. Apple Silicon Macs require Rosetta for this simulator kit; the review
+workflow uses an Intel macOS runner. A custom source-built Qt kit can select
+`APPLE_ARCH=arm64` for the simulator. The deployment baseline is iOS 17,
+matching [Qt 6.11's supported configuration](https://doc.qt.io/qt-6.11/ios.html).
+The shared
 `tools/apple/build-dependencies.sh` verifies existing dependency pins and builds
 static FFmpeg, curl/OpenSSL, subtitle libraries, libplacebo, mpv and QCoro for
 the selected SDK. Qt and application code use OpenGL ES; no desktop AppKit,

@@ -6,7 +6,7 @@ source "$ROOT/tools/lib/manifest-sources.sh"
 APPLE_SYSTEM="${APPLE_SYSTEM:-iOS}"
 APPLE_SDK="${APPLE_SDK:-iphoneos}"
 APPLE_ARCH="${APPLE_ARCH:-arm64}"
-APPLE_DEPLOYMENT_TARGET="${APPLE_DEPLOYMENT_TARGET:-16.0}"
+APPLE_DEPLOYMENT_TARGET="${APPLE_DEPLOYMENT_TARGET:-17.0}"
 case "$APPLE_SYSTEM:$APPLE_SDK" in
   iOS:iphoneos) target_os=ios ;;
   iOS:iphonesimulator) target_os=ios; simulator=-simulator ;;

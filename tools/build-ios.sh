@@ -6,8 +6,12 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 : "${QT_HOST_PATH:?Set QT_HOST_PATH to the matching macOS Qt kit}"
 export APPLE_SYSTEM=iOS
 export APPLE_SDK="${APPLE_SDK:-iphoneos}"
-export APPLE_ARCH="${APPLE_ARCH:-arm64}"
-export APPLE_DEPLOYMENT_TARGET="${APPLE_DEPLOYMENT_TARGET:-16.0}"
+if [[ "$APPLE_SDK" == iphonesimulator ]]; then
+  export APPLE_ARCH="${APPLE_ARCH:-x86_64}"
+else
+  export APPLE_ARCH="${APPLE_ARCH:-arm64}"
+fi
+export APPLE_DEPLOYMENT_TARGET="${APPLE_DEPLOYMENT_TARGET:-17.0}"
 BASE="$ROOT/build/apple/$APPLE_SDK-$APPLE_ARCH"
 export APPLE_DEPS_PREFIX="${APPLE_DEPS_PREFIX:-$BASE/prefix}"
 if [[ "${BUILD_DEPENDENCIES:-1}" == 1 ]]; then "$ROOT/tools/apple/build-dependencies.sh"; fi
