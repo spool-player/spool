@@ -1,0 +1,29 @@
+--- a/src/network/kernel/qnetworkproxy_darwin.cpp
++++ b/src/network/kernel/qnetworkproxy_darwin.cpp
+@@ -53,7 +53,7 @@
+     if (host.isEmpty())
+         return true;
+ 
+-#ifndef Q_OS_IOS
++#ifndef QT_PLATFORM_UIKIT
+     // On iOS all those keys are not available, and worse so - entries
+     // for HTTPS are not in the dictionary, but instead in some nested dictionary
+     // with undocumented keys/object types.
+@@ -187,7 +187,7 @@
+     return escaped.toCFString();
+ }
+ 
+-#ifdef Q_OS_IOS
++#ifdef QT_PLATFORM_UIKIT
+ QList<QNetworkProxy> proxiesForQueryUrl(CFDictionaryRef dict, const QUrl &url)
+ {
+     Q_ASSERT(dict);
+@@ -301,7 +301,7 @@
+     }
+ 
+ 
+-#ifdef Q_OS_IOS
++#ifdef QT_PLATFORM_UIKIT
+     if (protocolSpecificProxy.type() != QNetworkProxy::DefaultProxy
+         && protocolSpecificProxy.type() != QNetworkProxy::DefaultProxy) {
+         // HTTP proxy is enabled (on iOS there is no separate HTTPS, though

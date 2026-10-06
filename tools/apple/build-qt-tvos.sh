@@ -38,7 +38,7 @@ mkdir -p "$source_root" "$build_root/empty-pkgconfig" "$prefix"
 # Qt retains a UIKit tvOS source port, but does not list tvOS as an officially
 # supported/tested platform. A successful source build is a prerequisite, not
 # evidence of device playback, accessibility, or App Store acceptance.
-for module in qtbase qtshadertools qtdeclarative qtsvg qtimageformats qtwebsockets qttools; do
+for module in qtbase qtshadertools qttasktree qtdeclarative qtsvg qtimageformats qtwebsockets qttools; do
   sha="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["qt"]["sources"][sys.argv[2]])' "$manifest" "$module")"
   archive="$ROOT/build/apple/downloads/$module-everywhere-src-$version.tar.xz"
   download_verified "$base_url/$module-everywhere-src-$version.tar.xz" "$sha" "$archive"
