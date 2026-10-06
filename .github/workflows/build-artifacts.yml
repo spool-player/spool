@@ -716,7 +716,7 @@ jobs:
           persist-credentials: false
           submodules: recursive
       - name: Install native source-build tools
-        run: brew install cmake ninja meson pkg-config bash python imagemagick
+        run: brew install cmake ninja meson pkg-config bash python imagemagick gpatch
       - name: Identify the exact Apple source toolchain
         id: apple-toolchain
         run: |

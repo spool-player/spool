@@ -532,7 +532,7 @@ Use a Mac with Xcode and the Apple TV SDK installed. Install the build tools and
 the matching macOS Qt host tools (the version comes only from the shared pin):
 
 ```sh
-brew install cmake ninja meson pkg-config bash python imagemagick
+brew install cmake ninja meson pkg-config bash python imagemagick gpatch
 QT_VERSION="$(python3 -c 'import json; print(json.load(open("tools/manifests/toolchain.json"))["qt"]["version"])')"
 python3 -m venv build/apple/aqt
 build/apple/aqt/bin/pip install aqtinstall
