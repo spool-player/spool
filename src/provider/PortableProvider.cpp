@@ -330,6 +330,41 @@ QCoro::Task<QVariantMap> PortableProvider::call(QString operation, QVariantMap a
     return m_registry->callSource(m_accountId, std::move(operation), std::move(arguments));
 }
 
+QCoro::Task<DownloadPlan> PortableProvider::negotiateDownload(DownloadRequest request, QString scope)
+{
+    QVariantMap args { { QStringLiteral("itemId"), request.itemId },
+        { QStringLiteral("mode"), request.transcode ? QStringLiteral("transcoded") : QStringLiteral("original") } };
+    if (request.maxBitrate > 0)
+        args.insert(QStringLiteral("maxBitrate"), request.maxBitrate);
+    if (request.maxHeight > 0)
+        args.insert(QStringLiteral("maxHeight"), request.maxHeight);
+    QVariantMap result = co_await m_registry->callSource(m_accountId, QStringLiteral("download"), args, scope);
+    if (result.contains(QStringLiteral("pick"))) {
+        const QVariantMap choice = co_await m_registry->pick(m_accountId, result.value(QStringLiteral("pick")).toMap());
+        if (choice.isEmpty())
+            throw std::runtime_error("download_cancelled");
+        args.insert(choice);
+        // A picker cannot replace the native-controlled item or quality request.
+        args.insert(QStringLiteral("itemId"), request.itemId);
+        args.insert(
+            QStringLiteral("mode"), request.transcode ? QStringLiteral("transcoded") : QStringLiteral("original"));
+        if (request.maxBitrate > 0)
+            args.insert(QStringLiteral("maxBitrate"), request.maxBitrate);
+        if (request.maxHeight > 0)
+            args.insert(QStringLiteral("maxHeight"), request.maxHeight);
+        result = co_await m_registry->callSource(m_accountId, QStringLiteral("download"), args, scope);
+    }
+    co_return DownloadPlan { QUrl(result.value(QStringLiteral("url")).toString()),
+        result.value(QStringLiteral("container")).toString().toLower(), result.value(QStringLiteral("headers")).toMap(),
+        result.value(QStringLiteral("size"), -1).toLongLong(), result.value(QStringLiteral("cleanup")).toMap() };
+}
+
+QCoro::Task<void> PortableProvider::releaseDownload(QVariantMap cleanup)
+{
+    if (!cleanup.isEmpty())
+        co_await call(QStringLiteral("downloadRelease"), { { QStringLiteral("cleanup"), cleanup } });
+}
+
 QCoro::Task<ProviderMediaPage> PortableProvider::listPage(
     QString operation, QVariantMap arguments, int limit, std::optional<QString> cursor, QString scope)
 {

@@ -207,6 +207,26 @@ export interface Resolved {
 /** Answer resolve with this to show the provider's `picker` screen first; Spool calls resolve again with what it completes with merged in. */
 export interface PickRequest { pick: Record<string, Value> }
 
+/** Finite complete media file, original or encoded by the provider's server.
+ * HLS/DASH manifests and live streams are not download endpoints.
+ * All URLs must be approved account origins. Headers belong only to this file.
+ */
+export interface DownloadPlan {
+    url: string;
+    container: string;
+    headers?: Record<string, string>;
+    size?: number;
+    /** Opaque server session cleanup; kept in memory, never persisted. */
+    cleanup?: Record<string, Value>;
+}
+export interface DownloadArgs {
+    itemId: string;
+    mode: 'original' | 'transcoded';
+    maxBitrate?: number;
+    maxHeight?: number;
+    variantId?: string;
+}
+
 export interface Segment { type: 'Intro' | 'Outro' | 'Recap' | 'Preview' | 'Commercial'; startTicks: number | string; endTicks: number | string }
 
 // Optional catalogue extensions, wire major 1.
@@ -339,6 +359,13 @@ export interface Source extends CatalogueExtensions, PreferenceExtensions, Appli
         { genres?: string[]; years?: number[]; officialRatings?: string[]; tags?: string[]; supported?: string[] }>;
 
     resolve?: Operation<PlaybackContext & { itemId: string; variantId?: string; positionTicks: string; forceTranscode: boolean }, Resolved | PickRequest>;
+    /** Capability downloads; downloadTranscode additionally allows mode=transcoded.
+     * Negotiate only; native code streams the finite file without buffering it.
+     * A PickRequest repeats this call with picker answers merged into the arguments.
+     */
+    download?: Operation<DownloadArgs, DownloadPlan | PickRequest>;
+    /** Called on completion, cancellation or failure when a plan supplied cleanup. */
+    downloadRelease?: Operation<{ cleanup: Record<string, Value> }, {}>;
     segments?: Operation<{ itemId: string }, { segments: Segment[] }>;
     /** New packages declare spool.speed-test v1; legacy speedTest capability remains supported. */
     speedTest?: Operation<{}, SpeedTestResult>;

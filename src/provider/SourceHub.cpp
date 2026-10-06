@@ -437,6 +437,59 @@ PlaybackSource *SourceHub::playback()
     return m_playback;
 }
 
+QVariantList SourceHub::downloadOptions(const QString& itemId) const
+{
+    const Provider *provider = owner(itemId);
+    if (!provider || !accountEnabled(provider->id()) || !provider->capabilities().testFlag(Downloads))
+        return {};
+    QVariantList options { QVariantMap { { QStringLiteral("label"), QStringLiteral("Original") },
+        { QStringLiteral("mode"), QStringLiteral("original") } } };
+    if (provider->capabilities().testFlag(DownloadTranscode)) {
+        const auto rungs = StreamQualityControl::defaultLadder(0);
+        for (size_t index = 0; index < rungs.size(); ++index) {
+            const auto& rung = rungs[index];
+            if (rung.height > 1080 || (index + 1 < rungs.size() && rungs[index + 1].height == rung.height))
+                continue;
+            options.push_back(QVariantMap { { QStringLiteral("label"), QStringLiteral("Converted · ") + rung.label },
+                { QStringLiteral("mode"), QStringLiteral("transcoded") },
+                { QStringLiteral("maxBitrate"), rung.bitrate }, { QStringLiteral("maxHeight"), rung.height } });
+        }
+    }
+    return options;
+}
+
+QCoro::Task<DownloadPlan> SourceHub::negotiateDownload(DownloadRequest request, QString scope)
+{
+    QPointer<Provider> provider = owner(request.itemId);
+    if (!provider || !accountEnabled(provider->id()) || !provider->downloads()
+        || (request.transcode && !provider->capabilities().testFlag(DownloadTranscode)))
+        throw std::runtime_error("download_unavailable");
+    const QString account = provider->id();
+    request.itemId = rawId(request.itemId);
+    DownloadPlan plan = co_await provider->downloads()->negotiateDownload(request, scope);
+    if (!plan.cleanup.isEmpty())
+        plan.cleanup = { { QStringLiteral("account"), account }, { QStringLiteral("payload"), plan.cleanup } };
+    co_return plan;
+}
+
+QCoro::Task<void> SourceHub::releaseDownload(QVariantMap cleanup)
+{
+    Provider *provider = source(cleanup.value(QStringLiteral("account")).toString());
+    if (provider && provider->downloads())
+        co_await provider->downloads()->releaseDownload(cleanup.value(QStringLiteral("payload")).toMap());
+}
+
+bool SourceHub::downloadOriginAllowed(const QString& itemId, const QUrl& url) const
+{
+    return source(accountOf(itemId)) && accountEnabled(accountOf(itemId))
+        && m_registry->accountOriginAllowed(accountOf(itemId), url);
+}
+
+void SourceHub::cancelDownloadNegotiation(const QString& itemId, const QString& scope)
+{
+    m_registry->cancelSourceScope(accountOf(itemId), scope);
+}
+
 bool SourceHub::ready() const
 {
     return m_registry->restored();

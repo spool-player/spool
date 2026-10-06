@@ -2,6 +2,7 @@
 
 #include "ArtworkSource.h"
 #include "Catalog.h"
+#include "DownloadSource.h"
 #include "PlaybackSource.h"
 #include "Provider.h"
 #include "SearchSource.h"
@@ -38,7 +39,8 @@ class SourceHub final : public Provider,
                         public SearchSource,
                         public UserItemStateSink,
                         public ArtworkSource,
-                        public StreamQualityControl {
+                        public StreamQualityControl,
+                        public DownloadSource {
     Q_OBJECT
     Q_PROPERTY(bool multipleSources READ multipleSources NOTIFY browseSourcesChanged)
 
@@ -76,6 +78,15 @@ public:
     {
         return this;
     }
+    DownloadSource *downloads() override
+    {
+        return this;
+    }
+    QCoro::Task<DownloadPlan> negotiateDownload(DownloadRequest request, QString scope) override;
+    QCoro::Task<void> releaseDownload(QVariantMap cleanup) override;
+    Q_INVOKABLE QVariantList downloadOptions(const QString& itemId) const;
+    bool downloadOriginAllowed(const QString& itemId, const QUrl& url) const;
+    void cancelDownloadNegotiation(const QString& itemId, const QString& scope);
     bool ready() const override;
 
     // Where a scoped item comes from, for telling libraries on different
