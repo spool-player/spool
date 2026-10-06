@@ -34,6 +34,10 @@ option(SPOOL_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer"
 # or bundled (no downloads). See docs/providers.md.
 set(SPOOL_PROVIDER_SOURCES "open" CACHE STRING "Provider sources: open, curated or bundled")
 set_property(CACHE SPOOL_PROVIDER_SOURCES PROPERTY STRINGS open curated bundled)
+option(SPOOL_APPLE_APP_STORE "Bundle only providers approved for Apple App Store builds" OFF)
+if(SPOOL_APPLE_APP_STORE)
+    set(SPOOL_PROVIDER_SOURCES "bundled" CACHE STRING "Provider sources: open, curated or bundled" FORCE)
+endif()
 if(NOT SPOOL_PROVIDER_SOURCES MATCHES "^(open|curated|bundled)$")
     message(FATAL_ERROR "SPOOL_PROVIDER_SOURCES must be open, curated or bundled, not '${SPOOL_PROVIDER_SOURCES}'")
 endif()
