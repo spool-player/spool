@@ -288,8 +288,9 @@ private:
     mpv_handle *takeIdleMpvHandle();
     bool configureAndInitializeMpv(mpv_handle *handle, bool needsVideoSurface, bool embeddedVideo);
     void observeMpvProperties(mpv_handle *handle);
+    void synchronizeWindowFullscreen(mpv_handle *handle);
     void scheduleMpvTeardown();
-    void handleMpvEvent(mpv_event *event, quint64 generation);
+    void handleMpvEvent(mpv_event *event, quint64 generation, mpv_handle *handle);
     template <typename Callback> void postMpvEvent(quint64 generation, Callback callback)
     {
         QMetaObject::invokeMethod(this, [this, generation, callback = std::move(callback)]() mutable {
@@ -407,6 +408,7 @@ private:
     QByteArray m_demuxerMaxBytes = QByteArrayLiteral("64M");
     QByteArray m_demuxerMaxBackBytes = QByteArrayLiteral("32M");
     MpvConfigPolicy m_mpvConfigPolicy;
+    quint64 m_fullscreenSyncSerial = 0;
     bool m_activeUserMpvConfig = false;
     TlsTrustController *m_tlsTrust = nullptr;
     const QByteArray m_subtitleFontsPath;

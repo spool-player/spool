@@ -55,6 +55,10 @@ namespace {
     }
 
     constexpr uint64_t kTimePosRefreshReply = 0x6a666e7074730001ULL;
+    constexpr uint64_t kFullscreenSetReply = 0x6673000000000000ULL;
+    constexpr uint64_t kFullscreenObservation = 0x666f000000000000ULL;
+    constexpr uint64_t kFullscreenReplyMask = 0xffff000000000000ULL;
+    constexpr uint64_t kFullscreenSerialMask = ~kFullscreenReplyMask;
     constexpr auto kNightModeFilter
         = "lavfi=[pan=stereo|FL<0.5*FL+1.0*FC+0.25*BL|FR<0.5*FR+1.0*FC+0.25*BR,"
           "dialoguenhance=original=0.25:enhance=2.0,"
@@ -175,10 +179,8 @@ PlayerController::PlayerController(NativeAppWindow *window, PlaybackSource *api,
                 releaseMpvKeys();
         });
         connect(m_window, &NativeAppWindow::fullScreenChanged, this, [this]() {
-            if (platformMpvOptionProfile() == MpvOptionProfile::Platform::Desktop) {
-                if (auto *handle = m_mpvLifecycle.handle())
-                    setMpvProperty(handle, "fullscreen", m_window->fullScreen() ? "yes" : "no");
-            }
+            if (auto *handle = m_mpvLifecycle.handle())
+                synchronizeWindowFullscreen(handle);
         });
     }
     if (m_api) {
@@ -593,6 +595,24 @@ void PlayerController::releaseMpvKeys()
     m_mpvKeys.clear();
 }
 
+void PlayerController::synchronizeWindowFullscreen(mpv_handle *handle)
+{
+    if (!m_window || platformMpvOptionProfile() != MpvOptionProfile::Platform::Desktop)
+        return;
+    // Qt's render thread needs GUI synchronization and mpv's queued update.
+    // A synchronous property write here can wait on that same render thread
+    // until the VO's timeout, even though the native fullscreen request is fast.
+    mpv_unobserve_property(handle, kFullscreenObservation | m_fullscreenSyncSerial);
+    m_fullscreenSyncSerial = (m_fullscreenSyncSerial + 1) & kFullscreenSerialMask;
+    int fullscreen = m_window->fullScreen();
+    const int error = mpv_set_property_async(
+        handle, kFullscreenSetReply | m_fullscreenSyncSerial, "fullscreen", MPV_FORMAT_FLAG, &fullscreen);
+    if (error < 0) {
+        qWarning() << "player: failed to queue fullscreen state" << mpv_error_string(error);
+        mpv_observe_property(handle, kFullscreenObservation | m_fullscreenSyncSerial, "fullscreen", MPV_FORMAT_FLAG);
+    }
+}
+
 void PlayerController::observeMpvProperties(mpv_handle *handle)
 {
     mpv_observe_property(handle, 0, "pause", MPV_FORMAT_FLAG);
@@ -611,9 +631,7 @@ void PlayerController::observeMpvProperties(mpv_handle *handle)
     if (platformMpvOptionProfile() == MpvOptionProfile::Platform::Desktop) {
         for (const char *name : { "current-vo", "current-gpu-context", "video-codec", "video-dec-params/pixelformat" })
             mpv_observe_property(handle, 0, name, MPV_FORMAT_STRING);
-        if (m_window)
-            setMpvProperty(handle, "fullscreen", m_window->fullScreen() ? "yes" : "no");
-        mpv_observe_property(handle, 0, "fullscreen", MPV_FORMAT_FLAG);
+        synchronizeWindowFullscreen(handle);
         mpv_observe_property(handle, 0, "speed", MPV_FORMAT_DOUBLE);
         mpv_observe_property(handle, 0, "mute", MPV_FORMAT_FLAG);
     }
@@ -1090,7 +1108,8 @@ bool PlayerController::ensureMpv(bool needsVideoSurface, bool embeddedVideo)
     m_embeddedVideoOutput = needsVideoSurface && embeddedVideo;
     m_activeUserMpvConfig = usesUserMpvConfig();
     const quint64 generation = ++m_mpvEventGeneration;
-    if (!m_mpvLifecycle.adopt(handle, [this, generation](mpv_event *event) { handleMpvEvent(event, generation); })) {
+    if (!m_mpvLifecycle.adopt(
+            handle, [this, generation, handle](mpv_event *event) { handleMpvEvent(event, generation, handle); })) {
         if (needsVideoSurface)
             releasePlatformMpvSurface(m_embeddedVideoOutput);
         m_embeddedVideoOutput = false;
@@ -2151,18 +2170,21 @@ void PlayerController::flushPendingSeek()
     notifyPlaybackStateChanged();
 }
 
-void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation)
+void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_handle *handle)
 {
     if (!event)
         return;
 
     switch (event->event_id) {
     case MPV_EVENT_FILE_LOADED:
+        // Runtime snapshots may wait for the VO. Query on this core's event
+        // thread, whose captured handle lives until the event loop is joined,
+        // so GUI synchronization remains available to the renderer.
+        logColorDiagnostics(handle);
         postMpvEvent(generation, [this]() {
             m_mpvLifecycle.completeFileLoad();
             qInfo() << "player: file loaded";
             m_fileLoaded = true;
-            logColorDiagnostics(m_mpvLifecycle.handle());
             // Only video can strain the renderer, and only once per playback:
             // a step down rebuilds the core, which lands back here.
             if (!m_renderStrainReported && m_mediaKind == QStringLiteral("video"))
@@ -2184,9 +2206,9 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation)
         });
         break;
     case MPV_EVENT_PLAYBACK_RESTART:
+        logColorDiagnostics(handle);
         postMpvEvent(generation, [this]() {
             qInfo() << "player: playback restart";
-            logColorDiagnostics(m_mpvLifecycle.handle());
             const bool hadPendingSeek = m_pendingSeek;
             m_seekDispatchReady = true;
             if (hadPendingSeek) {
@@ -2209,8 +2231,28 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation)
             notifyPlaybackStateChanged();
         });
         break;
+    case MPV_EVENT_SET_PROPERTY_REPLY: {
+        if ((event->reply_userdata & kFullscreenReplyMask) != kFullscreenSetReply)
+            break;
+        const uint64_t serial = event->reply_userdata & kFullscreenSerialMask;
+        const int error = event->error;
+        postMpvEvent(generation, [this, serial, error] {
+            if (serial != m_fullscreenSyncSerial)
+                return;
+            if (error < 0)
+                qWarning() << "player: failed to synchronize fullscreen state" << mpv_error_string(error);
+            // Renew the observation after the latest write. Its initial value
+            // retains custom mpv bindings; the serial rejects older GUI echoes.
+            if (auto *handle = m_mpvLifecycle.handle()) {
+                const int observeError
+                    = mpv_observe_property(handle, kFullscreenObservation | serial, "fullscreen", MPV_FORMAT_FLAG);
+                if (observeError < 0)
+                    qWarning() << "player: failed to observe fullscreen state" << mpv_error_string(observeError);
+            }
+        });
+        break;
+    }
     case MPV_EVENT_GET_PROPERTY_REPLY: {
-
         if (event->reply_userdata != kTimePosRefreshReply)
             break;
 
@@ -2316,8 +2358,9 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation)
             });
         } else if (strcmp(property->name, "fullscreen") == 0 && property->format == MPV_FORMAT_FLAG) {
             const bool fullscreen = *static_cast<int *>(property->data);
-            postMpvEvent(generation, [this, fullscreen]() {
-                if (m_window && m_window->fullScreen() != fullscreen)
+            const uint64_t serial = event->reply_userdata & kFullscreenSerialMask;
+            postMpvEvent(generation, [this, fullscreen, serial]() {
+                if (serial == m_fullscreenSyncSerial && m_window && m_window->fullScreen() != fullscreen)
                     m_window->toggleFullScreen();
             });
         } else if (strcmp(property->name, "speed") == 0 && property->format == MPV_FORMAT_DOUBLE) {
