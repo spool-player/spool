@@ -105,7 +105,9 @@ Filters are checked for every call, so no per-provider cached enablement flags.
 Spool adds the trusted provider ID and a short opaque account fingerprint, not
 account labels, usernames, server addresses or configuration. URLs, recognizable
 credentials and personal fields are always redacted, even with
-`--unredacted-urls`. Known credentials in source configuration are also removed
+`--unredacted-urls`. Textual Cookie, Set-Cookie and Authorization values are
+redacted in both header lines and quoted JSON, including credentials acquired
+after source creation. Known credentials in source configuration are also removed
 when present as bare message/field text. This is defense in depth, not permission
 to log secrets: never log credentials, cookies, authentication/request/response
 bodies, signed stream URLs, titles or torrent hashes. Use stable event descriptions,

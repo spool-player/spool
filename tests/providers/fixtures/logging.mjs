@@ -24,6 +24,23 @@ export function createSource(config, sourceHost) {
             host.log('unknown', function() { throw new Error('invalid-level'); });
             return {enabled: enabled, lazy: lazy, reads: reads, invalid: host.isLogEnabled('unknown')};
         },
+        lateCredentials: function(args, host) {
+            // These credentials are acquired after source creation, so none
+            // can be redacted through the source configuration secret list.
+            const samples = [
+                'Cookie: session=late-cookie-value; renewal=late-renewal-value\nstatus=200',
+                'Set-Cookie: session=late-setcookie-value; Expires=Wed, 09 Jun 2027 10:18:14 GMT; HttpOnly\nstatus=201',
+                '{"Authorization":"Bearer late-auth-value","count":7}',
+                "{'Authorization':'Basic late-basic-value','count':8}",
+                '{"Cookie":"session=late-jsoncookie-value; renewal=late-jsonrenewal-value","count":9}',
+                '{"Set-Cookie":"session=late-jsonsetcookie-value; HttpOnly","count":10}',
+                '{"Proxy-Authorization":"Bearer late-proxy-value","count":11}'
+            ];
+            samples.forEach(function(sample) {
+                host.log('info', sample, {status: 200, note: sample});
+            });
+            return {count: samples.length};
+        },
         safety: function(args, host) {
             host.log('info', 'credentials ' + config.token + ' ' + config.refreshToken +
                 ' password="two word password" URL=https://private.example/stream?token=url-secret\n' +
