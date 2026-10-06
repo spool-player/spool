@@ -516,6 +516,88 @@ occur on decoded-output replacement, not on same-sheet crop movement.
 
 
 
+## Apple TV
+
+Releases include `Spool-<VERSION>-tvOS-arm64.ipa`, an **unsigned** device build
+for Apple TV running tvOS 16 or later. It contains the real `Payload/Spool.app`,
+but no Apple signing identity or provisioning profile. **tvOS will not install
+it as downloaded.** Spool is not distributed through the App Store or TestFlight
+and has not been reviewed by Apple. If you already have a tvOS re-signing setup,
+use your own certificate, matching entitlements, and provisioning profile; Spool
+does not supply a re-signing command or signing credentials.
+
+### Build the device package
+
+Use a Mac with Xcode and the Apple TV SDK installed. Install the build tools and
+the matching macOS Qt host tools (the version comes only from the shared pin):
+
+```sh
+brew install cmake ninja meson pkg-config bash python imagemagick
+QT_VERSION="$(python3 -c 'import json; print(json.load(open("tools/manifests/toolchain.json"))["qt"]["version"])')"
+python3 -m venv build/apple/aqt
+build/apple/aqt/bin/pip install aqtinstall
+build/apple/aqt/bin/aqt install-qt mac desktop "$QT_VERSION" clang_64 \
+  -O "$PWD/build/apple/host-qt" \
+  -m qtshadertools qtwebsockets qtimageformats
+export QT_HOST_PATH="$PWD/build/apple/host-qt/$QT_VERSION/macos"
+APPLE_SDK=appletvos APPLE_ARCH=arm64 bash tools/build-tvos.sh
+bash tools/package-tvos.sh build/tvos/appletvos-arm64/install/Spool.app dist/tvos
+```
+
+The build compiles the pinned source Qt tvOS port and static media dependencies;
+a desktop Qt kit is only used for matching host generators, never as a target
+SDK. Qt does not list tvOS as an officially supported platform. Target Qt and
+media prefixes live under `build/apple/appletvos-arm64/`; the app lives under
+`build/tvos/appletvos-arm64/install/`. Apple builds enforce bundled-only loading
+and explicit `appleAppStore: true` provider approval; local provider checkout
+overrides are not accepted.
+
+The packager performs no signing. It rejects simulator/wrong-architecture
+binaries, mismatched bundle versions, signed/provisioned bundles, and unsafe
+archive paths before publishing the IPA. Its optional third argument must match
+`VERSION`; the embedded bundle versions must match it too.
+
+### Sign and run from source
+
+1. Add your Apple Account in Xcode's account settings, and pair your Apple TV
+   with the Mac on the same network. On the TV, open **Settings → Remotes and
+   Devices → Remote App and Devices**; use Xcode's **Manage Devices** (or
+   **Window → Devices and Simulators** on older Xcode) to pair it.
+2. After the device build above, open
+   `build/tvos/appletvos-arm64/app/SpoolWebOS.xcodeproj` in Xcode and select the
+   `spool` application target, not the playback-smoke target.
+3. In the application target's **Build Settings**, set **Code Signing Allowed**
+   to **Yes**. Under **Signing & Capabilities**, enable **Automatically manage
+   signing** and choose your team. Use a unique bundle identifier you control;
+   ensure the generated app's `CFBundleIdentifier` agrees with the signing
+   identifier (the **Info.plist File** build setting identifies that file).
+4. Select your paired Apple TV and the `spool` scheme, then **Product → Run**.
+   Xcode creates the development provisioning profile and signs the app using
+   your account. These generated-project changes are local; regenerating the
+   project with the unsigned build command resets its build settings.
+
+Follow Apple's current [device signing and run directions](https://developer.apple.com/documentation/xcode/running-your-app-on-simulated-or-physical-devices)
+and [device pairing directions](https://developer.apple.com/documentation/xcode/managing-your-simulated-and-physical-devices-in-device-hub).
+Account eligibility, provisioning, and signature expiry are Apple's policies.
+Simulator success is not a claim of physical-device playback or App Store approval.
+
+### Simulator proof and CI artifacts
+
+```sh
+APPLE_SDK=appletvsimulator APPLE_ARCH=arm64 bash tools/build-tvos.sh
+bash tools/apple/smoke-tvos.sh build/tvos/appletvsimulator-arm64/install/Spool.app
+```
+
+The isolated simulator smoke exercises the actual native app and playback
+consumer, writing proof to `build/tvos/smoke/`. The multi-platform workflow
+builds both device and simulator on normal branches and PRs under the existing
+duplicate-build policy; manual dispatch can select `build_tvos`. Reusable
+release builds always include both. Dependency caches are exact-keyed to source
+pins, patches, build policy, SDK, architecture, and compiler/build-tool identity;
+PRs restore without publishing caches. Only `spool-tvos-device-arm64` is a public
+release artifact. Simulator apps and smoke results use
+`internal-tvos-simulator-arm64` and are never offered as installable downloads.
+
 ## Android development
 
 The Android toolchain is pinned to SDK 36, Build Tools 36.0.0 and NDK
