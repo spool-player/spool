@@ -22,8 +22,8 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/aqt"
           "$RUNNER_TEMP/aqt/bin/pip" install aqtinstall
           qt_version="$(python3 -c 'import json; print(json.load(open("tools/manifests/toolchain.json"))["qt"]["version"])')"
-          "$RUNNER_TEMP/aqt/bin/aqt" install-qt mac desktop "$qt_version" clang_64 -O "$RUNNER_TEMP/Qt" -m qtshadertools qtwebsockets qtimageformats
-          "$RUNNER_TEMP/aqt/bin/aqt" install-qt mac ios "$qt_version" ios -O "$RUNNER_TEMP/Qt" -m qtshadertools qtwebsockets qtimageformats
+          "$RUNNER_TEMP/aqt/bin/aqt" install-qt mac desktop "$qt_version" clang_64 -O "$RUNNER_TEMP/Qt" -m qtshadertools qtwebsockets qtimageformats qttasktree
+          "$RUNNER_TEMP/aqt/bin/aqt" install-qt mac ios "$qt_version" ios -O "$RUNNER_TEMP/Qt" -m qtshadertools qtwebsockets qtimageformats qttasktree
           echo "QT_HOST_PATH=$RUNNER_TEMP/Qt/$qt_version/macos" >> "$GITHUB_ENV"
           echo "QT_TARGET_PREFIX=$RUNNER_TEMP/Qt/$qt_version/ios" >> "$GITHUB_ENV"
       - name: Build native iOS simulator application
