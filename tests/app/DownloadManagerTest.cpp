@@ -3,6 +3,7 @@
 #include "TestMain.h"
 #include "cache/DatabaseManager.h"
 #include "provider/ProviderRegistry.h"
+#include "provider/ProviderUiContext.h"
 #include "provider/SourceHub.h"
 #include "providers/local/LocalProvider.h"
 #include <QCoreApplication>
@@ -105,6 +106,7 @@ SPOOL_TEST_MAIN("download-manager")
     });
     int authenticated = 0;
     bool transcodeRequested = false;
+    int createdSessions = 0;
     QObject::connect(&server, &QTcpServer::newConnection, &app, [&] {
         while (auto *socket = server.nextPendingConnection()) {
             QObject::connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
@@ -121,6 +123,12 @@ SPOOL_TEST_MAIN("download-manager")
                     "download uses this plan's account headers");
                 require(!request.toLower().contains("cookie:"), "download has no implicit cookies");
                 ++authenticated;
+                if (request.startsWith("GET /create-download-session")) {
+                    ++createdSessions;
+                    socket->write("HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                    socket->disconnectFromHost();
+                    return;
+                }
                 if (request.startsWith("GET /playlist")) {
                     const QByteArray body("#EXTM3U\n#EXT-X-ENDLIST\n");
                     socket->write("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: "
@@ -181,7 +189,14 @@ export function createSource(config, sourceHost) {
     return {
         describe: function() { return {}; },
         details: function(args) { return {item:{id:args.itemId,title:'Offline ' + args.itemId,type:'Movie',runtimeTicks:'10000000'}}; },
-        download: function(args) {
+        download: function(args, host) {
+            if (args.itemId.indexOf('picker-') === 0) {
+                if (!args.variantId)
+                    return {pick:{kind:'download',variants:[{id:'edition',label:'Edition'}]}};
+                return host.http(config.origin + '/create-download-session', {headers:{Authorization:'Download account-secret'}}).then(function() {
+                    return {url:config.origin + '/original.mp4',container:'mp4',headers:{Authorization:'Download account-secret'},cleanup:{id:args.itemId}};
+                });
+            }
             const path = args.itemId === 'movie' ? (args.mode === 'transcoded' ? 'converted.mp4' : 'original.mp4') : args.itemId + '.mp4';
             return {url:config.origin + '/' + path,container:'mp4',headers:{Authorization:'Download account-secret'},cleanup:{id:args.itemId}};
         },
@@ -205,12 +220,48 @@ export function createSource(config, sourceHost) {
             if (type == "released")
                 ++releases;
         });
+    QList<QPointer<ProviderUiContext>> pickers;
+    QObject::connect(&registry, &ProviderRegistry::componentRequested, &app,
+        [&](QObject *context) { pickers.push_back(qobject_cast<ProviderUiContext *>(context)); });
     const QString movie = hub.scoped(account, "movie");
     QString completedId;
     QString completedPath;
     {
         DownloadManager downloads(&hub, root.filePath("ledger"));
         downloads.setDestination(QUrl::fromLocalFile(root.filePath("media")));
+        const QString pickerCancelledItem = hub.scoped(account, "picker-cancelled");
+        const QString pickerOtherItem = hub.scoped(account, "picker-other");
+        downloads.start(pickerCancelledItem, hub.downloadOptions(pickerCancelledItem).front().toMap());
+        waitUntil([&] { return pickers.size() == 1; }, "download opens its provider picker");
+        const QPointer<ProviderUiContext> cancelledPicker = pickers.front();
+        downloads.start(pickerOtherItem, hub.downloadOptions(pickerOtherItem).front().toMap());
+        waitUntil([&] { return pickers.size() == 2; }, "another scoped download opens independently");
+        const QPointer<ProviderUiContext> otherPicker = pickers.back();
+        bool ordinarySubmitted = false;
+        registry.pick(account, { { "kind", "ordinary-playback" } }).then([&](QVariantMap result) {
+            ordinarySubmitted = result.value("variantId").toString() == "edition";
+        });
+        waitUntil([&] { return pickers.size() == 3; }, "ordinary playback picker opens without download scope");
+        const QPointer<ProviderUiContext> ordinaryPicker = pickers.back();
+        downloads.cancel(downloads.statusFor(pickerCancelledItem).value("id").toString());
+        if (cancelledPicker)
+            cancelledPicker->complete({ { "variantId", "edition" } });
+        // Drain the real worker/network result of a stale picker submission.
+        QEventLoop staleSubmission;
+        QTimer::singleShot(500, &staleSubmission, &QEventLoop::quit);
+        staleSubmission.exec();
+        require(createdSessions == 0, "a cancelled picker cannot create a server download session");
+        require(!cancelledPicker || cancelledPicker->closed(), "cancel retires its pending picker");
+        require(otherPicker && !otherPicker->closed(), "cancelling one download preserves another picker");
+        require(
+            ordinaryPicker && !ordinaryPicker->closed(), "download cancellation leaves ordinary playback picker open");
+        ordinaryPicker->complete({ { "variantId", "edition" } });
+        waitUntil([&] { return ordinarySubmitted; }, "ordinary playback submission still completes");
+        otherPicker->complete({ { "variantId", "edition" } });
+        waitUntil([&] { return downloads.statusFor(pickerOtherItem).value("state").toString() == "complete"; },
+            "independent picker still starts and completes its transfer");
+        require(createdSessions == 1, "only the submitted live download creates a server session");
+        downloads.remove(downloads.statusFor(pickerOtherItem).value("id").toString());
         const auto options = hub.downloadOptions(movie);
         require(options.size() > 1, "server quality offered for this account");
         const auto quality = options[1].toMap();
@@ -250,11 +301,26 @@ export function createSource(config, sourceHost) {
         }
         require(foreignRequests == 0, "redirect never leaks download authentication to a foreign origin");
         waitUntil(
-            [&] { return releases >= 5; }, "every negotiated session releases after success cancellation and failure");
+            [&] { return releases >= 6; }, "every negotiated session releases after success cancellation and failure");
+        const QString removedItem = hub.scoped(account, "picker-account-removed");
+        downloads.start(removedItem, hub.downloadOptions(removedItem).front().toMap());
+        waitUntil([&] { return pickers.size() == 4; }, "download picker waits when account is removed");
+        const QPointer<ProviderUiContext> removedPicker = pickers.back();
+        registry.removeAccount(account);
+        // Account removal first awaits best-effort server sign-out.
+        waitUntil([&] { return !registry.sourceRunning(account) && (!removedPicker || removedPicker->closed()); },
+            "completed account removal retires pending download picker");
+        if (removedPicker)
+            removedPicker->complete({ { "variantId", "edition" } });
+        QEventLoop removedSubmission;
+        QTimer::singleShot(500, &removedSubmission, &QEventLoop::quit);
+        removedSubmission.exec();
+        require(createdSessions == 1, "removed account cannot create a download session from a stale picker");
+        require(downloads.statusFor(removedItem).value("state").toString() == "failed",
+            "account removal exposes download failure rather than retaining preparation");
     }
     require(authenticated >= 5, "actual authenticated streaming requests exercised");
     server.close();
-    registry.removeAccount(account);
     {
         DownloadManager restarted(&hub, root.filePath("ledger"));
         require(restarted.statusFor(movie).value("state").toString() == "complete",

@@ -50,6 +50,9 @@ incomplete files/documents, cancels requests, applies account origin/TLS policy,
 rejects redirects/playlists, and commits a complete offline inventory only at EOF.
 Server session cleanup is memory-only and calls `downloadRelease` after terminal
 transfers. See `sdk/README.md` for the exact operation and picker contract.
+Download negotiation scopes also own pending provider pickers. Cancelling a
+download closes only its picker and rejects stale answers before any second
+server operation; ordinary playback and concurrent download pickers are unchanged.
 
 Library grids request rendered artwork only for tiles intersecting the viewport.
 Buffered and pooled delegates do not occupy the render queue; scrolling cancels

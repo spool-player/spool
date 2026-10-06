@@ -472,9 +472,9 @@ void DownloadManager::cancel(const QString& id)
     const auto job = m_jobs.value(id);
     if (!job || job->stopped)
         return;
-    m_sources->cancelDownloadNegotiation(job->itemId, job->id);
     finish(job, tr("Cancelled"));
     job->state = QStringLiteral("cancelled");
+    m_sources->cancelDownloadNegotiation(job->itemId, job->id);
     persist();
     emit changed();
 }

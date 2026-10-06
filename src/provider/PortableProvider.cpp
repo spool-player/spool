@@ -352,6 +352,13 @@ QCoro::Task<DownloadPlan> PortableProvider::negotiateDownload(DownloadRequest re
     QPointer<PortableProvider> guard(this);
     QPointer<ProviderRegistry> registry(m_registry);
     const QString accountId = m_accountId;
+    bool cancelled = false;
+    const auto cancellation = connect(registry, &ProviderRegistry::sourceScopeCancelled, registry,
+        [&cancelled, accountId, scope](const QString& sourceId, const QString& cancelledScope) {
+            if (sourceId == accountId && (cancelledScope.isEmpty() || cancelledScope == scope))
+                cancelled = true;
+        });
+    const auto disconnectCancellation = qScopeGuard([cancellation] { QObject::disconnect(cancellation); });
     QVariantMap args { { QStringLiteral("itemId"), request.itemId },
         { QStringLiteral("mode"), request.transcode ? QStringLiteral("transcoded") : QStringLiteral("original") } };
     if (!request.variantId.isEmpty())
@@ -364,10 +371,13 @@ QCoro::Task<DownloadPlan> PortableProvider::negotiateDownload(DownloadRequest re
     if (!guard || !registry)
         throw std::runtime_error("source_unavailable");
     if (result.contains(QStringLiteral("pick"))) {
-        const QVariantMap choice = co_await registry->pick(accountId, result.value(QStringLiteral("pick")).toMap());
+        if (cancelled)
+            throw std::runtime_error("download_cancelled");
+        const QVariantMap choice
+            = co_await registry->pick(accountId, result.value(QStringLiteral("pick")).toMap(), scope);
         if (!guard || !registry)
             throw std::runtime_error("source_unavailable");
-        if (choice.isEmpty())
+        if (cancelled || choice.isEmpty())
             throw std::runtime_error("download_cancelled");
         args.insert(choice);
         // A picker cannot replace the native-controlled item or quality request.
