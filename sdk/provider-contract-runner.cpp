@@ -5,6 +5,10 @@
 #include <QTimer>
 #include <cstdio>
 
+#ifdef SPOOL_TEST_RUNNER
+#include "TestMain.h"
+#endif
+
 class ContractResult final : public QObject {
     Q_OBJECT
 public:
@@ -23,7 +27,11 @@ private:
     bool settled = false;
 };
 
+#ifdef SPOOL_TEST_RUNNER
+SPOOL_TEST_MAIN("bundled-jellyfin")
+#else
 int main(int argc, char **argv)
+#endif
 {
     QCoreApplication app(argc, argv);
     if (app.arguments().size() != 2) {
