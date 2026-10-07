@@ -34,15 +34,26 @@ int main(int argc, char **argv)
 #endif
 {
     QCoreApplication app(argc, argv);
+#ifdef SPOOL_TEST_RUNNER
+    if (app.arguments().size() != 1 && app.arguments().size() != 2) {
+#else
     if (app.arguments().size() != 2) {
+#endif
         std::fprintf(stderr, "usage: provider-contract-runner tests.mjs\n");
         return 2;
     }
+#ifdef SPOOL_TEST_RUNNER
+    const QString fixture = app.arguments().size() == 1
+        ? QStringLiteral(TEST_SOURCE_DIR "/tests/providers/fixtures/bundled-jellyfin.mjs")
+        : app.arguments()[1];
+#else
+    const QString fixture = app.arguments()[1];
+#endif
     QJSEngine engine;
     ContractResult result;
     QJSEngine::setObjectOwnership(&result, QJSEngine::CppOwnership);
     QTimer::singleShot(0, &app, [&] {
-        const QJSValue module = engine.importModule(QFileInfo(app.arguments()[1]).absoluteFilePath());
+        const QJSValue module = engine.importModule(QFileInfo(fixture).absoluteFilePath());
         if (module.isError() || !module.property(QStringLiteral("run")).isCallable()) {
             std::fprintf(stderr, "Contract module did not load or export run(): %s\n",
                 qPrintable(module.isError() ? module.toString() : QStringLiteral("missing run")));
