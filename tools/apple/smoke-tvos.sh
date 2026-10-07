@@ -49,12 +49,16 @@ checks = [
 ]
 results = {}
 for bundle, arguments, expected in checks:
-    process = subprocess.run(["xcrun", "simctl", "launch", "--console", device, bundle, *arguments],
+    # Selectors are separate native executions, not arguments to a process
+    # UIKit may still be retiring after the previous consumer returned.
+    process = subprocess.run(["xcrun", "simctl", "launch", "--console", "--terminate-running-process",
+                              device, bundle, *arguments],
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=90)
     passed = process.returncode == 0 and expected in process.stdout
     results[arguments[0]] = passed
     print(f"{arguments[0]}: {'passed' if passed else 'FAILED'}")
     if not passed:
+        print(f"native consumer exit: {process.returncode}")
         # Report only controlled native smoke diagnostics; URLs/auth are absent
         # from these test result lines and provider logs are deliberately omitted.
         lines = process.stdout.splitlines()
