@@ -386,6 +386,14 @@ SPOOL_TEST_MAIN("mpv-video-item")
                 static_cast<long long>(decodedWidth), widthStatus, static_cast<long long>(decodedHeight), heightStatus,
                 position, positionStatus, eof, eofStatus);
             captureItem().save(QDir::tempPath() + QStringLiteral("/mpv-video-item-failure.png"));
+#ifdef Q_OS_TVOS
+            if (verbose) {
+                std::fprintf(stderr, "native presentation diagnostic: holding failed live viewport\n");
+                QEventLoop hold;
+                QTimer::singleShot(15000, &hold, &QEventLoop::quit);
+                hold.exec();
+            }
+#endif
         }
 
         // Diagnostic, not an assertion: what the swapchain can present depends on

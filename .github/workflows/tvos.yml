@@ -82,7 +82,36 @@ jobs:
         env:
           SIMCTL_CHILD_SPOOL_TEST_MPV_LOG: '1'
           SIMCTL_CHILD_QT_MESSAGE_PATTERN: '%{time process} %{message}'
-        run: bash tools/apple/smoke-tvos.sh build/tvos/appletvsimulator-arm64/install/Spool.app
+        run: |
+          python3 -c 'from pathlib import Path; Path("build/tvos/smoke/result.json").unlink(missing_ok=True)'
+          bash tools/apple/smoke-tvos.sh build/tvos/appletvsimulator-arm64/install/Spool.app &
+          supervisor=$!
+          python3 - <<'PY'
+          import json, subprocess, time
+          from pathlib import Path
+          deadline = time.monotonic() + 160
+          while time.monotonic() < deadline:
+              if Path("build/tvos/smoke/result.json").exists():
+                  break
+              devices = json.loads(subprocess.check_output(
+                  ["xcrun", "simctl", "list", "devices", "--json"], text=True))["devices"]
+              candidates = [item for group in devices.values() for item in group
+                            if item["name"] == "Spool-tvOS-smoke" and item["state"] == "Booted"]
+              if candidates:
+                  device = candidates[0]["udid"]
+                  container = subprocess.run(
+                      ["xcrun", "simctl", "get_app_container", device, "com.sachk.spool.playback-smoke", "data"],
+                      stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+                  if container.returncode == 0:
+                      failed = Path(container.stdout.strip()) / "tmp/mpv-video-item-failure.png"
+                      if failed.exists():
+                          subprocess.run(["xcrun", "simctl", "io", device, "screenshot",
+                                          "build/tvos/smoke/native-presentation.png"], check=True)
+                          print("Captured native presentation while failed viewport remains live")
+                          break
+              time.sleep(0.2)
+          PY
+          wait "$supervisor"
       - name: Repeat actual native renderer lifecycle
         run: |
           python3 - <<'PY'
