@@ -12,26 +12,46 @@ cleanup() { xcrun simctl shutdown "$device" >/dev/null 2>&1 || true; xcrun simct
 trap cleanup EXIT
 xcrun simctl boot "$device"
 xcrun simctl bootstatus "$device" -b
-xcrun simctl install "$device" "$app"
 # simctl's console mode returns after process exit. Parse only the exact
 # credential-free consumer-test result, never dump full app/provider logs.
 python3 - "$device" "$app" "$result" <<'PY'
-import json, os, re, subprocess, sys
+import json, os, plistlib, re, subprocess, sys, tempfile
 from pathlib import Path
 
 device, app, output = sys.argv[1:]
 output = Path(output)
+app = Path(app)
+smoke = app.parent / "smoke" / "spool-tvos-playback-smoke.app"
+bundle_ids = []
+with tempfile.TemporaryDirectory(prefix="spool-tvos-sign-") as signing:
+    for bundle in (app, smoke):
+        with (bundle / "Info.plist").open("rb") as metadata:
+            identifier = plistlib.load(metadata)["CFBundleIdentifier"]
+        bundle_ids.append(identifier)
+        # Simulator Keychain still enforces signed application/access-group
+        # entitlements. A local ad-hoc identity needs no developer certificate
+        # and is not a signing identity for device/App Store distribution.
+        application = "SPOOLSMOKE." + identifier
+        entitlements = Path(signing) / (identifier + ".plist")
+        with entitlements.open("wb") as file:
+            plistlib.dump({
+                "application-identifier": application,
+                "com.apple.developer.team-identifier": "SPOOLSMOKE",
+                "keychain-access-groups": [application],
+            }, file)
+        subprocess.run(["codesign", "--force", "--sign", "-", "--timestamp=none",
+                        "--entitlements", str(entitlements), "--generate-entitlement-der", str(bundle)], check=True)
+        subprocess.run(["xcrun", "simctl", "install", device, str(bundle)], check=True)
+app_id, smoke_id = bundle_ids
 checks = [
-    ("com.sachk.spool", ["--launch-test"], "launch test: application UI rendered"),
-    ("com.sachk.spool.playback-smoke", ["mpv-video-item"],
+    (app_id, ["--launch-test"], "launch test: application UI rendered"),
+    (smoke_id, ["mpv-video-item"],
      "mpv video smoke: upright frames and OSD rendered across detach and resize"),
-    ("com.sachk.spool.playback-smoke", ["tvos-audio"],
+    (smoke_id, ["tvos-audio"],
      "tvOS audio smoke: AudioUnit output advanced with exclusive playback session"),
-    ("com.sachk.spool.playback-smoke", ["tvos-credentials"],
+    (smoke_id, ["tvos-credentials"],
      "tvOS credentials smoke: Keychain roundtrip and sandbox file persistence passed"),
 ]
-smoke = Path(app).parent / "smoke" / "spool-tvos-playback-smoke.app"
-subprocess.run(["xcrun", "simctl", "install", device, str(smoke)], check=True)
 results = {}
 for bundle, arguments, expected in checks:
     environment = os.environ.copy()
