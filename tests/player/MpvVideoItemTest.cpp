@@ -157,7 +157,12 @@ SPOOL_TEST_MAIN("mpv-video-item")
     window.setColor(Qt::black);
     window.resize(320, 180);
     Spool::MpvVideoItem videoItem(window.contentItem());
-    videoItem.setSize(QSizeF(window.size()));
+    // Match production's anchors.fill: parent. UIKit can replace requested
+    // window geometry asynchronously with the fullscreen television surface.
+    const auto fitSurface = [&] { videoItem.setSize(window.contentItem()->size()); };
+    QObject::connect(window.contentItem(), &QQuickItem::widthChanged, &videoItem, fitSurface);
+    QObject::connect(window.contentItem(), &QQuickItem::heightChanged, &videoItem, fitSurface);
+    fitSurface();
 #if SPOOL_MPV_ITEM_RHI
     QObject::connect(
         &window, &QQuickWindow::afterRendering, &videoItem,
@@ -176,7 +181,7 @@ SPOOL_TEST_MAIN("mpv-video-item")
     // the new context, including when Qt replaces the render target on resize.
     for (const QSize size : { QSize(320, 180), QSize(480, 270) }) {
         window.resize(size);
-        videoItem.setSize(QSizeF(size));
+        fitSurface();
         std::setlocale(LC_NUMERIC, "C");
         mpv_handle *handle = mpv_create();
         const bool verbose = !qgetenv("SPOOL_TEST_MPV_LOG").isEmpty();
