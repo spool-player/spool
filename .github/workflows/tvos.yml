@@ -89,27 +89,31 @@ jobs:
           python3 - <<'PY'
           import json, subprocess, time
           from pathlib import Path
-          deadline = time.monotonic() + 160
+          deadline = time.monotonic() + 300
+          device = None
+          failed = None
           while time.monotonic() < deadline:
               if Path("build/tvos/smoke/result.json").exists():
                   break
-              devices = json.loads(subprocess.check_output(
-                  ["xcrun", "simctl", "list", "devices", "--json"], text=True))["devices"]
-              candidates = [item for group in devices.values() for item in group
-                            if item["name"] == "Spool-tvOS-smoke" and item["state"] == "Booted"]
-              if candidates:
-                  device = candidates[0]["udid"]
+              if device is None:
+                  devices = json.loads(subprocess.check_output(
+                      ["xcrun", "simctl", "list", "devices", "--json"], text=True))["devices"]
+                  candidates = [item for group in devices.values() for item in group
+                                if item["name"] == "Spool-tvOS-smoke" and item["state"] == "Booted"]
+                  if candidates:
+                      device = candidates[0]["udid"]
+              if device is not None and failed is None:
                   container = subprocess.run(
                       ["xcrun", "simctl", "get_app_container", device, "com.sachk.spool.playback-smoke", "data"],
                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
                   if container.returncode == 0:
                       failed = Path(container.stdout.strip()) / "tmp/mpv-video-item-failure.png"
-                      if failed.exists():
-                          subprocess.run(["xcrun", "simctl", "io", device, "screenshot",
-                                          "build/tvos/smoke/native-presentation.png"], check=True)
-                          print("Captured native presentation while failed viewport remains live")
-                          break
-              time.sleep(0.2)
+              if failed is not None and failed.exists():
+                  subprocess.run(["xcrun", "simctl", "io", device, "screenshot",
+                                  "build/tvos/smoke/native-presentation.png"], check=True)
+                  print("Captured native presentation while failed viewport remains live")
+                  break
+              time.sleep(0.1 if failed is not None else 3)
           PY
           wait "$supervisor"
       - name: Repeat actual native renderer lifecycle
