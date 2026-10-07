@@ -78,6 +78,9 @@ jobs:
           ARTIFACT_RUN: ${{ inputs.native-artifact-run }}
         run: gh run download "$ARTIFACT_RUN" --name internal-tvos-appletvsimulator-arm64 --dir build/tvos
       - name: Exercise distinct native consumer processes
+        env:
+          SIMCTL_CHILD_SPOOL_TEST_MPV_LOG: '1'
+          SIMCTL_CHILD_QT_MESSAGE_PATTERN: '%{time process} %{message}'
         run: bash tools/apple/smoke-tvos.sh build/tvos/appletvsimulator-arm64/install/Spool.app
       - name: Repeat actual native renderer lifecycle
         run: |
