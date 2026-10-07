@@ -69,12 +69,35 @@ database (`providers/accounts/2`); configuration, which holds tokens, lives in t
 store and is read off the GUI thread. Accounts in the same group (users of one server) are
 alternatives: using one sets the others aside. Accounts in different groups are shown together.
 
-Saved accounts open Home by default, combining the selected viewer on each
-independent server. A startup activation requiring a PIN remains locked without
-opening a chooser. **Profiles & servers** explicitly switches watching users;
-pending selection returns Home only after successful activation. A cancelled
-switch leaves the current viewer unchanged. Search uses these same selected
-identities, never saved alternative profiles or a union of their permissions.
+Viewers that are alternatives to one another form a **profile set**: one
+provider activation family (such as a Plex Home, which spans its servers) or,
+without one, one provider group (the users of one server). One person per set
+watches at a time; independent sets appear on Home together. Choosing a person
+in a family brings their other saved servers along, authorized by the in-memory
+family proof rather than another PIN. Providers own sign-in and any PIN; the host
+only groups what they describe and never assumes a Home API.
+
+Each set has a device-local startup choice, persisted with the account metadata.
+After a new sign-in, Spool asks once: **Always use** that (now active) profile, or
+**Ask at startup**. Without a choice the last-used viewer opens. A pinned profile
+opens even when another was used later, but the provider still sees the honest
+last-used flag, so a protected profile stays locked rather than skipping its PIN.
+Only the active, authorized viewer can be pinned. When a set asks, its viewers stay
+stopped and **Who's watching?** opens at launch for those sets only; other sets
+start normally and Home never waits on the question. Startup activation never
+opens a PIN chooser.
+
+**Profiles & servers** shows each set with its server(s), its startup choice and
+Add profile, then one tile per person. Tiles carry one short state (Watching,
+Opening…, PIN required, Couldn't open, Sign in again); the page shows one sentence
+for the pending, cancelled or failed attempt, grouped by what the viewer can do
+(sign in, retry the PIN, check the connection, no access to this server), never the
+provider's code. A pending switch can be cancelled with Back or Cancel, leaving the
+current viewer unchanged. Every tile has a menu (Menu key, hold, right-click) with
+Remove, even while its activation is pending or has failed; removal cancels the
+pending activation and never requires a successful one. Selection returns Home only
+after successful activation. Search uses these same selected identities, never
+saved alternative profiles or a union of their permissions.
 
 Changing the browsed account set immediately removes unavailable accounts from the
 library list, Continue Watching, Next Up and Recently Added while retaining the

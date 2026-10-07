@@ -374,8 +374,18 @@ KeyRouter {
             if (App.initialized)
                 root.applyInitializedRoute()
         }
-        function onAccountAdded() {
-            root.goHome()
+        function onAccountAdded(accountId) {
+            // A newly signed-in profile is asked how its server should start.
+            const account = Providers.accounts.find(row => row.id === accountId)
+            if (account && account.onboarding && account.profiles) {
+                Router.reset("accounts", {
+                                 "onboarding": accountId
+                             })
+                root.navigationTarget = routeStack
+                InputKeys.focus(routeStack)
+            } else {
+                root.goHome()
+            }
         }
         function onComponentRequested(context) {
             root.providerOverlay = context
@@ -459,7 +469,13 @@ KeyRouter {
             if (root.signedIn)
                 return
         }
-        Router.reset(root.defaultRoute())
+        // Startup asks who is watching only on servers set to ask.
+        if (root.signedIn && Providers.startupChoicePending)
+            Router.reset("accounts", {
+                             "startup": true
+                         })
+        else
+            Router.reset(root.defaultRoute())
     }
 
     // Every platform states its own text rendering rather than inheriting a

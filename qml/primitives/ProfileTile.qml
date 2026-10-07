@@ -1,18 +1,22 @@
 import QtQuick
 import "../theme"
 
-// An account: initial-avatar tile, name, and the server it belongs to.
+// A person: initial-avatar tile, name and one line of detail. An optional
+// badge marks a state the viewer must act on; busy shows work in progress.
 FocusScope {
     id: root
 
     property int tileSize: Metrics.scaled(152)
     property string username: ""
-    property string serverName: ""
-    property bool needsSignIn: false
+    property string detail: ""
+    property color detailColor: Theme.textMuted
+    property string badgeIcon: ""
+    property bool badgeAlert: false
+    property bool busy: false
     property bool addTile: false
     property bool focused: activeFocus
 
-    readonly property int labelHeight: Metrics.scaled(addTile || serverName.length === 0 ? 34 : 52)
+    readonly property int labelHeight: Metrics.scaled(addTile || detail.length === 0 ? 34 : 52)
 
     readonly property string initial: {
         const name = String(username).trim()
@@ -36,6 +40,10 @@ FocusScope {
     height: tileSize + labelHeight
     focus: true
     focusPolicy: Qt.StrongFocus
+    Accessible.role: Accessible.Button
+    Accessible.name: detail.length > 0 ? username + ", " + detail : username
+    Accessible.description: addTile ? "" : "Press Menu or hold for options"
+    Accessible.onPressAction: root.accepted()
 
     Rectangle {
         id: avatar
@@ -61,7 +69,7 @@ FocusScope {
 
         AppText {
             anchors.centerIn: parent
-            visible: !root.addTile
+            visible: !root.addTile && !root.busy
             text: root.initial
             font.pixelSize: Math.round(root.tileSize * 0.4)
             font.weight: Font.DemiBold
@@ -74,17 +82,25 @@ FocusScope {
             width: Metrics.scaled(28)
             height: width
             radius: width / 2
-            visible: root.needsSignIn
-            color: Theme.errorPanel
+            visible: root.badgeIcon.length > 0
+            color: root.badgeAlert ? Theme.errorPanel : Theme.bgPanel
             border.width: Theme.hoverBorderWidth
-            border.color: Theme.errorText
+            border.color: root.badgeAlert ? Theme.errorText : Theme.borderStrong
 
             MaterialIcon {
                 anchors.centerIn: parent
-                name: "lock"
+                name: root.badgeIcon
                 iconSize: Metrics.scaled(16)
-                iconColor: Theme.errorText
+                iconColor: root.badgeAlert ? Theme.errorText : Theme.textSecondary
             }
+        }
+
+        BusySpinner {
+            anchors.centerIn: parent
+            width: Math.round(root.tileSize * 0.5)
+            height: width
+            running: root.busy
+            visible: root.busy
         }
     }
 
@@ -129,9 +145,9 @@ FocusScope {
 
         SecondaryText {
             width: parent.width
-            visible: !root.addTile && root.serverName.length > 0
-            text: root.serverName
-            color: Theme.textMuted
+            visible: !root.addTile && root.detail.length > 0
+            text: root.detail
+            color: root.detailColor
             font.pixelSize: Metrics.scaled(13)
             horizontalAlignment: Text.AlignHCenter
             maximumLineCount: 1

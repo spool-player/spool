@@ -9,9 +9,17 @@ FocusScope {
     property string message: ""
     property string confirmText: "Confirm"
     property bool destructive: false
+    property string cancelText: "Cancel"
+    // An optional second answer between Cancel and the confirmation.
+    property string alternativeText: ""
+    // Questions without a risky answer start on the confirmation instead.
+    property bool focusConfirm: false
 
     signal accepted
+    signal alternativeChosen
     signal dismissed
+
+    readonly property var buttons: [cancelButton, alternativeButton, confirmButton].filter(button => button.visible)
 
     anchors.fill: parent
     focus: true
@@ -25,14 +33,19 @@ FocusScope {
         }
         if (!InputKeys.isDirection(key))
             return InputKeys.isAccept(key)
-        if (phase === "press" && InputKeys.isHorizontal(key))
-            InputKeys.focus(cancelButton.activeFocus ? confirmButton : cancelButton)
+        if (phase === "press" && InputKeys.isHorizontal(key)) {
+            const index = buttons.findIndex(button => button.activeFocus)
+            const step = key === Qt.Key_Left ? -1 : 1
+            InputKeys.focus(buttons[Math.max(0, Math.min(buttons.length - 1, index + step))])
+        }
         return true
     }
 
     function activate() {
         if (confirmButton.activeFocus)
             accepted()
+        else if (alternativeButton.activeFocus)
+            alternativeChosen()
         else
             dismissed()
     }
@@ -43,7 +56,7 @@ FocusScope {
     }
 
     Component.onCompleted: Qt.callLater(function () {
-        InputKeys.focus(cancelButton)
+        InputKeys.focus(root.focusConfirm ? confirmButton : cancelButton)
     })
 
     Rectangle {
@@ -95,8 +108,15 @@ FocusScope {
 
                 ActionButton {
                     id: cancelButton
-                    text: "Cancel"
+                    text: root.cancelText
                     onClicked: root.dismissed()
+                }
+
+                ActionButton {
+                    id: alternativeButton
+                    visible: root.alternativeText.length > 0
+                    text: root.alternativeText
+                    onClicked: root.alternativeChosen()
                 }
 
                 ActionButton {
