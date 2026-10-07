@@ -626,6 +626,8 @@ release artifact. Simulator apps and smoke results use
 The GLES framebuffer renderer resets shared OpenGL state at context handoffs and
 frame rendering boundaries so Qt's clipping/blend state cannot leak into mpv
 when the video viewport is resized or a playback context is replaced.
+The pixel consumer waits for a real window swap before readback; grabbing an
+offscreen frame cannot substitute for native presentation feedback.
 
 Simulator builds embed matching local application and Keychain access-group
 entitlements in the Mach-O XML/DER sections used by the simulator. Before
