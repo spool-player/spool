@@ -94,6 +94,57 @@ TestCase {
             provider: testCase.providerContext
         }
     }
+    Component {
+        id: startupPreference
+        Item {
+            id: fixture
+            property alias dialog: dialog
+            property int confirmations: 0
+            property int alternatives: 0
+            property int dismissals: 0
+            ConfirmationDialog {
+                id: dialog
+                title: "When Spool starts"
+                message: "Open Viewer One on Loopback Home every time, or choose who's watching first?"
+                cancelText: "Not now"
+                alternativeText: "Choose a profile at startup"
+                confirmText: "Always use Viewer One"
+                focusConfirm: true
+                onAccepted: ++fixture.confirmations
+                onAlternativeChosen: ++fixture.alternatives
+                onDismissed: ++fixture.dismissals
+            }
+        }
+    }
+    function test_startupPreferenceFullTargetsAndRemote_data() {
+        return [
+                    {
+                        tag: "desktop",
+                        width: 900
+                    },
+                    {
+                        tag: "portrait",
+                        width: 380
+                    }
+                ]
+    }
+    function test_startupPreferenceFullTargetsAndRemote(data) {
+        const view = createTemporaryObject(startupPreference, testCase, {
+                                               width: data.width,
+                                               height: 650
+                                           })
+        verify(view)
+        tryVerify(() => view.dialog.buttons[2].activeFocus)
+        verify(waitForRendering(view))
+        view.dialog.routeKey(Qt.Key_Up, "press", false)
+        view.dialog.activate()
+        compare(view.alternatives, 1)
+        const confirm = view.dialog.buttons[2]
+        const point = confirm.mapToItem(view, confirm.width - 3, confirm.height / 2)
+        mouseClick(view, point.x, point.y)
+        compare(view.confirmations, 1)
+        compare(view.dismissals, 0)
+    }
     function init() {
         provider.completions = []
         provider.pendingAuthentication = null

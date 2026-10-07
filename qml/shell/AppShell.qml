@@ -374,18 +374,12 @@ KeyRouter {
             if (App.initialized)
                 root.applyInitializedRoute()
         }
-        function onAccountAdded(accountId) {
-            // A newly signed-in profile is asked how its server should start.
-            const account = Providers.accounts.find(row => row.id === accountId)
-            if (account && account.onboarding && account.profiles) {
-                Router.reset("accounts", {
-                                 "onboarding": accountId
-                             })
-                root.navigationTarget = routeStack
-                InputKeys.focus(routeStack)
-            } else {
-                root.goHome()
-            }
+        function onAccountSetupStarted(accountId) {
+            Router.reset("accounts", {
+                             "onboarding": accountId
+                         })
+            root.navigationTarget = routeStack
+            InputKeys.focus(routeStack)
         }
         function onComponentRequested(context) {
             root.providerOverlay = context

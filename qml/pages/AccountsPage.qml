@@ -25,6 +25,7 @@ FocusScope {
     property string startupMenuSet: ""
     property var removingPerson: null
     property bool onboardingAsked: false
+    property bool onboardingSelected: false
 
     readonly property var sections: {
         const result = []
@@ -91,10 +92,10 @@ FocusScope {
             return "removing"
         if (rows.some(account => account.pending))
             return "pending"
-        if (rows.some(account => account.running && account.enabled))
-            return "active"
         if (rows.some(account => account.needsSignIn))
             return "signIn"
+        if (rows.some(account => account.running && account.enabled))
+            return "active"
         if (rows.some(account => account.connectionState === "failed"))
             return "failed"
         if (rows.some(account => account.locked))
@@ -148,7 +149,8 @@ FocusScope {
             const entry = root.personOf(accountId)
             if (selected) {
                 if (root.onboardingId.length > 0 && entry && entry.accounts.some(account => account.onboarding)) {
-                    root.onboardingAsked = true
+                    if (root.onboardingSelected)
+                        root.onboardingAsked = true
                     return
                 }
                 if (root.startupMode && Providers.startupChoicePending) {
@@ -176,6 +178,7 @@ FocusScope {
             return
         if (state === "pending")
             return
+        onboardingSelected = onboardingId.length > 0
         if (state === "signIn") {
             shell.openProviderScreen(Providers.beginSetup(entry.moduleId, entry.accounts[0].id, "reconnect"))
             return
@@ -502,6 +505,11 @@ FocusScope {
     readonly property var onboardingPerson: onboardingId.length > 0 ? personOf(onboardingId) : null
     readonly property bool onboardingReady: Boolean(onboardingPerson && stateOf(onboardingPerson) === "active"
                                                     && sections.length > 0)
+    readonly property bool onboardingPending: Boolean(onboardingPerson && stateOf(onboardingPerson) === "pending")
+    onOnboardingPendingChanged: {
+        if (onboardingPending && pendingAccountId.length === 0)
+            pendingAccountId = onboardingPerson.accounts.find(account => account.pending).id
+    }
 
     function closeMenu(focusTarget) {
         menuLoader.active = false
@@ -516,12 +524,6 @@ FocusScope {
                                   Qt.callLater(focusInitial)
     Component.onCompleted: {
         Qt.callLater(focusInitial)
-        Qt.callLater(maybeAskOnboarding)
-    }
-
-    function maybeAskOnboarding() {
-        if (onboardingReady)
-            focusStop(tileFor(onboardingPerson.key))
     }
 
     function answerOnboarding(mode) {
@@ -787,8 +789,9 @@ FocusScope {
         sourceComponent: ConfirmationDialog {
             readonly property var section: root.sections.find(entry => entry.key === root.onboardingPerson.set)
             title: "When Spool starts"
-            message: "Open " + root.onboardingPerson.label + " on " + (section ? section.title : "this server")
-                     + " every time, or ask who's watching first? You can change this here later."
+            message: "Use " + root.onboardingPerson.label + (section && section.title !== root.onboardingPerson.label
+                                                             ? " on " + section.title : "")
+                     + " every time, or choose a profile at startup? You can change this here later."
             cancelText: "Not now"
             alternativeText: "Choose a profile at startup"
             confirmText: "Always use " + root.onboardingPerson.label

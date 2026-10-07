@@ -268,28 +268,8 @@ void profileStartupChoices()
         waitUntil([&] { return registry.sourceRunning(alice) && !registry.sourceRunning(bob); },
             "switching viewers keeps one viewer per server");
         require(registry.setStartupChoice(carol, QStringLiteral("ask")), "another server can ask at startup");
-        auto *setup = qobject_cast<ProviderUiContext *>(registry.beginSetup(QStringLiteral("fixture.test"), bob));
-        require(setup
-                && setup->arguments().value(QStringLiteral("setupContext")).toMap().value(QStringLiteral("accountId"))
-                    == bob
-                && !setup->arguments().contains(QStringLiteral("setupAccount")),
-            "adding a profile exposes only nonsecret context to its screen");
-        const auto result = QCoro::waitFor(registry.callSource(setup->sourceId(), QStringLiteral("setupPrivate"),
-            { { QStringLiteral("account"), QStringLiteral("frank") },
-                { QStringLiteral("group"), QStringLiteral("server-4") },
-                { QStringLiteral("label"), QStringLiteral("Frank") },
-                { QStringLiteral("configuration"),
-                    QVariantMap { { QStringLiteral("token"), QStringLiteral("draft-private-token") },
-                        { QStringLiteral("signOutDelay"), 60000 } } } }));
-        const QString frank = registry.finishSetup(setup->sourceId(), result);
-        waitUntil([&] { return registry.sourceRunning(frank); }, "private draft configuration publishes the account");
-        require(registry.accountList().back().configuration.value(QStringLiteral("token"))
-                == QStringLiteral("draft-private-token"),
-            "draft credential events persist privately without login completion carrying credentials");
-        setup->close();
-        waitUntil([&] { return CredentialStore::load(frank).contains(QStringLiteral("draft-private-token")); },
-            "private draft credentials reach the actual platform credential store");
-        delete setup;
+        const QString frank = signIn(registry, QStringLiteral("frank"), QStringLiteral("server-4"), {},
+            QVariantMap { { QStringLiteral("signOutDelay"), 60000 } });
         registry.removeAccount(frank);
         require(row(registry, frank).value(QStringLiteral("removing")).toBool(),
             "an active profile immediately shows removal while sign-out is pending");
@@ -339,6 +319,9 @@ void profileStartupChoices()
             { QStringLiteral("group"), QStringLiteral("server-1") },
             { QStringLiteral("label"), QStringLiteral("Erin") },
             { QStringLiteral("configuration"), QVariantMap { { QStringLiteral("describeDelay"), 60000 } } } };
+        QString announcedSetup;
+        QObject::connect(
+            &registry, &ProviderRegistry::accountSetupStarted, [&](const QString& id) { announcedSetup = id; });
         const QString slow = registry.finishSetup({}, erin);
         std::optional<bool> finished;
         QObject::connect(&registry, &ProviderRegistry::accountSelectionFinished, [&](const QString& id, bool selected) {
@@ -347,6 +330,8 @@ void profileStartupChoices()
         });
         waitUntil(
             [&] { return row(registry, slow).value(QStringLiteral("pending")).toBool(); }, "the switch is pending");
+        require(announcedSetup == slow && !registry.sourceRunning(slow),
+            "setup opens its actionable profile before delayed activation can publish it");
         registry.cancelActivation(slow);
         waitUntil([&] { return finished.has_value(); }, "cancelling settles the pending switch");
         require(

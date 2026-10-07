@@ -190,6 +190,8 @@ signals:
     void accountIdentityRevoked(const QString& accountId);
     void activationConfigurationChanged(const QString& accountId);
     void accountAdded(const QString& accountId);
+    // Setup admission precedes activation so its pending/failed tile stays actionable.
+    void accountSetupStarted(const QString& accountId);
     // Selection has committed or settled without changing the viewer.
     void accountSelectionFinished(const QString& accountId, bool selected);
     void problem(const QString& message);

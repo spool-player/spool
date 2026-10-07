@@ -46,7 +46,7 @@ export function createSource(config, sourceHost) {
     };
     return {
         setupPrivate: function(args, host) {
-            host.emit('configuration', args.configuration);
+            host.emit('configuration', args.configuration || {token: 'ui-private-token'});
             return {account: args.account, group: args.group, label: args.label};
         },
         signOut: function() {

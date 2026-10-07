@@ -754,8 +754,8 @@ QCoro::Task<void> ProviderRegistry::start(
                 m_failedAccounts.insert(accountId);
         }
         // Provider errors may contain credentials; do not log candidate failures.
-        // An explicit switch reports on the profile itself, not again as a toast.
-        if (!(select && reason == QStringLiteral("switch")))
+        // Explicit setup and switches report beside their actionable profile tile.
+        if (!select)
             emit problem(QStringLiteral("%1: %2").arg(candidate.label, message));
         co_return;
     }
@@ -1680,6 +1680,7 @@ QString ProviderRegistry::finishSetup(const QString& draftId, const QVariantMap&
         pending.enabled = false;
         m_accounts.push_back(std::move(pending));
     }
+    emit accountSetupStarted(id);
     Async::runScoped(
         this, start(id, draft.draft ? QStringLiteral("linked") : QStringLiteral("switch"), true, candidate), [] { },
         [](const std::exception_ptr&) { }, "provider link");

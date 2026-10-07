@@ -134,6 +134,12 @@ Remove, even while its activation is pending or has failed; removal cancels the
 pending activation and never requires a successful one. Selection returns Home only
 after successful activation. Search uses these same selected identities, never
 saved alternative profiles or a union of their permissions.
+Server controls wrap below their label at narrow widths. Startup preference
+buttons stay entirely visible, with Up/Down as well as Left/Right remote navigation.
+Login admission opens that profile immediately, so unfinished or failed activation
+can be cancelled, retried or removed without waiting behind a login spinner.
+An incompatible catalogue update does not block signing in to an already installed,
+validated provider; the incompatible package itself still cannot be installed.
 
 Add profile and Sign in again carry the selected server into setup; the viewer
 does not re-enter its address. `beginSetup(moduleId, accountId, purpose)` validates
