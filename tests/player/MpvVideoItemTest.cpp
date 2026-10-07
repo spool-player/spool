@@ -302,6 +302,14 @@ SPOOL_TEST_MAIN("mpv-video-item")
         ) {
             std::fprintf(stderr, "video result: rendered=%d upright=%d released=%d neutralOSD=%d\n",
                 rendered, upright, released, neutralOsd);
+            const QImage failedFrame = captureItem();
+            const QColor upper = failedFrame.pixelColor(failedFrame.width() / 2, failedFrame.height() / 4);
+            const QColor lower = failedFrame.pixelColor(failedFrame.width() / 2, 3 * failedFrame.height() / 4);
+            std::fprintf(stderr, "viewport: window=%dx%d content=%.0fx%.0f item=%.0fx%.0f capture=%dx%d upper=%s lower=%s\n",
+                window.width(), window.height(), window.contentItem()->width(), window.contentItem()->height(),
+                videoItem.width(), videoItem.height(), failedFrame.width(), failedFrame.height(),
+                qPrintable(upper.name()), qPrintable(lower.name()));
+            failedFrame.save(QDir::tempPath() + QStringLiteral("/mpv-video-item-failure.png"));
             return 1;
         }
     }

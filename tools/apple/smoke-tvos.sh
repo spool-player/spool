@@ -43,13 +43,19 @@ for bundle, arguments, expected in checks:
         # Report only controlled native smoke diagnostics; URLs/auth are absent
         # from these test result lines and provider logs are deliberately omitted.
         for line in process.stdout.splitlines():
-            if any(marker in line for marker in ["launch test:", "video result:", "orientation:",
+            if any(marker in line for marker in ["launch test:", "video result:", "orientation:", "viewport:",
                                                 "render context was not ready", "failed to initialize mpv",
                                                 "tvOS audio smoke:", "tvOS credentials smoke:",
                                                 "startup:", "[qml]", "font registration failed:",
                                                 "database initialization failed:", "dyld[",
                                                 "An error was encountered processing the command"]):
                 print(re.sub(r"https?://\S+", "[redacted-url]", line))
+        if arguments == ["mpv-video-item"]:
+            container = subprocess.check_output(
+                ["xcrun", "simctl", "get_app_container", device, bundle, "data"], text=True).strip()
+            frame = Path(container) / "tmp" / "mpv-video-item-failure.png"
+            if frame.exists():
+                (output / "video-failure.png").write_bytes(frame.read_bytes())
         (output / "result.json").write_text(json.dumps(results, indent=2) + "\n")
         raise SystemExit(1)
 (output / "result.json").write_text(json.dumps(results, indent=2) + "\n")
