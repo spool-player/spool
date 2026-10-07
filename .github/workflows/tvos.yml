@@ -170,7 +170,7 @@ jobs:
                       for line in transcript.splitlines():
                           if any(marker in line for marker in ["orientation:", "decoder:", "viewport:", "video result:",
                                                                "render context was not ready", "first video frame",
-                                                               "render context handoff did not complete"]):
+                                                               "render context handoff did not complete", "native target:"]):
                               print(line)
                       raise SystemExit(1)
           finally:
