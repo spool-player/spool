@@ -197,7 +197,7 @@ void plexSessions()
             value.insert("answers", answers);
         return value;
     };
-    add("link", {}, true);
+    QCoro::waitFor(plex.addSource("link", { { "fixtureEndpoint", cloudOrigin } }, { QUrl(cloudOrigin) }, offers, true));
     const auto linked = call("link", "pinPoll", { { "id", "7" } });
     require(
         linked.value("homeUsers").toList().size() == 3 && !linked.value("user").toMap().contains("linkedAccountToken"),
@@ -207,6 +207,12 @@ void plexSessions()
     require(chosen.value("servers").toList().size() == 2
             && !chosen.value("servers").toList().front().toMap().contains("token"),
         "actual member resource chooser exposes no resource credential");
+    rejects(plex.call("link", "connect", { { "serverId", "machine" } }), "server_unreachable");
+    require(probedPorts.isEmpty() && !credentials.contains("link"),
+        "fresh Home sign-in starts cloud-only and cannot send member credentials to unapproved PMS origins");
+    QCoro::waitFor(plex.grantOrigins("link",
+        { QUrl(firstOrigin), QUrl(backupOrigin), QUrl(origin(alternate1)), QUrl(origin(alternate2)),
+            QUrl(origin(alternate3)) }));
     const auto firstAccount = call("link", "connect", { { "serverId", "machine" } });
     require(firstAccount.value("account") == "2@machine" && !firstAccount.contains("configuration")
             && credentials.value("link").value("token") == "fixture-member-pms",
@@ -215,6 +221,7 @@ void plexSessions()
         "bounded provider workers probe every approved candidate beyond the native four-request budget without "
         "expanding grants");
     const QVariantMap savedFirst = credentials.value("link");
+    QCoro::waitFor(plex.grantOrigins("link", { QUrl(secondOrigin) }));
     call("link", "connect", { { "serverId", "other" } });
     const QVariantMap savedSecond = credentials.value("link");
     require(savedFirst.value("linkedAccountToken") == "fixture-owner"

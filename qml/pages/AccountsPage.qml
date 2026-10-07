@@ -25,7 +25,11 @@ FocusScope {
     property string startupMenuSet: ""
     property var removingPerson: null
     property bool onboardingAsked: false
-    property bool onboardingSelected: false
+    property string onboardingViewerId: ""
+    onOnboardingIdChanged: {
+        onboardingViewerId = ""
+        onboardingAsked = false
+    }
 
     readonly property var sections: {
         const result = []
@@ -148,8 +152,8 @@ FocusScope {
             root.pendingAccountId = ""
             const entry = root.personOf(accountId)
             if (selected) {
-                if (root.onboardingId.length > 0 && entry && entry.accounts.some(account => account.onboarding)) {
-                    if (root.onboardingSelected)
+                if (root.onboardingActive) {
+                    if (root.onboardingViewerId.length > 0)
                         root.onboardingAsked = true
                     return
                 }
@@ -178,13 +182,14 @@ FocusScope {
             return
         if (state === "pending")
             return
-        onboardingSelected = onboardingId.length > 0
+        if (onboardingActive)
+            onboardingViewerId = entry.accounts[0].id
         if (state === "signIn") {
             shell.openProviderScreen(Providers.beginSetup(entry.moduleId, entry.accounts[0].id, "reconnect"))
             return
         }
         if (state === "active") {
-            if (onboardingId.length > 0 && entry.accounts.some(account => account.onboarding)) {
+            if (onboardingActive) {
                 onboardingAsked = true
                 return
             }
@@ -379,7 +384,7 @@ FocusScope {
         const rows = focusRows()
         let target = null
         if (onboardingId.length > 0) {
-            const entry = personOf(onboardingId)
+            const entry = personOf(onboardingViewerId || onboardingId)
             target = entry ? tileFor(entry.key) : null
         }
         if (!target && startupMode) {
@@ -425,7 +430,7 @@ FocusScope {
         }
         const nextRow = position.row + (key === Qt.Key_Up ? -1 : 1)
         if (nextRow < 0) {
-            if (shell && !startupMode)
+            if (shell && !startupMode && !Providers.startupChoicePending)
                 shell.focusNavBar()
             return true
         }
@@ -502,13 +507,15 @@ FocusScope {
 
     property Item menuAnchor: null
     readonly property var startupMenuSection: sections.find(section => section.key === startupMenuSet) || null
-    readonly property var onboardingPerson: onboardingId.length > 0 ? personOf(onboardingId) : null
-    readonly property bool onboardingReady: Boolean(onboardingPerson && stateOf(onboardingPerson) === "active"
-                                                    && sections.length > 0)
-    readonly property bool onboardingPending: Boolean(onboardingPerson && stateOf(onboardingPerson) === "pending")
+    readonly property var admittedPerson: onboardingId.length > 0 ? personOf(onboardingId) : null
+    readonly property bool onboardingActive: Boolean(admittedPerson && admittedPerson.accounts.some(account
+                                                                                                    => account.onboarding))
+    readonly property var onboardingPerson: personOf(onboardingViewerId || onboardingId)
+    readonly property bool onboardingReady: Boolean(onboardingPerson && stateOf(onboardingPerson) === "active")
+    readonly property bool onboardingPending: Boolean(admittedPerson && stateOf(admittedPerson) === "pending")
     onOnboardingPendingChanged: {
         if (onboardingPending && pendingAccountId.length === 0)
-            pendingAccountId = onboardingPerson.accounts.find(account => account.pending).id
+            pendingAccountId = admittedPerson.accounts.find(account => account.pending).id
     }
 
     function closeMenu(focusTarget) {
@@ -527,11 +534,13 @@ FocusScope {
     }
 
     function answerOnboarding(mode) {
-        const account = onboardingPerson ? onboardingPerson.accounts.find(row => row.running) : null
-        if (account && mode.length > 0)
-            Providers.setStartupChoice(account.id, mode)
-        else
-            Providers.finishOnboarding(onboardingId)
+        const account = onboardingPerson ? onboardingPerson.accounts.find(row => row.running && row.enabled) : null
+        if (mode.length > 0 && (!account || !Providers.setStartupChoice(account.id, mode))) {
+            onboardingAsked = false
+            notice = "Choose an available profile before setting its startup preference."
+            return
+        }
+        Providers.finishOnboarding(onboardingId)
         shell.goHome()
     }
 
@@ -782,8 +791,7 @@ FocusScope {
     Loader {
         id: onboardingDialog
         anchors.fill: parent
-        active: root.onboardingReady && root.onboardingAsked && root.onboardingPerson.accounts.some(account
-                                                                                                    => account.onboarding)
+        active: root.onboardingActive && root.onboardingReady && root.onboardingAsked
 
         z: 210
         sourceComponent: ConfirmationDialog {

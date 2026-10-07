@@ -917,7 +917,7 @@ KeyRouter {
     }
 
     function focusNavBar() {
-        if (setupRoute)
+        if (setupRoute || Providers.startupChoicePending || !navBar.visible)
             return
         const page = routeStack.activeItem
         if (page && page.revealHeader)

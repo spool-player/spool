@@ -300,7 +300,7 @@ public:
         if (source == m_sources.end() || source->generation != generation)
             return fail(promise, "source_unavailable");
         auto *access = source->host->access();
-        if (!access->capabilities.value(QStringLiteral("originGrants")).toBool())
+        if (!access->loginDraft && !access->capabilities.value(QStringLiteral("originGrants")).toBool())
             return fail(promise, "unsupported_capability");
         QList<QUrl> normalized;
         for (QUrl origin : origins) {

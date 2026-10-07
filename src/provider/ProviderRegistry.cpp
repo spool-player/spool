@@ -1499,21 +1499,22 @@ QCoro::Task<void> ProviderRegistry::allowSetupOrigin(QString draftId, QUrl url)
     if (running->origins.contains(origin))
         co_return;
     cancelNetworkConsent(draftId);
-    running->origins.append(origin);
-    running->generation = ++m_nextGeneration;
-    ScriptRuntime *runtime = m_modules.value(running->module).runtime;
-    // Origins are fixed when a source is created; retain only the host-approved
-    // setup context when recreating the draft, never partially linked state.
-    runtime->removeSource(draftId);
-    const bool lanConsent = running->lanConsent;
     const quint64 generation = running->generation;
+    const quint64 revision = running->networkRevision;
+    ScriptRuntime *runtime = m_modules.value(running->module).runtime;
+    if (!runtime)
+        throw std::runtime_error("source_unavailable");
+    // Keep provider-private link/member/session state in the same draft closure.
+    // The grant remains unusable until this context survives the worker round trip.
+    auto approval = std::make_shared<std::atomic_bool>(false);
     QPointer<ProviderRegistry> guard(this);
-    co_await runtime->addSource(
-        draftId, running->setupConfiguration, running->origins, running->declaredCapabilities, true);
-    if (!guard || m_running.value(draftId).generation != generation)
+    co_await runtime->grantOrigins(draftId, { origin }, approval);
+    if (!guard || m_running.value(draftId).generation != generation
+        || m_running.value(draftId).networkRevision != revision)
         throw std::runtime_error("source_changed");
-    if (lanConsent && m_running.value(draftId).lanConsent)
-        co_await runtime->allowLanDiscovery(draftId);
+    approval->store(true);
+    if (!m_running[draftId].origins.contains(origin))
+        m_running[draftId].origins.append(origin);
 }
 
 QCoro::Task<bool> ProviderRegistry::requestNetworkConsent(QString sourceId, QString scope, QString kind, QUrl origin)

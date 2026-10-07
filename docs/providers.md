@@ -122,6 +122,9 @@ stopped and **Who's watching?** opens at launch for those sets only; other sets
 start normally. The chooser precedes recovered routes after shell close, memory
 reclaim or a crash; Home cannot bypass an unanswered set. Startup activation never
 opens a PIN chooser.
+The preference applies to the viewer actually selected, including a previously
+saved viewer chosen instead of the newly added account; finishing clears the
+new account's onboarding marker.
 
 **Profiles & servers** shows each set with its server(s), its startup choice and
 Add profile, then one tile per person. Tiles carry one short state (Watching,
@@ -151,6 +154,9 @@ must return the saved account/server identity. Draft `configuration` events stor
 credentials privately until setup commits; they need not travel through QML.
 Removal shows its state immediately and settles locally within three seconds even
 if best-effort server sign-out never answers.
+Approving another server extends the existing login draft in place: private
+link/member selection and retained provider state survive origin approval. This
+login authority does not require the optional saved-account `originGrants` offer.
 
 Changing the browsed account set immediately removes unavailable accounts from the
 library list, Continue Watching, Next Up and Recently Added while retaining the
