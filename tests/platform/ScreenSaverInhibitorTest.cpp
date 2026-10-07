@@ -1,6 +1,7 @@
 #include "platform/ScreenSaverInhibitor.h"
 
 #include "TestMain.h"
+#include "TestRequire.h"
 
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -9,6 +10,7 @@
 #include <iostream>
 #include <memory>
 
+#if !defined(Q_OS_ANDROID) && !defined(SPOOL_APPLE_MOBILE)
 namespace Spool {
 
 std::unique_ptr<ScreenSaverBackend> createPlatformScreenSaverBackend()
@@ -17,16 +19,11 @@ std::unique_ptr<ScreenSaverBackend> createPlatformScreenSaverBackend()
 }
 
 } // namespace Spool
+#endif
 
 namespace {
 
-void require(bool condition, const char *message)
-{
-    if (condition)
-        return;
-    std::cerr << message << '\n';
-    std::exit(EXIT_FAILURE);
-}
+using SpoolTests::require;
 
 struct BackendState {
     int acquisitions = 0;

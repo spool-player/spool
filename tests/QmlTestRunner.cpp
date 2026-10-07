@@ -13,6 +13,8 @@
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QtQuickTest/quicktest.h>
+#include <QByteArray>
+#include <vector>
 
 class QmlTestSetup final : public QObject {
     Q_OBJECT
@@ -68,6 +70,17 @@ private:
     Spool::InputLatencyMonitor *m_latency = nullptr;
 };
 
-QUICK_TEST_MAIN_WITH_SETUP(spool, QmlTestSetup)
+int spoolRunQml(int argc, char **argv, const char *input)
+{
+    std::vector<char *> arguments(argv, argv + argc);
+    QByteArray option("-input");
+    QByteArray path(input);
+    arguments.push_back(option.data());
+    arguments.push_back(path.data());
+    const int count = int(arguments.size());
+    arguments.push_back(nullptr);
+    QmlTestSetup setup;
+    return quick_test_main_with_setup(count, arguments.data(), "spool", TEST_SOURCE_DIR, &setup);
+}
 
 #include "QmlTestRunner.moc"

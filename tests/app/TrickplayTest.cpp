@@ -1,4 +1,5 @@
 #include "TestMain.h"
+#include "TestRequire.h"
 #include "app/TrickplayDecoder.h"
 #include "app/TrickplayService.h"
 
@@ -28,13 +29,7 @@
 #endif
 using namespace Spool;
 namespace {
-void require(bool ok, const char *message)
-{
-    if (!ok) {
-        std::cerr << message << '\n';
-        std::exit(EXIT_FAILURE);
-    }
-}
+using SpoolTests::require;
 template <typename Predicate> void waitUntil(Predicate predicate, const char *message = "native preview did not finish")
 {
     QElapsedTimer timer;
@@ -165,7 +160,9 @@ QImage frame(TrickplayService& service, double seconds, bool success = true, QIm
 
 SPOOL_TEST_MAIN("trickplay")
 {
+#if !defined(Q_OS_ANDROID) && !defined(SPOOL_APPLE_MOBILE)
     qputenv("QT_QPA_PLATFORM", "offscreen");
+#endif
     QGuiApplication application(argc, argv);
     QImage odd(33, 19, QImage::Format_RGB32);
     odd.fill(Qt::cyan);

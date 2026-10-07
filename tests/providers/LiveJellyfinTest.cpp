@@ -68,12 +68,12 @@ SPOOL_TEST_MAIN("live-jellyfin")
 {
     QCoreApplication app(argc, argv);
     const QString server = qEnvironmentVariable("SPOOL_LIVE_JELLYFIN");
-    if (server.isEmpty()) {
-        std::cout << "SPOOL_LIVE_JELLYFIN not set; skipped\n";
-        return 0;
-    }
-    const QString user = qEnvironmentVariable("SPOOL_LIVE_USER", QStringLiteral("alice"));
+    const QString user = qEnvironmentVariable("SPOOL_LIVE_USER");
     const QString password = qEnvironmentVariable("SPOOL_LIVE_PASSWORD");
+    if (server.isEmpty() || user.isEmpty() || !qEnvironmentVariableIsSet("SPOOL_LIVE_PASSWORD")) {
+        std::cout << "SKIP: live Jellyfin requires SPOOL_LIVE_JELLYFIN, SPOOL_LIVE_USER and SPOOL_LIVE_PASSWORD\n";
+        return 77;
+    }
 
     QTemporaryDir directory;
     qputenv("SPOOL_CREDENTIAL_STORE_DIR", directory.filePath(QStringLiteral("credentials")).toUtf8());

@@ -1,5 +1,6 @@
 #include "player/PlayerController.h"
 #include "TestMain.h"
+#include "TestRequire.h"
 #include "platform/NativeAppWindow.h"
 
 #include <QDataStream>
@@ -17,13 +18,7 @@
 using namespace Spool;
 
 namespace {
-void require(bool condition, const char *message)
-{
-    if (!condition) {
-        std::cerr << message << '\n';
-        std::exit(EXIT_FAILURE);
-    }
-}
+using SpoolTests::require;
 
 void waitUntil(const std::function<bool()>& condition, const char *message)
 {
@@ -78,7 +73,9 @@ PlaybackSession audioSession(const QString& directory, const QString& id, int se
 
 SPOOL_TEST_MAIN("player-controller")
 {
+#if !defined(Q_OS_ANDROID) && !defined(SPOOL_APPLE_MOBILE)
     qputenv("QT_QPA_PLATFORM", QByteArrayLiteral("offscreen"));
+#endif
     QGuiApplication app(argc, argv);
     std::setlocale(LC_NUMERIC, "C");
     QTemporaryDir directory;

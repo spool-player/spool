@@ -82,7 +82,7 @@ compatibility shims for older provider/host builds.
 - Launch the native release app with `nix run`. Clean Git revisions substitute the immutable package from Cachix; dirty tracked changes use the incremental checkout build.
 - Launch the already-built native release app without rebuilding with `nix run .#run`. It fails with a build-command hint when the binary is missing.
 - Build without launching with `nix run .#build`.
-- Run the test suite the way CI does with `nix run .#tests` (release build, then the same ctest invocation and exclusions as the workflow).
+- Run the test suite the way CI does with `nix run .#tests` (release build, then `python tools/run-tests.py --build-dir <dir> --workers N`: traditional selectors finish before real GUI e2e; failures aggregate without GPU exclusions).
 - Leave interactive UI testing to the user. Do not drive their desktop with xdotool/xdgtool or similar input automation, or launch visible smoke tests unless explicitly requested. Use builds and isolated/offscreen checks for verification.
 - Use `nix develop .#native -c ...` for targeted development commands (e.g. `cmake --preset linux-dev`, then `cmake --build build/linux-dev/app --target spool`).
 - The image-diagnostics equivalents remain `nix run .#image-debug-build` followed by `nix run .#image-debug`.

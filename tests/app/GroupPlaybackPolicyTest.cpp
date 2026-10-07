@@ -1,6 +1,7 @@
 #include "app/GroupPlaybackController.h"
 
 #include "TestMain.h"
+#include "TestRequire.h"
 
 #include <cmath>
 #include <cstdlib>
@@ -10,13 +11,7 @@ using namespace Spool;
 
 namespace {
 
-void require(bool condition, const char *message)
-{
-    if (condition)
-        return;
-    std::cerr << message << '\n';
-    std::exit(1);
-}
+using SpoolTests::require;
 
 bool near(double value, double expected, double tolerance = 0.001)
 {

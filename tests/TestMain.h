@@ -1,11 +1,9 @@
 #pragma once
 
-// Tests are grouped into one executable per directory rather than one
-// executable per test. Every test still gets its own ctest entry: the shared
-// runner in TestRunner.cpp dispatches on the selector that add_test() passes
-// as the first argument. Grouping matters most on Windows, where each test
-// executable otherwise pays a whole-program-optimized link against the entire
-// spool-core static library.
+// One native binary owns traditional selectors and one owns GUI e2e selectors.
+// The shared runner supervises isolated SAME-binary subprocesses so a test may
+// own its Q(Core/Gui)Application, environment and exit() without harming peers.
+// Use --list, --child SELECTOR, or --run-all --workers N --results FILE.
 //
 // Write a test exactly as a standalone program, but name its entry point with
 // SPOOL_TEST_MAIN("selector") instead of main(). Keep helpers in an
@@ -16,6 +14,7 @@ namespace SpoolTests {
 using Entry = int (*)(int argc, char **argv);
 
 bool registerTest(const char *name, Entry entry);
+int invoke(const char *name, int argc, char **argv);
 
 } // namespace SpoolTests
 

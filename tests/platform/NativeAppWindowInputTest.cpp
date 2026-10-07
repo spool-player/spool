@@ -1,6 +1,7 @@
 #include "platform/NativeAppWindow.h"
 
 #include "TestMain.h"
+#include "TestRequire.h"
 
 #include <QCoreApplication>
 #include <QGuiApplication>
@@ -10,13 +11,7 @@
 #include <iostream>
 
 namespace {
-void require(bool condition, const char *message)
-{
-    if (!condition) {
-        std::cerr << message << '\n';
-        std::exit(1);
-    }
-}
+using SpoolTests::require;
 
 bool sendMouseButton(
     Spool::NativeAppWindow& window, QEvent::Type type, Qt::MouseButton button, Qt::MouseEventSource source)
@@ -29,7 +24,9 @@ bool sendMouseButton(
 
 SPOOL_TEST_MAIN("native-window-input")
 {
+#if !defined(Q_OS_ANDROID) && !defined(SPOOL_APPLE_MOBILE)
     qputenv("QT_QPA_PLATFORM", QByteArrayLiteral("offscreen"));
+#endif
     QGuiApplication app(argc, argv);
     Spool::NativeAppWindow window(QStringLiteral("input-test"));
 

@@ -13,6 +13,10 @@
 #include <QQuickWindow>
 #include <QSGTexture>
 #include <QSGTextureProvider>
+#ifdef Q_OS_WIN
+#include <QOpenGLContext>
+#include <QOpenGLFunctions>
+#endif
 #include <QSurfaceFormat>
 #include <QTemporaryFile>
 #include <QTimer>
@@ -234,7 +238,7 @@ SPOOL_TEST_MAIN("mpv-video-item")
     if (api == "vulkan")
         std::fprintf(stderr, "requested Vulkan scene graph\n");
     QSurfaceFormat format;
-#ifdef Q_OS_TVOS
+#if defined(Q_OS_TVOS) || defined(Q_OS_ANDROID)
     format.setRenderableType(QSurfaceFormat::OpenGLES);
     format.setVersion(3, 0);
 #else
@@ -242,6 +246,9 @@ SPOOL_TEST_MAIN("mpv-video-item")
     format.setVersion(3, 3);
 #endif
     format.setAlphaBufferSize(0);
+#ifdef Q_OS_ANDROID
+    QSurfaceFormat::setDefaultFormat(format);
+#endif
     QGuiApplication app(argc, argv);
 
     QTemporaryFile video(QDir::tempPath() + QStringLiteral("/mpv-video-item-XXXXXX.mkv"));
@@ -264,6 +271,16 @@ SPOOL_TEST_MAIN("mpv-video-item")
     QObject::connect(window.contentItem(), &QQuickItem::widthChanged, &videoItem, fitSurface);
     QObject::connect(window.contentItem(), &QQuickItem::heightChanged, &videoItem, fitSurface);
     fitSurface();
+#ifdef Q_OS_WIN
+    std::atomic_bool cpuOpenGLProven { false };
+    QObject::connect(&window, &QQuickWindow::afterRendering, &videoItem, [&] {
+        if (auto *context = QOpenGLContext::currentContext()) {
+            const auto *renderer = context->functions()->glGetString(GL_RENDERER);
+            if (renderer && QByteArray(reinterpret_cast<const char *>(renderer)).toLower().contains("llvmpipe"))
+                cpuOpenGLProven.store(true);
+        }
+    }, Qt::DirectConnection);
+#endif
 #if SPOOL_MPV_ITEM_RHI
     QObject::connect(
         &window, &QQuickWindow::afterRendering, &videoItem,
@@ -275,7 +292,7 @@ SPOOL_TEST_MAIN("mpv-video-item")
         },
         Qt::DirectConnection);
 #endif
-#ifdef Q_OS_TVOS
+#if defined(Q_OS_TVOS) || defined(Q_OS_ANDROID)
     window.showFullScreen();
 #else
     window.show();
@@ -283,7 +300,7 @@ SPOOL_TEST_MAIN("mpv-video-item")
     app.processEvents();
     const auto captureItem = [&] {
         const QImage image = window.grabWindow();
-#ifdef Q_OS_TVOS
+#if defined(Q_OS_TVOS) || defined(Q_OS_ANDROID)
         if (image.isNull())
             return image;
         const qreal xScale = qreal(image.width()) / window.contentItem()->width();
@@ -318,9 +335,9 @@ SPOOL_TEST_MAIN("mpv-video-item")
     // Reusing an item after detach must reset first-frame state and publish
     // the new context, including when Qt replaces the render target on resize.
     for (const QSize size : { QSize(320, 180), QSize(480, 270) }) {
-#ifdef Q_OS_TVOS
-        // UIKit owns the fullscreen native window; resize the real video
-        // viewport instead of requesting an unsupported television window size.
+#if defined(Q_OS_TVOS) || defined(Q_OS_ANDROID)
+        // The mobile platform owns the fullscreen native window; resize the
+        // real video viewport instead of requesting a desktop window size.
         viewportFraction = size.width() == 320 ? 1.0 : 2.0 / 3.0;
 #else
         window.resize(size);
@@ -423,10 +440,19 @@ SPOOL_TEST_MAIN("mpv-video-item")
             return 1;
         }
     }
+#ifdef Q_OS_WIN
+    if (qEnvironmentVariable("SPOOL_TEST_RENDER_BACKEND") == "opengl" && !cpuOpenGLProven.load()) {
+        std::fprintf(stderr, "Windows CPU OpenGL test did not observe the required llvmpipe GL_RENDERER\n");
+        return 1;
+    }
+    if (cpuOpenGLProven.load())
+        std::fprintf(stderr, "native mpv/Qt OpenGL frames proved Mesa llvmpipe GL_RENDERER\n");
+#endif
     std::fprintf(stderr, "mpv video smoke: upright frames and OSD rendered across detach and resize\n");
     return 0;
 }
 
+#if !defined(Q_OS_TVOS) && !defined(Q_OS_ANDROID) && !defined(SPOOL_TEST_OPENGL_ONLY)
 namespace {
 
 int vulkanEntry(int argc, char **argv)
@@ -440,3 +466,4 @@ int vulkanEntry(int argc, char **argv)
 [[maybe_unused]] const bool vulkanRegistered = ::SpoolTests::registerTest("mpv-video-item-vulkan", &vulkanEntry);
 
 } // namespace
+#endif

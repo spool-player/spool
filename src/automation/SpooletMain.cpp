@@ -3,6 +3,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -25,7 +26,7 @@ QJsonObject help()
     return { { QStringLiteral("ok"), true },
         { QStringLiteral("result"),
             QJsonObject {
-                { QStringLiteral("usage"), QStringLiteral("spoolet [--instance ID] [--timeout MS] COMMAND [ARGS]") },
+                { QStringLiteral("usage"), QStringLiteral("spoolet [--instance ID | --descriptor FILE] [--timeout MS] COMMAND [ARGS]") },
                 { QStringLiteral("commands"),
                     QJsonArray { QStringLiteral("help | instances | status | state"),
                         QStringLiteral(
@@ -36,6 +37,7 @@ QJsonObject help()
                         QStringLiteral("preview SECONDS (actual timeline hover; key up first if controls are hidden)"),
                         QStringLiteral("qualities | quality INDEX"), QStringLiteral("screenshot FILE.png"),
                         QStringLiteral("pointer move|click|press|release|right-click X Y (window logical coordinates)"),
+                        QStringLiteral("text TEXT | text --stdin (commit to the focused editable field; no echo)"),
                         QStringLiteral(
                             "downloads list | options ITEM_ID | start ITEM_ID INDEX | cancel|retry|remove|play JOB_ID"),
                         QStringLiteral("settings get [KEY] | settings set KEY JSON_VALUE") } },
@@ -54,18 +56,22 @@ int main(int argc, char **argv)
     QCoreApplication::setApplicationName(QStringLiteral("spoolet"));
     QStringList arguments = app.arguments().mid(1);
     QString instance;
+    QString descriptorPath;
     int timeout = Spool::LocalControl::RequestTimeoutMs;
     while (!arguments.isEmpty() && arguments.first().startsWith(QStringLiteral("--"))) {
         const QString option = arguments.takeFirst();
         if (option == QStringLiteral("--help"))
             return print(help());
-        if ((option != QStringLiteral("--instance") && option != QStringLiteral("--timeout")) || arguments.isEmpty())
-            return error(QStringLiteral("Expected --instance ID or --timeout MS; see help"));
+        if ((option != QStringLiteral("--instance") && option != QStringLiteral("--timeout")
+                && option != QStringLiteral("--descriptor")) || arguments.isEmpty())
+            return error(QStringLiteral("Expected --instance ID, --descriptor FILE or --timeout MS; see help"));
         const QString value = arguments.takeFirst();
         if (option == QStringLiteral("--instance")) {
             if (!Spool::LocalControl::validInstance(value))
                 return error(QStringLiteral("Invalid instance identifier"));
             instance = value;
+        } else if (option == QStringLiteral("--descriptor")) {
+            descriptorPath = QFileInfo(value).absoluteFilePath();
         } else {
             bool valid = false;
             timeout = value.toInt(&valid);
@@ -73,6 +79,8 @@ int main(int argc, char **argv)
                 return error(QStringLiteral("Timeout must be 100..30000 milliseconds"));
         }
     }
+    if (!instance.isEmpty() && !descriptorPath.isEmpty())
+        return error(QStringLiteral("--instance and --descriptor are mutually exclusive"));
     if (arguments.isEmpty() || arguments == QStringList { QStringLiteral("help") })
         return print(help());
     QString command = arguments.takeFirst();
@@ -87,8 +95,24 @@ int main(int argc, char **argv)
             : command == QStringLiteral("library")                ? QStringLiteral("id")
                                                                   : QStringLiteral("path");
         args.insert(key,
-            command == QStringLiteral("screenshot") ? QFileInfo(arguments.first()).absoluteFilePath()
-                                                    : arguments.first());
+            command == QStringLiteral("screenshot") && descriptorPath.isEmpty()
+                ? QFileInfo(arguments.first()).absoluteFilePath() : arguments.first());
+    } else if (command == QStringLiteral("text")) {
+        if (!count(1, 1))
+            return error(QStringLiteral("Usage: text TEXT | text --stdin"));
+        QString text = arguments.first();
+        if (text == QStringLiteral("--stdin")) {
+            QFile input;
+            if (!input.open(stdin, QIODevice::ReadOnly))
+                return error(QStringLiteral("Cannot read text from stdin"));
+            const QByteArray bytes = input.read(16385);
+            if (bytes.size() > 16384)
+                return error(QStringLiteral("Text exceeds the input limit"));
+            text = QString::fromUtf8(bytes);
+        }
+        if (text.size() > 4096)
+            return error(QStringLiteral("Text must be at most 4096 characters"));
+        args.insert(QStringLiteral("text"), text);
     } else if (command == QStringLiteral("play")) {
         if (!count(1, 2) || (arguments.size() == 2 && arguments.last() != QStringLiteral("--from-start")))
             return error(QStringLiteral("Usage: play QUALIFIED_ID [--from-start]"));
@@ -180,6 +204,14 @@ int main(int argc, char **argv)
                    .contains(command)
         || !arguments.isEmpty()) {
         return error(QStringLiteral("Unknown command or extra arguments; see spoolet help"));
+    }
+    if (!descriptorPath.isEmpty()) {
+        const QJsonObject descriptor = Spool::LocalControl::readDescriptor(descriptorPath);
+        if (descriptor.isEmpty())
+            return error(QStringLiteral("Explicit descriptor is absent or unsafe"));
+        if (command == QStringLiteral("instances"))
+            return error(QStringLiteral("instances does not accept an explicit descriptor"));
+        return print(Spool::LocalControl::request(descriptor, command, args, timeout));
     }
     QString directoryError;
     const QString directory = Spool::LocalControl::directory(&directoryError);

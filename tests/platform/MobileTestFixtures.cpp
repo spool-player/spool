@@ -1,0 +1,38 @@
+#include "MobileTestFixtures.h"
+
+#include <QDir>
+#include <QDirIterator>
+#include <QFile>
+#include <QFileInfo>
+#include <QTemporaryDir>
+
+#include <cstdio>
+
+namespace SpoolTests {
+
+bool prepareMobileFixtures()
+{
+    static QTemporaryDir directory(QDir::tempPath() + QStringLiteral("/spool-test-fixtures-XXXXXX"));
+    if (!directory.isValid()) {
+        std::fprintf(stderr, "mobile tests: cannot create isolated fixture directory\n");
+        return false;
+    }
+    const QString prefix = QStringLiteral(":/spool-mobile-fixtures/");
+    QDirIterator fixtures(prefix, QDir::Files, QDirIterator::Subdirectories);
+    while (fixtures.hasNext()) {
+        const QString source = fixtures.next();
+        const QString destination = directory.filePath(source.mid(prefix.size()));
+        if (!QDir().mkpath(QFileInfo(destination).absolutePath()) || !QFile::copy(source, destination)) {
+            std::fprintf(stderr, "mobile tests: cannot extract packaged fixture\n");
+            return false;
+        }
+    }
+    qputenv("QML_DISABLE_DISK_CACHE", "1");
+    if (!QDir::setCurrent(directory.path())) {
+        std::fprintf(stderr, "mobile tests: cannot enter isolated fixture directory\n");
+        return false;
+    }
+    return true;
+}
+
+} // namespace SpoolTests

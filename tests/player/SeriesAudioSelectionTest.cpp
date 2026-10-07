@@ -1,6 +1,7 @@
 #include "common/SeriesAudioSelection.h"
 
 #include "TestMain.h"
+#include "TestRequire.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -9,13 +10,7 @@ using namespace Spool;
 
 namespace {
 
-void require(bool condition, const char *message)
-{
-    if (condition)
-        return;
-    std::cerr << message << '\n';
-    std::exit(EXIT_FAILURE);
-}
+using SpoolTests::require;
 
 MediaStreamInfo stream(int index, QString language, bool isDefault = false)
 {

@@ -2,7 +2,10 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-APK="${1:-$ROOT/dist/android/spool-x86_64.apk}"
+APK="${1:-$ROOT/dist/android/spool-e2e-app-x86_64.apk}"
+BUILD_DIR="${ANDROID_TEST_BUILD_DIR:-$ROOT/build/android/app-x86_64}"
+TEST_APK="${ANDROID_TRADITIONAL_TEST_APK:-$ROOT/dist/android/spool-tests-x86_64.apk}"
+E2E_APK="${ANDROID_E2E_TEST_APK:-$ROOT/dist/android/spool-e2e-tests-x86_64.apk}"
 EMULATOR_LOG="${ANDROID_EMULATOR_LOG:-$ROOT/build/android/emulator.log}"
 ARTIFACT_DIR="${ANDROID_LAUNCH_TEST_DIR:-$ROOT/build/android/launch-test}"
 # The app launches through its own QtActivity subclass, which owns the launch
@@ -21,21 +24,43 @@ ADB="$ANDROID_HOME/platform-tools/adb"
   echo "error: APK missing at $APK" >&2
   exit 1
 }
+for test_apk in "$TEST_APK" "$E2E_APK"; do
+  [[ -f "$test_apk" ]] || { echo "error: native test APK missing: $test_apk" >&2; exit 1; }
+done
+if [[ -z "${SPOOL_DEVICE_HOST_E2E:-}" ]]; then
+  host_build="${SPOOL_DEVICE_HOST_BUILD_DIR:-$ROOT/build/linux-release/app}"
+  [[ -f "$host_build/native-spool-e2e-path.txt" ]] || {
+    echo 'error: build the native host journey controller with tools/build-linux-release.sh first' >&2
+    exit 1
+  }
+  read -r SPOOL_DEVICE_HOST_E2E <"$host_build/native-spool-e2e-path.txt"
+fi
+export SPOOL_DEVICE_HOST_E2E
+export SPOOL_E2E_ISOLATED_DEVICE=1
 
 # Realize the emulator and system image before the adb registration deadline.
 # A cold CI runner may spend minutes downloading them.
 nix build --no-link "$ROOT#android-emulator"
 
 cleanup() {
-  "$ADB" emu kill >/dev/null 2>&1 || true
+  if [[ -n "${ANDROID_SERIAL:-}" ]]; then
+    "$ADB" emu kill >/dev/null 2>&1 || true
+  fi
+  if [[ -n "${launcher_pid:-}" ]]; then
+    kill "$launcher_pid" 2>/dev/null || true
+    wait "$launcher_pid" 2>/dev/null || true
+  fi
 }
 trap cleanup EXIT
 
 mkdir -p "$(dirname "$EMULATOR_LOG")" "$ARTIFACT_DIR"
 : >"$EMULATOR_LOG"
 nix run "$ROOT#android-emulator" >"$EMULATOR_LOG" 2>&1 &
+launcher_pid=$!
 for _ in $(seq 1 30); do
-  ANDROID_SERIAL="$("$ADB" devices | sed -n 's/^\(emulator-[0-9]*\)[[:space:]].*/\1/p' | sed -n '1p')"
+  # Nix logs the port it allocated. Never attach to somebody else's emulator.
+  port="$(sed -n 's/^We have a free TCP port: \([0-9]*\)$/\1/p' "$EMULATOR_LOG")"
+  ANDROID_SERIAL="${port:+emulator-$port}"
   [[ -n "$ANDROID_SERIAL" ]] && break
   sleep 1
 done
@@ -47,7 +72,7 @@ done
 export ANDROID_SERIAL
 
 for _ in $(seq 1 90); do
-  if "$ADB" wait-for-device >/dev/null 2>&1 &&
+  if [[ "$("$ADB" get-state 2>/dev/null)" == device ]] &&
     [[ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]]; then
     break
   fi
@@ -74,7 +99,7 @@ fail() {
   shift
   "$ADB" logcat -d >"$ARTIFACT_DIR/$package-logcat.txt" 2>/dev/null || true
   "$ADB" exec-out screencap -p >"$ARTIFACT_DIR/$package-screen.png" 2>/dev/null || true
-  sed -n '1,200p' "$ARTIFACT_DIR/$package-logcat.txt" >&2 || true
+  # Raw logcat can contain provider credentials; archive it, never print it.
   echo "error: $*" >&2
   echo "note: full logcat and screenshot under $ARTIFACT_DIR" >&2
   exit 1
@@ -119,8 +144,16 @@ launch_category() {
 }
 
 "$ADB" install -r "$APK"
-# One package, both entry points. A handset resolves the first and a television
-# the second, and the universal APK is only universal if it answers to both.
-launch_category "$SPOOL_PACKAGE" android.intent.category.LAUNCHER
-launch_category "$SPOOL_PACKAGE" android.intent.category.LEANBACK_LAUNCHER
-printf 'universal APK launch test passed for both launcher categories\n'
+"$ADB" install -r "$TEST_APK"
+"$ADB" install -r "$E2E_APK"
+status=0
+# The shared driver finishes every traditional native selector before starting
+# real GUI selectors and retains both phase failures.
+# The native shell supplies real host Qt, FFmpeg CLI and English OCR; the
+# controller renders nothing on the host and observes the private emulator.
+nix develop "$ROOT#native" -c python "$ROOT/tools/run-tests.py" \
+  --build-dir "$BUILD_DIR" --workers 1 || status=1
+# The production package still has to resolve both public launcher contracts.
+(launch_category "$SPOOL_PACKAGE" android.intent.category.LAUNCHER) || status=1
+(launch_category "$SPOOL_PACKAGE" android.intent.category.LEANBACK_LAUNCHER) || status=1
+exit "$status"

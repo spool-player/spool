@@ -423,6 +423,10 @@
         perl
         pkg-config
         python3
+        # The slim playback closure deliberately has no ffmpeg CLI/encoders;
+        # app-journey creates its finite FFV1 fixture with the full pinned CLI.
+        (lib.getBin (spoolFfmpegFor pkgs))
+        tesseract
         rubberband
         unzip
         which
@@ -435,7 +439,11 @@
           (sourceLinuxPackages pkgs))
         # zstd compresses the portable Linux tarball; see
         # tools/package-linux-bundle.sh.
-        ++ [ pkgs.elfutils pkgs.vulkan-loader pkgs.zstd ];
+        ++ [
+          pkgs.elfutils pkgs.vulkan-loader pkgs.zstd
+          # Isolated test displays exercise the real Qt/libmpv GPU paths.
+          pkgs.weston pkgs.xorg-server
+        ];
 
 
       qmlToolWrappers = pkgs: qt:
@@ -564,6 +572,15 @@
         # for webp. tools/lib/qt-deploy.sh and tools/package-appimage.sh take
         # qwebp from this prefix; both then assert it landed.
         export SPOOL_QT_EXTRA_PLUGIN_DIRS="${pkgs.spoolQt6.qtimageformats}/lib/qt-6/plugins"
+
+        ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
+          # The test driver opts into these CPU drivers only inside its isolated
+          # compositor. Do not replace the developer's normal desktop drivers.
+          export SPOOL_TEST_DRI_DIR="${pkgs.mesa}/lib/dri"
+          export SPOOL_TEST_VULKAN_ICD="$(echo ${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.*.json)"
+          export SPOOL_TEST_DRIVER_LIB_DIR="${pkgs.lib.makeLibraryPath [ pkgs.mesa pkgs.libGL pkgs.vulkan-loader ]}"
+          export SPOOL_TEST_EGL_VENDOR="${pkgs.mesa}/share/glvnd/egl_vendor.d/50_mesa.json"
+        ''}
       '';
       cachedNativeQtPackage = pkgs:
         let
@@ -812,22 +829,19 @@
             if pkgs.stdenv.hostPlatform.isDarwin
             then "build/macos/app"
             else "build/linux-release/app";
-          # Mirrors the "Run native tests" CI steps. Both mpv-video-item tests
-          # need a GPU, so the pattern is a prefix rather than an exact name
-          # the Linux runner does not have, so CI skips it there and here.
-          ctestExcludeArgs =
-            if pkgs.stdenv.hostPlatform.isDarwin
-            then ""
-            else "-E '^mpv-video-item' ";
-          ctestJobs =
+          # One driver runs the complete traditional phase before real GUI e2e,
+          # retaining both failures rather than excluding GPU consumers on Linux.
+          testJobs =
             if pkgs.stdenv.hostPlatform.isDarwin
             then "$(sysctl -n hw.ncpu)"
             else "$(nproc)";
-          testScript = pkgs.writeShellScript "spool-ctest" ''
+          testScript = pkgs.writeShellScript "spool-tests" ''
             set -euo pipefail
             cd "$1"
             shift
-            exec ctest --test-dir ${appBuildDir} ${ctestExcludeArgs}--parallel "${ctestJobs}" --output-on-failure "$@"
+            workers="${testJobs}"
+            if (( workers > 32 )); then workers=32; fi
+            exec python3 tools/run-tests.py --build-dir ${appBuildDir} --workers "$workers" "$@"
           '';
           # Development apps resolve the checkout, optionally build the
           # selected native variant, then launch it inside the #native shell.
@@ -1058,7 +1072,7 @@
             ''}
           '';
 
-          # Same build and ctest invocation the release workflow runs.
+          # Same build and unified test driver the release workflow runs.
           tester = makeRunner {
             name = "spool-tests";
             buildBeforeRun = true;

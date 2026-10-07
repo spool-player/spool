@@ -1,6 +1,7 @@
 #include "app/GroupClock.h"
 
 #include "TestMain.h"
+#include "TestRequire.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -9,13 +10,7 @@ using namespace Spool;
 
 namespace {
 
-void require(bool condition, const char *message)
-{
-    if (condition)
-        return;
-    std::cerr << message << '\n';
-    std::exit(1);
-}
+using SpoolTests::require;
 
 } // namespace
 

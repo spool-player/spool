@@ -1,5 +1,6 @@
 #include "app/SearchController.h"
 #include "TestMain.h"
+#include "TestRequire.h"
 #include "provider/SearchSource.h"
 
 #include <QCoreApplication>
@@ -17,13 +18,7 @@
 using namespace Spool;
 
 namespace {
-void require(bool condition, const char *message)
-{
-    if (!condition) {
-        std::cerr << message << '\n';
-        std::exit(1);
-    }
-}
+using SpoolTests::require;
 
 class PendingSearch final : public SearchSource {
 public:

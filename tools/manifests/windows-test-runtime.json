@@ -1,0 +1,11 @@
+{
+  "mesa": {
+    "version": "26.2.4",
+    "url": "https://github.com/pal1000/mesa-dist-win/releases/download/26.2.4/mesa3d-26.2.4-release-msvc.7z",
+    "sha256": "351fc8c8b695878ffb3eaa044b3ead08672a48b1a045e3c3e3975811df0f6695"
+  },
+  "tesseract": {
+    "package": "tesseract",
+    "version": "5.5.3.20260724"
+  }
+}

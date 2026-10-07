@@ -1,6 +1,7 @@
 #include "platform/PlatformSystemProbes.h"
 
 #include "TestMain.h"
+#include "TestRequire.h"
 
 #include <QtGlobal>
 
@@ -11,13 +12,7 @@
 using namespace Spool;
 
 namespace {
-void require(bool condition, const char *message)
-{
-    if (condition)
-        return;
-    std::cerr << message << '\n';
-    std::exit(EXIT_FAILURE);
-}
+using SpoolTests::require;
 }
 
 SPOOL_TEST_MAIN("linux-memory-policy")

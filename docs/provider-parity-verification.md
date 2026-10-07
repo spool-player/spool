@@ -34,11 +34,12 @@ From the Spool repository:
 
 ```sh
 nix run .#local-providers-build
-nix develop .#native -c ctest --test-dir build/linux-release-local-providers/app \
-  -E '^mpv-video-item' --parallel 8 --output-on-failure
+nix develop .#native -c python tools/run-tests.py \
+  --build-dir build/linux-release-local-providers/app --workers 8
 ```
 
-The two excluded mpv rendering tests require a GPU. Provider contracts also run
+The unified driver now includes the real GPU consumers on an isolated Linux
+display; it no longer excludes mpv selectors. Provider contracts also run
 against each sibling's `tests/contract.mjs` with `provider-contract-runner`, both
 normally and with `QV4_FORCE_INTERPRETER=1`.
 
@@ -55,8 +56,8 @@ For screenshots, supply an output directory:
 
 ```sh
 nix develop .#native -c env SPOOL_INTEGRATION_CAPTURES=/tmp/spool-extension-captures \
-  ctest --test-dir build/linux-release-local-providers/app \
-  -R '^extension-integration$' --output-on-failure
+  bash tools/test-gpu-session.sh \
+  build/linux-release-local-providers/app/spool-e2e-tests --child extension-integration
 ```
 
 The test captures both Settings and Subtitle Appearance at 1280×720, 1920×1080,

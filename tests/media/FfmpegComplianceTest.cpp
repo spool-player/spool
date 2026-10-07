@@ -1,3 +1,4 @@
+#include "TestMain.h"
 #define __STDC_CONSTANT_MACROS
 extern "C" {
 #include <libavcodec/bsf.h>
@@ -62,7 +63,7 @@ void requireFixtureOpens(std::string_view relativePath, std::string_view expecte
 
 } // namespace
 
-int main()
+SPOOL_TEST_MAIN("ffmpeg-compliance")
 {
     const std::string license = avutil_license();
     const std::string configuration = avutil_configuration();

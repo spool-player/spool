@@ -304,17 +304,15 @@ jobs:
       - name: Build host app
         run: nix develop .#native -c bash tools/build-linux-release.sh
 
-      - name: Run native tests
+      - name: Run traditional and real GUI e2e tests
         run: |
-          nix develop .#native -c ctest --test-dir build/linux-release/app \
-            -E '^mpv-video-item' --parallel "$(nproc)" --output-on-failure
+          nix develop .#native -c python tools/run-tests.py \
+            --build-dir build/linux-release/app --workers "$(nproc)"
 
 
       - name: Lint compiled QML
         run: nix develop .#native -c cmake --build build/linux-release/app --target spool_qmllint_strict
 
-      - name: Launch-test host app UI
-        run: nix develop .#native -c bash tools/launch-native-app.sh build/linux-release/install/bin/spool
 
       # A page switch is meant to cost one frame. That is a number, so it is
       # measured every commit rather than noticed once it has got bad.
@@ -577,10 +575,10 @@ jobs:
           SPOOL_MACOS_CREDENTIAL_SERVICE: ${{ inputs.enable_macos_signing && 'com.sachk.spool' || '' }}
         run: nix develop .#native --no-write-lock-file -c bash tools/build-macos.sh
 
-      - name: Run native tests
+      - name: Run traditional and real GUI e2e tests
         run: |
-          nix develop .#native --no-write-lock-file -c ctest --test-dir build/macos/app \
-            --parallel "$(sysctl -n hw.ncpu)" --output-on-failure
+          nix develop .#native --no-write-lock-file -c python tools/run-tests.py \
+            --build-dir build/macos/app --workers "$(sysctl -n hw.ncpu)"
 
       - name: Lint compiled QML
         run: nix develop .#native --no-write-lock-file -c cmake --build build/macos/app --target spool_qmllint_strict
@@ -617,10 +615,6 @@ jobs:
           print("Bundled Vulkan loader and MoltenVK load successfully; Metal surface extension available")
           PY
 
-      - name: Launch-test macOS app UI
-        env:
-          SPOOL_LAUNCH_TEST_QPA_PLATFORM: cocoa
-        run: nix develop .#native --no-write-lock-file -c bash tools/launch-native-app.sh build/macos/install/Spool.app
 
       - name: Sign macOS application
         if: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.enable_macos_signing }}
@@ -761,10 +755,23 @@ jobs:
             -m qtshadertools qttasktree qtwebsockets qtimageformats
       - name: Build actual source Qt, media closure, and tvOS app
         run: bash tools/build-tvos.sh
-      - name: Exercise native Apple TV simulator UI and playback
+      - uses: ./.github/actions/install-nix
+        if: ${{ matrix.sdk == 'appletvsimulator' }}
+        with:
+          nix_conf: |
+            experimental-features = nix-command flakes
+      - uses: cachix/cachix-action@3ba601ff5bbb07c7220846facfa2cd81eeee15a1 # v16
+        if: ${{ matrix.sdk == 'appletvsimulator' }}
+        with:
+          name: spool
+          skipPush: true
+      - name: Build same-binary native controller for the actual mobile app journey
+        if: ${{ matrix.sdk == 'appletvsimulator' }}
+        run: nix develop .#native -c env DEPLOY_APP=0 bash tools/build-macos.sh
+      - name: Run native traditional then GPU GUI tests in isolated Apple TV simulator
         if: ${{ matrix.sdk == 'appletvsimulator' }}
         run: bash tools/apple/smoke-tvos.sh build/tvos/appletvsimulator-arm64/install/Spool.app
-      - name: Package validated unsigned device IPA
+      - name: Package artifact-audited unsigned device IPA (no device runtime claim)
         if: ${{ matrix.sdk == 'appletvos' }}
         run: bash tools/package-tvos.sh build/tvos/appletvos-arm64/install/Spool.app dist/tvos
       - name: Upload only the device release package
@@ -788,8 +795,7 @@ jobs:
           path: |
             ${{ runner.temp }}/tvos-simulator-arm64.tar.gz
             build/tvos/smoke/*.png
-            build/tvos/smoke/result.json
-            build/tvos/smoke/credentials-result.json
+            build/tvos/smoke/*.json
           retention-days: ${{ inputs.release && 1 || 7 }}
       - name: Save coherent Apple dependency cache
         if: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release && steps.tvos-source-cache.outputs.cache-hit != 'true' }}
@@ -1089,6 +1095,7 @@ jobs:
           SPOOL_ANDROID_KEYSTORE_STORE_PASS: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release && secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD || '' }}
           SPOOL_ANDROID_KEYSTORE_KEY_PASS: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release && secrets.ANDROID_RELEASE_KEY_PASSWORD || '' }}
           ANDROID_ABI: ${{ matrix.abi }}
+          SPOOL_ANDROID_BUILD_TESTS: ${{ matrix.abi == 'x86_64' && 'ON' || 'OFF' }}
         run: nix develop .#android -c bash tools/android/build-apks.sh
 
       - name: Verify native libraries stay compressed
@@ -1136,26 +1143,33 @@ jobs:
             build/android/qcoro
           key: ${{ steps.android-cache.outputs.cache-primary-key }}
 
-      - name: Launch-test both launcher categories in headless emulator
+      - name: Build same-binary native controller for the actual mobile app journey
+        if: ${{ matrix.abi == 'x86_64' }}
+        run: nix develop .#native -c bash tools/build-linux-release.sh
+
+      - name: Run native traditional then GPU GUI tests and both launcher contracts
         if: ${{ matrix.abi == 'x86_64' }}
         run: |
           nix develop .#android -c bash tools/android/emulator-launch-test.sh \
-            dist/android/spool-x86_64.apk
+            dist/android/spool-e2e-app-x86_64.apk
 
-      - name: Upload launch-test diagnostics
-        if: ${{ failure() && matrix.abi == 'x86_64' }}
+      - name: Upload internal emulator test receipts and diagnostics
+        if: ${{ always() && matrix.abi == 'x86_64' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
         with:
-          name: spool-android-launch-test
+          name: internal-spool-android-tests
           path: |
             build/android/launch-test
             build/android/emulator.log
+            dist/android/spool-tests-x86_64.apk
+            dist/android/spool-e2e-tests-x86_64.apk
+            dist/android/spool-e2e-app-x86_64.apk
           retention-days: 1
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
         with:
           name: spool-android-apks-${{ matrix.abi }}
-          path: dist/android/*.apk
+          path: dist/android/spool-${{ matrix.abi }}.apk
           if-no-files-found: error
           retention-days: ${{ inputs.release && 1 || 7 }}
 
@@ -1365,9 +1379,13 @@ jobs:
 
       - name: Build application
         shell: pwsh
-        run: tools\windows\build.ps1 -Clean
+        run: tools\windows\build.ps1 -Clean -CMakeArguments '-DSPOOL_TEST_RENDER_BACKEND=opengl'
 
-      - name: Run tests
+      - name: Install pinned real OpenGL and fixture test dependencies
+        shell: pwsh
+        run: tools\windows\install-test-runtime.ps1
+
+      - name: Run traditional and real OpenGL GUI e2e tests
         shell: pwsh
         run: tools\windows\test.ps1
 
