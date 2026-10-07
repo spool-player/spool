@@ -74,6 +74,17 @@ for bundle, arguments, expected in checks:
         if native_error is not None:
             for line in lines[native_error:]:
                 print(re.sub(r"https?://\S+", "[redacted-url]", line))
+            predicate = '(process == "amfid" OR process == "kernel") AND (eventMessage CONTAINS[c] "spool")'
+            native = subprocess.run(["/usr/bin/log", "show", "--last", "2m", "--style", "compact",
+                                     "--predicate", predicate], stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT, text=True, timeout=30)
+            print(re.sub(r"https?://\S+", "[redacted-url]", native.stdout))
+            for report in (Path.home() / "Library/Logs/DiagnosticReports").glob("Spool*.ips"):
+                payload = report.read_text()
+                metadata, offset = json.JSONDecoder().raw_decode(payload)
+                details = json.loads(payload[offset:])
+                print("native termination:", json.dumps({
+                    "exception": details.get("exception"), "termination": details.get("termination")}))
         for line in lines:
             if arguments == ["mpv-video-item"] and any(
                     marker in line for marker in ["[vd]", "[vo/libmpv]", "[libmpv_render", "[ffmpeg/video]",
