@@ -15,7 +15,7 @@ xcrun simctl bootstatus "$device" -b
 # simctl's console mode returns after process exit. Parse only the exact
 # credential-free consumer-test result, never dump full app/provider logs.
 python3 - "$device" "$app" "$result" <<'PY'
-import json, plistlib, re, subprocess, sys, tempfile
+import json, plistlib, re, subprocess, sys, tempfile, uuid
 from pathlib import Path
 
 device, app, output = sys.argv[1:]
@@ -44,17 +44,46 @@ checks = [
      "mpv video smoke: upright frames and OSD rendered across detach and resize"),
     (smoke_id, ["tvos-audio"],
      "tvOS audio smoke: AudioUnit output advanced with exclusive playback session"),
-    (smoke_id, ["tvos-credentials"],
-     "tvOS credentials smoke: Keychain roundtrip and sandbox file persistence passed"),
+    (smoke_id, ["tvos-credentials"], None),
 ]
 results = {}
 for bundle, arguments, expected in checks:
+    receipt = None
+    launch_arguments = arguments
+    if arguments == ["tvos-credentials"]:
+        container = subprocess.check_output(
+            ["xcrun", "simctl", "get_app_container", device, bundle, "data"], text=True).strip()
+        receipt = Path(container) / "tmp" / "tvos-credentials-result.json"
+        receipt.unlink(missing_ok=True)
+        (output / "credentials-result.json").unlink(missing_ok=True)
+        nonce = uuid.uuid4().hex
+        launch_arguments = [*arguments, nonce]
     # Selectors are separate native executions, not arguments to a process
     # UIKit may still be retiring after the previous consumer returned.
     process = subprocess.run(["xcrun", "simctl", "launch", "--console", "--terminate-running-process",
-                              device, bundle, *arguments],
+                              device, bundle, *launch_arguments],
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=90)
-    passed = process.returncode == 0 and expected in process.stdout
+    if receipt is None:
+        passed = process.returncode == 0 and expected in process.stdout
+    else:
+        try:
+            report = json.loads(receipt.read_text())
+        except (OSError, ValueError):
+            report = None
+        expected_report = {"case": "tvos-credentials", "nonce": nonce,
+                           "saved": True, "loaded": True, "removed": True, "writable": True}
+        valid = (isinstance(report, dict) and report.keys() == expected_report.keys()
+                 and report["case"] == expected_report["case"] and report["nonce"] == nonce
+                 and all(type(report[key]) is bool for key in ["saved", "loaded", "removed", "writable"]))
+        passed = process.returncode == 0 and valid and report == expected_report
+        if valid:
+            (output / "credentials-result.json").write_text(json.dumps(report, indent=2) + "\n")
+            if passed and "Keychain roundtrip and sandbox file persistence passed" not in process.stdout:
+                print("tvOS credentials smoke: console marker absent; fresh native receipt passed")
+        if not passed:
+            print("tvOS credentials smoke: native receipt " + (
+                json.dumps({key: report[key] for key in ["saved", "loaded", "removed", "writable"]})
+                if valid else "missing or invalid"))
     results[arguments[0]] = passed
     print(f"{arguments[0]}: {'passed' if passed else 'FAILED'}")
     if not passed:

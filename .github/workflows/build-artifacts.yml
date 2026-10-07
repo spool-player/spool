@@ -789,6 +789,7 @@ jobs:
             ${{ runner.temp }}/tvos-simulator-arm64.tar.gz
             build/tvos/smoke/*.png
             build/tvos/smoke/result.json
+            build/tvos/smoke/credentials-result.json
           retention-days: ${{ inputs.release && 1 || 7 }}
       - name: Save coherent Apple dependency cache
         if: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release && steps.tvos-source-cache.outputs.cache-hit != 'true' }}

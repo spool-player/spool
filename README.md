@@ -634,6 +634,11 @@ The identical red/blue fixture is a finite 30-second clip; the consumer does not
 reset playback with rapid EOF seeks while renderer initialization is in flight.
 Each consumer selector launches a fresh native process, terminating any previous
 instance of the harness before dispatching its next argument vector.
+The credential consumer atomically writes only its selector, invocation token,
+and actual save/load/remove/sandbox-write booleans. The supervisor clears stale
+receipts, requires the matching token and all four boolean successes, and
+publishes `credentials-result.json` alongside `result.json`; console output is
+not the credential acceptance signal.
 
 Simulator builds embed matching local application and Keychain access-group
 entitlements in the Mach-O XML/DER sections used by the simulator. Before
