@@ -159,7 +159,8 @@ SPOOL_TEST_MAIN("mpv-video-item")
     Spool::MpvVideoItem videoItem(window.contentItem());
     // Match production's anchors.fill: parent. UIKit can replace requested
     // window geometry asynchronously with the fullscreen television surface.
-    const auto fitSurface = [&] { videoItem.setSize(window.contentItem()->size()); };
+    qreal viewportFraction = 1.0;
+    const auto fitSurface = [&] { videoItem.setSize(window.contentItem()->size() * viewportFraction); };
     QObject::connect(window.contentItem(), &QQuickItem::widthChanged, &videoItem, fitSurface);
     QObject::connect(window.contentItem(), &QQuickItem::heightChanged, &videoItem, fitSurface);
     fitSurface();
@@ -174,13 +175,35 @@ SPOOL_TEST_MAIN("mpv-video-item")
         },
         Qt::DirectConnection);
 #endif
+#ifdef Q_OS_TVOS
+    window.showFullScreen();
+#else
     window.show();
+#endif
     app.processEvents();
+    const auto captureItem = [&] {
+        const QImage image = window.grabWindow();
+#ifdef Q_OS_TVOS
+        if (image.isNull())
+            return image;
+        const qreal xScale = qreal(image.width()) / window.contentItem()->width();
+        const qreal yScale = qreal(image.height()) / window.contentItem()->height();
+        return image.copy(0, 0, qRound(videoItem.width() * xScale), qRound(videoItem.height() * yScale));
+#else
+        return image;
+#endif
+    };
 
     // Reusing an item after detach must reset first-frame state and publish
     // the new context, including when Qt replaces the render target on resize.
     for (const QSize size : { QSize(320, 180), QSize(480, 270) }) {
+#ifdef Q_OS_TVOS
+        // UIKit owns the fullscreen native window; resize the real video
+        // viewport instead of requesting an unsupported television window size.
+        viewportFraction = size.width() == 320 ? 1.0 : 2.0 / 3.0;
+#else
         window.resize(size);
+#endif
         fitSurface();
         std::setlocale(LC_NUMERIC, "C");
         mpv_handle *handle = mpv_create();
@@ -234,7 +257,7 @@ SPOOL_TEST_MAIN("mpv-video-item")
         timer.start();
         while (!rendered && timer.elapsed() < 5000) {
             app.processEvents(QEventLoop::AllEvents, 20);
-            rendered = isRightWayUp(window.grabWindow());
+            rendered = isRightWayUp(captureItem());
             QThread::msleep(10);
         }
 
@@ -246,7 +269,7 @@ SPOOL_TEST_MAIN("mpv-video-item")
             int(display.hdrAvailable), int(display.preferredFormat), double(display.sdrWhiteNits),
             double(display.minLuminanceNits), double(display.maxLuminanceNits));
 
-        const bool upright = rendered && isRightWayUp(window.grabWindow());
+        const bool upright = rendered && isRightWayUp(captureItem());
         char *pixelFormat = mpv_get_property_string(handle, "video-target-params/pixelformat");
         const QByteArray actualFormat = pixelFormat ? QByteArray(pixelFormat) : QByteArray();
         mpv_free(pixelFormat);
@@ -259,14 +282,14 @@ SPOOL_TEST_MAIN("mpv-video-item")
         std::fprintf(stderr, "rendered SDR target: RHI=%d mpv=%s\n", textureFormat.load(),
             actualFormat.isEmpty() ? "(legacy renderer)" : actualFormat.constData());
 #endif
-        const QImage beforeOsd = window.grabWindow();
+        const QImage beforeOsd = captureItem();
         const char *osdCommand[] = { "show-text", "SDR white", "10000", nullptr };
         bool neutralOsd = false;
         if (mpv_command(handle, osdCommand) >= 0) {
             timer.restart();
             while (!neutralOsd && timer.elapsed() < 5000) {
                 app.processEvents(QEventLoop::AllEvents, 20);
-                neutralOsd = containsNeutralOsd(window.grabWindow(), beforeOsd);
+                neutralOsd = containsNeutralOsd(captureItem(), beforeOsd);
                 QThread::msleep(10);
             }
         }
