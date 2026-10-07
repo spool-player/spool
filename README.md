@@ -623,9 +623,12 @@ pins, patches, build policy, SDK, architecture, and compiler/build-tool identity
 PRs restore without publishing caches. Only `spool-tvos-device-arm64` is a public
 release artifact. Simulator apps and smoke results use
 `internal-tvos-simulator-arm64` and are never offered as installable downloads.
-The GLES framebuffer renderer resets shared OpenGL state at context handoffs and
-frame rendering boundaries so Qt's clipping/blend state cannot leak into mpv
-when the video viewport is resized or a playback context is replaced.
+Qt owns the GLES framebuffer renderer's external-command bracket; the renderer
+does not nest another RHI scope. Context changes restore the provided FBO after
+resetting shared OpenGL state, and drawing resets state before Qt resumes.
+Attach/detach acknowledgement is delivered on the GUI thread after render-thread
+GPU work. Each waiter checks its own completion token, so an old notification
+cannot finish a later handoff and stack event-loop receivers stay GUI-owned.
 The pixel consumer waits for a real window swap before readback; grabbing an
 offscreen frame cannot substitute for native presentation feedback.
 Those waits enter Qt's native event loop: on UIKit a manual event pump does not
