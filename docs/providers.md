@@ -49,6 +49,10 @@ again before completion. `callSource`, `callSourceMediaPage` and `callSourceItem
 are the single operation boundary: optional operations are guarded before
 provider execution, including the validated native preferences and settings
 storage paths. Unsupported operations fail with `unsupported_capability`.
+Joined group playback also follows its owning account, not aggregate availability:
+withdrawing that account's `groupPlayback` clears the active group, synchronization
+timers and pending group handoff so playback controls return to local ownership.
+Another account offering group playback cannot retain the withdrawn group's state.
 
 Capabilities advertise behavior, not permission: per-account server policy,
 private activation approval, explicit origin/LAN consent, cancellation and

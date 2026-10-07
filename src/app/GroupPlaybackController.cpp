@@ -97,6 +97,13 @@ GroupPlaybackController::GroupPlaybackController(
     connect(
         m_player, &PlayerController::playbackStateChanged, this, &GroupPlaybackController::handlePlayerStateChanged);
     connect(m_hub, &Provider::capabilitiesChanged, this, &GroupPlaybackController::availableChanged);
+    connect(m_hub, &SourceHub::capabilitySupportChanged, this, [this](const QString& account) {
+        if (account != m_account)
+            return;
+        const Provider *source = m_hub->source(account);
+        if (!source || !source->capabilities().testFlag(Provider::GroupPlayback))
+            clearGroup();
+    });
     connect(m_hub, &SourceHub::accountEvent, this,
         [this](const QString& account, const QString& type, const QVariantMap& payload) {
             if (type == QStringLiteral("group"))

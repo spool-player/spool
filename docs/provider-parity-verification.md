@@ -32,6 +32,16 @@ Bundled versions are Jellyfin 0.2.11, Emby 0.1.7, Plex 0.1.8, Stremio 0.1.2
 and Open Movies 1.1.1. They are working packages, not published releases.
 Curated release URLs and digests await separately approved publication.
 
+Independent review then identified active group ownership surviving withdrawal
+when another account kept aggregate availability true. The existing
+`group-playback-policy` test now drives two real registry accounts through the
+public group controller and capability events. It failed before repair at the
+active/pending group ownership assertion, then passed after the controller consumed
+account-specific support changes and used its existing group teardown. Withdrawal
+of the unrelated account leaves the joined group intact. The focused followup
+build and four selectors (`group-playback-policy`, `group-clock`,
+`provider-registry`, `source-hub`) passed.
+
 ## Earlier parity verification
 
 Verified again on 2026-09-30 after the provider UI/local-library cutover: the
