@@ -6,21 +6,21 @@
       "appleAppStore": true,
       "version": "0.2.11",
       "archive": "bundled/spool.jellyfin-0.2.11.tar.zst",
-      "sha256": "802d683b67a6b2eff48fd3db9025c6ddbc25fc873d0085874dcf76e3b9beb9af"
+      "sha256": "4ee855c959577f04b53a1defe4a3a8d518b2ad86def9de69a81f89f57ccb2f49"
     },
     {
       "id": "spool.emby",
       "appleAppStore": true,
       "version": "0.1.7",
       "archive": "bundled/spool.emby-0.1.7.tar.zst",
-      "sha256": "4bb1748b468a2d6fffcaa61ef230e8f9e963b28677d3e51c428e979e8304b954"
+      "sha256": "2d4221ce043ca27d3d55866002d8db47ac66fc6b6c8b6345e929c55c26076bf3"
     },
     {
       "id": "spool.plex",
       "appleAppStore": true,
       "version": "0.1.8",
       "archive": "bundled/spool.plex-0.1.8.tar.zst",
-      "sha256": "0af25b1dd9691d76a0fc6aef7b35ae16b6662ec9dcf05472ec088859556acced"
+      "sha256": "a24b5229d35b67f7944b21e9b26741b26caae9ec5dff94714ea15d4faa0335fc"
     },
     {
       "id": "spool.stremio",
