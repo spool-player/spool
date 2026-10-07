@@ -270,9 +270,15 @@ namespace {
                 return;
 
             if (m_lifecycle.hasPendingHandle()) {
+                if (auto *window = m_lifecycle.window())
+                    window->beginExternalCommands();
+                QQuickOpenGLUtils::resetOpenGLState();
                 m_lifecycle.releaseContext();
                 if (auto *next = m_lifecycle.nextHandle())
                     createRenderContext(next);
+                QQuickOpenGLUtils::resetOpenGLState();
+                if (auto *window = m_lifecycle.window())
+                    window->endExternalCommands();
                 m_lifecycle.completeHandoff();
             }
 
@@ -301,7 +307,12 @@ namespace {
 
             if (auto *window = m_lifecycle.window())
                 window->beginExternalCommands();
+            // The FBO renderer shares Qt's context just like the RHI renderer.
+            // Inherited clipping/blend/stencil state is not a libmpv default,
+            // especially after Qt replaces the target during a viewport resize.
+            QQuickOpenGLUtils::resetOpenGLState();
             mpv_render_context_render(ctx, params);
+            QQuickOpenGLUtils::resetOpenGLState();
             if (auto *window = m_lifecycle.window())
                 window->endExternalCommands();
             m_lifecycle.frameRendered(updateFlags);
