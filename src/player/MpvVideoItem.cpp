@@ -63,6 +63,39 @@ extern "C" {
 namespace Spool {
 
 namespace {
+#ifdef Q_OS_TVOS
+    thread_local int nativeDrawDiagnostics = 0;
+    thread_local GLfloat nativeVertexData[12] {};
+    void diagnosticBufferData(GLenum target, GLsizeiptr size, const void *data, GLenum usage)
+    {
+        if (target == GL_ARRAY_BUFFER && data && size >= GLsizeiptr(sizeof(nativeVertexData)))
+            std::memcpy(nativeVertexData, data, sizeof(nativeVertexData));
+        ::glBufferData(target, size, data, usage);
+    }
+    void diagnosticDrawArrays(GLenum mode, GLint first, GLsizei count)
+    {
+        GLint viewport[4] {}, scissor[4] {}, fbo = 0, program = 0, vao = 0;
+        ::glGetIntegerv(GL_VIEWPORT, viewport);
+        if (viewport[2] >= 2000 && nativeDrawDiagnostics++ < 12) {
+            ::glGetIntegerv(GL_SCISSOR_BOX, scissor);
+            ::glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fbo);
+            ::glGetIntegerv(GL_CURRENT_PROGRAM, &program);
+            ::glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &vao);
+            GLint enabled = 0, stride = 0, buffer = 0;
+            ::glGetVertexAttribiv(0, GL_VERTEX_ATTRIB_ARRAY_ENABLED, &enabled);
+            ::glGetVertexAttribiv(0, GL_VERTEX_ATTRIB_ARRAY_STRIDE, &stride);
+            ::glGetVertexAttribiv(0, GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING, &buffer);
+            std::fprintf(stderr,
+                "native draw: vp=%d,%d,%d,%d scissor=%d,%d,%d,%d fbo=%d program=%d vao=%d attrib0=%d stride=%d buffer=%d vertices=%g,%g,%g,%g;%g,%g,%g,%g;%g,%g,%g,%g error=%u\n",
+                viewport[0], viewport[1], viewport[2], viewport[3], scissor[0], scissor[1], scissor[2], scissor[3],
+                fbo, program, vao, enabled, stride, buffer, double(nativeVertexData[0]), double(nativeVertexData[1]),
+                double(nativeVertexData[2]), double(nativeVertexData[3]), double(nativeVertexData[4]), double(nativeVertexData[5]),
+                double(nativeVertexData[6]), double(nativeVertexData[7]), double(nativeVertexData[8]), double(nativeVertexData[9]),
+                double(nativeVertexData[10]), double(nativeVertexData[11]), unsigned(::glGetError()));
+        }
+        ::glDrawArrays(mode, first, count);
+    }
+#endif
 
     void *getProcAddressGl(void *, const char *name)
     {
@@ -79,6 +112,12 @@ namespace {
             dladdr(reinterpret_cast<void *>(&::glViewport), &linked);
             std::fprintf(stderr, "native GL provider: function=%s resolved=%s directGLES=%s\n", name,
                 provider.dli_fname ? provider.dli_fname : "(unknown)", linked.dli_fname ? linked.dli_fname : "(unknown)");
+        }
+        if (!qgetenv("SPOOL_TEST_MPV_LOG").isEmpty()) {
+            if (std::strcmp(name, "glDrawArrays") == 0)
+                return reinterpret_cast<void *>(&diagnosticDrawArrays);
+            if (std::strcmp(name, "glBufferData") == 0)
+                return reinterpret_cast<void *>(&diagnosticBufferData);
         }
 #endif
         return address;
@@ -322,7 +361,17 @@ namespace {
                 { MPV_RENDER_PARAM_INVALID, nullptr },
             };
 
+#ifdef Q_OS_TVOS
+            static thread_local bool nativeReported = false;
+            const int result = mpv_render_context_render(ctx, params);
+            if (!nativeReported && !qgetenv("SPOOL_TEST_MPV_LOG").isEmpty()) {
+                nativeReported = true;
+                std::fprintf(stderr, "native renderer result: target=%dx%d status=%d error=%u\n",
+                    mpfbo.w, mpfbo.h, result, unsigned(::glGetError()));
+            }
+#else
             mpv_render_context_render(ctx, params);
+#endif
             QQuickOpenGLUtils::resetOpenGLState();
             m_lifecycle.frameRendered(updateFlags);
         }
