@@ -71,6 +71,7 @@ for bundle, arguments, expected in checks:
                 print(re.sub(r"https?://\S+", "[redacted-url]", line))
         for line in lines:
             if any(marker in line for marker in ["launch test:", "video result:", "orientation:", "viewport:",
+                                                "first video frame", "render context handoff did not complete",
                                                 "render context was not ready", "failed to initialize mpv",
                                                 "tvOS audio smoke:", "tvOS credentials smoke:",
                                                 "startup:", "[qml]", "font registration failed:",
