@@ -14,6 +14,7 @@
 #include <cstdio>
 
 #import <AVFoundation/AVFoundation.h>
+#import <Security/Security.h>
 extern "C" {
 #include <mpv/client.h>
 }
@@ -99,8 +100,21 @@ int secureStoreSmoke(int argc, char **argv)
     const bool removed = Spool::CredentialStore::load(account).isEmpty();
     QTemporaryFile data(QDir(Spool::persistentDataRoot()).filePath(QStringLiteral("smoke-XXXXXX")));
     const bool writable = data.open() && data.write("sandbox") == 7 && data.flush();
-    if (!saved || !loaded || !removed || !writable)
+    if (!saved || !loaded || !removed || !writable) {
+        std::fprintf(stderr, "tvOS credentials smoke: saved=%d loaded=%d removed=%d writable=%d\n",
+            saved, loaded, removed, writable);
+        // Read the actual native status without logging any account/value.
+        NSDictionary *query = @{ (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+            (__bridge id)kSecAttrService: @SPOOL_APPLE_CREDENTIAL_SERVICE,
+            (__bridge id)kSecAttrAccount: [NSString stringWithUTF8String:account.toUtf8().constData()],
+            (__bridge id)kSecReturnData: @YES };
+        CFTypeRef result = nullptr;
+        const OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &result);
+        if (result)
+            CFRelease(result);
+        std::fprintf(stderr, "tvOS credentials smoke: nativeStatus=%d\n", int(status));
         return 1;
+    }
     std::fprintf(stderr, "tvOS credentials smoke: Keychain roundtrip and sandbox file persistence passed\n");
     return 0;
 }
