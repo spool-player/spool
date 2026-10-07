@@ -77,10 +77,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           ARTIFACT_RUN: ${{ inputs.native-artifact-run }}
         run: gh run download "$ARTIFACT_RUN" --name internal-tvos-appletvsimulator-arm64 --dir build/tvos
-      - name: Launch isolated Apple TV simulator smoke
-        env:
-          SIMCTL_CHILD_SPOOL_TEST_MPV_LOG: '1'
-        run: bash tools/apple/smoke-tvos.sh build/tvos/appletvsimulator-arm64/install/Spool.app
+      - name: Repeat isolated native detach and resize smoke
+        run: |
+          for attempt in 1 2 3; do
+            echo "Native lifecycle round $attempt"
+            bash tools/apple/smoke-tvos.sh build/tvos/appletvsimulator-arm64/install/Spool.app
+            cp build/tvos/smoke/result.json "build/tvos/smoke/result-$attempt.json"
+          done
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
