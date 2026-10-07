@@ -2,11 +2,6 @@ name: tvOS source build
 
 on:
   workflow_dispatch:
-    inputs:
-      native-artifact-run:
-        description: Temporary native failure investigation artifact run
-        required: false
-        default: ''
   push:
     branches: [feature/tvos]
 
@@ -20,7 +15,6 @@ concurrency:
 jobs:
   simulator:
     name: Qt mpv tvOS ${{ matrix.sdk }} build and smoke
-    if: ${{ inputs.native-artifact-run == '' }}
     runs-on: macos-15
     timeout-minutes: 180
     strategy:
@@ -61,30 +55,3 @@ jobs:
             build/tvos/${{ matrix.sdk }}-arm64/install/smoke/spool-tvos-playback-smoke.app
             build/tvos/smoke/*.png
             build/tvos/smoke/result.json
-
-  diagnose:
-    if: ${{ inputs.native-artifact-run != '' }}
-    runs-on: macos-15
-    permissions:
-      contents: read
-      actions: read
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          persist-credentials: false
-      - name: Download existing native simulator failure
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ARTIFACT_RUN: ${{ inputs.native-artifact-run }}
-        run: gh run download "$ARTIFACT_RUN" --name internal-tvos-appletvsimulator-arm64 --dir build/tvos
-      - name: Inspect actual simulator signatures
-        run: |
-          codesign --display --verbose=4 --entitlements - build/tvos/appletvsimulator-arm64/install/Spool.app
-          codesign --display --verbose=4 --entitlements - build/tvos/appletvsimulator-arm64/install/smoke/spool-tvos-playback-smoke.app
-      - name: Launch isolated Apple TV simulator smoke
-        run: bash tools/apple/smoke-tvos.sh build/tvos/appletvsimulator-arm64/install/Spool.app
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: always()
-        with:
-          name: native-failure-pixels
-          path: build/tvos/smoke
