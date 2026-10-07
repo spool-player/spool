@@ -173,7 +173,7 @@ jobs:
                                                                "render context handoff did not complete", "native target:",
                                                                "native GL provider:", "native draw:", "native renderer result:",
                                                                "native uniform:", "native sampler:", "native texture allocation:",
-                                                               "native pass pixels:"]):
+                                                               "native pass pixels:", "native LUT input:", "native LUT pixels:"]):
                               print(line)
                       raise SystemExit(1)
           finally:

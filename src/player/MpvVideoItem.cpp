@@ -82,7 +82,56 @@ namespace {
             std::fprintf(stderr, "native texture allocation: texture=%d size=%dx%d level=%d format=%d\n",
                 texture, width, height, level, internal);
         }
+        if (data && width == 2 && height == 256 && format == GL_RGBA && type == GL_FLOAT) {
+            const auto *values = static_cast<const GLfloat *>(data);
+            GLint rowLength = 0, skipRows = 0, skipPixels = 0, unpackBuffer = 0;
+            ::glGetIntegerv(GL_UNPACK_ROW_LENGTH, &rowLength);
+            ::glGetIntegerv(GL_UNPACK_SKIP_ROWS, &skipRows);
+            ::glGetIntegerv(GL_UNPACK_SKIP_PIXELS, &skipPixels);
+            ::glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &unpackBuffer);
+            std::fprintf(stderr,
+                "native LUT input: rowLength=%d skipRows=%d skipPixels=%d unpackBuffer=%d row0=%g,%g,%g,%g,%g,%g,%g,%g row1=%g,%g,%g,%g,%g,%g,%g,%g\n",
+                rowLength, skipRows, skipPixels, unpackBuffer,
+                double(values[0]), double(values[1]), double(values[2]), double(values[3]),
+                double(values[4]), double(values[5]), double(values[6]), double(values[7]),
+                double(values[8]), double(values[9]), double(values[10]), double(values[11]),
+                double(values[12]), double(values[13]), double(values[14]), double(values[15]));
+        }
         ::glTexImage2D(target, level, internal, width, height, border, format, type, data);
+        if (data && width == 2 && height == 256 && format == GL_RGBA && type == GL_FLOAT) {
+            GLint texture = 0, read = 0, draw = 0, pack = 0, length = 0, rows = 0, pixels = 0;
+            ::glGetIntegerv(GL_TEXTURE_BINDING_2D, &texture);
+            ::glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &read);
+            ::glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &draw);
+            ::glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &pack);
+            ::glGetIntegerv(GL_PACK_ROW_LENGTH, &length);
+            ::glGetIntegerv(GL_PACK_SKIP_ROWS, &rows);
+            ::glGetIntegerv(GL_PACK_SKIP_PIXELS, &pixels);
+            GLuint probe = 0;
+            ::glGenFramebuffers(1, &probe);
+            ::glBindFramebuffer(GL_FRAMEBUFFER, probe);
+            ::glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, target, texture, 0);
+            const GLenum status = ::glCheckFramebufferStatus(GL_FRAMEBUFFER);
+            unsigned short values[8] {};
+            if (status == GL_FRAMEBUFFER_COMPLETE) {
+                ::glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+                ::glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+                ::glPixelStorei(GL_PACK_SKIP_ROWS, 0);
+                ::glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
+                ::glReadPixels(0, 0, 2, 1, GL_RGBA, GL_HALF_FLOAT, values);
+            }
+            std::fprintf(stderr, "native LUT pixels: texture=%d status=%u error=%u row0=%04x,%04x,%04x,%04x,%04x,%04x,%04x,%04x\n",
+                texture, unsigned(status), unsigned(::glGetError()), unsigned(values[0]), unsigned(values[1]),
+                unsigned(values[2]), unsigned(values[3]), unsigned(values[4]), unsigned(values[5]),
+                unsigned(values[6]), unsigned(values[7]));
+            ::glBindBuffer(GL_PIXEL_PACK_BUFFER, pack);
+            ::glPixelStorei(GL_PACK_ROW_LENGTH, length);
+            ::glPixelStorei(GL_PACK_SKIP_ROWS, rows);
+            ::glPixelStorei(GL_PACK_SKIP_PIXELS, pixels);
+            ::glBindFramebuffer(GL_READ_FRAMEBUFFER, read);
+            ::glBindFramebuffer(GL_DRAW_FRAMEBUFFER, draw);
+            ::glDeleteFramebuffers(1, &probe);
+        }
     }
     void diagnosticDrawArrays(GLenum mode, GLint first, GLsizei count)
     {
