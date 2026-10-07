@@ -83,7 +83,7 @@ for module in qtbase qtshadertools qttasktree qtdeclarative qtsvg qtimageformats
     cmake "${args[@]}" -DBUILD_SHARED_LIBS=OFF -DQT_QMAKE_TARGET_MKSPEC=macx-ios-clang \
       -DFEATURE_opengl=ON -DINPUT_opengl=es2 -DFEATURE_dbus=OFF -DFEATURE_printsupport=OFF \
       -DFEATURE_permissions=OFF -DFEATURE_testlib=OFF -DFEATURE_clipboard=OFF \
-      -DFEATURE_tabletevent=OFF -DFEATURE_wheelevent=OFF
+      -DFEATURE_tabletevent=OFF -DFEATURE_wheelevent=ON
   else
     "$prefix/bin/qt-cmake" "${args[@]}" \
       -DQt6_DIR="$prefix/lib/cmake/Qt6" \

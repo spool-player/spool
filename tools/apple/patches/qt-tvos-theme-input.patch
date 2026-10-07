@@ -72,3 +72,12 @@
  
  - (int)mapPressTypeToKey:(UIPress*)press withModifiers:(Qt::KeyboardModifiers)qtModifiers text:(QString &)text
  {
+@@ -759,7 +763,7 @@
+         UIEditingInteractionConfigurationDefault : UIEditingInteractionConfigurationNone;
+ }
+ 
+-#if QT_CONFIG(wheelevent)
++#if QT_CONFIG(wheelevent) && !defined(Q_OS_TVOS)
+ - (void)handleScroll:(UIPanGestureRecognizer *)recognizer
+ {
+     if (!self.platformWindow->window())
