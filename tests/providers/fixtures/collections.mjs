@@ -1,5 +1,5 @@
 export function createSource(config, sourceHost) {
-    const extensions = {'spool.collection-editing': 1, 'spool.item-actions': 1};
+    const capabilities = {collectionEditing: true, itemActions: true};
     const original = () => [
         {id: 'same', entryId: 'first', title: 'First occurrence', type: 'Movie'},
         {id: 'same', entryId: 'second', title: 'Second occurrence', type: 'Movie'},
@@ -36,7 +36,7 @@ export function createSource(config, sourceHost) {
         return {};
     };
     return {
-        describe() { return {extensions: extensions}; },
+        describe() { return {capabilities}; },
         setup(args) {
             entries = original();
             mode = args.mode || '';
@@ -85,6 +85,6 @@ export function createSource(config, sourceHost) {
             ++actionRuns;
             return {changed: true, itemId: args.itemId};
         },
-        dropExtensions() { sourceHost.emit('extensionsChanged', {extensions: {}}); return {}; }
+        dropCapabilities() { sourceHost.emit('capabilitiesChanged', {capabilities: {}}); return {}; }
     };
 }

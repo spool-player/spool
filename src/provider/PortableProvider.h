@@ -31,7 +31,7 @@ public:
     PortableProvider(ProviderRegistry *registry, QString accountId, QString label, Capabilities capabilities,
         const QVariantMap& description, QObject *parent = nullptr);
     ~PortableProvider() override;
-    void setExtensionSpeedTest(bool enabled);
+    void setCapabilities(Capabilities capabilities);
 
     QString id() const override
     {
@@ -122,7 +122,6 @@ private:
     QString m_accountId;
     QString m_label;
     Capabilities m_capabilities;
-    bool m_legacySpeedTest = false;
     QString m_artworkTemplate;
     QVariantMap m_playbackContext;
     QVariantMap m_queueSnapshot;

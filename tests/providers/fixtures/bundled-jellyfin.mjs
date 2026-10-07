@@ -1,6 +1,6 @@
 // The Jellyfin provider as bundled (qrc), against a scripted server: the
 // provider's own repository carries the full contract; this proves the pinned
-// package loads in this Qt and speaks API 0.2.
+// package loads in this Qt and implements the current capability contract.
 import {createSource} from 'qrc:/providers/spool.jellyfin/logic/provider.mjs';
 
 function require(value, message) {
@@ -14,9 +14,10 @@ function respond(value) {
 export function run() {
     const device = {id: 'device', name: 'Test', app: 'Spool', version: '0', platform: 'test', locale: 'en'};
     const logging = {isLogEnabled: function() { return false; }, log: function() {}};
+    const capabilities = Object.freeze({search: true, segments: true, streamQuality: true});
     const source = createSource({server: 'https://fixture.invalid', userId: 'user', token: 'fixture-token'},
-        {device: device, isLogEnabled: logging.isLogEnabled, log: logging.log});
-    const host = {device: device, isLogEnabled: logging.isLogEnabled, log: logging.log, http: function(url, options) {
+        {device: device, capabilities, isLogEnabled: logging.isLogEnabled, log: logging.log});
+    const host = {device: device, capabilities, isLogEnabled: logging.isLogEnabled, log: logging.log, http: function(url, options) {
         require(options.headers.Authorization.indexOf('Token="fixture-token"') >= 0, 'token in every request');
         if (url.indexOf('/PlaybackInfo') >= 0) {
             require(JSON.parse(options.body).MediaSourceId === 'chosen', 'the chosen edition is requested');
@@ -45,7 +46,7 @@ export function run() {
         require(playback.url.indexOf('MediaSourceId=chosen') >= 0, 'stream URL');
         require(playback.headers.Authorization.indexOf('Token="fixture-token"') >= 0, 'stream credentials');
         require(playback.container === 'mkv' && playback.segments[0].type === 'Intro', 'details');
-        return source.search({query: 'x'}, {device: device, isLogEnabled: logging.isLogEnabled, log: logging.log, http: function() {
+        return source.search({query: 'x'}, {device: device, capabilities, isLogEnabled: logging.isLogEnabled, log: logging.log, http: function() {
             return Promise.resolve({status: 401, body: ''});
         }}).then(function() { require(false, '401 rejects'); }, function(error) {
             require(error.message === 'http_401', 'a rejected token is reported as http_401');

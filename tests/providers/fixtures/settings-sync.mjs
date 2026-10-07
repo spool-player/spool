@@ -11,7 +11,7 @@ export function createSource(config, sourceHost) {
     let storageReads = 0, preferenceReads = 0;
     let writes = [], preferenceWrites = [];
     const pendingResponses = {};
-    const extensions = config.extensions || {'spool.playback-preferences': 1, 'spool.settings-storage': 1};
+    const capabilities = config.capabilities || {playbackPreferences: true, settingsStorage: true};
     const delay = (host, ms, result) => ms ? host.delay(ms).then(() => result) : result;
     const respond = (operation, host, ms, result) => {
         if ((options.blockedOperations || []).indexOf(operation) < 0)
@@ -23,7 +23,7 @@ export function createSource(config, sourceHost) {
     };
     const fail = () => { if (options.offline) throw new Error('network_offline'); };
     return {
-        describe(args, host) { return delay(host, config.describeDelay || 0, {extensions}); },
+        describe(args, host) { return delay(host, config.describeDelay || 0, {capabilities}); },
         configure(args) {
             if (args.document !== undefined) { doc = clone(args.document); found = true; ++revision; }
             if (args.found !== undefined) found = args.found;
@@ -83,6 +83,6 @@ export function createSource(config, sourceHost) {
             native = Object.assign({}, native, clone(args.values));
             return respond('preferencesWrite', host, options.nativeWriteDelay || 0, {});
         },
-        dropExtensions() { sourceHost.emit('extensionsChanged', {extensions: {}}); return {}; }
+        dropCapabilities() { sourceHost.emit('capabilitiesChanged', {capabilities: {}}); return {}; }
     };
 }

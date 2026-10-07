@@ -5,7 +5,7 @@
 #include "../platform/CredentialStore.h"
 #include "PortableProvider.h"
 #include "ProviderExtensionData.h"
-#include "ProviderExtensions.h"
+#include "ProviderCapabilityContract.h"
 #include "ProviderUiContext.h"
 
 #include <QCoroFuture>
@@ -54,13 +54,12 @@ namespace {
         return names;
     }
 
-    Provider::Capabilities capabilitiesOf(const ProviderManifest& manifest)
+    Provider::Capabilities capabilitiesOf(const QVariantMap& capabilities)
     {
         Provider::Capabilities flags;
-        for (const QString& name : manifest.capabilities) {
-            if (name == QStringLiteral("speedTest") && manifest.extensions.contains(QStringLiteral("spool.speed-test")))
-                continue;
-            flags |= capabilityNames().value(name, Provider::Capability {});
+        for (auto it = capabilities.cbegin(); it != capabilities.cend(); ++it) {
+            if (it.value().toBool())
+                flags |= capabilityNames().value(it.key(), Provider::Capability {});
         }
         return flags;
     }
@@ -122,7 +121,7 @@ namespace {
 } // namespace
 
 namespace {
-    const QString activationExtension = QStringLiteral("spool.account-activation");
+    const QString activationCapability = QStringLiteral("accountActivation");
 
     void readActivation(ProviderAccount& candidate, const QVariantMap& description)
     {
@@ -415,7 +414,7 @@ QCoro::Task<void> ProviderRegistry::startRestored(QStringList ids)
             co_return;
         if (const auto *entry = account(id); entry && entry->enabled) {
             const auto *owner = module(entry->module);
-            if (owner && owner->manifest.extensions.value(activationExtension).toInt() == 1)
+            if (owner && owner->manifest.capabilities.contains(activationCapability))
                 co_await start(id);
             else
                 Async::runScoped(this, start(id), [] { }, [](const std::exception_ptr&) { }, "provider restore");
@@ -492,10 +491,9 @@ QCoro::Task<void> ProviderRegistry::start(
     prepared.enableOnCommit = select || candidate.enabled;
     for (const QString& origin : module.manifest.origins)
         prepared.origins.append(QUrl(origin));
-    prepared.hostExtensions = ProviderExtensions::supported(module.manifest.extensions);
-    if (!candidate.activationFamily.isEmpty() || prepared.hostExtensions.value(activationExtension).toInt() == 1)
+    prepared.declaredCapabilities = ProviderCapabilityContract::declarations(module.manifest.capabilities);
+    if (!candidate.activationFamily.isEmpty() || prepared.declaredCapabilities.value(activationCapability).toBool())
         prepared.activationApproval = std::make_shared<std::atomic_bool>(false);
-    const auto capabilities = capabilitiesOf(module.manifest);
     const auto native = module.native;
     QPointer<ScriptRuntime> runtime(native ? nullptr : runtimeFor(module));
     QPointer<ProviderRegistry> guard(this);
@@ -519,23 +517,23 @@ QCoro::Task<void> ProviderRegistry::start(
         if (!native) {
             const auto savedOptions = m_activationOptions.value(familyKey(candidate)).toMap();
             candidate.configuration.insert(savedOptions);
-            co_await runtime->addSource(preparedId, candidate.configuration, prepared.origins, prepared.hostExtensions,
-                false, prepared.activationApproval);
+            co_await runtime->addSource(preparedId, candidate.configuration, prepared.origins,
+                prepared.declaredCapabilities, false, prepared.activationApproval);
             if (!current())
                 co_return;
             description = co_await runtime->call(preparedId, QStringLiteral("describe"));
             if (!current())
                 co_return;
             readActivation(candidate, description);
-            updateExtensions(preparedId,
-                description.contains(QStringLiteral("extensions"))
-                    ? ProviderExtensions::decode(description.value(QStringLiteral("extensions")))
+            updateCapabilities(preparedId,
+                description.contains(QStringLiteral("capabilities"))
+                    ? ProviderCapabilityContract::decodeOffers(description.value(QStringLiteral("capabilities")))
                     : QVariantMap {});
             const bool hasFamily = !candidate.activationFamily.isEmpty();
             const bool requiresActivation
-                = m_running.value(preparedId).extensions.value(activationExtension).toInt() == 1;
+                = m_running.value(preparedId).capabilities.value(activationCapability).toBool();
             if (hasFamily && !requiresActivation)
-                throw std::runtime_error("unsupported_extension");
+                throw std::runtime_error("unsupported_capability");
             if (requiresActivation) {
                 const quint64 epoch = hasFamily ? m_familyEpochs[familyKey(candidate)] : 0;
                 // Metadata alone is not permission, but remembers the boundary even
@@ -553,14 +551,35 @@ QCoro::Task<void> ProviderRegistry::start(
                     m_running[preparedId].pendingOptions.clear();
                     runtime->removeSource(preparedId);
                     co_await runtime->addSource(preparedId, candidate.configuration, prepared.origins,
-                        prepared.hostExtensions, false, prepared.activationApproval);
+                        prepared.declaredCapabilities, false, prepared.activationApproval);
                     if (!current())
                         co_return;
                     description = co_await runtime->call(preparedId, QStringLiteral("describe"));
                     if (!current())
                         co_return;
                     readActivation(candidate, description);
+                    updateCapabilities(preparedId,
+                        description.contains(QStringLiteral("capabilities"))
+                            ? ProviderCapabilityContract::decodeOffers(description.value(QStringLiteral("capabilities")))
+                            : QVariantMap {});
                 }
+                if (!m_running.value(preparedId).capabilities.value(activationCapability).toBool())
+                    throw std::runtime_error("unsupported_capability");
+                const quint64 activationRevision
+                    = m_running.value(preparedId).capabilityRevisions.value(activationCapability);
+                const auto requireActivation = [&] {
+                    if (!m_running.value(preparedId).capabilities.value(activationCapability).toBool()
+                        || m_running.value(preparedId).capabilityRevisions.value(activationCapability)
+                            != activationRevision)
+                        throw std::runtime_error("unsupported_capability");
+                };
+                const QString activationScope = QUuid::createUuid().toString(QUuid::WithoutBraces);
+                const quint64 activationCall = ++m_nextCapabilityCall;
+                m_running[preparedId].capabilityCalls.insert(activationCall, { activationCapability, activationScope });
+                const auto finishActivation = qScopeGuard([guard, preparedId, generation, activationCall] {
+                    if (guard && guard->m_running.value(preparedId).generation == generation)
+                        guard->m_running[preparedId].capabilityCalls.remove(activationCall);
+                });
                 const auto cached = m_activationGrants.value(familyKey(candidate));
                 const bool family = hasFamily && cached.runtime == runtime && cached.generation != 0
                     && cached.identity == candidate.activationIdentity;
@@ -580,9 +599,11 @@ QCoro::Task<void> ProviderRegistry::start(
                     arguments.insert(QStringLiteral("grant"), cached.value);
                 bool activated = false;
                 for (int attempt = 0; attempt < 8; ++attempt) {
-                    const auto result = co_await runtime->call(preparedId, QStringLiteral("activate"), arguments);
+                    const auto result
+                        = co_await runtime->call(preparedId, QStringLiteral("activate"), arguments, activationScope);
                     if (!current())
                         co_return;
+                    requireActivation();
                     if (result.contains(QStringLiteral("pick"))) {
                         const QVariant picker = result.value(QStringLiteral("pick"));
                         if (picker.metaType().id() != QMetaType::QVariantMap)
@@ -593,9 +614,10 @@ QCoro::Task<void> ProviderRegistry::start(
                             m_lockedAccounts.insert(accountId);
                             co_return;
                         }
-                        const auto answer = co_await pickResult(preparedId, picker.toMap(), true);
+                        const auto answer = co_await pickResult(preparedId, picker.toMap(), true, activationScope);
                         if (!current())
                             co_return;
+                        requireActivation();
                         if (!answer.submitted) {
                             m_lockedAccounts.insert(accountId);
                             co_return;
@@ -616,16 +638,16 @@ QCoro::Task<void> ProviderRegistry::start(
                 description = co_await runtime->call(preparedId, QStringLiteral("describe"));
                 if (!current())
                     co_return;
+                requireActivation();
                 readActivation(candidate, description);
                 if (hasFamily != !candidate.activationFamily.isEmpty()
                     || (hasFamily && m_familyEpochs.value(familyKey(candidate)) != epoch))
                     throw std::runtime_error("source_changed");
-                updateExtensions(preparedId,
-                    description.contains(QStringLiteral("extensions"))
-                        ? ProviderExtensions::decode(description.value(QStringLiteral("extensions")))
+                updateCapabilities(preparedId,
+                    description.contains(QStringLiteral("capabilities"))
+                        ? ProviderCapabilityContract::decodeOffers(description.value(QStringLiteral("capabilities")))
                         : QVariantMap {});
-                if (m_running.value(preparedId).extensions.value(activationExtension).toInt() != 1)
-                    throw std::runtime_error("unsupported_extension");
+                requireActivation();
                 authorizedFamily = hasFamily;
             }
         } else {
@@ -677,7 +699,8 @@ QCoro::Task<void> ProviderRegistry::start(
     if (active.activationApproval)
         active.activationApproval->store(true);
     active.provider = native ? nativeCandidate.release()
-                             : new PortableProvider(this, accountId, candidate.label, capabilities, description, this);
+                             : new PortableProvider(this, accountId, candidate.label,
+                                   capabilitiesOf(active.capabilities), description, this);
     m_running.insert(accountId, std::move(active));
     if (authorizedFamily) {
         clearGrants(candidate.module, candidate.activationFamily);
@@ -687,12 +710,9 @@ QCoro::Task<void> ProviderRegistry::start(
     m_unavailableConfigurations.remove(accountId);
     m_expired.remove(accountId);
     m_accountErrors.remove(accountId);
-    if (auto *provider = qobject_cast<PortableProvider *>(m_running[accountId].provider.data()))
-        provider->setExtensionSpeedTest(
-            m_running[accountId].extensions.value(QStringLiteral("spool.speed-test")).toInt() == 1);
     persist(true);
     emit sourceStarted(m_running[accountId].provider);
-    emit extensionsChanged(accountId);
+    emit capabilitiesChanged(accountId);
     emit accountsChanged();
     selected = select;
     if (linked || !hadAccount || (select && replacement))
@@ -720,7 +740,7 @@ void ProviderRegistry::stopPublished(const QString& sourceId)
     if (ScriptRuntime *runtime = m_modules.value(state.module).runtime)
         runtime->removeSource(state.runtimeId);
     emit contextSourceStopped(sourceId);
-    emit extensionsChanged(sourceId);
+    emit capabilitiesChanged(sourceId);
     if (state.provider) {
         emit sourceStopped(sourceId);
         state.provider->shutdown();
@@ -846,7 +866,7 @@ QCoro::Task<void> ProviderRegistry::uninstall(QString moduleId)
 }
 
 template <typename T, typename Call>
-QCoro::Task<T> ProviderRegistry::guarded(QString sourceId, Call call, QString extension, QString scope)
+QCoro::Task<T> ProviderRegistry::guarded(QString sourceId, Call call, QString capability, QString scope)
 {
     const auto running = m_running.constFind(sourceId);
     ScriptRuntime *runtime = running == m_running.cend() ? nullptr : m_modules.value(running->module).runtime;
@@ -854,20 +874,20 @@ QCoro::Task<T> ProviderRegistry::guarded(QString sourceId, Call call, QString ex
         throw std::runtime_error("source_unavailable");
     if (!running->draft && !running->provider)
         throw std::runtime_error("source_unavailable");
-    if (!extension.isEmpty() && (running->draft || running->extensions.value(extension).toInt() != 1))
-        throw std::runtime_error("unsupported_extension");
+    if (!capability.isEmpty() && !sourceHasCapability(sourceId, capability))
+        throw std::runtime_error("unsupported_capability");
     const quint64 generation = running->generation;
     const QString runtimeId = running->runtimeId;
     QPointer<ProviderRegistry> guard(this);
-    const quint64 revision = running->extensionRevisions.value(extension);
-    const quint64 callId = extension.isEmpty() ? 0 : ++m_nextExtensionCall;
+    const quint64 revision = running->capabilityRevisions.value(capability);
+    const quint64 callId = capability.isEmpty() ? 0 : ++m_nextCapabilityCall;
     if (callId)
-        m_running[sourceId].extensionCalls.insert(callId, { extension, scope });
+        m_running[sourceId].capabilityCalls.insert(callId, { capability, scope });
     const auto cleanup = qScopeGuard([guard, sourceId, generation, callId] {
         if (guard) {
             auto current = guard->m_running.find(sourceId);
             if (current != guard->m_running.end() && current->generation == generation)
-                current->extensionCalls.remove(callId);
+                current->capabilityCalls.remove(callId);
         }
     });
     std::optional<T> result;
@@ -887,10 +907,10 @@ QCoro::Task<T> ProviderRegistry::guarded(QString sourceId, Call call, QString ex
     }
     if (!guard || m_running.value(sourceId).generation != generation)
         throw std::runtime_error("source_changed");
-    if (!extension.isEmpty()
-        && (m_running.value(sourceId).extensionRevisions.value(extension) != revision
-            || extensionVersion(sourceId, extension) != 1))
-        throw std::runtime_error("unsupported_extension");
+    if (!capability.isEmpty()
+        && (m_running.value(sourceId).capabilityRevisions.value(capability) != revision
+            || !sourceHasCapability(sourceId, capability)))
+        throw std::runtime_error("unsupported_capability");
     co_return std::move(*result);
 }
 
@@ -899,113 +919,29 @@ QCoro::Task<QVariantMap> ProviderRegistry::callSource(
 {
     if (operation == QStringLiteral("activate"))
         throw std::runtime_error("action_unavailable");
-    const QString extension = ProviderExtensions::operationExtension(operation);
-    // Discovery belongs to the login draft, before an account can negotiate
-    // extensions. The operation host still enforces its separate LAN consent.
-    const auto running = m_running.constFind(sourceId);
-    const bool loginDiscovery = operation == QStringLiteral("discoverMore") && running != m_running.cend()
-        && running->draft && running->hostExtensions.value(QStringLiteral("spool.lan-probe")).toInt() == 1;
-    if (!extension.isEmpty() && !loginDiscovery && !legacySpeedTest(sourceId, operation))
-        co_return co_await callExtension(sourceId, extension, operation, arguments, scope);
-    co_return co_await guarded<QVariantMap>(sourceId, [=](ScriptRuntime *runtime, const QString& runtimeId) {
-        return runtime->call(runtimeId, operation, arguments, scope);
-    });
-}
-
-QCoro::Task<ProviderMediaPage> ProviderRegistry::callSourceMediaPage(
-    QString sourceId, QString operation, QVariantMap arguments, int maximumItems, QString scope)
-{
-    if (operation == QStringLiteral("activate"))
-        throw std::runtime_error("action_unavailable");
-    const QString extension = ProviderExtensions::operationExtension(operation);
-    if (!extension.isEmpty())
-        co_return co_await callExtensionMediaPage(sourceId, extension, operation, arguments, maximumItems, scope);
-    co_return co_await guarded<ProviderMediaPage>(sourceId, [=](ScriptRuntime *runtime, const QString& runtimeId) {
-        return runtime->callMediaPage(runtimeId, operation, arguments, scope, maximumItems);
-    });
-}
-
-QCoro::Task<MovieItem> ProviderRegistry::callSourceItem(QString sourceId, QString operation, QVariantMap arguments)
-{
-    if (operation == QStringLiteral("activate"))
-        throw std::runtime_error("action_unavailable");
-    const QString extension = ProviderExtensions::operationExtension(operation);
-    if (!extension.isEmpty())
-        throw std::runtime_error("unsupported_extension");
-    co_return co_await guarded<MovieItem>(sourceId, [=](ScriptRuntime *runtime, const QString& runtimeId) {
-        return runtime->callItem(runtimeId, operation, arguments);
-    });
-}
-bool ProviderRegistry::legacySpeedTest(const QString& sourceId, const QString& operation) const
-{
-    if (operation != QStringLiteral("speedTest"))
-        return false;
-    const auto running = m_running.constFind(sourceId);
-    const ProviderModule *owner = running == m_running.cend() ? nullptr : module(running->module);
-    return owner && !owner->manifest.extensions.contains(QStringLiteral("spool.speed-test"))
-        && owner->manifest.capabilities.contains(QStringLiteral("speedTest"));
-}
-
-int ProviderRegistry::extensionVersion(const QString& accountId, const QString& extensionId) const
-{
-    const auto running = m_running.constFind(accountId);
-    return running != m_running.cend() && running->provider && !running->draft
-        ? running->extensions.value(extensionId).toInt()
-        : 0;
-}
-
-QVariantMap ProviderRegistry::extensions(const QString& sourceId) const
-{
-    const auto running = m_running.constFind(sourceId);
-    if (running == m_running.cend())
-        return {};
-    return running->draft                                                        ? running->hostExtensions
-        : running->provider || m_preparing.value(running->accountId) == sourceId ? running->extensions
-                                                                                 : QVariantMap {};
-}
-
-QStringList ProviderRegistry::missingHostExtensions(const QString& moduleId) const
-{
-    const ProviderModule *owner = module(moduleId);
-    if (!owner)
-        return {};
-    const QVariantMap supported = ProviderExtensions::supported(owner->manifest.extensions);
-    QStringList missing;
-    for (auto it = owner->manifest.extensions.cbegin(); it != owner->manifest.extensions.cend(); ++it) {
-        if (!supported.contains(it.key()))
-            missing.append(it.key());
-    }
-    return missing;
-}
-
-QCoro::Task<QVariantMap> ProviderRegistry::callExtension(
-    QString accountId, QString extensionId, QString operation, QVariantMap arguments, QString scope)
-{
-    if (operation == QStringLiteral("activate"))
-        throw std::runtime_error("action_unavailable");
-    if (extensionId.isEmpty() || ProviderExtensions::operationExtension(operation) != extensionId
-        || extensionVersion(accountId, extensionId) != 1)
-        throw std::runtime_error("unsupported_extension");
-    if (scope.isEmpty())
+    const QString capability = ProviderCapabilityContract::operationCapability(operation);
+    if (!capability.isEmpty() && !sourceHasCapability(sourceId, capability))
+        throw std::runtime_error("unsupported_capability");
+    if (!capability.isEmpty() && scope.isEmpty())
         scope = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    const bool preferences = extensionId == QStringLiteral("spool.playback-preferences");
-    const bool storage = extensionId == QStringLiteral("spool.settings-storage");
+    const bool preferences = capability == QStringLiteral("playbackPreferences");
+    const bool storage = capability == QStringLiteral("settingsStorage");
     const QPointer<ProviderRegistry> owner(this);
-    const quint64 generation = m_running.value(accountId).generation;
-    const quint64 revision = m_running.value(accountId).extensionRevisions.value(extensionId);
-    const auto requireCurrent = [owner, accountId, extensionId, generation, revision] {
-        if (!owner || owner->m_running.value(accountId).generation != generation)
+    const quint64 generation = m_running.value(sourceId).generation;
+    const quint64 revision = m_running.value(sourceId).capabilityRevisions.value(capability);
+    const auto requireCurrent = [owner, sourceId, capability, generation, revision] {
+        if (!owner || owner->m_running.value(sourceId).generation != generation)
             throw std::runtime_error("source_changed");
-        if (owner->extensionVersion(accountId, extensionId) != 1
-            || owner->m_running.value(accountId).extensionRevisions.value(extensionId) != revision)
-            throw std::runtime_error("unsupported_extension");
+        if (!capability.isEmpty()
+            && (!owner->sourceHasCapability(sourceId, capability)
+                || owner->m_running.value(sourceId).capabilityRevisions.value(capability) != revision))
+            throw std::runtime_error("unsupported_capability");
     };
     ProviderExtensionData::StorageInfo info;
     if (preferences) {
         arguments = ProviderExtensionData::preferenceArguments(operation, arguments);
         if (operation == QStringLiteral("preferencesWrite")) {
-            const auto current
-                = co_await callExtension(accountId, extensionId, QStringLiteral("preferencesRead"), {}, scope);
+            const auto current = co_await callSource(sourceId, QStringLiteral("preferencesRead"), {}, scope);
             requireCurrent();
             ProviderExtensionData::requireWritable(arguments.value(QStringLiteral("values")).toMap(), current);
         }
@@ -1013,89 +949,137 @@ QCoro::Task<QVariantMap> ProviderRegistry::callExtension(
         // Validate locally before even discovering the backend limits.
         ProviderExtensionData::storageArguments(operation, arguments);
         if (operation != QStringLiteral("dataInfo")) {
-            if (!m_running.value(accountId).storageInfo) {
-                co_await callExtension(accountId, extensionId, QStringLiteral("dataInfo"), {}, scope);
+            if (!m_running.value(sourceId).storageInfo) {
+                co_await callSource(sourceId, QStringLiteral("dataInfo"), {}, scope);
                 requireCurrent();
             }
-            info = *m_running.value(accountId).storageInfo;
+            info = *m_running.value(sourceId).storageInfo;
             ProviderExtensionData::storageArguments(operation, arguments, &info);
-        } else if (m_running.value(accountId).storageInfo) {
-            info = *m_running.value(accountId).storageInfo;
+        } else if (m_running.value(sourceId).storageInfo) {
+            info = *m_running.value(sourceId).storageInfo;
             co_return QVariantMap { { QStringLiteral("maxBytes"), info.maxBytes },
                 { QStringLiteral("conditionalWrites"), info.conditionalWrites } };
         }
     }
     auto result = co_await guarded<QVariantMap>(
-        accountId,
+        sourceId,
         [=](ScriptRuntime *runtime, const QString& runtimeId) {
             return runtime->call(runtimeId, operation, arguments, scope);
         },
-        extensionId, scope);
+        capability, scope);
     requireCurrent();
     if (preferences)
         result = ProviderExtensionData::preferenceResult(operation, result);
     else if (storage) {
         result = ProviderExtensionData::storageResult(operation, result, info);
         if (operation == QStringLiteral("dataInfo"))
-            m_running[accountId].storageInfo = ProviderExtensionData::storageInfo(result);
+            m_running[sourceId].storageInfo = ProviderExtensionData::storageInfo(result);
     }
     co_return result;
 }
 
-QCoro::Task<ProviderMediaPage> ProviderRegistry::callExtensionMediaPage(
-    QString accountId, QString extensionId, QString operation, QVariantMap arguments, int maximumItems, QString scope)
+QCoro::Task<ProviderMediaPage> ProviderRegistry::callSourceMediaPage(
+    QString sourceId, QString operation, QVariantMap arguments, int maximumItems, QString scope)
 {
     if (operation == QStringLiteral("activate"))
         throw std::runtime_error("action_unavailable");
-    if (extensionId.isEmpty() || ProviderExtensions::operationExtension(operation) != extensionId
-        || extensionVersion(accountId, extensionId) != 1)
-        throw std::runtime_error("unsupported_extension");
-    if (extensionId == QStringLiteral("spool.playback-preferences")
-        || extensionId == QStringLiteral("spool.settings-storage"))
-        throw std::runtime_error("unsupported_extension");
-    if (scope.isEmpty())
+    const QString capability = ProviderCapabilityContract::operationCapability(operation);
+    // Preference and storage data must pass their bounded object validators.
+    if (capability == QStringLiteral("playbackPreferences") || capability == QStringLiteral("settingsStorage"))
+        throw std::runtime_error("unsupported_capability");
+    if (!capability.isEmpty() && scope.isEmpty())
         scope = QUuid::createUuid().toString(QUuid::WithoutBraces);
     co_return co_await guarded<ProviderMediaPage>(
-        accountId,
+        sourceId,
         [=](ScriptRuntime *runtime, const QString& runtimeId) {
             return runtime->callMediaPage(runtimeId, operation, arguments, scope, maximumItems);
         },
-        extensionId, scope);
+        capability, scope);
 }
 
-void ProviderRegistry::updateExtensions(const QString& sourceId, QVariantMap offers)
+QCoro::Task<MovieItem> ProviderRegistry::callSourceItem(QString sourceId, QString operation, QVariantMap arguments)
+{
+    if (operation == QStringLiteral("activate"))
+        throw std::runtime_error("action_unavailable");
+    const QString capability = ProviderCapabilityContract::operationCapability(operation);
+    if (capability == QStringLiteral("playbackPreferences") || capability == QStringLiteral("settingsStorage"))
+        throw std::runtime_error("unsupported_capability");
+    const QString scope = capability.isEmpty() ? QString() : QUuid::createUuid().toString(QUuid::WithoutBraces);
+    co_return co_await guarded<MovieItem>(
+        sourceId,
+        [=](ScriptRuntime *runtime, const QString& runtimeId) {
+            return runtime->callItem(runtimeId, operation, arguments, scope);
+        },
+        capability, scope);
+}
+
+bool ProviderRegistry::hasCapability(const QString& accountId, const QString& capability) const
+{
+    const auto running = m_running.constFind(accountId);
+    return running != m_running.cend() && running->provider && !running->draft
+        && running->capabilities.value(capability).toBool();
+}
+
+bool ProviderRegistry::sourceHasCapability(const QString& sourceId, const QString& capability) const
+{
+    const auto running = m_running.constFind(sourceId);
+    if (running == m_running.cend())
+        return false;
+    // Login discovery uses declarations. Only the HTTP LAN probe continuation
+    // requires its existing separate consent; UDP discovery keeps its policy.
+    return running->draft
+        ? (capability == QStringLiteral("discovery") || capability == QStringLiteral("lanProbe"))
+            && running->declaredCapabilities.value(capability).toBool()
+        : hasCapability(sourceId, capability);
+}
+
+QVariantMap ProviderRegistry::capabilities(const QString& sourceId) const
+{
+    const auto running = m_running.constFind(sourceId);
+    if (running == m_running.cend())
+        return {};
+    return running->draft ? running->declaredCapabilities
+        : running->provider || m_preparing.value(running->accountId) == sourceId ? running->capabilities
+                                                                               : QVariantMap {};
+}
+
+void ProviderRegistry::updateCapabilities(const QString& sourceId, QVariantMap offers)
 {
     auto running = m_running.find(sourceId);
     if (running == m_running.end() || running->draft)
         return;
-    const QVariantMap effective = ProviderExtensions::intersect(running->hostExtensions, offers);
-    running->offers = std::move(offers);
-    if (effective == running->extensions)
+    const QVariantMap effective = ProviderCapabilityContract::intersect(running->declaredCapabilities, offers);
+    if (effective == running->capabilities)
         return;
     QStringList lost;
-    for (auto it = running->extensions.cbegin(); it != running->extensions.cend(); ++it) {
-        if (effective.value(it.key()) != it.value()) {
+    for (auto it = running->capabilities.cbegin(); it != running->capabilities.cend(); ++it) {
+        if (!effective.value(it.key()).toBool()) {
             lost.append(it.key());
-            ++running->extensionRevisions[it.key()];
+            ++running->capabilityRevisions[it.key()];
         }
     }
-    running->extensions = effective;
-    if (lost.contains(QStringLiteral("spool.settings-storage")))
+    running->capabilities = effective;
+    if (lost.contains(QStringLiteral("settingsStorage")))
         running->storageInfo.reset();
-    if (lost.contains(QStringLiteral("spool.origin-grants")))
-        cancelNetworkConsent(sourceId);
     QSet<QString> scopes;
-    for (const ExtensionCall& call : running->extensionCalls) {
-        if (lost.contains(call.extension))
+    for (const CapabilityCall& call : running->capabilityCalls) {
+        if (lost.contains(call.capability))
             scopes.insert(call.scope);
     }
-    if (ScriptRuntime *runtime = m_modules.value(running->module).runtime) {
+    const QPointer<PortableProvider> provider = qobject_cast<PortableProvider *>(running->provider.data());
+    const QPointer<ScriptRuntime> runtime = m_modules.value(running->module).runtime;
+    const QString runtimeId = running->runtimeId;
+    if (lost.contains(QStringLiteral("originGrants")))
+        cancelNetworkConsent(sourceId);
+    if (runtime) {
         for (const QString& scope : scopes)
-            runtime->cancelScope(running->runtimeId, scope);
+            runtime->cancelScope(runtimeId, scope);
     }
-    if (auto *provider = qobject_cast<PortableProvider *>(running->provider.data()))
-        provider->setExtensionSpeedTest(effective.value(QStringLiteral("spool.speed-test")).toInt() == 1);
-    emit extensionsChanged(sourceId);
+    if (provider)
+        provider->setCapabilities(capabilitiesOf(effective));
+    for (const QString& scope : scopes)
+        emit sourceScopeCancelled(sourceId, scope);
+    emit capabilitiesChanged(sourceId);
     emit accountsChanged();
 }
 
@@ -1149,6 +1133,15 @@ void ProviderRegistry::handleEvent(const QString& runtimeId, const QString& type
     auto state = m_running.find(sourceId);
     if (state == m_running.end())
         return;
+    if (type == QStringLiteral("capabilitiesChanged")) {
+        try {
+            updateCapabilities(sourceId,
+                ProviderCapabilityContract::decodeOffers(payload.value(QStringLiteral("capabilities"))));
+        } catch (const std::exception&) {
+            updateCapabilities(sourceId, {});
+        }
+        return;
+    }
     if (!state->provider && !state->draft) {
         if (type == QStringLiteral("configuration")) {
             state->pendingConfiguration.insert(payload);
@@ -1157,18 +1150,8 @@ void ProviderRegistry::handleEvent(const QString& runtimeId, const QString& type
                 state->pendingOptions.insert(activationOptions(payload.value(QStringLiteral("configuration"))));
             } catch (const std::exception&) {
             }
-        } else if (type == QStringLiteral("extensionsChanged")) {
-            // The private description is the authoritative offer at commit.
         } else if (state->pendingEvents.size() < 64) {
             state->pendingEvents.append({ type, payload });
-        }
-        return;
-    }
-    if (type == QStringLiteral("extensionsChanged")) {
-        try {
-            updateExtensions(sourceId, ProviderExtensions::decode(payload.value(QStringLiteral("extensions"))));
-        } catch (const std::exception&) {
-            updateExtensions(sourceId, {});
         }
         return;
     }
@@ -1179,7 +1162,7 @@ void ProviderRegistry::handleEvent(const QString& runtimeId, const QString& type
     }
     if (type == QStringLiteral("activationConfiguration")) {
         const auto *entry = account(sourceId);
-        if (!entry || entry->activationFamily.isEmpty() || extensionVersion(sourceId, activationExtension) != 1)
+        if (!entry || entry->activationFamily.isEmpty() || !hasCapability(sourceId, activationCapability))
             return;
         QVariantMap options;
         try {
@@ -1246,7 +1229,6 @@ QVariantList ProviderRegistry::modules() const
             { QStringLiteral("bundled"), module.bundled && !module.overridesBundled },
             { QStringLiteral("removable"), !module.native && (!module.bundled || module.overridesBundled) },
             { QStringLiteral("needsAccount"), module.manifest.needsAccount() },
-            { QStringLiteral("missingHostExtensions"), missingHostExtensions(module.manifest.id) },
             { QStringLiteral("accountCount"), int(count) }, { QStringLiteral("failed"), module.failed } });
     }
     std::sort(list.begin(), list.end(), [](const QVariant& a, const QVariant& b) {
@@ -1287,8 +1269,7 @@ QVariantList ProviderRegistry::accounts() const
                     : m_failedAccounts.contains(account.id) || (owner && owner->failed) ? QStringLiteral("failed")
                     : account.enabled                                                   ? QStringLiteral("starting")
                                                                                         : QStringLiteral("locked") },
-            { QStringLiteral("extensions"), extensions(account.id) },
-            { QStringLiteral("missingHostExtensions"), missingHostExtensions(account.module) },
+            { QStringLiteral("capabilities"), capabilities(account.id) },
             { QStringLiteral("needsSignIn"),
                 m_expired.contains(account.id) || m_unavailableConfigurations.contains(account.id) },
             { QStringLiteral("errorText"), m_accountErrors.value(account.id) },
@@ -1345,10 +1326,10 @@ QObject *ProviderRegistry::beginSetup(const QString& moduleId)
     draft.draft = true;
     m_running.insert(draftId, draft);
     m_runtimeSources.insert(draftId, draftId);
-    m_running[draftId].hostExtensions = ProviderExtensions::supported(owner->manifest.extensions);
+    m_running[draftId].declaredCapabilities = ProviderCapabilityContract::declarations(owner->manifest.capabilities);
     if (!owner->native) {
         Async::runScoped(
-            this, runtimeFor(*owner)->addSource(draftId, {}, origins, m_running[draftId].hostExtensions, true),
+            this, runtimeFor(*owner)->addSource(draftId, {}, origins, m_running[draftId].declaredCapabilities, true),
             [](QVariantMap) {},
             [this, draftId](const std::exception_ptr&) {
                 stop(draftId);
@@ -1377,7 +1358,7 @@ QCoro::Task<void> ProviderRegistry::allowSetupOrigin(QString draftId, QUrl url)
     const bool lanConsent = running->lanConsent;
     const quint64 generation = running->generation;
     QPointer<ProviderRegistry> guard(this);
-    co_await runtime->addSource(draftId, {}, running->origins, running->hostExtensions, true);
+    co_await runtime->addSource(draftId, {}, running->origins, running->declaredCapabilities, true);
     if (!guard || m_running.value(draftId).generation != generation)
         throw std::runtime_error("source_changed");
     if (lanConsent && m_running.value(draftId).lanConsent)
@@ -1435,23 +1416,22 @@ QCoro::Task<void> ProviderRegistry::requestAccountOrigin(QString accountId, QUrl
     const QUrl origin = grantOrigin(url);
     const auto running = m_running.constFind(accountId);
     if (running == m_running.cend() || running->draft || !running->provider
-        || extensionVersion(accountId, QStringLiteral("spool.origin-grants")) != 1)
-        throw std::runtime_error("unsupported_extension");
+        || !hasCapability(accountId, QStringLiteral("originGrants")))
+        throw std::runtime_error("unsupported_capability");
     if (running->origins.contains(origin))
         co_return;
     const quint64 generation = running->generation;
     const quint64 revision = running->networkRevision;
-    const quint64 extensionRevision = running->extensionRevisions.value(QStringLiteral("spool.origin-grants"));
+    const quint64 capabilityRevision = running->capabilityRevisions.value(QStringLiteral("originGrants"));
     QPointer<ProviderRegistry> guard(this);
     if (!co_await requestNetworkConsent(accountId, scope, QStringLiteral("origin"), origin))
         throw std::runtime_error("origin_denied");
     if (!guard || m_running.value(accountId).generation != generation
         || m_running.value(accountId).networkRevision != revision)
         throw std::runtime_error("source_changed");
-    if (extensionVersion(accountId, QStringLiteral("spool.origin-grants")) != 1
-        || m_running.value(accountId).extensionRevisions.value(QStringLiteral("spool.origin-grants"))
-            != extensionRevision)
-        throw std::runtime_error("unsupported_extension");
+    if (!hasCapability(accountId, QStringLiteral("originGrants"))
+        || m_running.value(accountId).capabilityRevisions.value(QStringLiteral("originGrants")) != capabilityRevision)
+        throw std::runtime_error("unsupported_capability");
     ScriptRuntime *runtime = m_modules.value(m_running.value(accountId).module).runtime;
     // Worker installation is provisional: neither source nor operation hosts
     // can use these origins until the owning context and offer survive the
@@ -1461,10 +1441,9 @@ QCoro::Task<void> ProviderRegistry::requestAccountOrigin(QString accountId, QUrl
     if (!guard || m_running.value(accountId).generation != generation
         || m_running.value(accountId).networkRevision != revision)
         throw std::runtime_error("source_changed");
-    if (extensionVersion(accountId, QStringLiteral("spool.origin-grants")) != 1
-        || m_running.value(accountId).extensionRevisions.value(QStringLiteral("spool.origin-grants"))
-            != extensionRevision)
-        throw std::runtime_error("unsupported_extension");
+    if (!hasCapability(accountId, QStringLiteral("originGrants"))
+        || m_running.value(accountId).capabilityRevisions.value(QStringLiteral("originGrants")) != capabilityRevision)
+        throw std::runtime_error("unsupported_capability");
     ProviderAccount *entry = account(accountId);
     if (!entry)
         throw std::runtime_error("source_changed");
@@ -1480,8 +1459,8 @@ QCoro::Task<void> ProviderRegistry::allowLanDiscovery(QString draftId, QString s
 {
     const auto running = m_running.constFind(draftId);
     if (running == m_running.cend() || !running->draft
-        || running->hostExtensions.value(QStringLiteral("spool.lan-probe")).toInt() != 1)
-        throw std::runtime_error("unsupported_extension");
+        || !running->declaredCapabilities.value(QStringLiteral("lanProbe")).toBool())
+        throw std::runtime_error("unsupported_capability");
     if (running->lanConsent)
         co_return;
     const quint64 generation = running->generation;
@@ -1720,7 +1699,7 @@ void ProviderRegistry::removeAccount(const QString& accountId)
 
 QVariantMap ProviderRegistry::activationConfiguration(const QString& accountId) const
 {
-    if (extensionVersion(accountId, activationExtension) != 1)
+    if (!hasCapability(accountId, activationCapability))
         return {};
     const auto entry = std::find_if(m_accounts.cbegin(), m_accounts.cend(),
         [&](const ProviderAccount& account) { return account.id == accountId; });

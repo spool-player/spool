@@ -39,7 +39,9 @@ void waitFor(const std::function<bool()>& condition)
 
 SPOOL_TEST_MAIN("provider-ui-context")
 {
+#if !defined(Q_OS_ANDROID) && !defined(SPOOL_APPLE_MOBILE)
     qputenv("QT_QPA_PLATFORM", "offscreen");
+#endif
     QGuiApplication app(argc, argv);
     using namespace Spool;
     QTemporaryDir directory;
@@ -78,20 +80,20 @@ SPOOL_TEST_MAIN("provider-ui-context")
     });
     require(!second->closed(), "dismissing one action does not close another action on the same source");
     engine.evaluate(QStringLiteral(R"JS(
-        var activationError = '', activationListError = '', extensionError = '';
+        var activationError = '', activationListError = '', capabilityError = '';
         second.request('activate').then(function() {}, function(code) { activationError = code; });
         second.requestList('activate').then(function() {}, function(code) { activationListError = code; });
-        second.request('suggestions').then(function() {}, function(code) { extensionError = code; });
+        second.request('suggestions').then(function() {}, function(code) { capabilityError = code; });
     )JS"));
     waitFor([&] {
         return !engine.globalObject().property("activationError").toString().isEmpty()
             && !engine.globalObject().property("activationListError").toString().isEmpty()
-            && !engine.globalObject().property("extensionError").toString().isEmpty();
+            && !engine.globalObject().property("capabilityError").toString().isEmpty();
     });
     require(engine.globalObject().property("activationError").toString() == "action_unavailable"
             && engine.globalObject().property("activationListError").toString() == "action_unavailable"
-            && engine.globalObject().property("extensionError").toString() == "unsupported_extension",
-        "provider QML cannot invoke private activation or unnegotiated optional operations");
+            && engine.globalObject().property("capabilityError").toString() == "unsupported_capability",
+        "provider QML cannot invoke private activation or unoffered optional operations");
     require(QCoro::waitFor(registry.callSource(source, "bump")).value("calls").toInt() == 1,
         "action cancellation leaves the source context running");
     engine.evaluate(QStringLiteral(R"JS(
@@ -192,7 +194,7 @@ SPOOL_TEST_MAIN("provider-ui-context")
 
     auto discoveryPackage = ProviderFixture::package("fixture.test", "2.0.0");
     auto manifest = QJsonDocument::fromJson(discoveryPackage.files.value("manifest.json")).object();
-    manifest.insert("extensions", QJsonObject { { "spool.lan-probe", 1 } });
+    manifest.insert("capabilities", QJsonArray { "lanProbe" });
     discoveryPackage.files["manifest.json"] = QJsonDocument(manifest).toJson();
     discoveryPackage.manifest = *ProviderManifest::parse(discoveryPackage.files.value("manifest.json"));
     discoveryPackage.files["logic/provider.mjs"] = R"JS(

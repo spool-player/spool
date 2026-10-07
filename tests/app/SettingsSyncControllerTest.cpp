@@ -68,8 +68,7 @@ struct Server {
         require(database.initialize(directory.filePath("registry.sqlite")), "registry database");
         auto package = ProviderFixture::package(QStringLiteral("fixture.settings"));
         auto manifest = QJsonDocument::fromJson(package.files.value("manifest.json")).object();
-        manifest.insert(
-            "extensions", QJsonObject { { "spool.settings-storage", 1 }, { "spool.playback-preferences", 1 } });
+        manifest.insert("capabilities", QJsonArray { "settingsStorage", "playbackPreferences" });
         package.files["manifest.json"] = QJsonDocument(manifest).toJson();
         package.manifest = *ProviderManifest::parse(package.files.value("manifest.json"));
         QFile script(QStringLiteral(TEST_SOURCE_DIR "/tests/providers/fixtures/settings-sync.mjs"));

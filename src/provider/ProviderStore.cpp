@@ -204,7 +204,7 @@ QVariantList ProviderStore::annotate(const QVariantList& entries) const
         const ProviderModule *module = m_registry ? m_registry->module(id) : nullptr;
         entry.insert(QStringLiteral("installed"), module != nullptr);
         entry.insert(QStringLiteral("installedVersion"), module ? module->manifest.version : QString());
-        entry.insert(QStringLiteral("compatible"), text(entry, "api") == QLatin1String(kApi));
+        entry.insert(QStringLiteral("compatible"), entry.value(QStringLiteral("format")).toInt() == 3);
         entry.insert(QStringLiteral("updateAvailable"),
             module && ProviderPackage::compareVersions(text(entry, "version"), module->manifest.version) > 0);
         entry.insert(QStringLiteral("busy"), m_busy.value(id).toString());
@@ -232,7 +232,7 @@ QVariantList ProviderStore::official() const
             if (module.value(QStringLiteral("bundled")).toBool()
                 || m_origins.value(id).channel == QStringLiteral("official")) {
                 QVariantMap entry = module;
-                entry.insert(QStringLiteral("api"), QLatin1String(kApi));
+                entry.insert(QStringLiteral("format"), 3);
                 entries.append(entry);
             }
         }
@@ -264,7 +264,7 @@ QVariantList ProviderStore::community() const
             entries.append(QVariantMap { { QStringLiteral("id"), id },
                 { QStringLiteral("name"), module->manifest.name },
                 { QStringLiteral("summary"), module->manifest.summary },
-                { QStringLiteral("version"), module->manifest.version }, { QStringLiteral("api"), QLatin1String(kApi) },
+                { QStringLiteral("version"), module->manifest.version }, { QStringLiteral("format"), 3 },
                 { QStringLiteral("publisher"),
                     origin.channel == QStringLiteral("url") ? origin.feed.host() : module->manifest.publisher },
                 { QStringLiteral("fromUrl"), origin.channel == QStringLiteral("url") } });
@@ -402,7 +402,7 @@ QCoro::Task<void> ProviderStore::installEntry(QVariantMap entry, Origin origin)
         qWarning("providers: %s is not from a source this build installs from", qPrintable(id));
         co_return;
     }
-    if (text(entry, "api") != QLatin1String(kApi)) {
+    if (entry.value(QStringLiteral("format")).toInt() != 3) {
         emit problem(QStringLiteral("%1 needs a different version of Spool").arg(name));
         co_return;
     }
@@ -500,7 +500,7 @@ QCoro::Task<void> ProviderStore::checkAsync(QString policy)
                     latest = value.toMap();
             }
         }
-        if (module && validEntry(latest) && text(latest, "api") == QLatin1String(kApi)
+        if (module && validEntry(latest) && latest.value(QStringLiteral("format")).toInt() == 3
             && ProviderPackage::compareVersions(text(latest, "version"), module->manifest.version) > 0)
             updates.append(latest);
     }

@@ -181,13 +181,12 @@ SPOOL_TEST_MAIN("download-manager")
     auto manifest = QJsonDocument::fromJson(package.files["manifest.json"]).object();
     manifest.insert("capabilities", QJsonArray { "downloads", "downloadTranscode" });
     manifest.insert("origins", QJsonArray { origin });
-    manifest.remove("extensions");
     package.files["manifest.json"] = QJsonDocument(manifest).toJson();
     package.manifest = *ProviderManifest::parse(package.files["manifest.json"]);
     package.files["logic/provider.mjs"] = R"JS(
 export function createSource(config, sourceHost) {
     return {
-        describe: function() { return {}; },
+        describe: function() { return {capabilities: {downloads:true, downloadTranscode:true}}; },
         details: function(args) { return {item:{id:args.itemId,title:'Offline ' + args.itemId,type:'Movie',runtimeTicks:'10000000'}}; },
         download: function(args, host) {
             if (args.itemId.indexOf('picker-') === 0) {

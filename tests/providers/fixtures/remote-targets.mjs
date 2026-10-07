@@ -1,5 +1,5 @@
 export function createSource(config, sourceHost) {
-    const extensions = {'spool.remote-targets': 1, 'spool.origin-grants': 1};
+    const capabilities = {remoteTargets: true, originGrants: true};
     const actions = ['play', 'pause', 'unpause', 'stop', 'seek', 'volume', 'mute', 'shuffle', 'repeat',
         'audioTrack', 'subtitleTrack', 'queuePlay', 'queueRemove', 'queueMove', 'next', 'previous'];
     let settings = {};
@@ -46,7 +46,7 @@ export function createSource(config, sourceHost) {
         if (args.targetId !== 'a' && args.targetId !== 'b') throw new Error('wrong_target');
     };
     return {
-        describe() { return {extensions}; },
+        describe() { return {capabilities}; },
         setup(args) {
             settings = args;
             connects = []; commands = []; stateReads = []; queueReads = []; lists = 0;
@@ -147,6 +147,6 @@ export function createSource(config, sourceHost) {
             };
             return settings.queueDelay ? host.delay(settings.queueDelay).then(get) : get();
         },
-        dropExtensions() { sourceHost.emit('extensionsChanged', {extensions: {}}); return {}; }
+        dropCapabilities() { sourceHost.emit('capabilitiesChanged', {capabilities: {}}); return {}; }
     };
 }

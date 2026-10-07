@@ -103,7 +103,7 @@ public:
         : PlaybackSource(owner)
         , m_owner(owner)
     {
-        connect(owner->m_registry, &ProviderRegistry::extensionsChanged, this, [this](const QString& account) {
+        connect(owner->m_registry, &ProviderRegistry::capabilitiesChanged, this, [this](const QString& account) {
             if (account == m_owner->m_accountId) {
                 ++m_queueSupportGeneration;
                 m_reportedQueueRevision.clear();
@@ -278,9 +278,7 @@ private:
         QString queueRevision;
         const quint64 supportGeneration = m_queueSupportGeneration;
         if (event != QStringLiteral("stop")
-            && m_owner->m_registry->extensionVersion(
-                   m_owner->m_accountId, QStringLiteral("spool.playback-queue-reporting"))
-                == 1) {
+            && m_owner->m_registry->hasCapability(m_owner->m_accountId, QStringLiteral("playbackQueueReporting"))) {
             queueRevision = m_owner->m_queueSnapshot.value(QStringLiteral("revision")).toString();
             if (!queueRevision.isEmpty()
                 && (event == QStringLiteral("start") || queueRevision != m_reportedQueueRevision))
@@ -314,12 +312,12 @@ void PortableProvider::setPlaybackQueueContext(QVariantMap snapshot, int index)
     m_queueIndex = index;
 }
 
-void PortableProvider::setExtensionSpeedTest(bool enabled)
+void PortableProvider::setCapabilities(Capabilities capabilities)
 {
-    const Capabilities before = m_capabilities;
-    m_capabilities.setFlag(SpeedTest, m_legacySpeedTest || enabled);
-    if (before != m_capabilities)
-        emit capabilitiesChanged();
+    if (m_capabilities == capabilities)
+        return;
+    m_capabilities = capabilities;
+    emit capabilitiesChanged();
 }
 
 PortableProvider::PortableProvider(ProviderRegistry *registry, QString accountId, QString label,
@@ -329,7 +327,6 @@ PortableProvider::PortableProvider(ProviderRegistry *registry, QString accountId
     , m_accountId(std::move(accountId))
     , m_label(std::move(label))
     , m_capabilities(capabilities)
-    , m_legacySpeedTest(capabilities.testFlag(SpeedTest))
     , m_artworkTemplate(description.value(QStringLiteral("artwork")).toString())
     , m_playback(new Playback(this))
 {
@@ -640,7 +637,7 @@ QCoro::Task<std::vector<MovieItem>> PortableProvider::searchItems(QString search
 
 QCoro::Task<std::vector<MovieItem>> PortableProvider::fetchSearchSuggestions(int limit)
 {
-    if (limit <= 0 || m_registry->extensionVersion(m_accountId, QStringLiteral("spool.suggestions")) != 1)
+    if (limit <= 0 || !m_registry->hasCapability(m_accountId, QStringLiteral("suggestions")))
         co_return std::vector<MovieItem> {};
     co_return co_await list(QStringLiteral("suggestions"), {}, std::min(limit, 60), QStringLiteral("suggestions"));
 }

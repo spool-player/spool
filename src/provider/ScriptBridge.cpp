@@ -357,8 +357,8 @@ void ScriptRequests::http(const QString& address, const QVariantMap& options, QJ
         return rejectWith(engine, reject, "request_limit");
     QList<QByteArray> requestedHeaders;
     if (options.contains(QStringLiteral("responseHeaders"))) {
-        if (m_access->extensions.value(QStringLiteral("spool.http-metadata")).toInt() != 1)
-            return rejectWith(engine, reject, "unsupported_extension");
+        if (!m_access->capabilities.value(QStringLiteral("httpMetadata")).toBool())
+            return rejectWith(engine, reject, "unsupported_capability");
         const QVariant value = options.value(QStringLiteral("responseHeaders"));
         if (value.metaType().id() != QMetaType::QVariantList && value.metaType().id() != QMetaType::QStringList)
             return rejectWith(engine, reject, "header_denied");
@@ -444,6 +444,8 @@ void ScriptRequests::http(const QString& address, const QVariantMap& options, QJ
 
 void ScriptRequests::speedTest(const QVariantMap& options, QJSValue resolve, QJSValue reject)
 {
+    if (!m_access->capabilities.value(QStringLiteral("speedTest")).toBool())
+        return rejectWith(m_access->engine, reject, "unsupported_capability");
     if (m_speedTest || !m_replies.isEmpty() || m_pending.size() >= kMaxTimers)
         return rejectWith(m_access->engine, reject, "request_denied");
     auto *test = new SpeedTest(
@@ -485,6 +487,8 @@ void ScriptRequests::delay(int milliseconds, QJSValue resolve, QJSValue reject)
 
 void ScriptRequests::discover(int port, const QString& message, int timeoutMs, QJSValue resolve, QJSValue reject)
 {
+    if (!m_access->capabilities.value(QStringLiteral("discovery")).toBool())
+        return rejectWith(m_access->engine, reject, "unsupported_capability");
     if (port < 1 || port > 65535 || message.size() > 1024 || timeoutMs < 100 || timeoutMs > 5000
         || m_pending.size() >= kMaxTimers)
         return rejectWith(m_access->engine, reject, "discovery_denied");
@@ -536,8 +540,8 @@ void ScriptRequests::discover(int port, const QString& message, int timeoutMs, Q
 
 void ScriptRequests::probeLocalHttp(const QVariantMap& options, QJSValue resolve, QJSValue reject)
 {
-    if (m_access->extensions.value(QStringLiteral("spool.lan-probe")).toInt() != 1)
-        return rejectWith(m_access->engine, reject, "unsupported_extension");
+    if (!m_access->capabilities.value(QStringLiteral("lanProbe")).toBool())
+        return rejectWith(m_access->engine, reject, "unsupported_capability");
     if (!m_access->loginDraft || !m_access->lanConsent || !m_access->lanSession)
         return rejectWith(m_access->engine, reject, "discovery_denied");
     if (m_pending.size() >= kMaxTimers)
@@ -649,6 +653,10 @@ void ScriptOperation::http(const QString& url, const QVariantMap& options, QJSVa
 
 void ScriptOperation::speedTest(const QVariantMap& options, QJSValue resolve, QJSValue reject)
 {
+    if (m_access->activationApproval && !m_access->activationApproval->load() && !m_activationOperation) {
+        reject.call({ QStringLiteral("account_locked") });
+        return;
+    }
     if (!m_settled)
         m_requests.speedTest(options, std::move(resolve), std::move(reject));
 }
@@ -774,6 +782,9 @@ void ScriptSourceHost::emitEvent(const QString& type, const QJSValue& payload)
     try {
         m_events(type, payload.isUndefined() ? QVariantMap {} : ownScriptValue(payload, 5000, 256 * 1024).toMap());
     } catch (const std::exception&) {
+        // Capability availability must fail closed even when decoding the event fails.
+        if (type == QStringLiteral("capabilitiesChanged"))
+            m_events(type, {});
         qWarning("provider: dropped an oversized or invalid %s event", qPrintable(type));
     }
 }

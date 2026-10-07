@@ -150,10 +150,10 @@ namespace {
         function promised(start) {
             return new Promise(function(resolve, reject) { start(resolve, reject); });
         }
-        function sourceHost(bridge, device, extensions) {
+        function sourceHost(bridge, device, capabilities) {
             return Object.freeze({
                 device: device,
-                extensions: extensions,
+                capabilities: capabilities,
                 isLogEnabled: function(level) { return bridge.isLogEnabled(level); },
                 log: function(level, message, fields) {
                     if (bridge.isLogEnabled(level))
@@ -181,13 +181,13 @@ namespace {
             });
         }
         return {
-            create: function(module, configuration, bridge, device, extensions) {
-                return module.createSource(configuration, sourceHost(bridge, device, extensions));
+            create: function(module, configuration, bridge, device, capabilities) {
+                return module.createSource(configuration, sourceHost(bridge, device, capabilities));
             },
-            call: function(source, method, args, operation, bridge, device, extensions) {
+            call: function(source, method, args, operation, bridge, device, capabilities) {
                 const host = Object.freeze({
                     device: device,
-                    extensions: extensions,
+                    capabilities: capabilities,
                     isLogEnabled: function(level) { return bridge.isLogEnabled(level); },
                     log: function(level, message, fields) {
                         if (bridge.isLogEnabled(level))
@@ -244,7 +244,7 @@ public:
     }
 
     void add(const QString& id, const QVariantMap& configuration, const QList<QUrl>& origins,
-        const QVariantMap& extensions, bool loginDraft, std::shared_ptr<std::atomic_bool> activationApproval,
+        const QVariantMap& capabilities, bool loginDraft, std::shared_ptr<std::atomic_bool> activationApproval,
         quint64 generation, const std::shared_ptr<QPromise<QVariantMap>>& promise)
     {
         if (!m_engine)
@@ -261,10 +261,10 @@ public:
             return fail(promise, error.what());
         }
         ScriptAccess access { m_engine.get(), m_network.get(), origins, m_hooks.socket };
-        access.extensions = extensions;
+        access.capabilities = capabilities;
         access.loginDraft = loginDraft;
         access.activationApproval = std::move(activationApproval);
-        if (loginDraft && extensions.value(QStringLiteral("spool.lan-probe")).toInt() == 1) {
+        if (loginDraft && capabilities.value(QStringLiteral("lanProbe")).toBool()) {
             access.lanSession = std::make_shared<LanProbeSession>();
             access.lanSession->targets = m_hooks.lanTargets;
         }
@@ -276,19 +276,19 @@ public:
         QJSEngine::setObjectOwnership(host, QJSEngine::CppOwnership);
         const QJSValue bridge = m_engine->newQObject(host);
         m_watchdog->arm();
-        const QJSValue jsExtensions = m_engine->toScriptValue(extensions);
+        const QJSValue jsCapabilities = m_engine->toScriptValue(capabilities);
         m_engine->globalObject()
             .property(QStringLiteral("Object"))
             .property(QStringLiteral("freeze"))
-            .call({ jsExtensions });
+            .call({ jsCapabilities });
         const QJSValue object = m_glue.property(QStringLiteral("create"))
-                                    .call({ m_module, jsConfiguration, bridge, m_jsDevice, jsExtensions });
+                                    .call({ m_module, jsConfiguration, bridge, m_jsDevice, jsCapabilities });
         if (object.isError() || !object.isObject() || m_engine->isInterrupted()) {
             delete host;
             checkInterrupted();
             return fail(promise, "source_initialization_failed");
         }
-        m_sources.insert(id, { object, bridge, jsExtensions, host, {}, generation });
+        m_sources.insert(id, { object, bridge, jsCapabilities, host, {}, generation });
         promise->addResult(QVariantMap { { QStringLiteral("sourceId"), id } });
         promise->finish();
     }
@@ -300,8 +300,8 @@ public:
         if (source == m_sources.end() || source->generation != generation)
             return fail(promise, "source_unavailable");
         auto *access = source->host->access();
-        if (access->extensions.value(QStringLiteral("spool.origin-grants")).toInt() != 1)
-            return fail(promise, "unsupported_extension");
+        if (!access->capabilities.value(QStringLiteral("originGrants")).toBool())
+            return fail(promise, "unsupported_capability");
         QList<QUrl> normalized;
         for (QUrl origin : origins) {
             if (!origin.isValid() || origin.host().isEmpty() || origin.host().contains(QLatin1Char('*'))
@@ -343,8 +343,8 @@ public:
         if (source == m_sources.end() || source->generation != generation)
             return fail(promise, "source_unavailable");
         auto *access = source->host->access();
-        if (!access->loginDraft || access->extensions.value(QStringLiteral("spool.lan-probe")).toInt() != 1)
-            return fail(promise, "unsupported_extension");
+        if (!access->loginDraft || !access->capabilities.value(QStringLiteral("lanProbe")).toBool())
+            return fail(promise, "unsupported_capability");
         access->lanConsent = true;
         promise->addResult(true);
         promise->finish();
@@ -400,7 +400,7 @@ public:
         m_watchdog->arm();
         m_glue.property(QStringLiteral("call"))
             .call({ source->object, QJSValue(method), jsArguments, m_engine->newQObject(operation), source->bridge,
-                m_jsDevice, source->extensions });
+                m_jsDevice, source->capabilities });
         checkInterrupted();
     }
 
@@ -444,7 +444,7 @@ private:
     struct Source {
         QJSValue object;
         QJSValue bridge;
-        QJSValue extensions;
+        QJSValue capabilities;
         ScriptSourceHost *host = nullptr;
         QSet<ScriptOperation *> operations;
         quint64 generation = 0;
@@ -577,7 +577,7 @@ ScriptRuntime::~ScriptRuntime()
 }
 
 QCoro::Task<QVariantMap> ScriptRuntime::addSource(QString sourceId, QVariantMap configuration, QList<QUrl> origins,
-    QVariantMap extensions, bool loginDraft, std::shared_ptr<std::atomic_bool> activationApproval)
+    QVariantMap capabilities, bool loginDraft, std::shared_ptr<std::atomic_bool> activationApproval)
 {
     auto promise = std::make_shared<QPromise<QVariantMap>>();
     promise->start();
@@ -589,10 +589,10 @@ QCoro::Task<QVariantMap> ScriptRuntime::addSource(QString sourceId, QVariantMap 
     QMetaObject::invokeMethod(
         d->worker,
         [worker = d->worker, sourceId = std::move(sourceId), configuration = std::move(configuration),
-            origins = std::move(origins), extensions = std::move(extensions), loginDraft,
+            origins = std::move(origins), capabilities = std::move(capabilities), loginDraft,
             activationApproval = std::move(activationApproval), generation, promise] {
             worker->add(
-                sourceId, configuration, origins, extensions, loginDraft, activationApproval, generation, promise);
+                sourceId, configuration, origins, capabilities, loginDraft, activationApproval, generation, promise);
         },
         Qt::QueuedConnection);
     return awaitResult(std::move(future));
@@ -665,9 +665,9 @@ QCoro::Task<ProviderMediaPage> ScriptRuntime::callMediaPage(
         [maximumItems](const QJSValue& value) { return Detail::readProviderMediaPage(value, maximumItems); });
 }
 
-QCoro::Task<MovieItem> ScriptRuntime::callItem(QString sourceId, QString method, QVariantMap arguments)
+QCoro::Task<MovieItem> ScriptRuntime::callItem(QString sourceId, QString method, QVariantMap arguments, QString scope)
 {
-    return d->submit<MovieItem>(std::move(sourceId), std::move(method), std::move(arguments), QString(),
+    return d->submit<MovieItem>(std::move(sourceId), std::move(method), std::move(arguments), std::move(scope),
         [](const QJSValue& value) { return Detail::readProviderItem(value.property(QStringLiteral("item"))); });
 }
 

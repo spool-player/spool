@@ -137,25 +137,9 @@ FocusScope {
             }
         }
 
-        AppText {
-            id: compatibilityNotice
-            anchors.top: header.bottom
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.leftMargin: Metrics.pageMarginPx
-            anchors.rightMargin: Metrics.pageMarginPx
-            visible: Boolean(root.context && root.context.missingHostExtensions
-                             && root.context.missingHostExtensions.length > 0)
-            height: visible ? implicitHeight + Metrics.scaled(12) : 0
-            text: "Update Spool to use all features of this provider."
-            font.pixelSize: Metrics.bodySizePx
-            color: Theme.textSecondary
-            wrapMode: Text.WordWrap
-        }
-
         Loader {
             id: loader
-            anchors.top: compatibilityNotice.bottom
+            anchors.top: header.bottom
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom

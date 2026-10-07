@@ -47,8 +47,8 @@ export function createSource(config, sourceHost) {
     return {
         describe: function() {
             return {artwork: 'https://img.invalid/{itemId}/{type}?w={width}',
-                extensions: config.catalogueExtensions
-                    ? {'spool.suggestions': 1, 'spool.playback-queue-reporting': 1} : {}};
+                capabilities: {search: true, reporting: true, groupPlayback: true,
+                    suggestions: !!config.catalogueCapabilities, playbackQueueReporting: !!config.catalogueCapabilities}};
         },
         suggestions: function(args) {
             return {items: [item('suggestion')].slice(0, args.limit), cursor: null, exhausted: true};

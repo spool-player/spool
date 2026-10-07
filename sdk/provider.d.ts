@@ -1,5 +1,5 @@
 /**
- * Spool provider API 0.2.
+ * Spool current provider contract (manifest format 3).
  *
  * A provider is an ES module exporting `createSource(configuration, host)`.
  * Spool calls it once per account; the returned object's methods are the
@@ -15,14 +15,20 @@
 
 export type Value = null | boolean | number | string | Value[] | { [key: string]: Value };
 
-/** Exact wire-major negotiation for optional declared features on the current host. */
-export type Extensions = Readonly<Record<string, number>>;
+/** The complete set of current manifest and account capability names. */
+export type Capability = 'search' | 'userState' | 'reporting' | 'segments' | 'groupPlayback'
+    | 'remoteControl' | 'streamQuality' | 'trickplay' | 'speedTest' | 'downloads' | 'downloadTranscode'
+    | 'discovery' | 'artworkOwners' | 'suggestions' | 'playbackPreferences' | 'settingsStorage'
+    | 'itemActions' | 'collectionEditing' | 'playbackQueueReporting' | 'remoteTargets' | 'httpMetadata'
+    | 'originGrants' | 'lanProbe' | 'accountActivation';
+/** Strict boolean flags; missing or false account offers disable the capability. */
+export type Capabilities = Readonly<Partial<Record<Capability, boolean>>>;
 
 export interface HttpOptions {
     method?: 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
     headers?: Record<string, string>;
     body?: string;
-    /** spool.http-metadata v1: at most 16 response header names; never Set-Cookie. */
+    /** httpMetadata: at most 16 response header names; never Set-Cookie. */
     responseHeaders?: string[];
 }
 /** Redirects are not followed: `status` is 3xx and `location` is set. */
@@ -72,8 +78,8 @@ export type LogFields = Readonly<Record<string, null | boolean | number | string
  */
 export interface SourceHost {
     device: Device;
-    /** Frozen host-supported exact versions requested in manifest.extensions. */
-    readonly extensions?: Extensions;
+    /** Frozen manifest declarations mapped to true; not account authorization. */
+    readonly capabilities: Capabilities;
     /** Native category guard; check before constructing expensive diagnostic fields. */
     isLogEnabled(level: LogLevel): boolean;
     /** Lazy message runs only when enabled. Native redaction/bounds always apply. */
@@ -92,18 +98,18 @@ export interface SourceHost {
 export interface OperationHost extends SourceHost {
     /** 0–10000 ms. */
     delay(milliseconds: number): Promise<void>;
-    /** UDP broadcast on the local network; replies within `timeout` ms (100–5000). */
+    /** Requires discovery declaration. UDP broadcast; replies within `timeout` ms (100–5000). */
     discover(options: { port: number; message: string; timeout?: number }): Promise<{ address: string; text: string }[]>;
-    /** spool.lan-probe v1, login draft after allowLanDiscovery consent only.
+    /** lanProbe, login draft after allowLanDiscovery consent only.
      * No authentication, cookies, redirects or origin grants. Up to 32 targets,
      * four concurrent requests and 600 ms per page; bodies at most 4 KiB.
      */
-    probeLocalHttp?(options: { port: number; path: string; cursor?: string; limit?: number }): Promise<{
+    probeLocalHttp(options: { port: number; path: string; cursor?: string; limit?: number }): Promise<{
         responses: { origin: string; status: number; body: string }[];
         cursor: string | null; exhausted: boolean;
     }>;
     /**
-     * Measures on the native provider worker, discarding response bodies.
+     * Requires speedTest declaration. Measures on the native provider worker, discarding response bodies.
      * Same origin/TLS policy as http; no redirects or cookies. Cancelled with
      * this operation. Generated endpoints return exactly the requested bytes;
      * range endpoints must honor the native Range header and Content-Range.
@@ -239,7 +245,7 @@ export interface DownloadArgs {
 
 export interface Segment { type: 'Intro' | 'Outro' | 'Recap' | 'Preview' | 'Commercial'; startTicks: number | string; endTicks: number | string }
 
-// Optional catalogue extensions, wire major 1.
+// Optional catalogue operations.
 export interface ItemAction {
     id: string; label: string; icon?: string; enabled?: boolean; reason?: string;
 }
@@ -250,13 +256,13 @@ export interface PlaybackQueueSnapshot {
     revision: string;
     items: { itemId: string; entryId?: string; mediaType: 'audio' | 'video' }[];
 }
-export interface CatalogueExtensions {
-    /** spool.suggestions: bounded recommendations, not Continue Watching. */
+export interface CatalogueOperations {
+    /** suggestions: bounded recommendations, not Continue Watching. */
     suggestions?: Operation<PageArgs, Page>;
-    /** spool.item-actions: load on menu opening, not per rendered row. */
+    /** itemActions: load on menu opening, not per rendered row. */
     itemActions?: Operation<{ itemId: string; itemType: string; containerId?: string; entryId?: string },
         { actions: ItemAction[] }>;
-    /** spool.collection-editing: every returned row carries its container-local entryId. */
+    /** collectionEditing: every returned row carries its container-local entryId. */
     collectionInfo?: Operation<{ containerId: string }, CollectionInfo>;
     collectionEntries?: Operation<PageArgs & { containerId: string }, Page>;
     collectionRemove?: Operation<{ containerId: string; entryId: string }, {}>;
@@ -264,7 +270,7 @@ export interface CatalogueExtensions {
     collectionMove?: Operation<{ containerId: string; entryId: string; index: number; afterEntryId: string | null }, {}>;
 }
 
-// Optional preference and application-data extensions, wire major 1.
+// Optional preference and application-data operations.
 export interface PreferenceValues {
     /** ISO-639-2, or empty for no preference. */
     audioLanguage?: string;
@@ -272,12 +278,12 @@ export interface PreferenceValues {
     subtitleLanguage?: string;
     subtitleMode?: 'Default' | 'Smart' | 'OnlyForced' | 'Always' | 'None';
 }
-export interface PreferenceExtensions {
+export interface PreferenceOperations {
     preferencesRead?: Operation<{}, { values: PreferenceValues; writable: (keyof PreferenceValues)[] }>;
     preferencesWrite?: Operation<{ values: Partial<PreferenceValues> }, {}>;
 }
-export interface ApplicationDataExtensions {
-    /** spool.settings-storage: maxBytes cannot exceed the host's 64 KiB/depth-16 bound. */
+export interface ApplicationDataOperations {
+    /** settingsStorage: maxBytes cannot exceed the host's 64 KiB/depth-16 bound. */
     dataInfo?: Operation<{}, { maxBytes: number; conditionalWrites: boolean }>;
     /** key is a canonical application-owned UUID, not a path; found distinguishes absent from null. */
     dataRead?: Operation<{ key: string }, { found: boolean; value?: Value; revision?: string }>;
@@ -286,7 +292,7 @@ export interface ApplicationDataExtensions {
     dataDelete?: Operation<{ key: string; expectedRevision?: string | null }, {}>;
 }
 
-// Optional outbound remote control, spool.remote-targets wire major 1.
+// Optional outbound remote control, remoteTargets capability.
 // This is independent of inbound Events.remote and remoteControl capability.
 export interface RemoteTarget {
     id: string; name: string; detail?: string; origins?: string[]; commands: string[];
@@ -320,7 +326,7 @@ export type RemoteTargetCommand =
     | { action: 'repeat'; mode: 'RepeatNone' | 'RepeatAll' | 'RepeatOne' }
     | { action: 'queuePlay' | 'queueRemove'; entryId: string }
     | { action: 'queueMove'; entryId: string; index: number; afterEntryId: string | null };
-export interface RemoteTargetExtensions {
+export interface RemoteTargetOperations {
     remoteTargets?: Operation<{}, { targets: RemoteTarget[] }>;
     /** Global preview preference is also supplied when inspecting another player. */
     remoteConnect?: Operation<{ targetId: string; videoPreviews: boolean }, RemoteState>;
@@ -329,8 +335,8 @@ export interface RemoteTargetExtensions {
     remoteCommand?: Operation<{ targetId: string; command: RemoteTargetCommand }, { commandSequence?: number }>;
 }
 
-// Optional private account activation transaction, spool.account-activation v1.
-export interface AccountActivationExtensions {
+// Optional private account activation transaction, accountActivation capability.
+export interface AccountActivationOperations {
     /** Native-only: provider QML cannot request this operation directly. */
     activate?: Operation<{
         reason: 'linked' | 'startup' | 'switch' | 'family';
@@ -342,13 +348,14 @@ export interface AccountActivationExtensions {
     }, { grant?: Value } | PickRequest>;
 }
 
-export interface Source extends CatalogueExtensions, PreferenceExtensions, ApplicationDataExtensions,
-    RemoteTargetExtensions, AccountActivationExtensions {
-    /** Required. Artwork templates take {itemId} {type} {tag} {width} {height} {quality} {format}. */
-    describe(): { artwork?: string; extensions?: Extensions;
+export interface Source extends CatalogueOperations, PreferenceOperations, ApplicationDataOperations,
+    RemoteTargetOperations, AccountActivationOperations {
+    /** Required. Artwork templates take {itemId} {type} {tag} {width} {height} {quality} {format}.
+     * Offer every available declared capability, including baseline features.
+     * Missing capabilities means no offers; undeclared flags cannot enable features.
+     */
+    describe(): { artwork?: string; capabilities?: Capabilities;
         activation?: { familyId: string; identityId: string } };
-    /** Baseline-callable compatibility information; no network update check. */
-    extensionStatus?: Operation<{}, { enabled: Extensions; missingHost: string[] }>;
 
     libraries?: Operation<{}, { items: { id: string; title: string; collectionType?: string; posterTag?: string }[] }>;
     browse?: Operation<PageArgs & { parentId?: string; collectionType?: string; recursive?: boolean; genre?: string;
@@ -379,12 +386,12 @@ export interface Source extends CatalogueExtensions, PreferenceExtensions, Appli
     /** Called on completion, cancellation or failure when a plan supplied cleanup. */
     downloadRelease?: Operation<{ cleanup: Record<string, Value> }, {}>;
     segments?: Operation<{ itemId: string }, { segments: Segment[] }>;
-    /** New packages declare spool.speed-test v1; legacy speedTest capability remains supported. */
+    /** Requires the declared and account-offered speedTest capability. */
     speedTest?: Operation<{}, SpeedTestResult>;
     report?: Operation<{ event: 'start' | 'progress' | 'stop'; itemId: string; variantId: string; playSessionId: string;
         playMethod: string; positionTicks: string; paused?: boolean; rate: number; volume?: number; muted?: boolean;
         failed?: boolean; audioStreamIndex: number; subtitleStreamIndex: number;
-        /** spool.playback-queue-reporting: immutable membership/order revision, omitted on unchanged progress. */
+        /** playbackQueueReporting: immutable membership/order revision, omitted on unchanged progress. */
         queue?: PlaybackQueueSnapshot; queueIndex?: number }, {}>;
 
     favorite?: Operation<{ itemId: string; value: boolean }, {}>;
@@ -428,9 +435,11 @@ export interface Events {
     changed: { itemId?: string };
     /** Merged into the stored configuration, e.g. a refreshed token. */
     configuration: Record<string, Value>;
-    /** Replaces this account's offers; cannot grant undeclared or unsupported versions. */
-    extensionsChanged: { extensions: Extensions };
-    /** Nonfatal spool.playback-queue-reporting status; never credentials or raw server errors. */
+    /** Replaces all account offers; true enables only declared flags.
+     * Unknown keys or non-boolean values withdraw offers fail-closed.
+     */
+    capabilitiesChanged: { capabilities: Capabilities };
+    /** Nonfatal playbackQueueReporting status; never credentials or raw server errors. */
     playbackQueueStatus: { revision: string; state: 'preparing' | 'ready' | 'unavailable' };
     /** Invalidates only this source/target; never an inbound remote command. */
     remoteChanged: { targetId: string };
@@ -475,21 +484,20 @@ export interface ScreenContext {
     role: 'login' | 'settings' | 'picker';
     /** For a picker: the `pick` object resolve or runItemAction returned. */
     arguments: Record<string, Value>;
-    /** New-host metadata: utility support for login, effective account offers otherwise. */
-    readonly extensions?: Extensions;
-    readonly missingHostExtensions?: readonly string[];
+    /** Login draft declarations; live account effective flags; empty when closed. */
+    readonly capabilities: Capabilities;
     /** Notifying, device-local boolean options for this activation family; no credentials/grants. */
     readonly activationConfiguration?: Readonly<Record<string, boolean>>;
     request(operation: string, args?: Record<string, Value>): Promise<Record<string, Value>>;
     /** Moves `items` into `rows` (a list model with `record` and `title` roles, up to 10,000 rows). */
     requestList(operation: string, args?: Record<string, Value>, append?: boolean): Promise<Record<string, Value>>;
     rows: unknown;
-    /** Login server selection; existing accounts require spool.origin-grants and host consent. */
+    /** Login server selection; existing accounts require originGrants and host consent. */
     allowOrigin(url: string): Promise<void>;
-    /** spool.lan-probe v1: explicit login-draft consent; does not authorize an origin. */
-    allowLanDiscovery?(): Promise<void>;
+    /** lanProbe: explicit login-draft consent; does not authorize an origin. */
+    allowLanDiscovery(): Promise<void>;
     /** Cancel this draft's pending discovery/consent without closing password login. */
-    cancelLanDiscovery?(): void;
+    cancelLanDiscovery(): void;
     /** login: { account, label, detail?, group?, configuration }; settings: { configuration? }; picker: the choice. */
     complete(result: Record<string, Value>): void;
     close(): void;

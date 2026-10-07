@@ -124,12 +124,13 @@ SPOOL_TEST_MAIN("script-runtime-network")
         return QList<QHostAddress>(40, QHostAddress(QHostAddress::LocalHost));
     };
     ScriptRuntime runtime(QStringLiteral(TEST_SOURCE_DIR "/tests/providers/fixtures/network.mjs"), {}, hooks);
-    const QVariantMap extensions { { "spool.http-metadata", 1 }, { "spool.origin-grants", 1 },
-        { "spool.lan-probe", 1 } };
-    QCoro::waitFor(runtime.addSource("draft", {}, { QUrl(origin) }, extensions, true));
-    QCoro::waitFor(runtime.addSource("other", {}, {}, extensions, true));
-    QCoro::waitFor(runtime.addSource("account", {}, {}, extensions));
+    const QVariantMap capabilities { { "httpMetadata", true }, { "originGrants", true }, { "lanProbe", true },
+        { "discovery", true } };
+    QCoro::waitFor(runtime.addSource("draft", {}, { QUrl(origin) }, capabilities, true));
+    QCoro::waitFor(runtime.addSource("other", {}, {}, capabilities, true));
+    QCoro::waitFor(runtime.addSource("account", {}, {}, capabilities));
     QCoro::waitFor(runtime.addSource("baseline", {}, { QUrl(origin) }));
+    rejects(runtime.call("baseline", "discover", { { "port", 7359 }, { "timeout", 100 } }), "unsupported_capability");
     const auto udp = QCoro::waitFor(runtime.call(
         "draft", "discover", { { "port", 7359 }, { "message", "spool-discovery-contract-test" }, { "timeout", 100 } }));
     require(
@@ -144,7 +145,7 @@ SPOOL_TEST_MAIN("script-runtime-network")
     require(headers == QVariantMap { { "etag", "fixture-etag" }, { "x-plex-client-identifier", "companion" } },
         "only requested present headers are returned with lowercase names");
     const int beforeInvalid = requests;
-    rejects(http("baseline", "/", metadata), "unsupported_extension");
+    rejects(http("baseline", "/", metadata), "unsupported_capability");
     rejects(http("draft", "/", { { "responseHeaders", QVariantList { "Set-Cookie" } } }), "header_denied");
     rejects(http("draft", "/", { { "responseHeaders", QVariantList { "Set-Cookie2" } } }), "header_denied");
     rejects(http("draft", "/", { { "responseHeaders", QVariantList { "bad\r\nname" } } }), "header_denied");
@@ -161,7 +162,7 @@ SPOOL_TEST_MAIN("script-runtime-network")
     rejects(runtime.grantOrigins("account", { QUrl("http://user@127.0.0.1") }), "origin_denied");
     rejects(runtime.grantOrigins("account", { QUrl("*") }), "origin_denied");
     rejects(runtime.grantOrigins("account", { QUrl("ws://127.0.0.1") }), "origin_denied");
-    rejects(runtime.grantOrigins("baseline", { QUrl(origin) }), "unsupported_extension");
+    rejects(runtime.grantOrigins("baseline", { QUrl(origin) }), "unsupported_capability");
     QCoro::waitFor(runtime.grantOrigins("account", { QUrl(origin) }));
     require(QCoro::waitFor(http("account", "/")).value("status").toInt() == 200,
         "approved origin reaches current operation host");
@@ -171,7 +172,7 @@ SPOOL_TEST_MAIN("script-runtime-network")
         "grant does not recreate source-private state");
     rejects(http("other", "/"), "request_denied");
 
-    QCoro::waitFor(runtime.addSource("staged", {}, {}, extensions));
+    QCoro::waitFor(runtime.addSource("staged", {}, {}, capabilities));
     auto approval = std::make_shared<std::atomic_bool>(false);
     QCoro::waitFor(runtime.grantOrigins("staged", { QUrl(origin) }, approval));
     rejects(http("staged", "/"), "request_denied");
@@ -189,8 +190,8 @@ SPOOL_TEST_MAIN("script-runtime-network")
 
     QVariantMap probe { { "port", server.serverPort() }, { "path", "/" }, { "limit", 32 } };
     rejects(runtime.call("draft", "probe", probe), "discovery_denied");
-    rejects(runtime.allowLanDiscovery("account"), "unsupported_extension");
-    rejects(runtime.allowLanDiscovery("baseline"), "unsupported_extension");
+    rejects(runtime.allowLanDiscovery("account"), "unsupported_capability");
+    rejects(runtime.allowLanDiscovery("baseline"), "unsupported_capability");
     QCoro::waitFor(runtime.allowLanDiscovery("draft"));
     QCoro::waitFor(runtime.allowLanDiscovery("other"));
     require(QCoro::waitFor(runtime.call("draft", "state")).value("sourceProbe").toString() == "undefined",
@@ -271,7 +272,7 @@ SPOOL_TEST_MAIN("script-runtime-network")
     ScriptRuntime::NetworkHooks emptyHooks;
     emptyHooks.lanTargets = [] { return QList<QHostAddress>(); };
     ScriptRuntime empty(QStringLiteral(TEST_SOURCE_DIR "/tests/providers/fixtures/network.mjs"), {}, emptyHooks);
-    QCoro::waitFor(empty.addSource("draft", {}, {}, extensions, true));
+    QCoro::waitFor(empty.addSource("draft", {}, {}, capabilities, true));
     QCoro::waitFor(empty.allowLanDiscovery("draft"));
     const auto noInterfaces = QCoro::waitFor(empty.call("draft", "probe", probe));
     require(noInterfaces.value("exhausted").toBool() && noInterfaces.value("responses").toList().isEmpty(),
