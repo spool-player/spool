@@ -72,6 +72,18 @@ namespace {
             std::memcpy(nativeVertexData, data, sizeof(nativeVertexData));
         ::glBufferData(target, size, data, usage);
     }
+    void diagnosticTexImage2D(GLenum target, GLint level, GLint internal, GLsizei width, GLsizei height,
+        GLint border, GLenum format, GLenum type, const void *data)
+    {
+        static thread_local int allocations = 0;
+        if (allocations++ < 40) {
+            GLint texture = 0;
+            ::glGetIntegerv(GL_TEXTURE_BINDING_2D, &texture);
+            std::fprintf(stderr, "native texture allocation: texture=%d size=%dx%d level=%d format=%d\n",
+                texture, width, height, level, internal);
+        }
+        ::glTexImage2D(target, level, internal, width, height, border, format, type, data);
+    }
     void diagnosticDrawArrays(GLenum mode, GLint first, GLsizei count)
     {
         GLint viewport[4] {}, scissor[4] {}, fbo = 0, program = 0, vao = 0;
@@ -102,14 +114,12 @@ namespace {
             }
             const GLint sampler = ::glGetUniformLocation(program, "texture0");
             if (sampler >= 0) {
-                GLint unit = 0, active = 0, texture = 0, width = 0, height = 0;
+                GLint unit = 0, active = 0, texture = 0;
                 ::glGetUniformiv(program, sampler, &unit);
                 ::glGetIntegerv(GL_ACTIVE_TEXTURE, &active);
                 ::glActiveTexture(GL_TEXTURE0 + unit);
                 ::glGetIntegerv(GL_TEXTURE_BINDING_2D, &texture);
-                ::glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &width);
-                ::glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &height);
-                std::fprintf(stderr, "native sampler: unit=%d texture=%d size=%dx%d\n", unit, texture, width, height);
+                std::fprintf(stderr, "native sampler: unit=%d texture=%d\n", unit, texture);
                 ::glActiveTexture(active);
             }
         }
@@ -138,6 +148,8 @@ namespace {
                 return reinterpret_cast<void *>(&diagnosticDrawArrays);
             if (std::strcmp(name, "glBufferData") == 0)
                 return reinterpret_cast<void *>(&diagnosticBufferData);
+            if (std::strcmp(name, "glTexImage2D") == 0)
+                return reinterpret_cast<void *>(&diagnosticTexImage2D);
         }
 #endif
         return address;

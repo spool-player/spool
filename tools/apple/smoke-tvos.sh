@@ -104,7 +104,7 @@ for bundle, arguments, expected in checks:
                                                  "player: render backend", "first video frame",
                                                  "render context handoff did not complete", "native target:", "native GL provider:",
                                                  "native presentation diagnostic:", "native draw:", "native renderer result:",
-                                                 "native uniform:", "native sampler:"]):
+                                                 "native uniform:", "native sampler:", "native texture allocation:"]):
                 print(re.sub(r"https?://\S+", "[redacted-url]", line))
             if any(marker in line for marker in ["launch test:", "video result:", "orientation:", "viewport:", "decoder:",
                                                 "render context was not ready", "failed to initialize mpv",
