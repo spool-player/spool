@@ -148,8 +148,8 @@ jobs:
                               print(f"Captured live native presentation for renderer round {attempt}")
                               return
                   environment = os.environ.copy()
-                  environment["SIMCTL_CHILD_SPOOL_TEST_MPV_LOG"] = "1"
-                  environment["SIMCTL_CHILD_QT_MESSAGE_PATTERN"] = "%{time process} %{message}"
+                  environment.pop("SIMCTL_CHILD_SPOOL_TEST_MPV_LOG", None)
+                  environment.pop("SIMCTL_CHILD_QT_MESSAGE_PATTERN", None)
                   process = subprocess.Popen(["xcrun", "simctl", "launch", "--console", "--terminate-running-process",
                                               device, "com.sachk.spool.playback-smoke", "mpv-video-item"],
                                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=environment)
@@ -157,6 +157,21 @@ jobs:
                   observer.start()
                   try:
                       transcript, _ = process.communicate(timeout=90)
+                  except subprocess.TimeoutExpired as error:
+                      transcript = error.stdout or b""
+                      if isinstance(transcript, bytes):
+                          transcript = transcript.decode(errors="replace")
+                      print(f"Native renderer lifecycle round {attempt}: TIMEOUT")
+                      for line in transcript.splitlines():
+                          if any(marker in line for marker in ["orientation:", "decoder:", "viewport:", "video result:",
+                                                               "render context was not ready", "first video frame",
+                                                               "render context handoff did not complete"]):
+                              print(line)
+                      process.kill()
+                      process.communicate()
+                      results.append(False)
+                      Path("build/tvos/smoke/repeat-renderer.json").write_text(json.dumps(results) + "\n")
+                      raise SystemExit(1)
                   finally:
                       finished.set()
                       observer.join()
