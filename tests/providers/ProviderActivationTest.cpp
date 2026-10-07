@@ -100,7 +100,8 @@ export function createSource(config, host) {
             host.emit('configuration', {token:'candidate-' + config.identity});
             host.emit('changed', {itemId:'private-change'});
             if (config.activationFailure) throw new Error(config.activationFailure);
-            if (args.reason !== 'linked' && args.reason !== 'family' && !(args.reason === 'startup' && args.lastUsed && config.automaticSignIn)) {
+            if (args.reason !== 'linked' && args.reason !== 'family' && !config.unprotected
+                && !(args.reason === 'startup' && args.lastUsed && config.automaticSignIn)) {
                 if (!args.answers) return {pick:{kind:'activationPin'}};
                 if (args.answers.pin !== '1234') throw new Error('invalid_pin');
             }
@@ -121,9 +122,9 @@ export function createSource(config, host) {
     return result;
 }
 QString link(ProviderRegistry& registry, const QString& identity, const QString& server, const QString& origin = {},
-    QVariantMap extra = {})
+    QVariantMap extra = {}, const QString& module = "fixture.activation")
 {
-    auto *context = qobject_cast<ProviderUiContext *>(registry.beginSetup("fixture.activation"));
+    auto *context = qobject_cast<ProviderUiContext *>(registry.beginSetup(module));
     require(context, "login context exists");
     if (!origin.isEmpty())
         QCoro::waitFor(registry.allowSetupOrigin(context->sourceId(), QUrl(origin)));
@@ -251,14 +252,14 @@ SPOOL_TEST_MAIN("provider-activation")
         registry.useAccount(a);
         waitUntil([&] { return picker && !picker->closed(); }, "retry prompts afresh");
         picker->complete({ { "pin", "1234" } });
+        const int promptsBeforeUnlock = prompts;
         waitUntil([&] { return registry.sourceRunning(a); }, "valid PIN commits");
         require(selections.back() == qMakePair(a, true), "selection succeeds only after authorized publication");
-        require(!registry.sourceRunning(b) && !registry.sourceRunning(a2),
-            "only authorized selected identity becomes active");
-        registry.useAccount(a2);
-        waitUntil([&] { return registry.sourceRunning(a2); }, "grant is reusable across saved servers");
-        require(QCoro::waitFor(registry.callSource(a2, "state")).value("reason") == "family",
-            "cached proof is identity scoped");
+        waitUntil(
+            [&] { return registry.sourceRunning(a2); }, "choosing a viewer brings that person's other servers along");
+        require(!registry.sourceRunning(b) && prompts == promptsBeforeUnlock && saved(registry, a2).enabled
+                && QCoro::waitFor(registry.callSource(a2, "state")).value("reason") == "family",
+            "only the authorized identity becomes active, its other servers reusing the cached proof");
         const auto stable = saved(registry, a2).configuration;
         picker = nullptr;
         const int beforeGrantFailure = failures;
@@ -325,8 +326,8 @@ SPOOL_TEST_MAIN("provider-activation")
         QCoro::waitFor(registry.restore());
         waitUntil([&] { return registry.sourceRunning(a2) && registry.sourceRunning(a); },
             "automatic last-used startup authorizes same-identity siblings");
-        require(QCoro::waitFor(registry.callSource(a2, "state")).value("reason") == "startup"
-                && QCoro::waitFor(registry.callSource(a, "state")).value("reason") == "family" && prompts == 0
+        require(QCoro::waitFor(registry.callSource(a, "state")).value("reason") == "startup"
+                && QCoro::waitFor(registry.callSource(a2, "state")).value("reason") == "family" && prompts == 0
                 && !registry.sourceRunning(b),
             "startup option is last-used-only; previous process proof is absent");
         QPointer<ProviderUiContext> picker;
@@ -456,10 +457,10 @@ export function createSource(config, host) {
             QCoro::waitFor(registry.install(std::move(downgraded)));
             waitUntil(
                 [&] {
-                    return row(registry, a).value("connectionState") == "locked"
-                        && row(registry, a2).value("connectionState") == "locked";
+                    return row(registry, a).value("connectionState") == "failed"
+                        && row(registry, a2).value("connectionState") == "failed";
                 },
-                "saved protected identities reject activation capability removal");
+                "saved protected identities fail closed when activation capability is removed");
             require(publications == authorizedPublications && socketAttempts.load() == 0 && backgroundConnections == 0
                     && !registry.sourceRunning(a) && !registry.sourceRunning(a2),
                 "removing activation declaration or metadata cannot start authenticated background I/O or publish "
@@ -471,6 +472,39 @@ export function createSource(config, host) {
         QCoro::waitFor(registry.uninstall("fixture.activation"));
         require(revoked.count(a) == 4 && revoked.count(a2) == 4 && !hub.source(a) && !hub.source(a2),
             "uninstall revokes published identities before removing their source and account metadata");
+    }
+    QString owner, kid;
+    {
+        ProviderRegistry registry(&database);
+        registry.setInstallDirectory(installs);
+        registry.loadModules();
+        QCoro::waitFor(registry.restore());
+        QPointer<ProviderUiContext> picker;
+        QObject::connect(&registry, &ProviderRegistry::componentRequested,
+            [&](QObject *context) { picker = qobject_cast<ProviderUiContext *>(context); });
+        owner = link(registry, "owner", "one", {}, {}, "fixture.isolated");
+        kid = link(registry, "kid", "one", {}, { { "unprotected", true } }, "fixture.isolated");
+        require(registry.setStartupChoice(kid, "always") && !registry.setStartupChoice(owner, "always"),
+            "only the active, authorized identity can be opened at startup unasked");
+        registry.useAccount(owner);
+        waitUntil([&] { return picker && !picker->closed(); }, "switching to the protected owner asks for a PIN");
+        picker->complete({ { "pin", "1234" } });
+        waitUntil([&] { return registry.sourceRunning(owner) && !registry.sourceRunning(kid); },
+            "the owner becomes the last-used viewer of this family");
+    }
+    {
+        ProviderRegistry registry(&database);
+        registry.setInstallDirectory(installs);
+        registry.loadModules();
+        int prompts = 0;
+        QObject::connect(&registry, &ProviderRegistry::componentRequested, [&](QObject *) { ++prompts; });
+        QCoro::waitFor(registry.restore());
+        waitUntil([&] { return registry.sourceRunning(kid); },
+            "an unprotected pinned identity opens at startup although another identity was used last");
+        const auto state = QCoro::waitFor(registry.callSource(kid, "state"));
+        require(!registry.sourceRunning(owner) && prompts == 0 && state.value("reason") == "startup"
+                && !state.value("lastUsed").toBool(),
+            "the provider decides with the honest last-used flag; the protected owner stays closed");
     }
     return 0;
 }

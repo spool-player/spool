@@ -21,6 +21,7 @@
 #include <cstdlib>
 #include <functional>
 #include <iostream>
+#include <optional>
 
 using namespace Spool;
 
@@ -219,12 +220,132 @@ void credentialRecordRestore()
     }
 }
 
+QVariantMap row(const ProviderRegistry& registry, const QString& id)
+{
+    for (const QVariant& value : registry.accounts()) {
+        if (value.toMap().value(QStringLiteral("id")) == id)
+            return value.toMap();
+    }
+    return {};
+}
+
+// Users of one server are one profile set: one viewer runs at a time, and the
+// set's startup choice survives a restart without waiting on anyone.
+void profileStartupChoices()
+{
+    QTemporaryDir directory;
+    require(directory.isValid(), "startup choice temporary directory");
+    qputenv("SPOOL_CREDENTIAL_STORE_DIR", directory.filePath(QStringLiteral("credentials")).toUtf8());
+    const QString installs = directory.filePath(QStringLiteral("providers"));
+    DatabaseManager database;
+    require(database.initialize(directory.filePath(QStringLiteral("cache.sqlite"))), "startup choice database opens");
+    QCoro::waitFor(database.schemaVersionAsync());
+    require(ProviderPackage::install(ProviderFixture::package(), installs).has_value(), "startup fixture installs");
+    QString alice;
+    QString bob;
+    QString carol;
+    {
+        ProviderRegistry registry(&database);
+        registry.setInstallDirectory(installs);
+        registry.loadModules();
+        QCoro::waitFor(registry.restore());
+        alice = signIn(registry, QStringLiteral("alice"), QStringLiteral("server-1"));
+        bob = signIn(registry, QStringLiteral("bob"), QStringLiteral("server-1"));
+        carol = signIn(registry, QStringLiteral("carol"), QStringLiteral("server-2"));
+        require(row(registry, bob).value(QStringLiteral("onboarding")).toBool()
+                && row(registry, alice).value(QStringLiteral("profileSet"))
+                    == row(registry, bob).value(QStringLiteral("profileSet"))
+                && row(registry, carol).value(QStringLiteral("profileSet"))
+                    != row(registry, bob).value(QStringLiteral("profileSet")),
+            "a second viewer of one server joins that server's profile set and is asked about startup");
+        require(!registry.setStartupChoice(alice, QStringLiteral("always")),
+            "only the active, authorized viewer can be opened unasked");
+        require(registry.setStartupChoice(bob, QStringLiteral("always"))
+                && !row(registry, bob).value(QStringLiteral("onboarding")).toBool()
+                && row(registry, alice).value(QStringLiteral("startupMode")) == QStringLiteral("always"),
+            "the explicit startup choice belongs to the whole server");
+        registry.useAccount(alice);
+        waitUntil([&] { return registry.sourceRunning(alice) && !registry.sourceRunning(bob); },
+            "switching viewers keeps one viewer per server");
+        require(registry.setStartupChoice(carol, QStringLiteral("ask")), "another server can ask at startup");
+    }
+    {
+        ProviderRegistry registry(&database);
+        registry.setInstallDirectory(installs);
+        registry.loadModules();
+        SourceHub hub(&registry);
+        bool announced = false;
+        QObject::connect(&hub, &SourceHub::sessionStarted, [&announced] { announced = true; });
+        QStringList problems;
+        QObject::connect(
+            &registry, &ProviderRegistry::problem, [&problems](const QString& message) { problems.append(message); });
+        QCoro::waitFor(registry.restore());
+        waitUntil([&] { return registry.sourceRunning(bob) && announced; },
+            "the pinned viewer opens instead of the last-used one, without Home waiting on the set that asks");
+        require(!registry.sourceRunning(alice) && !registry.sourceRunning(carol) && registry.startupChoicePending()
+                && row(registry, carol).value(QStringLiteral("connectionState")) == QStringLiteral("choose"),
+            "a set that asks starts nobody until a viewer is chosen");
+        registry.useAccount(carol);
+        waitUntil([&] { return registry.sourceRunning(carol) && !registry.startupChoicePending(); },
+            "choosing a viewer answers the startup question");
+
+        const QString offline = registry.finishSetup({},
+            { { QStringLiteral("module"), QStringLiteral("fixture.test") },
+                { QStringLiteral("account"), QStringLiteral("dave") },
+                { QStringLiteral("group"), QStringLiteral("server-3") },
+                { QStringLiteral("label"), QStringLiteral("Dave") },
+                { QStringLiteral("configuration"),
+                    QVariantMap { { QStringLiteral("describeFailure"), QStringLiteral("network_error") } } } });
+        waitUntil(
+            [&] { return row(registry, offline).value(QStringLiteral("connectionState")) == QStringLiteral("failed"); },
+            "an unreachable profile fails to open");
+        require(row(registry, offline).value(QStringLiteral("errorText"))
+                    == QStringLiteral("Couldn't reach the server. Check the connection and try again.")
+                && problems.isEmpty(),
+            "an explicit switch reports one actionable error on the profile, not a second toast");
+        registry.removeAccount(offline);
+        require(row(registry, offline).isEmpty(), "a profile that never opened can be removed");
+
+        const QVariantMap erin { { QStringLiteral("module"), QStringLiteral("fixture.test") },
+            { QStringLiteral("account"), QStringLiteral("erin") },
+            { QStringLiteral("group"), QStringLiteral("server-1") },
+            { QStringLiteral("label"), QStringLiteral("Erin") },
+            { QStringLiteral("configuration"), QVariantMap { { QStringLiteral("describeDelay"), 60000 } } } };
+        const QString slow = registry.finishSetup({}, erin);
+        std::optional<bool> finished;
+        QObject::connect(&registry, &ProviderRegistry::accountSelectionFinished, [&](const QString& id, bool selected) {
+            if (id == slow)
+                finished = selected;
+        });
+        waitUntil(
+            [&] { return row(registry, slow).value(QStringLiteral("pending")).toBool(); }, "the switch is pending");
+        registry.cancelActivation(slow);
+        waitUntil([&] { return finished.has_value(); }, "cancelling settles the pending switch");
+        require(
+            !*finished && registry.sourceRunning(bob) && !row(registry, slow).value(QStringLiteral("pending")).toBool(),
+            "a cancelled switch keeps the current viewer of that server");
+        require(registry.finishSetup({}, erin) == slow, "retrying keeps the same profile");
+        waitUntil([&] { return row(registry, slow).value(QStringLiteral("pending")).toBool(); }, "a retry is pending");
+        registry.removeAccount(slow);
+        require(row(registry, slow).isEmpty() && registry.sourceRunning(bob), "a pending profile can be removed");
+    }
+    {
+        ProviderRegistry registry(&database);
+        registry.setInstallDirectory(installs);
+        registry.loadModules();
+        QCoro::waitFor(registry.restore());
+        require(registry.startupChoicePending() && registry.accountList().size() == 3,
+            "the choice to ask persists, and removed profiles stay removed");
+    }
+}
+
 } // namespace
 
 SPOOL_TEST_MAIN("provider-registry")
 {
     QCoreApplication app(argc, argv);
     credentialRecordRestore();
+    profileStartupChoices();
     QTemporaryDir directory;
     require(directory.isValid(), "temporary directory");
     const QString credentials = directory.filePath(QStringLiteral("credentials"));

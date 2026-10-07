@@ -46,6 +46,10 @@ export function createSource(config, sourceHost) {
     };
     return {
         describe: function() {
+            if (config.describeFailure)
+                throw new Error(config.describeFailure);
+            if (config.describeDelay)
+                return sourceHost.delay(config.describeDelay).then(function() { return {}; });
             return {artwork: 'https://img.invalid/{itemId}/{type}?w={width}',
                 extensions: config.catalogueExtensions
                     ? {'spool.suggestions': 1, 'spool.playback-queue-reporting': 1} : {}};

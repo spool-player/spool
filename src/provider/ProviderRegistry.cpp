@@ -36,6 +36,22 @@ namespace {
         return code == "http_401" || code == "invalid_config" || code == "auth_required" || code == "invalid_token";
     }
 
+    // One sentence for the profile that failed to open; provider codes are
+    // grouped by what the viewer can do about them, never shown verbatim.
+    QString activationError(const std::exception& error)
+    {
+        const std::string_view code(error.what());
+        if (requiresSignIn(error))
+            return QStringLiteral("Sign in again to use this profile.");
+        if (code == "invalid_pin")
+            return QStringLiteral("That PIN wasn't accepted. Try again.");
+        if (code == "permission_denied")
+            return QStringLiteral("This profile doesn't have access to this server.");
+        if (code == "network_error" || code == "operation_timeout" || code == "server_unreachable")
+            return QStringLiteral("Couldn't reach the server. Check the connection and try again.");
+        return QStringLiteral("Couldn't open this profile. Try again.");
+    }
+
     const QHash<QString, Provider::Capability>& capabilityNames()
     {
         static const QHash<QString, Provider::Capability> names {
@@ -278,6 +294,7 @@ QCoro::Task<void> ProviderRegistry::restore()
         co_return;
     const QJsonObject root = QJsonDocument::fromJson(stored.toUtf8()).object();
     m_activationOptions = root.value(QStringLiteral("activationOptions")).toObject().toVariantMap();
+    m_startupChoices = root.value(QStringLiteral("startup")).toObject().toVariantMap();
     std::vector<ProviderAccount> accounts;
     for (const QJsonValue& row : root.value(QStringLiteral("accounts")).toArray()) {
         ProviderAccount account = fromJson(row.toObject());
@@ -347,6 +364,7 @@ QCoro::Task<void> ProviderRegistry::restore()
         if (!m_accounts.empty())
             persist(true);
     }
+    applyStartupChoices();
     m_restored = true;
     // Accounts first: the shell picks its first route when restored changes,
     // from bindings on the account list.
@@ -387,6 +405,64 @@ void ProviderRegistry::clearGrants(const QString& moduleId, const QString& famil
     }
 }
 
+QString ProviderRegistry::profileSet(const ProviderAccount& candidate) const
+{
+    const bool family = !candidate.activationFamily.isEmpty();
+    return QString::fromUtf8(
+        QJsonDocument(QJsonArray { candidate.module, family ? QStringLiteral("family") : QStringLiteral("group"),
+                          family                          ? candidate.activationFamily
+                              : candidate.group.isEmpty() ? candidate.id
+                                                          : candidate.group })
+            .toJson(QJsonDocument::Compact));
+}
+
+bool ProviderRegistry::sameProfile(const ProviderAccount& a, const ProviderAccount& b) const
+{
+    return a.id == b.id
+        || (a.module == b.module && !a.activationFamily.isEmpty() && a.activationFamily == b.activationFamily
+            && a.activationIdentity == b.activationIdentity);
+}
+
+bool ProviderRegistry::startupDefault(const ProviderAccount& candidate) const
+{
+    const auto choice = m_startupChoices.value(profileSet(candidate)).toMap();
+    if (choice.value(QStringLiteral("mode")).toString() != QStringLiteral("always"))
+        return false;
+    const QString pinned = choice.value(QStringLiteral("account")).toString();
+    const auto found = std::find_if(
+        m_accounts.cbegin(), m_accounts.cend(), [&](const ProviderAccount& entry) { return entry.id == pinned; });
+    return found != m_accounts.cend() && sameProfile(*found, candidate);
+}
+
+// Startup choices decide which viewer each set opens before anything starts:
+// a pinned profile replaces whoever was last selected, and a set that asks
+// starts no one until a viewer is chosen.
+void ProviderRegistry::applyStartupChoices()
+{
+    m_awaitingChoice.clear();
+    for (auto it = m_startupChoices.begin(); it != m_startupChoices.end();) {
+        const auto choice = it.value().toMap();
+        const QString mode = choice.value(QStringLiteral("mode")).toString();
+        const ProviderAccount *pinned = account(choice.value(QStringLiteral("account")).toString());
+        const bool members = std::any_of(m_accounts.cbegin(), m_accounts.cend(),
+            [&](const ProviderAccount& entry) { return profileSet(entry) == it.key(); });
+        if (!members || (mode != QStringLiteral("ask") && mode != QStringLiteral("always"))
+            || (mode == QStringLiteral("always") && (!pinned || profileSet(*pinned) != it.key()))) {
+            it = m_startupChoices.erase(it);
+            continue;
+        }
+        if (mode == QStringLiteral("ask"))
+            m_awaitingChoice.insert(it.key());
+        for (ProviderAccount& entry : m_accounts) {
+            if (profileSet(entry) == it.key())
+                entry.enabled = mode == QStringLiteral("always") && sameProfile(entry, *pinned);
+        }
+        ++it;
+    }
+    if (!m_startupChoices.isEmpty())
+        persist();
+}
+
 QString ProviderRegistry::runtimeSourceId(const QString& sourceId) const
 {
     return m_running.value(sourceId).runtimeId;
@@ -394,12 +470,18 @@ QString ProviderRegistry::runtimeSourceId(const QString& sourceId) const
 
 bool ProviderRegistry::lastUsedIdentity(const ProviderAccount& candidate) const
 {
+    // A person was last used when any of their servers was.
+    qint64 latest = candidate.lastUsed;
     for (const auto& other : m_accounts) {
-        if (other.module != candidate.module || other.id == candidate.id)
+        if (sameProfile(other, candidate))
+            latest = std::max(latest, other.lastUsed);
+    }
+    for (const auto& other : m_accounts) {
+        if (other.module != candidate.module || sameProfile(other, candidate))
             continue;
         if (!other.activationFamily.isEmpty() && other.activationFamily != candidate.activationFamily)
             continue;
-        if (other.lastUsed > candidate.lastUsed)
+        if (other.lastUsed > latest)
             return false;
     }
     return true;
@@ -425,6 +507,7 @@ QCoro::Task<void> ProviderRegistry::startRestored(QStringList ids)
 
 void ProviderRegistry::commitSelection(const ProviderAccount& candidate)
 {
+    m_awaitingChoice.remove(profileSet(candidate));
     QStringList retired;
     QStringList revoked;
     for (auto& other : m_accounts) {
@@ -566,7 +649,7 @@ QCoro::Task<void> ProviderRegistry::start(
                     && cached.identity == candidate.activationIdentity;
                 const bool lastUsed = lastUsedIdentity(candidate);
                 if (hasFamily && (reason == QStringLiteral("startup") || reason == QStringLiteral("restart"))
-                    && !lastUsed && !family) {
+                    && !lastUsed && !family && !startupDefault(candidate)) {
                     m_lockedAccounts.insert(accountId);
                     co_return;
                 }
@@ -637,17 +720,20 @@ QCoro::Task<void> ProviderRegistry::start(
         const bool signIn = requiresSignIn(error);
         if (signIn)
             m_expired.insert(accountId);
-        m_accountErrors.insert(accountId,
-            signIn ? QStringLiteral("Sign in again to reconnect this server.")
-                   : QStringLiteral("Couldn't switch profile. Try again or reconnect this server."));
+        const QString message = activationError(error);
+        m_accountErrors.insert(accountId, message);
+        // A rejected PIN leaves the profile waiting for its unlock; anything
+        // else is a failure to open it.
         if (!m_running.value(accountId).provider) {
-            if (!signIn && !candidate.activationFamily.isEmpty())
+            if (std::string_view(error.what()) == "invalid_pin")
                 m_lockedAccounts.insert(accountId);
             else
                 m_failedAccounts.insert(accountId);
         }
         // Provider errors may contain credentials; do not log candidate failures.
-        emit problem(QStringLiteral("Couldn't activate %1").arg(candidate.label));
+        // An explicit switch reports on the profile itself, not again as a toast.
+        if (!(select && reason == QStringLiteral("switch")))
+            emit problem(QStringLiteral("%1: %2").arg(candidate.label, message));
         co_return;
     }
     if (!current())
@@ -693,7 +779,23 @@ QCoro::Task<void> ProviderRegistry::start(
     persist(true);
     emit sourceStarted(m_running[accountId].provider);
     emit extensionsChanged(accountId);
+    // Choosing a viewer brings their other servers in this family along,
+    // authorized by the proof just granted rather than another prompt.
+    QStringList siblings;
+    if (select && authorizedFamily) {
+        for (ProviderAccount& other : m_accounts) {
+            if (other.id != accountId && sameProfile(other, candidate) && !m_running.value(other.id).provider
+                && !m_preparing.contains(other.id)) {
+                other.enabled = true;
+                siblings.append(other.id);
+            }
+        }
+        if (!siblings.isEmpty())
+            persist();
+    }
     emit accountsChanged();
+    for (const QString& sibling : std::as_const(siblings))
+        Async::runScoped(this, start(sibling), [] { }, [](const std::exception_ptr&) { }, "provider family");
     selected = select;
     if (linked || !hadAccount || (select && replacement))
         emit accountAdded(accountId);
@@ -789,9 +891,10 @@ void ProviderRegistry::persist(bool credentials)
             &m_credentialPool);
     }
     m_database->saveSetting(kAccountsKey,
-        QString::fromUtf8(QJsonDocument(
-            QJsonObject { { QStringLiteral("format"), 2 }, { QStringLiteral("accounts"), rows },
-                { QStringLiteral("activationOptions"), QJsonObject::fromVariantMap(m_activationOptions) } })
+        QString::fromUtf8(
+            QJsonDocument(QJsonObject { { QStringLiteral("format"), 2 }, { QStringLiteral("accounts"), rows },
+                              { QStringLiteral("activationOptions"), QJsonObject::fromVariantMap(m_activationOptions) },
+                              { QStringLiteral("startup"), QJsonObject::fromVariantMap(m_startupChoices) } })
                 .toJson(QJsonDocument::Compact)));
 }
 
@@ -1271,8 +1374,23 @@ QVariantList ProviderRegistry::accounts() const
                 && (server.scheme() == QLatin1String("http") || server.scheme() == QLatin1String("https"))
             ? server.host() + (server.port() > 0 ? QLatin1Char(':') + QString::number(server.port()) : QString())
             : QString();
+        const QString set = profileSet(account);
+        const auto startup = m_startupChoices.value(set).toMap();
+        const bool awaiting = m_awaitingChoice.contains(set);
         list.append(QVariantMap { { QStringLiteral("id"), account.id }, { QStringLiteral("moduleId"), account.module },
-            { QStringLiteral("address"), address },
+            { QStringLiteral("address"), address }, { QStringLiteral("profileSet"), set },
+            // One tile per person: an activation identity spans its servers.
+            { QStringLiteral("profile"),
+                std::find_if(m_accounts.cbegin(), m_accounts.cend(),
+                    [&](const ProviderAccount& entry) { return sameProfile(entry, account); })
+                    ->id },
+            { QStringLiteral("profiles"), owner && owner->manifest.needsAccount() },
+            { QStringLiteral("startupMode"), startup.value(QStringLiteral("mode")).toString() },
+            { QStringLiteral("startupDefault"), startupDefault(account) },
+            { QStringLiteral("onboarding"), m_onboarding.contains(account.id) },
+            { QStringLiteral("pending"), m_preparing.contains(account.id) },
+            // Waiting for its PIN or other activation, not merely set aside.
+            { QStringLiteral("locked"), m_lockedAccounts.contains(account.id) },
             { QStringLiteral("providerName"), owner ? owner->manifest.name : account.module },
             { QStringLiteral("iconUrl"), owner ? owner->file(owner->manifest.icon) : QUrl() },
             { QStringLiteral("label"), account.label }, { QStringLiteral("detail"), account.detail },
@@ -1285,6 +1403,7 @@ QVariantList ProviderRegistry::accounts() const
                     : m_preparing.contains(account.id)                                  ? QStringLiteral("starting")
                     : m_lockedAccounts.contains(account.id)                             ? QStringLiteral("locked")
                     : m_failedAccounts.contains(account.id) || (owner && owner->failed) ? QStringLiteral("failed")
+                    : awaiting                                                          ? QStringLiteral("choose")
                     : account.enabled                                                   ? QStringLiteral("starting")
                                                                                         : QStringLiteral("locked") },
             { QStringLiteral("extensions"), extensions(account.id) },
@@ -1534,6 +1653,8 @@ QString ProviderRegistry::finishSetup(const QString& draftId, const QVariantMap&
         candidate.origins.removeAll(QUrl(origin));
     const QString id = candidate.id;
     if (existing == m_accounts.end()) {
+        if (m_modules[moduleId].manifest.needsAccount())
+            m_onboarding.insert(id);
         ProviderAccount pending = candidate;
         pending.configuration.clear();
         pending.enabled = false;
@@ -1701,10 +1822,32 @@ void ProviderRegistry::removeAccount(const QString& accountId)
                 emit accountIdentityRevoked(accountId);
         }
         stop(accountId);
-        std::erase_if(m_accounts, [&](const ProviderAccount& account) { return account.id == accountId; });
+        if (const auto *removed = account(accountId)) {
+            const ProviderAccount gone = *removed;
+            const QString set = profileSet(gone);
+            std::erase_if(m_accounts, [&](const ProviderAccount& account) { return account.id == accountId; });
+            // A pinned startup profile moves to the same person on another
+            // server; otherwise the set falls back to its last-used viewer.
+            auto choice = m_startupChoices.value(set).toMap();
+            const auto other = std::find_if(m_accounts.cbegin(), m_accounts.cend(),
+                [&](const ProviderAccount& entry) { return sameProfile(entry, gone); });
+            if (choice.value(QStringLiteral("account")).toString() == accountId && other == m_accounts.cend()) {
+                m_startupChoices.remove(set);
+            } else if (choice.value(QStringLiteral("account")).toString() == accountId) {
+                choice.insert(QStringLiteral("account"), other->id);
+                m_startupChoices.insert(set, choice);
+            }
+            if (std::none_of(m_accounts.cbegin(), m_accounts.cend(),
+                    [&](const ProviderAccount& entry) { return profileSet(entry) == set; })) {
+                m_startupChoices.remove(set);
+                m_awaitingChoice.remove(set);
+            }
+        }
         m_failedAccounts.remove(accountId);
         m_accountErrors.remove(accountId);
         m_lockedAccounts.remove(accountId);
+        m_expired.remove(accountId);
+        m_onboarding.remove(accountId);
         m_unavailableConfigurations.remove(accountId);
         m_removedAccounts.append(accountId);
         persist(true);
@@ -1716,6 +1859,36 @@ void ProviderRegistry::removeAccount(const QString& accountId)
     Async::runScoped(
         this, callSource(accountId, QStringLiteral("signOut")), [forget](QVariantMap) { forget(); },
         [forget](const std::exception_ptr&) { forget(); }, "provider sign out");
+}
+
+void ProviderRegistry::cancelActivation(const QString& accountId)
+{
+    const QString prepared = m_preparing.value(accountId);
+    if (!prepared.isEmpty())
+        stopPublished(prepared);
+}
+
+bool ProviderRegistry::setStartupChoice(const QString& accountId, const QString& mode)
+{
+    const ProviderAccount *entry = account(accountId);
+    // Only the authorized, active viewer can become the one opened unasked.
+    if (!entry || (mode != QStringLiteral("ask") && mode != QStringLiteral("always"))
+        || (mode == QStringLiteral("always") && !m_running.value(accountId).provider))
+        return false;
+    QVariantMap choice { { QStringLiteral("mode"), mode } };
+    if (mode == QStringLiteral("always"))
+        choice.insert(QStringLiteral("account"), accountId);
+    m_startupChoices.insert(profileSet(*entry), choice);
+    m_onboarding.remove(accountId);
+    persist();
+    emit accountsChanged();
+    return true;
+}
+
+void ProviderRegistry::finishOnboarding(const QString& accountId)
+{
+    if (m_onboarding.remove(accountId))
+        emit accountsChanged();
 }
 
 QVariantMap ProviderRegistry::activationConfiguration(const QString& accountId) const

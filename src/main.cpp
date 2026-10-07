@@ -981,7 +981,10 @@ int main(int argc, char **argv)
                 active |= account.value(QStringLiteral("enabled")).toBool()
                     && account.value(QStringLiteral("connectionState")).toString() == QStringLiteral("active");
             }
-            router->reset(active ? QStringLiteral("home") : QStringLiteral("accounts"));
+            // Profiles & servers shows no media, and may be asking about the
+            // person who just took over; every other page is dropped.
+            if (router->route() != QStringLiteral("accounts"))
+                router->reset(active ? QStringLiteral("home") : QStringLiteral("accounts"));
             identityRoutePending = !active;
         });
     Spool::ApplicationHooks applicationHooks;

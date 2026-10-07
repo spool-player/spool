@@ -77,6 +77,8 @@ class ProviderRegistry final : public QObject {
     Q_PROPERTY(bool restored READ restored NOTIFY restoredChanged)
     Q_PROPERTY(bool hasAccounts READ hasAccounts NOTIFY accountsChanged)
     Q_PROPERTY(QVariantMap networkConsent READ networkConsent NOTIFY networkConsentChanged)
+    // Some server's viewers wait for an explicit choice at startup.
+    Q_PROPERTY(bool startupChoicePending READ startupChoicePending NOTIFY accountsChanged)
 
 public:
     explicit ProviderRegistry(DatabaseManager *database, QObject *parent = nullptr);
@@ -153,6 +155,17 @@ public:
     Q_INVOKABLE void useAccount(const QString& accountId);
     Q_INVOKABLE void setAccountEnabled(const QString& accountId, bool enabled);
     Q_INVOKABLE void removeAccount(const QString& accountId);
+    // Abandons a pending activation; the current viewer stays as it was.
+    Q_INVOKABLE void cancelActivation(const QString& accountId);
+    // What a profile set does at startup: "always" opens this account's
+    // (authorized, active) profile; "ask" waits for an explicit choice.
+    Q_INVOKABLE bool setStartupChoice(const QString& accountId, const QString& mode);
+    // The new-account startup question was answered elsewhere or dismissed.
+    Q_INVOKABLE void finishOnboarding(const QString& accountId);
+    bool startupChoicePending() const
+    {
+        return !m_awaitingChoice.isEmpty();
+    }
 
     // Called by ProviderUiContext.
     QCoro::Task<void> allowSetupOrigin(QString draftId, QUrl origin);
@@ -239,6 +252,12 @@ private:
         QVariant value;
     };
     QString familyKey(const ProviderAccount& candidate) const;
+    // Viewers that are alternatives to one another: one activation family, or
+    // else one provider group (the users of one server).
+    QString profileSet(const ProviderAccount& candidate) const;
+    bool sameProfile(const ProviderAccount& a, const ProviderAccount& b) const;
+    bool startupDefault(const ProviderAccount& candidate) const;
+    void applyStartupChoices();
     void clearGrants(const QString& moduleId, const QString& family = {});
     QCoro::Task<void> startRestored(QStringList ids);
     void restartModule(const QString& moduleId);
@@ -268,6 +287,10 @@ private:
     QHash<QString, ActivationGrant> m_activationGrants;
     QHash<QString, quint64> m_familyEpochs;
     QVariantMap m_activationOptions;
+    // Device-local, by profile set: { mode: "always" | "ask", account }.
+    QVariantMap m_startupChoices;
+    QSet<QString> m_awaitingChoice;
+    QSet<QString> m_onboarding;
     QSet<QString> m_lockedAccounts;
     quint64 m_nextGeneration = 0;
     quint64 m_nextExtensionCall = 0;
