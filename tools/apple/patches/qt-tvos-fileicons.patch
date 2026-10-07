@@ -1,0 +1,11 @@
+--- a/src/gui/platform/darwin/qapplefileiconengine.mm
++++ b/src/gui/platform/darwin/qapplefileiconengine.mm
+@@ -22,7 +22,7 @@
+ {
+ #if defined(Q_OS_MACOS)
+     m_image = [[NSWorkspace sharedWorkspace] iconForFile:fileInfo().canonicalFilePath().toNSString()];
+-#elif defined(QT_PLATFORM_UIKIT)
++#elif defined(QT_PLATFORM_UIKIT) && !defined(Q_OS_TVOS)
+     const QUrl url = QUrl::fromLocalFile(fileInfo().canonicalFilePath());
+     const auto controller = [UIDocumentInteractionController interactionControllerWithURL:url.toNSURL()];
+     const auto allIcons = controller.icons;

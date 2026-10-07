@@ -594,6 +594,17 @@ and [device pairing directions](https://developer.apple.com/documentation/xcode/
 Account eligibility, provisioning, and signature expiry are Apple's policies.
 Simulator success is not a claim of physical-device playback or App Store approval.
 
+The target reuses TV focus, hold-to-open-options, and directional navigation.
+Clickpad directions/Select arrive through Qt's UIKit mapping; indirect swipes
+step focus without turning the remote into a pointer. Back/Menu dismisses
+overlays or navigates back and remains unhandled at the root for tvOS to return
+to the launcher. Play/Pause toggles playback. Siri, TV/Home, and volume remain
+system-owned. Video pauses when hidden/suspended; audio uses the playback
+session and system Now Playing/remote controls. Idle inhibition applies only
+while media is active. Account secrets use device-only Keychain records.
+Database/artwork/log storage is purgeable on tvOS; local filesystem browsing
+and self-updating are not enabled.
+
 ### Simulator proof and CI artifacts
 
 ```sh

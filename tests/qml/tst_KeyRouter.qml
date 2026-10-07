@@ -85,6 +85,9 @@ TestCase {
         keyRouter.textInputActive = false
         keyRouter.backspaceNavigatesInTextInput = false
         keyRouter.webOsScanCodes = false
+        keyRouter.tvOsRemote = false
+        keyRouter.activeTarget = target
+        keyRouter.backHandler = null
         keyRouter.globalHandler = null
         keyRouter.platformSendsRepeats = false
         keyRouter.platformSilent = false
@@ -94,6 +97,42 @@ TestCase {
         keyRouter.lastReleaseAt = 0
         keyRouter.heldReleaseKey = 0
         keyRouter.stopSustaining()
+    }
+
+    function test_siriRemoteBackHandlesBothPhasesWithoutOpeningContextMenu() {
+        keyRouter.tvOsRemote = true
+        routeResult = false
+        keyRouter.globalHandler = function (key, phase, repeat, modifiers) {
+            compare(key, Qt.Key_Back)
+            return false
+        }
+        const event = {
+            "key": Qt.Key_Menu,
+            "text": "",
+            "modifiers": Qt.NoModifier,
+            "isAutoRepeat": false
+        }
+        verify(keyRouter.dispatch(event, "press"))
+        compare(backCalls, 1)
+        verify(keyRouter.dispatch(event, "release"))
+        compare(backCalls, 1)
+        compare(fallbackCalls, 0)
+    }
+
+    function test_siriRemoteRootBackIsUnacceptedForSystemLauncher() {
+        keyRouter.tvOsRemote = true
+        keyRouter.activeTarget = null
+        keyRouter.backHandler = function () {
+            return false
+        }
+        const event = {
+            "key": Qt.Key_Menu,
+            "text": "",
+            "modifiers": Qt.NoModifier,
+            "isAutoRepeat": false
+        }
+        verify(!keyRouter.dispatch(event, "press"))
+        verify(!keyRouter.dispatch(event, "release"))
     }
 
     function test_directionUsesRouterHelper() {
@@ -276,7 +315,7 @@ TestCase {
         keyRouter.routeDirection(Qt.Key_Down, "press", false, Qt.NoModifier)
         compare(routeCalls, 1)
         compare(lastRouteRepeat, false)
-        compare(keyRouter.sustainedKey, Qt.Key_Down);
+        compare(keyRouter.sustainedKey, Qt.Key_Down)
 
         // The stand-in cadence, which the view sees as ordinary auto-repeat.
         keyRouter.emitSustainedRepeat()
@@ -300,7 +339,7 @@ TestCase {
         compare(keyRouter.sustainedKey, Qt.Key_Down)
         keyRouter.routeDirection(Qt.Key_Down, "press", true, Qt.NoModifier)
         verify(keyRouter.platformSendsRepeats)
-        compare(keyRouter.sustainedKey, 0);
+        compare(keyRouter.sustainedKey, 0)
 
         // And never speaks again, even for a fresh press.
         keyRouter.routeDirection(Qt.Key_Down, "release", false, Qt.NoModifier)

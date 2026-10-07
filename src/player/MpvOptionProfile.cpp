@@ -581,7 +581,11 @@ std::vector<MpvOption> MpvOptionProfile::applicationOptions(Platform platform, b
             options.push_back({ "ao", "audiotrack,opensles,null" });
     } else {
         options.push_back({ "vo", needsVideoSurface ? "libmpv" : "null" });
+#if defined(SPOOL_APPLE_MOBILE)
+        options.push_back({ "audio-fallback-to-null", "no" });
+#else
         options.push_back({ "audio-fallback-to-null", "yes" });
+#endif
         // Everything above this line ran at libplacebo's defaults before,
         // which is a great deal of work for a Mali-class part to do sixty
         // times a second.
@@ -596,7 +600,9 @@ std::vector<MpvOption> MpvOptionProfile::applicationOptions(Platform platform, b
             // hardware and read the frames back.
             options.push_back({ "hwdec", "mediacodec-copy" });
         } else {
-#if defined(Q_OS_LINUX)
+#if defined(SPOOL_APPLE_MOBILE)
+            options.push_back({ "hwdec", "videotoolbox-copy" });
+#elif defined(Q_OS_LINUX)
             options.push_back({ "hwdec", "auto-copy" });
 #else
             options.push_back({ "hwdec", "auto-safe" });
@@ -612,6 +618,11 @@ std::vector<MpvOption> MpvOptionProfile::applicationOptions(Platform platform, b
             options.push_back({ "ao", "audiotrack,opensles,null" });
         }
     }
+#if defined(SPOOL_APPLE_MOBILE)
+    // AudioUnit otherwise enables MixWithOthers and defeats interruption focus.
+    options.push_back({ "ao", "audiounit" });
+    options.push_back({ "audio-exclusive", "yes" });
+#endif
 
     const MpvOption applicationOptions[] = {
         { "osd-bar", "no" },

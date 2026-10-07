@@ -160,6 +160,7 @@ KeyRouter {
     focus: true
     backspaceNavigatesInTextInput: Platform.isTV
     webOsScanCodes: Platform.isTV
+    tvOsRemote: Boolean(Platform.isTVOS)
     platformMayPairHolds: Platform.isAndroid && Platform.isTV
 
     readonly property string route: Router.route

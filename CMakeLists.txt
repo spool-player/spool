@@ -8,12 +8,17 @@ endif()
 
 project(SpoolWebOS VERSION "${SPOOL_VERSION}" LANGUAGES C CXX)
 
+set(SPOOL_APPLE_MOBILE OFF)
+if(CMAKE_SYSTEM_NAME STREQUAL "tvOS")
+    set(SPOOL_APPLE_MOBILE ON)
+endif()
+
 if(WIN32)
     add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()
 
 set(SPOOL_WEBOS_DEFAULT OFF)
-if(CMAKE_CROSSCOMPILING AND NOT ANDROID)
+if(CMAKE_CROSSCOMPILING AND NOT ANDROID AND NOT SPOOL_APPLE_MOBILE)
     set(SPOOL_WEBOS_DEFAULT ON)
 endif()
 option(SPOOL_WEBOS "Build the webOS Starfish/native-surface client" ${SPOOL_WEBOS_DEFAULT})
@@ -101,6 +106,18 @@ else()
     endif()
 endif()
 find_package(Qt6 ${SPOOL_QT_MIN_VERSION} REQUIRED COMPONENTS ${SPOOL_QT_COMPONENTS})
+if(SPOOL_APPLE_MOBILE)
+    set(SPOOL_APPLE_QML_IMPORT_SCANNER "" CACHE FILEPATH "Patched pinned macOS QML import scanner")
+    if(NOT EXISTS "${SPOOL_APPLE_QML_IMPORT_SCANNER}")
+        message(FATAL_ERROR "Build tvOS with tools/build-tvos.sh to supply the patched host QML import scanner")
+    endif()
+    set_target_properties(Qt6::qmlimportscanner PROPERTIES
+        IMPORTED_LOCATION "${SPOOL_APPLE_QML_IMPORT_SCANNER}"
+        IMPORTED_LOCATION_RELEASE "${SPOOL_APPLE_QML_IMPORT_SCANNER}"
+        IMPORTED_LOCATION_DEBUG "${SPOOL_APPLE_QML_IMPORT_SCANNER}"
+        IMPORTED_LOCATION_RELWITHDEBINFO "${SPOOL_APPLE_QML_IMPORT_SCANNER}"
+        IMPORTED_LOCATION_MINSIZEREL "${SPOOL_APPLE_QML_IMPORT_SCANNER}")
+endif()
 find_package(QCoro6 0.13 REQUIRED COMPONENTS Core Network)
 
 qt_standard_project_setup(
@@ -367,7 +384,7 @@ qt_add_executable(spool
     src/app/GraphicsStartup.h
 )
 
-if(NOT ANDROID AND NOT SPOOL_WEBOS)
+if(NOT ANDROID AND NOT SPOOL_WEBOS AND NOT SPOOL_APPLE_MOBILE)
     target_sources(spool PRIVATE
         src/automation/LocalCommandServer.cpp
         src/automation/LocalCommandServer.h
@@ -471,7 +488,7 @@ endif()
 # translation unit against the new base class while leaving the moc output
 # generated for the old one in place. That mismatch fails the build with
 # `use of undeclared identifier 'QQuickFramebufferObject'`.
-if(ANDROID OR SPOOL_WEBOS)
+if(ANDROID OR SPOOL_WEBOS OR SPOOL_APPLE_MOBILE)
     set(SPOOL_MPV_ITEM_RHI_ENABLED 0)
 else()
     set(SPOOL_MPV_ITEM_RHI_ENABLED 1)
@@ -785,6 +802,11 @@ if(SPOOL_WEBOS)
         QT_QML_IMPORT_SCANNER_EXTRA_ARGS
             -exclude qml/pages/DesktopFolderDialog.qml
     )
+endif()
+if(TARGET spool-tvos-playback-smoke)
+    get_target_property(SPOOL_APPLE_SMOKE_SCAN_ARGS spool QT_QML_IMPORT_SCANNER_EXTRA_ARGS)
+    set_property(TARGET spool-tvos-playback-smoke PROPERTY
+        QT_QML_IMPORT_SCANNER_EXTRA_ARGS ${SPOOL_APPLE_SMOKE_SCAN_ARGS})
 endif()
 
 
@@ -1281,7 +1303,7 @@ install(TARGETS spool
     RUNTIME DESTINATION bin
 )
 
-if(NOT ANDROID)
+if(NOT ANDROID AND NOT SPOOL_APPLE_MOBILE)
     set(SPOOL_FONT_INSTALL_DIRECTORY "fonts")
     if(APPLE)
         set(SPOOL_FONT_INSTALL_DIRECTORY "Spool.app/Contents/fonts")

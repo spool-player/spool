@@ -488,6 +488,12 @@ void ScriptRequests::discover(int port, const QString& message, int timeoutMs, Q
     if (port < 1 || port > 65535 || message.size() > 1024 || timeoutMs < 100 || timeoutMs > 5000
         || m_pending.size() >= kMaxTimers)
         return rejectWith(m_access->engine, reject, "discovery_denied");
+#if defined(SPOOL_APPLE_MOBILE)
+    // UDP broadcast requires Apple's restricted multicast entitlement, which
+    // this App Store bundle does not request. Providers can still probe HTTP
+    // or accept a manually entered server address after user consent.
+    return rejectWith(m_access->engine, reject, "discovery_unavailable");
+#endif
     auto *socket = new QUdpSocket(this);
     if (!socket->bind(QHostAddress::AnyIPv4, 0)) {
         socket->deleteLater();

@@ -437,7 +437,7 @@ void dumpDiagnostics(const QString& reason)
         { { QStringLiteral("reason"), safeReason }, { QStringLiteral("path"), procPath } });
 
     if (kStackDumpEnabled) {
-#ifdef Q_OS_UNIX
+#if defined(Q_OS_UNIX) && QT_CONFIG(process)
         const QString output = state().root + QStringLiteral("/stackdump/%1-%2.gdb.txt").arg(stamp, safeReason);
         QStringList args;
         args << QStringLiteral("-batch") << QStringLiteral("-ex") << QStringLiteral("set pagination off")

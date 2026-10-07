@@ -142,7 +142,7 @@ QtObject {
     }
 
     function isMedia(key) {
-        return key === Qt.Key_MediaPlay || key === Qt.Key_Play
+        return key === Qt.Key_MediaPlay || key === Qt.Key_Play || key === Qt.Key_MediaTogglePlayPause
     }
 
     function isMediaNext(key) {

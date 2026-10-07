@@ -17,7 +17,7 @@
 #include "common/AsyncTask.h"
 #include "common/LogRotation.h"
 #include "common/TlsTrust.h"
-#if !defined(SPOOL_ANDROID) && !defined(SPOOL_WEBOS)
+#if !defined(SPOOL_ANDROID) && !defined(SPOOL_WEBOS) && !defined(SPOOL_APPLE_MOBILE)
 #include "automation/LocalCommandServer.h"
 #endif
 #include "app/DownloadManager.h"
@@ -47,6 +47,9 @@
 #endif
 #if defined(SPOOL_ANDROID)
 #include <QJniObject>
+#endif
+#ifdef Q_OS_TVOS
+#include "platform/tvos/TvOSRemoteInput.h"
 #endif
 
 #include <QCoreApplication>
@@ -346,7 +349,7 @@ void logQmlWarnings(const QList<QQmlError>& warnings)
         logLine("[qml] %s", qPrintable(warning.toString()));
 }
 
-#if !defined(SPOOL_WEBOS) && !defined(SPOOL_ANDROID)
+#if !defined(SPOOL_WEBOS) && !defined(SPOOL_ANDROID) && !defined(SPOOL_APPLE_MOBILE)
 QIcon applicationIcon(bool playerSelected)
 {
     const QString variant = playerSelected ? QStringLiteral("spool-film") : QStringLiteral("spool");
@@ -567,6 +570,9 @@ int main(int argc, char **argv)
     window.rootContext()->setContextProperty(QStringLiteral("startupSplashCoreWidthDp"), splashCoreWidthDp());
     window.rootContext()->setContextProperty(QStringLiteral("startupSplashPixelsPerDp"), splashPixelsPerDp());
     Spool::configurePlatformWindow(window);
+#ifdef Q_OS_TVOS
+    Spool::installTvOSRemoteInput(window);
+#endif
     inputLatencyMonitor.attachWindow(&window);
     window.setInputLatencyMonitor(&inputLatencyMonitor);
     const auto directSingleShot = static_cast<Qt::ConnectionType>(Qt::DirectConnection | Qt::SingleShotConnection);
@@ -604,7 +610,7 @@ int main(int argc, char **argv)
 
     if (!registerBundledFonts(appRootPath))
         return 1;
-#if !defined(SPOOL_WEBOS) && !defined(SPOOL_ANDROID)
+#if !defined(SPOOL_WEBOS) && !defined(SPOOL_ANDROID) && !defined(SPOOL_APPLE_MOBILE)
     const QIcon defaultApplicationIcon = applicationIcon(false);
     const QIcon playerApplicationIcon = applicationIcon(true);
     app.setWindowIcon(defaultApplicationIcon);
@@ -704,7 +710,7 @@ int main(int argc, char **argv)
     if (providerSources != Spool::ProviderSources::Bundled)
         providers.setInstallDirectory(QDir(Spool::persistentDataRoot()).filePath(QStringLiteral("providers")));
     providers.loadModules();
-#if !defined(SPOOL_WEBOS) && !defined(SPOOL_ANDROID)
+#if !defined(SPOOL_WEBOS) && !defined(SPOOL_ANDROID) && !defined(SPOOL_APPLE_MOBILE)
     {
         Spool::ProviderManifest folder;
         folder.id = QStringLiteral("spool.local");
@@ -774,7 +780,7 @@ int main(int argc, char **argv)
     };
     QObject::connect(player.get(), &Spool::PlayerController::playbackStateChanged, &app, updateScreenSaver);
     QObject::connect(player.get(), &Spool::PlayerController::sessionActiveChanged, &app, updateScreenSaver);
-#if !defined(SPOOL_WEBOS) && !defined(SPOOL_ANDROID)
+#if !defined(SPOOL_WEBOS) && !defined(SPOOL_ANDROID) && !defined(SPOOL_APPLE_MOBILE)
     const auto updateApplicationIcon
         = [&app, &window, player = player.get(), &defaultApplicationIcon, &playerApplicationIcon] {
               const QIcon& icon = player->sessionActive() ? playerApplicationIcon : defaultApplicationIcon;
@@ -999,6 +1005,11 @@ int main(int argc, char **argv)
     platformInfo->insert(QStringLiteral("isWebOS"), capabilities.isWebOS);
     platformInfo->insert(QStringLiteral("isAndroid"), capabilities.isAndroid);
     platformInfo->insert(QStringLiteral("isMobile"), capabilities.isMobile);
+#ifdef Q_OS_TVOS
+    platformInfo->insert(QStringLiteral("isTVOS"), true);
+#else
+    platformInfo->insert(QStringLiteral("isTVOS"), false);
+#endif
 #ifdef TOUCHSCREEN
     platformInfo->insert(QStringLiteral("touchscreen"), !capabilities.isTV);
 #else
@@ -1209,7 +1220,7 @@ int main(int argc, char **argv)
     }
 
     QTimer::singleShot(1000, router.get(), [router = router.get()] { router->beginSession(false); });
-#if !defined(SPOOL_ANDROID) && !defined(SPOOL_WEBOS)
+#if !defined(SPOOL_ANDROID) && !defined(SPOOL_WEBOS) && !defined(SPOOL_APPLE_MOBILE)
     Spool::LocalCommandServer localCommands(controller.get(), router.get(), &window, &downloads, &hub);
     if (!app.arguments().contains(QStringLiteral("--no-local-control"))) {
         QString error;

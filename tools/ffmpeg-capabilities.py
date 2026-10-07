@@ -17,7 +17,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 DEFAULT_MANIFEST = ROOT / "tools" / "manifests" / "ffmpeg-capabilities.json"
 # Every platform the app builds FFmpeg for. A platform missing from here is
 # rejected by the CLI rather than quietly falling back to FFmpeg's defaults.
-SUPPORTED_PLATFORMS = ("android", "linux", "macos", "webos", "windows")
+SUPPORTED_PLATFORMS = ("android", "ios", "linux", "macos", "tvos", "webos", "windows")
 
 CATEGORIES = {
     "protocols": "protocol",

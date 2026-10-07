@@ -18,7 +18,9 @@
 #include <QThread>
 #include <algorithm>
 #include <atomic>
+#if SPOOL_MPV_ITEM_RHI
 #include <rhi/qrhi.h>
+#endif
 
 #include <clocale>
 #include <cstdio>
@@ -132,10 +134,14 @@ SPOOL_TEST_MAIN("mpv-video-item")
     if (api == "vulkan")
         std::fprintf(stderr, "requested Vulkan scene graph\n");
     QSurfaceFormat format;
+#ifdef Q_OS_TVOS
+    format.setRenderableType(QSurfaceFormat::OpenGLES);
+    format.setVersion(3, 0);
+#else
     format.setRenderableType(QSurfaceFormat::OpenGL);
     format.setVersion(3, 3);
+#endif
     format.setAlphaBufferSize(0);
-    QSurfaceFormat::setDefaultFormat(format);
     QGuiApplication app(argc, argv);
 
     QTemporaryFile video(QDir::tempPath() + QStringLiteral("/mpv-video-item-XXXXXX.mkv"));
@@ -144,12 +150,21 @@ SPOOL_TEST_MAIN("mpv-video-item")
         return 1;
     }
 
+#if SPOOL_MPV_ITEM_RHI
     std::atomic_int textureFormat { -1 };
+#endif
     QQuickWindow window;
     window.setColor(Qt::black);
     window.resize(320, 180);
     Spool::MpvVideoItem videoItem(window.contentItem());
-    videoItem.setSize(QSizeF(window.size()));
+    // Match production's anchors.fill: parent. UIKit can replace requested
+    // window geometry asynchronously with the fullscreen television surface.
+    qreal viewportFraction = 1.0;
+    const auto fitSurface = [&] { videoItem.setSize(window.contentItem()->size() * viewportFraction); };
+    QObject::connect(window.contentItem(), &QQuickItem::widthChanged, &videoItem, fitSurface);
+    QObject::connect(window.contentItem(), &QQuickItem::heightChanged, &videoItem, fitSurface);
+    fitSurface();
+#if SPOOL_MPV_ITEM_RHI
     QObject::connect(
         &window, &QQuickWindow::afterRendering, &videoItem,
         [&] {
@@ -159,14 +174,37 @@ SPOOL_TEST_MAIN("mpv-video-item")
                 textureFormat.store(int(target->format()));
         },
         Qt::DirectConnection);
+#endif
+#ifdef Q_OS_TVOS
+    window.showFullScreen();
+#else
     window.show();
+#endif
     app.processEvents();
+    const auto captureItem = [&] {
+        const QImage image = window.grabWindow();
+#ifdef Q_OS_TVOS
+        if (image.isNull())
+            return image;
+        const qreal xScale = qreal(image.width()) / window.contentItem()->width();
+        const qreal yScale = qreal(image.height()) / window.contentItem()->height();
+        return image.copy(0, 0, qRound(videoItem.width() * xScale), qRound(videoItem.height() * yScale));
+#else
+        return image;
+#endif
+    };
 
     // Reusing an item after detach must reset first-frame state and publish
     // the new context, including when Qt replaces the render target on resize.
     for (const QSize size : { QSize(320, 180), QSize(480, 270) }) {
+#ifdef Q_OS_TVOS
+        // UIKit owns the fullscreen native window; resize the real video
+        // viewport instead of requesting an unsupported television window size.
+        viewportFraction = size.width() == 320 ? 1.0 : 2.0 / 3.0;
+#else
         window.resize(size);
-        videoItem.setSize(QSizeF(size));
+#endif
+        fitSurface();
         std::setlocale(LC_NUMERIC, "C");
         mpv_handle *handle = mpv_create();
         const bool verbose = !qgetenv("SPOOL_TEST_MPV_LOG").isEmpty();
@@ -219,7 +257,7 @@ SPOOL_TEST_MAIN("mpv-video-item")
         timer.start();
         while (!rendered && timer.elapsed() < 5000) {
             app.processEvents(QEventLoop::AllEvents, 20);
-            rendered = isRightWayUp(window.grabWindow());
+            rendered = isRightWayUp(captureItem());
             QThread::msleep(10);
         }
 
@@ -231,36 +269,52 @@ SPOOL_TEST_MAIN("mpv-video-item")
             int(display.hdrAvailable), int(display.preferredFormat), double(display.sdrWhiteNits),
             double(display.minLuminanceNits), double(display.maxLuminanceNits));
 
-        const bool upright = rendered && isRightWayUp(window.grabWindow());
+        const bool upright = rendered && isRightWayUp(captureItem());
         char *pixelFormat = mpv_get_property_string(handle, "video-target-params/pixelformat");
         const QByteArray actualFormat = pixelFormat ? QByteArray(pixelFormat) : QByteArray();
         mpv_free(pixelFormat);
         // The legacy OpenGL renderer does not expose video-target-params.
         // Inspect the actual RHI texture on both APIs, and additionally the
         // mpv handover descriptor on Vulkan.
+#if SPOOL_MPV_ITEM_RHI
         const bool sdrTarget
             = textureFormat.load() == int(QRhiTexture::RGBA8) && (api != "vulkan" || actualFormat == "rgba8");
         std::fprintf(stderr, "rendered SDR target: RHI=%d mpv=%s\n", textureFormat.load(),
             actualFormat.isEmpty() ? "(legacy renderer)" : actualFormat.constData());
-        const QImage beforeOsd = window.grabWindow();
+#endif
+        const QImage beforeOsd = captureItem();
         const char *osdCommand[] = { "show-text", "SDR white", "10000", nullptr };
         bool neutralOsd = false;
         if (mpv_command(handle, osdCommand) >= 0) {
             timer.restart();
             while (!neutralOsd && timer.elapsed() < 5000) {
                 app.processEvents(QEventLoop::AllEvents, 20);
-                neutralOsd = containsNeutralOsd(window.grabWindow(), beforeOsd);
+                neutralOsd = containsNeutralOsd(captureItem(), beforeOsd);
                 QThread::msleep(10);
             }
         }
         const bool released = videoItem.releaseMpvHandle();
         mpv_terminate_destroy(handle);
-        if (!rendered || !upright || !released || !sdrTarget || !neutralOsd) {
-            std::fprintf(stderr, "video result: rendered=%d upright=%d released=%d SDR=%d neutralOSD=%d\n", rendered,
-                upright, released, sdrTarget, neutralOsd);
+        if (!rendered || !upright || !released || !neutralOsd
+#if SPOOL_MPV_ITEM_RHI
+            || !sdrTarget
+#endif
+        ) {
+            std::fprintf(stderr, "video result: rendered=%d upright=%d released=%d neutralOSD=%d\n", rendered, upright,
+                released, neutralOsd);
+            const QImage failedFrame = captureItem();
+            const QColor upper = failedFrame.pixelColor(failedFrame.width() / 2, failedFrame.height() / 4);
+            const QColor lower = failedFrame.pixelColor(failedFrame.width() / 2, 3 * failedFrame.height() / 4);
+            std::fprintf(stderr,
+                "viewport: window=%dx%d content=%.0fx%.0f item=%.0fx%.0f capture=%dx%d upper=%s lower=%s\n",
+                window.width(), window.height(), window.contentItem()->width(), window.contentItem()->height(),
+                videoItem.width(), videoItem.height(), failedFrame.width(), failedFrame.height(),
+                qPrintable(upper.name()), qPrintable(lower.name()));
+            failedFrame.save(QDir::tempPath() + QStringLiteral("/mpv-video-item-failure.png"));
             return 1;
         }
     }
+    std::fprintf(stderr, "mpv video smoke: upright frames and OSD rendered across detach and resize\n");
     return 0;
 }
 

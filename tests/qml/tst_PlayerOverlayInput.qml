@@ -14,6 +14,7 @@ TestCase {
     property int subtitleCycles: 0
     property int controlsShown: 0
     property int fullscreenToggles: 0
+    property int playbackToggles: 0
 
     QtObject {
         id: playerStub
@@ -49,11 +50,14 @@ TestCase {
             ++testCase.previewCancels
         }
         function showControls(zone) {
-            focusZone = zone
+            focusZone = zone;
             ++testCase.controlsShown
         }
         function toggleFullScreen() {
             ++testCase.fullscreenToggles
+        }
+        function togglePlayback() {
+            ++testCase.playbackToggles
         }
         function maybeRestartAutohide() {
         }
@@ -92,6 +96,7 @@ TestCase {
         subtitleCycles = 0
         controlsShown = 0
         fullscreenToggles = 0
+        playbackToggles = 0
         input.reset()
         overlayStub.controlsVisible = true
         overlayStub.focusZone = "timeline"
@@ -126,7 +131,7 @@ TestCase {
 
     function test_heldSeekRampsWithoutTouchingThePlayer() {
         verify(input.pressed(Qt.Key_Right, false))
-        compare(previewDeltas, [10]);
+        compare(previewDeltas, [10])
 
         // The nudge stands alone for a moment before the ramp picks it up.
         advance(200)
@@ -195,6 +200,18 @@ TestCase {
         compare(fullscreenToggles, 0)
         verify(input.released(Qt.Key_F, false))
         compare(fullscreenToggles, 1)
+    }
+
+    function test_siriRemotePlayPauseTogglesOnceOnRelease() {
+        overlayStub.controlsVisible = false
+        verify(input.pressed(Qt.Key_MediaTogglePlayPause, false))
+        compare(playbackToggles, 0)
+        verify(input.released(Qt.Key_MediaTogglePlayPause, true))
+        compare(playbackToggles, 0)
+        verify(input.released(Qt.Key_MediaTogglePlayPause, false))
+        compare(playbackToggles, 1)
+        compare(controlsShown, 1)
+        compare(overlayStub.focusZone, "actions")
     }
 
     function test_unusedKeyFallsThroughWithoutRevealingControls() {
