@@ -4,37 +4,37 @@
     {
       "id": "spool.jellyfin",
       "appleAppStore": true,
-      "version": "0.2.10",
-      "archive": "bundled/spool.jellyfin-0.2.10.tar.zst",
-      "sha256": "18d83631a5eb2592481d8234aebaf665896ec1649bbb4c70eec20c7beee677ec"
+      "version": "0.2.11",
+      "archive": "bundled/spool.jellyfin-0.2.11.tar.zst",
+      "sha256": "802d683b67a6b2eff48fd3db9025c6ddbc25fc873d0085874dcf76e3b9beb9af"
     },
     {
       "id": "spool.emby",
       "appleAppStore": true,
-      "version": "0.1.6",
-      "archive": "bundled/spool.emby-0.1.6.tar.zst",
-      "sha256": "210e682ea8d9d967ca49f6835a37ac7450e2cea609a94a45c6f8a27945c4fb9d"
+      "version": "0.1.7",
+      "archive": "bundled/spool.emby-0.1.7.tar.zst",
+      "sha256": "4bb1748b468a2d6fffcaa61ef230e8f9e963b28677d3e51c428e979e8304b954"
     },
     {
       "id": "spool.plex",
       "appleAppStore": true,
-      "version": "0.1.7",
-      "archive": "bundled/spool.plex-0.1.7.tar.zst",
-      "sha256": "ff85ef3d4cd1717ede4a719998eef38fcc44aaa53b4056f0644230fa9028b379"
+      "version": "0.1.8",
+      "archive": "bundled/spool.plex-0.1.8.tar.zst",
+      "sha256": "0af25b1dd9691d76a0fc6aef7b35ae16b6662ec9dcf05472ec088859556acced"
     },
     {
       "id": "spool.stremio",
       "appleAppStore": false,
-      "version": "0.1.1",
-      "archive": "bundled/spool.stremio-0.1.1.tar.zst",
-      "sha256": "4a71de7a02b8aad51676f977c02b852f4fa0f0e6de67979bbe97854ca1fdb4b4"
+      "version": "0.1.2",
+      "archive": "bundled/spool.stremio-0.1.2.tar.zst",
+      "sha256": "37656099d57dac3411f0515ca7b4458f72e4c255d5966c930fdd5eb67538b2c6"
     },
     {
       "id": "example.open-movies",
       "appleAppStore": true,
-      "version": "1.1.0",
-      "archive": "bundled/example.open-movies-1.1.0.tar.zst",
-      "sha256": "68c8460941bb9182890869bd8b307a23a9fef5a970241b8295698c30fe22bb19"
+      "version": "1.1.1",
+      "archive": "bundled/example.open-movies-1.1.1.tar.zst",
+      "sha256": "09d0243ba1ab31592e499a591f7672e2614336ba70c722f4f69ac6bed10ae712"
     }
   ]
 }
