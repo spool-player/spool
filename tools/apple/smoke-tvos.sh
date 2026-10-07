@@ -48,7 +48,8 @@ for bundle, arguments, expected in checks:
         # from these test result lines and provider logs are deliberately omitted.
         for line in process.stdout.splitlines():
             if arguments == ["mpv-video-item"] and any(
-                    marker in line for marker in ["[vd]", "[vo/libmpv]", "[ffmpeg/video]", "player: render backend"]):
+                    marker in line for marker in ["[vd]", "[vo/libmpv]", "[libmpv_render", "[ffmpeg/video]",
+                                                 "player: render backend"]):
                 print(re.sub(r"https?://\S+", "[redacted-url]", line))
             if any(marker in line for marker in ["launch test:", "video result:", "orientation:", "viewport:", "decoder:",
                                                 "render context was not ready", "failed to initialize mpv",
