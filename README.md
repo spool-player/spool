@@ -617,6 +617,8 @@ frame rendering boundaries so Qt's clipping/blend state cannot leak into mpv
 when the video viewport is resized or a playback context is replaced.
 The pixel consumer waits for a real window swap before readback; grabbing an
 offscreen frame cannot substitute for native presentation feedback.
+Each consumer selector launches a fresh native process, terminating any previous
+instance of the harness before dispatching its next argument vector.
 
 Simulator builds embed matching local application and Keychain access-group
 entitlements in the Mach-O XML/DER sections used by the simulator. Before
