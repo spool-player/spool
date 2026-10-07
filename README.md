@@ -646,6 +646,8 @@ resetting shared OpenGL state, and drawing resets state before Qt resumes.
 Attach/detach acknowledgement is delivered on the GUI thread after render-thread
 GPU work. Each waiter checks its own completion token, so an old notification
 cannot finish a later handoff and stack event-loop receivers stay GUI-owned.
+The pinned mpv scaler initializes every uploaded LUT vector channel, including
+padding beyond the filter tap count, instead of uploading allocator contents.
 The pixel consumer waits for a real window swap before readback; grabbing an
 offscreen frame cannot substitute for native presentation feedback.
 Those waits enter Qt's native event loop: on UIKit a manual event pump does not
