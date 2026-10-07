@@ -619,6 +619,8 @@ The pixel consumer waits for a real window swap before readback; grabbing an
 offscreen frame cannot substitute for native presentation feedback.
 Those waits enter Qt's native event loop: on UIKit a manual event pump does not
 transfer control to `UIApplicationMain` for normal system presentation.
+The identical red/blue fixture is a finite 30-second clip; the consumer does not
+reset playback with rapid EOF seeks while renderer initialization is in flight.
 Each consumer selector launches a fresh native process, terminating any previous
 instance of the harness before dispatching its next argument vector.
 
