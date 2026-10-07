@@ -153,8 +153,10 @@ SPOOL_TEST_MAIN("mpv-video-item")
 #if SPOOL_MPV_ITEM_RHI
     std::atomic_int textureFormat { -1 };
 #endif
+    bool framePresented = false;
     QQuickWindow window;
     window.setColor(Qt::black);
+    QObject::connect(&window, &QQuickWindow::frameSwapped, &window, [&] { framePresented = true; });
     window.resize(320, 180);
     Spool::MpvVideoItem videoItem(window.contentItem());
     // Match production's anchors.fill: parent. UIKit can replace requested
@@ -253,11 +255,17 @@ SPOOL_TEST_MAIN("mpv-video-item")
         }
 
         bool rendered = false;
+        framePresented = false;
         QElapsedTimer timer;
         timer.start();
         while (!rendered && timer.elapsed() < 5000) {
             app.processEvents(QEventLoop::AllEvents, 20);
-            rendered = isRightWayUp(captureItem());
+            // grabWindow renders a readback frame, not a presented frame.
+            // Let the normal window swap (and libmpv feedback) happen first.
+            if (framePresented) {
+                framePresented = false;
+                rendered = isRightWayUp(captureItem());
+            }
             QThread::msleep(10);
         }
         if (!rendered) {
@@ -299,11 +307,15 @@ SPOOL_TEST_MAIN("mpv-video-item")
         const QImage beforeOsd = captureItem();
         const char *osdCommand[] = { "show-text", "SDR white", "10000", nullptr };
         bool neutralOsd = false;
+        framePresented = false;
         if (mpv_command(handle, osdCommand) >= 0) {
             timer.restart();
             while (!neutralOsd && timer.elapsed() < 5000) {
                 app.processEvents(QEventLoop::AllEvents, 20);
-                neutralOsd = containsNeutralOsd(captureItem(), beforeOsd);
+                if (framePresented) {
+                    framePresented = false;
+                    neutralOsd = containsNeutralOsd(captureItem(), beforeOsd);
+                }
                 QThread::msleep(10);
             }
         }
