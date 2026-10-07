@@ -370,6 +370,15 @@
           runHook postInstall
         '';
       };
+      zstdSource = pkgs:
+        let
+          pin = (builtins.fromJSON (builtins.readFile ./tools/manifests/android-third-party.json)).sources.zstd;
+          archive = pkgs.fetchurl { inherit (pin) url sha256; };
+        in pkgs.runCommand "spool-zstd-${pin.version}-source" {} ''
+          mkdir -p "$out"
+          tar -xzf "${archive}" --strip-components=1 -C "$out"
+        '';
+
 
       sourceLinuxPackages = pkgs: with pkgs; [
         alsa-lib
@@ -536,6 +545,7 @@
         export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
         export CURL_CA_BUNDLE="$SSL_CERT_FILE"
         export NIX_ENFORCE_PURITY=0
+        export SPOOL_ZSTD_SOURCE_DIR="${zstdSource pkgs}"
 
         if [ -z "''${WEBOS_SDK_ROOT:-}" ]; then
           repo_sdk="$PWD/build/webos-sdk/arm-webos-linux-gnueabi_sdk-buildroot"
@@ -662,6 +672,7 @@
           };
 
           nativeBuildInputs = nativePackages pkgs ++ [ pkgs.spoolQt6.wrapQtAppsHook ];
+          SPOOL_ZSTD_SOURCE_DIR = zstdSource pkgs;
           dontWrapQtApps = pkgs.stdenv.hostPlatform.isDarwin;
           dontConfigure = true;
           dontInstall = true;
