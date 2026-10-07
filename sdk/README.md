@@ -1,4 +1,4 @@
-# Spool provider SDK (API 0.2)
+# Spool provider SDK (manifest format 3)
 
 A provider teaches Spool a media source: a server, a service, a folder. It is a
 small package of JavaScript (the logic) and optional QML (its own sign-in,
@@ -16,7 +16,7 @@ bundled with the app, installed from the store or added from a link.
 ## Packages
 
 ```
-manifest.json      format 2 (below)
+manifest.json      format 3 (below)
 LICENSE, NOTICE
 logic/*.mjs        entry module exporting createSource(configuration, host)
 ui/*.qml           optional screens named in manifest.ui
@@ -25,7 +25,7 @@ assets/            icon and anything else the screens show
 
 ```json
 {
-  "format": 2, "api": "0.2",
+  "format": 3,
   "id": "publisher.name", "name": "Shown name", "version": "1.2.3",
   "summary": "One line, up to 120 characters", "publisher": "You", "homepage": "https://…",
   "icon": "assets/icon.svg", "entry": "logic/provider.mjs",
@@ -43,6 +43,11 @@ assets/            icon and anything else the screens show
 - `actions` appear in the item menu for the listed types and run through `runItemAction`.
 - Packages are `.tar.zst` (ustar, zstd), at most 16 MiB, 512 files, 32 MiB expanded. Paths are
   relative, without hidden parts, of the listed types; links and native binaries are refused.
+- `format: 3` is the only package schema gate. The manifest has no `api` or
+  `extensions` fields; packages containing either are rejected.
+- `capabilities` is required: an array of at most 24 known names, with no
+  duplicate or non-string entries. Use `[]` when there are no optional features.
+  Account availability is reported separately; see [Capabilities](#capabilities).
 
 ```
 python3 sdk/spool-provider.py build path/to/provider           # dist/<id>-<version>.tar.zst
@@ -115,8 +120,9 @@ counts, timing and HTTP status codes instead.
 
 ## Connection speed
 
-Declare `speedTest` when the service offers a bounded download endpoint, then
-implement the operation using the native operation host:
+Declare `speedTest` and offer it in `describe().capabilities` when this account's
+service offers a bounded download endpoint, then implement the operation using
+the native operation host:
 
 ```js
 speedTest(args, host) {
@@ -210,8 +216,8 @@ for a fixed media server, not interchangeable across arbitrary stream origins.
 
 ## Offline downloads
 
-Declare `downloads` for original media and additionally `downloadTranscode` only
-when the server can produce a finite, complete encoded media file. Implement
+Declare and offer `downloads` for original media and additionally `downloadTranscode`
+only when this account's server can produce a finite, complete encoded media file. Implement
 `download({itemId, mode, maxBitrate?, maxHeight?, variantId?}, host)` and return
 `{url, container, headers?, size?, cleanup?}`. `mode` is `original` or `transcoded`;
 encoding is performed by the server, never on the viewer's device. `container`
@@ -234,6 +240,7 @@ shown as retryable failures after restart, not silently resumed with stale URLs.
 
 ## Artwork ownership
 
+Declare and offer `artworkOwners` when returning inherited image owners.
 An image tag belongs to an item, not necessarily the row that displays it.
 When a thumbnail or backdrop is inherited, return `thumbItemId` or
 `backdropItemId` alongside its tag. Omit the owner for the row's own image.
@@ -244,8 +251,8 @@ and album covers retain their existing `seriesId`/`albumId` ownership.
 
 ## Seek previews
 
-Return `resolve().trickplay` for the selected media variant, not a global URL
-template in `describe()`. Sprite sheets use
+Declare and offer `trickplay`. Return `resolve().trickplay` for the selected
+media variant, not a global URL template in `describe()`. Sprite sheets use
 `{width, height, columns, rows, count, intervalMs, urlTemplate}`; the absolute
 HTTP(S) template has one `{index}` substitution. BIF sequences use
 `{format: "bif", url}` with optional `width`/`height`. Pass the whole sequence
@@ -273,6 +280,13 @@ app's theme, metrics, input keys and primitives). `request()` calls an operation
 `requestList()` streams `items` into the native `rows` model; `complete()` or `close()` settles the
 screen once. Map error codes to your own words.
 
+`provider.capabilities` is required read-only screen metadata. Login drafts see
+manifest declarations; live account settings/pickers see effective flags;
+closed contexts see an empty map. Gate optional controls with
+`provider.capabilities.feature === true`. A flag never authorizes a request:
+the native host and provider must still enforce account permissions and consent.
+Private `activate` is never callable through `request()` or `requestList()`.
+
 ## Testing
 
 ```
@@ -291,6 +305,10 @@ install it from a link to the repository: GitHub resolves to
 `releases/latest/download/spool-provider.json`, GitLab to
 `-/releases/permalink/latest/downloads/spool-provider.json`, and any other site to
 `/spool-provider.json` at the address given. Installed providers are updated from the same place.
+
+Feed entries carry `format: 3` from the validated manifest and have no `api`
+field. The same format discriminator applies to the feed and package; no
+separate API-version compatibility gate is used.
 
 To be listed in the store, open a pull request on `spool-player/spool-providers` adding
 `providers/<id>.json` with that feed entry. CI downloads the package, checks its digest and validates
@@ -311,47 +329,80 @@ and queue occurrences. ID lookups fetch at most 50 unique IDs per request and
 reconstruct the original requested order, including duplicates and omitting
 missing rows.
 
-## Optional extensions
+## Capabilities
 
-Keep manifest `format: 2`, `api: "0.2"` and the existing baseline capability
-names. Declare optional features in a top-level `extensions` object, for example
-`{"spool.speed-test": 1}`. Values are exact positive wire-major integers
-(1 through 2147483647), not minimum versions. Declarations allow at most 32
-namespaced IDs of at most 128 characters. Unknown valid IDs or majors do not
-prevent baseline loading; malformed declarations are rejected.
+Manifest `capabilities` declares package features using these 24 names:
 
-Both source and operation hosts expose the same frozen `host.extensions` map
-of supported declared versions. Negotiate exact feature versions from this map,
-never infer support from the application version.
-Return account/server offers in `describe().extensions`; effective support is
-the exact intersection of declarations, host support and account offers.
-`host.emit('extensionsChanged', {extensions})` replaces only that account's
-offers; support loss cancels affected calls and updates controls.
+| Area | Names |
+| --- | --- |
+| Baseline account features | `search`, `userState`, `reporting`, `segments`, `groupPlayback`, `remoteControl`, `streamQuality`, `trickplay`, `speedTest`, `downloads`, `downloadTranscode`, `discovery` |
+| Catalogue and queue | `artworkOwners`, `suggestions`, `itemActions`, `collectionEditing`, `playbackQueueReporting` |
+| Preferences and storage | `playbackPreferences`, `settingsStorage` |
+| Network and account | `remoteTargets`, `httpMetadata`, `originGrants`, `lanProbe`, `accountActivation` |
 
-Optional operations are checked before provider execution and fail with
-`unsupported_extension` when unavailable. Providers must also check support.
-Speed-test implementations declare `spool.speed-test`; inherited artwork owners
-require `spool.artwork-owners`. When that feature is unavailable, retain own artwork
-and ordinary series/album fallback without inherited child tags.
+Source and operation hosts always expose the same frozen `host.capabilities`
+boolean map: declared names map to `true`, and undeclared names are absent.
+This is package metadata, not authorization or an account's available features.
+There are no version values or application-version gates.
 
-Provider and host builds are released together against the current prerelease
-contract. Older host compatibility is not supported; do not add aliases or logging
-fallbacks to make current providers run on frozen host glue. Missing declared host
-features and server permission/endpoint failures remain distinct conditions.
+Return account/server availability in optional `describe().capabilities`.
+Offer every available feature, including baseline features, as an actual boolean:
+
+```js
+describe() {
+    return {
+        artwork: server + "/items/{itemId}/images/{type}?tag={tag}",
+        capabilities: {
+            search: true,
+            userState: canUpdateUserState,
+            reporting: true,
+            speedTest: hasBoundedTestEndpoint,
+            playbackPreferences: canReadPreferences
+        }
+    };
+}
+```
+
+Effective account support is **declared AND offered === true**. Missing or false
+flags disable that feature; omitting the map means no offers, not baseline
+defaults. Offer maps have at most 24 known keys and only boolean values.
+Malformed offers are rejected fail-closed. To refresh availability, emit
+`host.emit('capabilitiesChanged', {capabilities: currentOffers})`. This replaces
+the whole account offer map, rather than merging it. Malformed events withdraw
+all offers. Losing support cancels tracked calls and updates controls; regranting
+a feature cannot publish results from a call started before withdrawal.
+
+Capability-gated operations fail with `unsupported_capability` before provider
+execution when unavailable. Providers must also enforce current server/viewer
+permissions inside operations and source-level background work. For example,
+`userState` gates `favorite`, `played` and `progress`; `reporting` gates `report`;
+`playbackPreferences` gates `preferencesRead`/`preferencesWrite`; and
+`settingsStorage` gates `dataInfo`/`dataRead`/`dataWrite`/`dataDelete`.
+Unrecognized custom operation names still belong to the provider's own policy.
+When `artworkOwners` is unavailable, retain own artwork and ordinary series/album
+fallback without inherited child tags.
+
+Provider and host builds cut over together against this current prerelease
+contract. Older contracts are not supported: no aliases, version negotiation,
+missing-host notices or compatibility-status operation.
 
 ### Optional network facilities
 
-`spool.http-metadata` allows `host.http` to request up to 16 response-header
+Native facilities also enforce their package declarations before starting work:
+`host.speedTest` requires `speedTest`, and UDP `host.discover` requires `discovery`.
+These static checks do not replace live account operation guards or consent.
+
+`httpMetadata` allows `host.http` to request up to 16 response-header
 names. Only those lowercase names are returned, with a 64 KiB aggregate bound;
 cookie-setting headers are forbidden. Redirect and cookie policy is unchanged.
 
-`spool.origin-grants` lets account settings/pickers request an exact HTTP(S)
+`originGrants` lets account settings/pickers request an exact HTTP(S)
 origin. A host-owned confirmation names the provider, account and origin,
 including an unencrypted-HTTP warning. Approval updates the worker allowlist
 and persists without restarting the source; denial or stale consent grants
 nothing. Certificate trust remains separate.
 
-`spool.lan-probe` is available only to a login draft after explicit
+`lanProbe` is available only to a login draft after explicit
 `provider.allowLanDiscovery()` consent. `host.probeLocalHttp` probes at most
 32 targets per page with four concurrent requests, a 600 ms wall deadline and
 4 KiB response bodies. It scans at most two ranked private/link-local IPv4
@@ -363,18 +414,18 @@ normal server selection still calls `allowOrigin`. Cancel/Back uses
 
 ### Catalogue and queue contracts
 
-`spool.suggestions` provides a bounded recommendation set. No extension means
+`suggestions` provides a bounded recommendation set. No effective capability means
 no suggestions section; Continue Watching is not substituted. Search remains
 a bounded top-N query with progressive account delivery.
 
-`spool.item-actions` fetches permission-aware actions when a menu opens.
-`spool.collection-editing` edits container-local occurrence IDs, preserving
+`itemActions` fetches permission-aware actions when a menu opens.
+`collectionEditing` edits container-local occurrence IDs, preserving
 duplicates. The host supplies both the post-removal index and preceding entry
 ID for moves; the provider chooses its native move style. Unordered/read-only
 containers do not offer movement. Mutations are serialized and uncertain
 results trigger a refresh, not an assumed rollback.
 
-`spool.playback-queue-reporting` adds an immutable queue snapshot only on start,
+`playbackQueueReporting` adds an immutable queue snapshot only on start,
 restart or membership/order revision. Ordinary progress can carry the current
 index without recopying the queue. Each account receives only its own entries.
 Unknown exact occurrence indexes are omitted rather than guessed.
@@ -385,7 +436,7 @@ is verified against count/order and occurrence IDs, with read-back before
 reconciliation after uncertain mutations; fixture success is not a live-server
 compatibility guarantee.
 
-Protected `spool.remote-targets` state uses the same sheet/BIF descriptor in
+Protected `remoteTargets` state uses the same sheet/BIF descriptor in
 `preview`, with an optional `headers` map. Use the same account/device
 authorization as media requests; never put tokens in preview query strings.
 The host keeps headers out of QML, validates the approved HTTP(S) origin and
@@ -395,13 +446,13 @@ reject foreign-origin redirects, and keep cached data isolated by session.
 
 ### Native preferences and application data
 
-`spool.playback-preferences` exposes the service's own audio/subtitle defaults.
+`playbackPreferences` exposes the service's own audio/subtitle defaults.
 Language values use ISO-639-2 (empty means no preference); the host normalizes
 two-letter codes through Qt. A writable mode must round-trip its full normalized
 vocabulary. Writes merge only the four mapped fields into a freshly fetched
 configuration and preserve unrelated fields and user policy.
 
-`spool.settings-storage` stores application-owned JSON documents by canonical
+`settingsStorage` stores application-owned JSON documents by canonical
 UUID, not filesystem or service paths. Values include JSON null; `found:false`
 alone means absence. Documents are bounded to 64 KiB of compact UTF-8 JSON and
 depth 16, or the provider's smaller advertised limit. Malformed, oversized or
@@ -422,7 +473,7 @@ on active IPv4 broadcast interfaces and returns an ordinary JavaScript array of
 `{address, text}` replies. Jellyfin/Emby discovery uses broadcast, not multicast.
 The host owns sockets, reply limits and cancellation; providers parse their own
 protocol. Retry broadcast discovery when the viewer chooses local search, before
-the optional consented `spool.lan-probe` HTTP fallback. HTTP continuation pages can
+the optional consented `lanProbe` HTTP fallback. HTTP continuation pages can
 be short or empty when their wall deadline expires: follow each new cursor until
 `exhausted`, rather than assuming every page scanned the requested target limit.
 
@@ -432,10 +483,42 @@ to resolution. Closing cancels the pending choice; it does not replace the detai
 route. Providers can compose sections within their screens (for example, an inline
 Quick Connect code underneath password sign-in).
 
-`spool.remote-targets` supplies the shared device dropdown's target, state, command
+When Add profile or Sign in again targets a saved account, login QML receives
+`provider.arguments.setupContext` with `accountId`, `serverId`, `serverName`,
+`serverOrigin` and `purpose` (`addProfile` or `reconnect`). These are nonsecret
+identity hints, not authentication or permission grants. The source factory
+privately receives `{setupContext, setupAccount}`, where `setupAccount` is that
+provider's retained account configuration. Decide inside provider logic whether
+its owner/household session can authorize selecting another viewer; never expose
+it to QML or borrow the existing viewer's media permissions. A reconnect must
+complete as the original account/server. Providers may emit `configuration` from
+a draft before completing with public account/label/group/detail metadata; the
+host commits that private configuration only after successful activation.
+`ServerLogin.setupContextOperation` can name a provider operation returning
+`{server}` to skip address entry while preserving provider-owned base paths.
+
+`remoteTargets` supplies the shared device dropdown's target, state, command
 and queue data. Set a target's `customControls` when it also needs provider-owned
 QML. The host mounts `ui.picker` with `{kind: "remoteControls", targetId}` as a
 section inside the dropdown; `provider.complete`/`close` returns to shared device
 controls. Use layouts that adapt to the available width and height. Full-page
 remote controls can also open the same component as a modal overlay. Providers
 never need to navigate a shell route to add these controls.
+
+### Private account activation
+
+Declare and offer `accountActivation` for the native activation transaction.
+`describe().activation` identifies its opaque `familyId` and `identityId`.
+The host alone invokes `activate` with native-controlled `reason` and `lastUsed`,
+an optional in-memory `grant`, and nested picker `answers`. Picker submissions
+cannot replace the native fields. Grants are bounded to 16 KiB and are never
+persisted or exposed to QML. Return a genuine grant or `PickRequest`, not a
+fabricated success.
+
+Prepared accounts remain locked until native approval commits. They may run only
+`describe` and the private activation operation, and cannot launch authenticated
+source-host background requests while locked. Cancellation, failure or stale
+generation/consent cannot unlock the account or publish it. Capability flags do
+not bypass this approval gate, origin consent, TLS trust or server/viewer policy.
+`activationConfiguration` events may update authorized device-local boolean
+family options only; they are not settings-sync data or credentials.

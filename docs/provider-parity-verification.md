@@ -1,9 +1,48 @@
 # Provider parity verification
 
 The provider parity plan is implemented across Spool and the sibling Jellyfin,
-Emby and Plex providers. The API remains 0.2; optional features negotiate exact
-extension versions per account. Local provider builds use the sibling working
-trees. Published provider pins are unchanged until a separately authorized release.
+Emby and Plex providers. The current contract uses manifest format 3 with one
+declared-and-account-offered boolean capability map, not API or extension-major
+negotiation. Local provider builds use the sibling working trees.
+
+## Current capability cutover (2026-10-08)
+
+The Linux Qt 6.11.2 native build succeeded for the production host, `spoolet`,
+native provider/app contracts, SDK contract runner and shared QML test target.
+Focused verification passed 17 native selectors covering capability withdrawal,
+activation, origins, cancellation, preference writability, bounded storage/CAS,
+remote targets, collections, downloads and the bundled Jellyfin consumer.
+Five isolated offscreen GUI contracts passed: artwork authentication, provider
+screen context, QML cache, settings/remote/activation integration and provider forms.
+These are targeted checks, not a full platform matrix or native-GPU claim.
+
+All five format-3 working archives passed SDK validation. Their full provider
+contract suites ran against the **unpacked archive logic**, not just checkout
+source, in both default and forced-interpreter Qt modes (ten successful runs).
+The real Stremio loopback HTTP smoke also passed manifest/catalogue/search,
+stream picker, HEAD validation, original media bytes and torrent-file selection.
+The SDK package suite (11 cases), checkout discovery suite (eight cases),
+curated working-package policy contract and all five SDK hash checks passed.
+
+The first Qt consumer runs exposed unsupported `Object.fromEntries` in the
+new Jellyfin/Emby/Plex capability construction. Explicit loops fixed the real
+runtime defect; the six affected archived-package runs and both bundled
+Jellyfin selectors then passed. No polyfill or compatibility shim was added.
+Bundled versions are Jellyfin 0.2.11, Emby 0.1.7, Plex 0.1.8, Stremio 0.1.2
+and Open Movies 1.1.1. They are working packages, not published releases.
+Curated release URLs and digests await separately approved publication.
+
+Independent review then identified active group ownership surviving withdrawal
+when another account kept aggregate availability true. The existing
+`group-playback-policy` test now drives two real registry accounts through the
+public group controller and capability events. It failed before repair at the
+active/pending group ownership assertion, then passed after the controller consumed
+account-specific support changes and used its existing group teardown. Withdrawal
+of the unrelated account leaves the joined group intact. The focused followup
+build and four selectors (`group-playback-policy`, `group-clock`,
+`provider-registry`, `source-hub`) passed.
+
+## Earlier parity verification
 
 Verified again on 2026-09-30 after the provider UI/local-library cutover: the
 local-provider release build succeeded, all 98 non-GPU tests passed, all six
@@ -49,7 +88,7 @@ confirmed read-back states, keyboard sync opt-out, stale responses after an acco
 change, remote target selection without playback, removal of the second duplicate
 queue entry, and rejected/successful PIN submission through a provider surface.
 Existing native and provider tests cover service-specific protocols, activation
-families, generation races, old-host compatibility and settings convergence.
+families, generation races, capability withdrawal and settings convergence.
 
 For screenshots, supply an output directory:
 

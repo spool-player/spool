@@ -45,14 +45,21 @@ export function createSource(config, sourceHost) {
         return {items: rows, cursor: end < total ? 's:' + end : null, exhausted: end >= total};
     };
     return {
+        setupPrivate: function(args, host) {
+            host.emit('configuration', args.configuration);
+            return {account: args.account, group: args.group, label: args.label};
+        },
+        signOut: function() {
+            return config.signOutDelay ? sourceHost.delay(config.signOutDelay).then(function() { return {}; }) : {};
+        },
         describe: function() {
             if (config.describeFailure)
                 throw new Error(config.describeFailure);
             if (config.describeDelay)
                 return sourceHost.delay(config.describeDelay).then(function() { return {}; });
             return {artwork: 'https://img.invalid/{itemId}/{type}?w={width}',
-                extensions: config.catalogueExtensions
-                    ? {'spool.suggestions': 1, 'spool.playback-queue-reporting': 1} : {}};
+                capabilities: {search: true, reporting: true, groupPlayback: true,
+                    suggestions: !!config.catalogueCapabilities, playbackQueueReporting: !!config.catalogueCapabilities}};
         },
         suggestions: function(args) {
             return {items: [item('suggestion')].slice(0, args.limit), cursor: null, exhausted: true};

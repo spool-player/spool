@@ -72,8 +72,7 @@ ProviderPackageContents package(
     auto ui = manifest.value("ui").toObject();
     ui.insert("settings", "ui/Selection.qml");
     manifest.insert("ui", ui);
-    manifest.insert("extensions",
-        QJsonObject { { "spool.account-activation", 1 }, { "spool.suggestions", 1 }, { "spool.settings-storage", 1 } });
+    manifest.insert("capabilities", QJsonArray { "accountActivation", "suggestions", "settingsStorage" });
     result.files["manifest.json"] = QJsonDocument(manifest).toJson();
     result.manifest = *ProviderManifest::parse(result.files.value("manifest.json"));
     result.files["logic/provider.mjs"] = R"JS(
@@ -92,7 +91,7 @@ export function createSource(config, host) {
     return {
         describe: function() {
             return {activation: {familyId: config.family || 'home', identityId: active && config.changeIdentity ? 'changed' : config.identity || 'draft'},
-                extensions: {'spool.account-activation':1, 'spool.suggestions':1, 'spool.settings-storage':1},
+                capabilities: {accountActivation:true, suggestions:true, settingsStorage:true},
                 artwork: active ? 'https://art.invalid/' + config.identity + '/{itemId}' : ''};
         },
         activate: function(args, operation) {
@@ -218,7 +217,7 @@ SPOOL_TEST_MAIN("provider-activation")
         const int revocations = revoked.size();
         require(!registry.sourceRunning(a) && !registry.sourceRunning(a2)
                 && failure(registry.callSource(a, "state")) == "source_unavailable"
-                && failure(registry.callExtension(a, "spool.settings-storage", "dataInfo")) == "unsupported_extension",
+                && failure(registry.callSource(a, "dataInfo")) == "unsupported_capability",
             "search and sync cannot implicitly activate another Home identity");
         selections.clear();
         registry.useAccount(a);
@@ -438,9 +437,14 @@ SPOOL_TEST_MAIN("provider-activation")
         for (const bool missingDescription : { false, true }) {
             auto downgraded = package("fixture.activation", missingDescription ? "1.4.0" : "1.3.0");
             auto manifest = QJsonDocument::fromJson(downgraded.files.value("manifest.json")).object();
-            auto declarations = manifest.value("extensions").toObject();
-            declarations.remove("spool.account-activation");
-            manifest.insert("extensions", declarations);
+            auto declarations = manifest.value("capabilities").toArray();
+            for (qsizetype index = 0; index < declarations.size(); ++index) {
+                if (declarations.at(index).toString() == QStringLiteral("accountActivation")) {
+                    declarations.removeAt(index);
+                    break;
+                }
+            }
+            manifest.insert("capabilities", declarations);
             downgraded.files["manifest.json"] = QJsonDocument(manifest).toJson();
             downgraded.manifest = *ProviderManifest::parse(downgraded.files.value("manifest.json"));
             if (missingDescription) {

@@ -10,6 +10,8 @@ FocusScope {
     property var provider
     property string serviceName: ""
     property var errorMessages: ({})
+    // A provider can resolve its private saved server to public login context.
+    property string setupContextOperation: ""
     property string codeLabel: ""
     property string codeStartOperation: ""
     property string codePollOperation: ""
@@ -25,7 +27,7 @@ FocusScope {
     property bool busy: false
     property bool discovering: false
     property bool validAddress: false
-    property bool lanAvailable: false
+    readonly property bool lanAvailable: !closed && provider.capabilities.lanProbe === true
     property bool lanSearching: false
     property string error: ""
     property string code: ""
@@ -60,7 +62,7 @@ FocusScope {
         servers = merged
     }
     function discoverServers() {
-        if (discovering || closed || alternateActive || step !== "server")
+        if (discovering || closed || provider.capabilities.discovery !== true || alternateActive || step !== "server")
             return
         discovering = true
         const stamp = discoveryGeneration
@@ -280,12 +282,18 @@ FocusScope {
             item.accepted()
     }
     Component.onCompleted: {
-        discoverServers()
-        provider.request("extensionStatus").then(result => {
-            if (!closed)
-                lanAvailable = !!result.enabled["spool.lan-probe"]
-        }, () => {})
-        Qt.callLater(() => address.focusRow())
+        const context = provider && provider.arguments ? provider.arguments.setupContext : null
+        if (context && context.accountId && setupContextOperation.length > 0) {
+            provider.request(setupContextOperation).then(result => {
+                if (!closed && result.server) {
+                    address.text = String(result.server)
+                    connect(String(result.server))
+                }
+            }, fail)
+        } else {
+            discoverServers()
+            Qt.callLater(() => address.focusRow())
+        }
     }
     Component.onDestruction: {
         ++generation

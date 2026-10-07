@@ -11,7 +11,7 @@
 
 namespace Spool {
 namespace {
-    const QString Extension = QStringLiteral("spool.remote-targets");
+    const QString RemoteTargets = QStringLiteral("remoteTargets");
     [[noreturn]] void invalid()
     {
         throw std::runtime_error("invalid_remote_response");
@@ -129,16 +129,16 @@ namespace {
 
 bool SourceHub::remoteAvailable(const QString& accountId) const
 {
-    return source(accountId) && accountEnabled(accountId) && m_registry->extensionVersion(accountId, Extension) == 1;
+    return source(accountId) && accountEnabled(accountId) && m_registry->hasCapability(accountId, RemoteTargets);
 }
 
 QCoro::Task<QVariantList> SourceHub::remoteTargets(QString accountId, QString scope)
 {
     if (!remoteAvailable(accountId))
-        throw std::runtime_error("unsupported_extension");
+        throw std::runtime_error("unsupported_capability");
     QPointer<SourceHub> guard(this);
     QPointer<Provider> owner(source(accountId));
-    const auto response = co_await m_registry->callExtension(accountId, Extension, "remoteTargets", {}, scope);
+    const auto response = co_await m_registry->callSource(accountId, "remoteTargets", {}, scope);
     if (!guard || !owner || owner != source(accountId) || !remoteAvailable(accountId))
         throw std::runtime_error("cancelled");
     QVariantList result;
@@ -182,13 +182,13 @@ QCoro::Task<QVariantMap> SourceHub::remoteState(QString targetId, bool connect, 
 {
     const auto account = accountOf(targetId);
     if (!remoteAvailable(account))
-        throw std::runtime_error("unsupported_extension");
+        throw std::runtime_error("unsupported_capability");
     QPointer<SourceHub> guard(this);
     QPointer<Provider> owner(source(account));
     QVariantMap arguments { { "targetId", rawId(targetId) } };
     arguments.insert("videoPreviews", m_videoPreviewsEnabled);
-    const auto response = co_await m_registry->callExtension(
-        account, Extension, connect ? "remoteConnect" : "remoteState", std::move(arguments), scope);
+    const auto response = co_await m_registry->callSource(
+        account, connect ? "remoteConnect" : "remoteState", std::move(arguments), scope);
     if (!guard || !owner || owner != source(account) || !remoteAvailable(account))
         throw std::runtime_error("cancelled");
     const auto status = text(response.value("state"), 32, true);
@@ -346,7 +346,7 @@ QCoro::Task<QVariantMap> SourceHub::remoteCommand(QString targetId, QVariantMap 
 {
     const QString account = accountOf(targetId);
     if (!remoteAvailable(account))
-        throw std::runtime_error("unsupported_extension");
+        throw std::runtime_error("unsupported_capability");
     const QString action = text(input.value("action"), 128, true);
     if (!actions().contains(action) || !state.value("commands").toStringList().contains(action))
         throw std::runtime_error("remote_command_unavailable");
@@ -406,8 +406,8 @@ QCoro::Task<QVariantMap> SourceHub::remoteCommand(QString targetId, QVariantMap 
                 "afterEntryId", after.isNull() ? QVariant::fromValue(nullptr) : QVariant(text(after, 1024, true)));
         }
     }
-    auto result = co_await m_registry->callExtension(
-        account, Extension, "remoteCommand", { { "targetId", rawId(targetId) }, { "command", command } }, scope);
+    auto result = co_await m_registry->callSource(
+        account, "remoteCommand", { { "targetId", rawId(targetId) }, { "command", command } }, scope);
     QVariantMap normalized;
     if (present(result, "commandSequence"))
         normalized.insert("commandSequence",
@@ -419,13 +419,13 @@ QCoro::Task<PagedMovieItems> SourceHub::remoteQueue(QString targetId, std::optio
 {
     const auto account = accountOf(targetId);
     if (!remoteAvailable(account))
-        throw std::runtime_error("unsupported_extension");
+        throw std::runtime_error("unsupported_capability");
     QVariantMap arguments { { "targetId", rawId(targetId) }, { "limit", 50 } };
     if (cursor)
         arguments.insert("cursor", *cursor);
     QPointer<SourceHub> guard(this);
     QPointer<Provider> owner(source(account));
-    auto page = co_await m_registry->callExtensionMediaPage(account, Extension, "remoteQueue", arguments, 50, scope);
+    auto page = co_await m_registry->callSourceMediaPage(account, "remoteQueue", arguments, 50, scope);
     if (!guard || !owner || owner != source(account) || !remoteAvailable(account))
         throw std::runtime_error("cancelled");
     PagedMovieItems result;

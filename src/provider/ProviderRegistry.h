@@ -123,13 +123,8 @@ public:
     QCoro::Task<ProviderMediaPage> callSourceMediaPage(
         QString sourceId, QString operation, QVariantMap arguments = {}, int maximumItems = 100, QString scope = {});
     QCoro::Task<MovieItem> callSourceItem(QString sourceId, QString operation, QVariantMap arguments = {});
-    int extensionVersion(const QString& accountId, const QString& extensionId) const;
-    QVariantMap extensions(const QString& sourceId) const;
-    QStringList missingHostExtensions(const QString& moduleId) const;
-    QCoro::Task<QVariantMap> callExtension(
-        QString accountId, QString extensionId, QString operation, QVariantMap arguments = {}, QString scope = {});
-    QCoro::Task<ProviderMediaPage> callExtensionMediaPage(QString accountId, QString extensionId, QString operation,
-        QVariantMap arguments = {}, int maximumItems = 100, QString scope = {});
+    bool hasCapability(const QString& accountId, const QString& capability) const;
+    QVariantMap capabilities(const QString& sourceId) const;
     void cancelSourceScope(const QString& sourceId, const QString& scope);
     bool sourceRunning(const QString& sourceId) const;
     bool accountOriginAllowed(const QString& accountId, const QUrl& url) const;
@@ -145,7 +140,8 @@ public:
     // Mounting provider QML. beginSetup returns a context for the module's
     // login component, or null after adding an account straight away for a
     // provider that needs no sign-in.
-    Q_INVOKABLE QObject *beginSetup(const QString& moduleId);
+    Q_INVOKABLE QObject *beginSetup(
+        const QString& moduleId, const QString& accountId = {}, const QString& purpose = QStringLiteral("addProfile"));
     Q_INVOKABLE QObject *openSettings(const QString& accountId);
     Q_INVOKABLE QObject *openPicker(const QString& accountId, const QVariantMap& arguments);
     // Shows the account's picker component and waits for the viewer's
@@ -186,7 +182,7 @@ signals:
     void modulesChanged();
     void accountsChanged();
     void restoredChanged();
-    void extensionsChanged(const QString& accountId);
+    void capabilitiesChanged(const QString& accountId);
     void networkConsentChanged();
     void sourceStarted(Spool::Provider *provider);
     void sourceStopped(const QString& accountId);
@@ -203,8 +199,8 @@ signals:
     void contextSourceStopped(const QString& sourceId);
 
 private:
-    struct ExtensionCall {
-        QString extension;
+    struct CapabilityCall {
+        QString capability;
         QString scope;
     };
     struct Running {
@@ -215,12 +211,12 @@ private:
         QPointer<Provider> provider;
         QList<QUrl> origins;
         bool draft = false;
+        QVariantMap setupConfiguration;
         bool enableOnCommit = false;
-        QVariantMap hostExtensions;
-        QVariantMap offers;
-        QVariantMap extensions;
-        QHash<QString, quint64> extensionRevisions;
-        QHash<quint64, ExtensionCall> extensionCalls;
+        QVariantMap declaredCapabilities;
+        QVariantMap capabilities;
+        QHash<QString, quint64> capabilityRevisions;
+        QHash<quint64, CapabilityCall> capabilityCalls;
         std::optional<ProviderExtensionData::StorageInfo> storageInfo;
         bool lanConsent = false;
         quint64 networkRevision = 0;
@@ -269,9 +265,9 @@ private:
     void handleInterrupted(const QString& moduleId);
     ProviderUiContext *createContext(const QString& sourceId, const QString& role, const QString& moduleId);
     template <typename T, typename Call>
-    QCoro::Task<T> guarded(QString sourceId, Call call, QString extension = {}, QString scope = {});
-    bool legacySpeedTest(const QString& sourceId, const QString& operation) const;
-    void updateExtensions(const QString& sourceId, QVariantMap offers);
+    QCoro::Task<T> guarded(QString sourceId, Call call, QString capability = {}, QString scope = {});
+    bool sourceHasCapability(const QString& sourceId, const QString& capability) const;
+    void updateCapabilities(const QString& sourceId, QVariantMap offers);
     QCoro::Task<bool> requestNetworkConsent(QString sourceId, QString scope, QString kind, QUrl origin = {});
     void cancelNetworkConsent(const QString& sourceId, const QString& scope = {});
 
@@ -293,8 +289,9 @@ private:
     QSet<QString> m_onboarding;
     QSet<QString> m_lockedAccounts;
     quint64 m_nextGeneration = 0;
-    quint64 m_nextExtensionCall = 0;
+    quint64 m_nextCapabilityCall = 0;
     QVariantMap m_networkConsent;
+    QSet<QString> m_removingAccounts;
     std::shared_ptr<QPromise<bool>> m_consentPromise;
     QString m_consentSource;
     QString m_consentScope;

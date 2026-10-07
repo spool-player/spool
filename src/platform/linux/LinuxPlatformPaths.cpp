@@ -38,11 +38,17 @@ QString startupCacheRoot(const QString&)
 
 QString persistentDataRoot()
 {
+    const QString configured = qEnvironmentVariable("SPOOL_DATA_HOME");
+    if (!configured.isEmpty())
+        return configured;
     return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
 }
 
 QStringList appLogDirectories(const QString&)
 {
+    const QString configured = qEnvironmentVariable("SPOOL_DATA_HOME");
+    if (!configured.isEmpty())
+        return { QDir(configured).filePath(QStringLiteral("logs")) };
     return {
         QDir(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation)).filePath(QStringLiteral("logs"))
     };

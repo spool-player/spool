@@ -23,7 +23,7 @@ except ImportError:
 
 
 def manifest(**changes):
-    value = {"format": 2, "api": "0.2", "id": "test.provider", "name": "Test", "version": "0.1.0",
+    value = {"format": 3, "id": "test.provider", "name": "Test", "version": "0.1.0",
              "summary": "A test provider", "entry": "logic/provider.mjs", "icon": "assets/icon.svg",
              "capabilities": ["search"], "ui": {"login": "ui/Login.qml"}, "origins": ["https://api.example.org"]}
     value.update(changes)
@@ -61,33 +61,30 @@ class ValidateTest(unittest.TestCase):
                 self.rejects(files(**{"logic/provider.mjs": magic + b"rest"}), "native")
 
     def test_manifest_contract(self):
-        for changes, fragment in (({"format": 1}, "format 2"), ({"api": "0.1"}, "format 2"),
+        for changes, fragment in (({"format": 2}, "format 3"), ({"api": "0.2"}, "api"),
                                   ({"id": "NoDots"}, "publisher.name"), ({"version": "1.0"}, "semantic"),
                                   ({"name": "x" * 65}, "64 characters"), ({"entry": "logic/main.js"}, ".mjs"),
                                   ({"icon": "assets/missing.svg"}, "icon"), ({"ui": {"wizard": "ui/Login.qml"}}, "roles"),
                                   ({"ui": {"settings": "ui/Settings.qml"}}, "missing QML"),
-                                  ({"capabilities": ["teleport"]}, "unknown capabilities"),
+                                  ({"capabilities": ["teleport"]}, "known capability names"),
                                   ({"origins": ["https://example.org/path"]}, "origins")):
             with self.subTest(changes=changes):
                 self.rejects(files(**{"manifest.json": json.dumps(manifest(**changes)).encode()}), fragment)
         self.rejects({k: v for k, v in files().items() if k != "manifest.json"}, "manifest.json")
 
-    def test_optional_extension_versions_are_exact_and_bounded(self):
-        declarations = {"spool.speed-test": 1, "future.feature": 2}
-        package = files(**{"manifest.json": json.dumps(manifest(extensions=declarations)).encode()})
-        self.assertEqual(tool.validate(package)["extensions"], declarations)
-        for invalid in (None, [], True, "spool.speed-test", {"feature": 1}, {"Bad.feature": 1},
-                        {"spool." + "x" * 123: 1}, {"spool.feature\n": 1},
-                        {f"future.feature{i}": 1 for i in range(33)},
-                        *({"spool.speed-test": version}
-                          for version in (0, -1, True, False, "1", None, [], {}, 1.5, 2147483648))):
-            with self.subTest(extensions=invalid):
-                self.rejects(files(**{"manifest.json": json.dumps(manifest(extensions=invalid)).encode()}),
-                             "manifest.extensions")
-        boundary = {f"future.feature{i}": 2147483647 for i in range(31)}
-        boundary["x." + "a" * 126] = 1.0
-        package = files(**{"manifest.json": json.dumps(manifest(extensions=boundary)).encode()})
-        self.assertEqual(tool.validate(package)["extensions"], boundary)
+    def test_capability_declarations_are_known_unique_strings(self):
+        declarations = ["search", "speedTest", "suggestions", "settingsStorage"]
+        package = files(**{"manifest.json": json.dumps(manifest(capabilities=declarations)).encode()})
+        self.assertEqual(tool.validate(package)["capabilities"], declarations)
+        for invalid in (None, {}, True, "speedTest", ["unknown"], ["search", "search"],
+                        ["search", 1], [True], [{}], ["x" * 129], ["search"] * 25):
+            with self.subTest(capabilities=invalid):
+                self.rejects(files(**{"manifest.json": json.dumps(manifest(capabilities=invalid)).encode()}),
+                             "capabilit")
+        missing = manifest()
+        del missing["capabilities"]
+        self.rejects(files(**{"manifest.json": json.dumps(missing).encode()}), "capabilities")
+        self.rejects(files(**{"manifest.json": json.dumps(manifest(extensions={})).encode()}), "extensions")
 
 
     def test_qml_imports_are_limited_to_what_spool_provides(self):
@@ -143,7 +140,8 @@ class PackageTest(unittest.TestCase):
         package = tool.build(self.source, self.root / "p.tar.zst")
         entry = tool.feed(package, "https://example.org/p.tar.zst")
         self.assertEqual(entry["id"], "test.provider")
-        self.assertEqual(entry["api"], "0.2")
+        self.assertEqual(entry["format"], 3)
+        self.assertNotIn("api", entry)
         self.assertEqual(entry["url"], "https://example.org/p.tar.zst")
         self.assertEqual(entry["size"], package.stat().st_size)
         self.assertEqual(entry["sha256"], hashlib.sha256(package.read_bytes()).hexdigest())

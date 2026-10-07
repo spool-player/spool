@@ -497,7 +497,8 @@ SPOOL_TEST_MAIN("source-hub")
     require(QCoro::waitFor(portable->fetchSearchSuggestions()).empty(),
         "an account without suggestions never substitutes its populated resume results");
     const QString reporting = add("fixture.test", "reporting",
-        { { QStringLiteral("catalogueExtensions"), true }, { QStringLiteral("label"), QStringLiteral("Reporting") } });
+        { { QStringLiteral("catalogueCapabilities"), true },
+            { QStringLiteral("label"), QStringLiteral("Reporting") } });
     waitUntil([&] { return hub.source(reporting) != nullptr; }, "reporting account starts");
     const auto suggestions = QCoro::waitFor(hub.source(reporting)->search()->fetchSearchSuggestions());
     require(suggestions.size() == 1 && suggestions.front().id == QStringLiteral("suggestion"),
@@ -585,7 +586,7 @@ SPOOL_TEST_MAIN("source-hub")
     const QVariantMap baselineReport
         = QCoro::waitFor(hub.call(remote, QStringLiteral("reportStats"))).value("reports").toList().last().toMap();
     require(!baselineReport.contains("queue") && !baselineReport.contains("queueIndex"),
-        "non-negotiated accounts retain baseline reports without extension fields");
+        "accounts without queue reporting retain baseline reports without queue fields");
     {
         DatabaseManager homeDatabase;
         require(homeDatabase.initialize(directory.filePath(QStringLiteral("home/cache.sqlite"))),

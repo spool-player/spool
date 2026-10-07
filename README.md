@@ -101,6 +101,15 @@ Native desktop builds also build/install `spoolet`, a small Qt Core/Network CLI
 from this checkout, with no browser or external control service. The ordinary
 Spool desktop app starts its private local command server automatically:
 
+Desktop `--data-dir PATH` starts with a separate database, INI settings, caches,
+logs, diagnostics, provider installation directory and default download folder.
+It does not import or move the normal profile's data. OS-managed credentials
+remain in the platform credential store; selecting a data directory does not
+silently replace that store with plaintext files. Isolated fixture runs opt into
+the existing private file backend with `SPOOL_CREDENTIAL_STORE_DIR` and must
+never use real account secrets. Mobile builds retain their platform sandbox and
+do not accept `--data-dir`.
+
 ```sh
 nix run .#local-providers-build
 nix run .#local-providers -- --instance plex-check

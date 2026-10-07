@@ -9,6 +9,7 @@ FocusScope {
     property int tileSize: Metrics.scaled(152)
     property string username: ""
     property string detail: ""
+    property string errorText: ""
     property color detailColor: Theme.textMuted
     property string badgeIcon: ""
     property bool badgeAlert: false
@@ -37,7 +38,7 @@ FocusScope {
     signal contextRequested
 
     width: tileSize
-    height: tileSize + labelHeight
+    height: tileSize + labelHeight + (errorText.length > 0 ? errorLabel.implicitHeight + Metrics.scaled(8) : 0)
     focus: true
     focusPolicy: Qt.StrongFocus
     Accessible.role: Accessible.Button
@@ -152,6 +153,18 @@ FocusScope {
             horizontalAlignment: Text.AlignHCenter
             maximumLineCount: 1
             elide: Text.ElideRight
+        }
+        AppText {
+            id: errorLabel
+            width: parent.width
+            visible: root.errorText.length > 0
+            text: root.errorText
+            color: Theme.errorText
+            font.pixelSize: Metrics.scaled(13)
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
+            Accessible.role: Accessible.AlertMessage
+            Accessible.name: text
         }
     }
 

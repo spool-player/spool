@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build, check and describe Spool provider packages (.tar.zst, manifest format 2).
+"""Build, check and describe Spool provider packages (.tar.zst, manifest format 3).
 
   spool-provider.py build DIR [--output FILE]     deterministic package from a provider checkout
   spool-provider.py validate FILE                 the same checks Spool runs before installing
@@ -22,7 +22,6 @@ import sys
 import tarfile
 from typing import NoReturn
 
-API = "0.2"
 MAX_ARCHIVE = 16 * 1024 * 1024
 MAX_EXPANDED = 32 * 1024 * 1024
 MAX_FILE = 8 * 1024 * 1024
@@ -30,7 +29,10 @@ MAX_FILES = 512
 EXTENSIONS = {".mjs", ".js", ".qml", ".json", ".png", ".jpg", ".svg", ".webp", ".ttf", ".otf", ".txt", ".md", ".map"}
 QML_IMPORTS = {"QtQuick", "QtQuick.Layouts", "QtQuick.Controls", "QtQml", "QtQml.Models", "Spool"}
 CAPABILITIES = {"search", "userState", "reporting", "segments", "streamQuality", "trickplay", "discovery",
-                "groupPlayback", "remoteControl", "speedTest", "downloads", "downloadTranscode"}
+                "groupPlayback", "remoteControl", "speedTest", "downloads", "downloadTranscode",
+                "artworkOwners", "suggestions", "playbackPreferences", "settingsStorage", "itemActions",
+                "collectionEditing", "playbackQueueReporting", "remoteTargets", "httpMetadata",
+                "originGrants", "lanProbe", "accountActivation"}
 UI_ROLES = {"login", "settings", "picker"}
 ROOTS = ("manifest.json", "LICENSE", "NOTICE", "logic", "ui", "assets")
 NATIVE_MAGIC = (b"\x7fELF", b"MZ", b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\0asm")
@@ -66,8 +68,11 @@ def validate(files: dict[str, bytes]) -> dict:
         manifest = json.loads(files["manifest.json"])
     except (KeyError, ValueError):
         fail("manifest.json is missing or not JSON")
-    if not isinstance(manifest, dict) or manifest.get("format") != 2 or manifest.get("api") != API:
-        fail(f"manifest must declare format 2 and api {API}")
+    if (not isinstance(manifest, dict) or type(manifest.get("format")) not in (int, float)
+            or manifest["format"] != 3):
+        fail("manifest must declare format 3")
+    if "api" in manifest or "extensions" in manifest:
+        fail("manifest.api and manifest.extensions are not part of format 3")
     for key in ("id", "name", "version", "entry"):
         if not isinstance(manifest.get(key), str) or not manifest[key].strip():
             fail(f"manifest.{key} is required")
@@ -87,18 +92,16 @@ def validate(files: dict[str, bytes]) -> dict:
     for role, path in ui.items():
         if path not in files or not path.endswith(".qml"):
             fail(f"manifest.ui.{role} names a missing QML file")
-    unknown = set(manifest.get("capabilities", [])) - CAPABILITIES
-    if unknown:
-        fail(f"unknown capabilities: {sorted(unknown)}")
-    extensions = manifest.get("extensions", {})
-    if not isinstance(extensions, dict) or len(extensions) > 32:
-        fail("manifest.extensions must be an object with at most 32 declarations")
-    for extension, major in extensions.items():
-        if len(extension) > 128 or not ID.fullmatch(extension):
-            fail("manifest.extensions ids must be namespaced and at most 128 characters")
-        if (type(major) not in (int, float) or not 1 <= major <= 2147483647
-                or int(major) != major):
-            fail("manifest.extensions versions must be exact positive wire-major integers")
+    capabilities = manifest.get("capabilities")
+    if not isinstance(capabilities, list) or len(capabilities) > len(CAPABILITIES):
+        fail("manifest.capabilities must be an array with at most 24 declarations")
+    declared = set()
+    for capability in capabilities:
+        if not isinstance(capability, str) or capability not in CAPABILITIES:
+            fail("manifest.capabilities must contain only known capability names")
+        if capability in declared:
+            fail(f"duplicate capability: {capability}")
+        declared.add(capability)
     for origin in manifest.get("origins", []):
         if origin != "*" and not re.fullmatch(r"https?://[^/\s]+", origin):
             fail(f"origins are scheme://host[:port] or *: {origin}")
@@ -179,7 +182,7 @@ def build(source: pathlib.Path, output: pathlib.Path | None) -> pathlib.Path:
 def feed(path: pathlib.Path, url: str) -> dict:
     manifest, _ = read(path)
     data = path.read_bytes()
-    entry = {key: manifest[key] for key in ("id", "name", "version", "api", "summary", "publisher", "homepage")
+    entry = {key: manifest[key] for key in ("format", "id", "name", "version", "summary", "publisher", "homepage")
              if manifest.get(key)}
     entry.update(url=url, size=len(data), sha256=hashlib.sha256(data).hexdigest())
     return entry

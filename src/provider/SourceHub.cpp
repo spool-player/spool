@@ -409,9 +409,9 @@ SourceHub::SourceHub(ProviderRegistry *registry, QObject *parent)
     const auto supportChanged = [this](const QString& account) {
         if (account == m_itemActionsAccount)
             cancelItemActions();
-        emit extensionSupportChanged(account);
+        emit capabilitySupportChanged(account);
     };
-    connect(registry, &ProviderRegistry::extensionsChanged, this, supportChanged);
+    connect(registry, &ProviderRegistry::capabilitiesChanged, this, supportChanged);
     connect(registry, &ProviderRegistry::sourceStopped, this, supportChanged);
     connect(registry, &ProviderRegistry::restoredChanged, this, [this] {
         // Nothing to wait for: announce the empty state so the shell moves on.
@@ -529,7 +529,7 @@ void SourceHub::addSource(Provider *provider)
     connect(provider, &Provider::sourceEvent, this, [this, accountId](const QString& type, const QVariantMap& payload) {
         if (type == QStringLiteral("remoteChanged")) {
             const auto target = payload.value(QStringLiteral("targetId"));
-            if (m_registry->extensionVersion(accountId, QStringLiteral("spool.remote-targets")) != 1
+            if (!m_registry->hasCapability(accountId, QStringLiteral("remoteTargets"))
                 || target.metaType().id() != QMetaType::QString || target.toString().isEmpty()
                 || target.toString().size() > 1024)
                 return;
@@ -540,8 +540,7 @@ void SourceHub::addSource(Provider *provider)
         if (type == QStringLiteral("playbackQueueStatus")) {
             const QString state = payload.value(QStringLiteral("state")).toString();
             const QString revision = payload.value(QStringLiteral("revision")).toString();
-            if (m_registry->extensionVersion(accountId, QStringLiteral("spool.playback-queue-reporting")) != 1
-                || revision.isEmpty()
+            if (!m_registry->hasCapability(accountId, QStringLiteral("playbackQueueReporting")) || revision.isEmpty()
                 || revision != m_queueSnapshots.value(accountId).value(QStringLiteral("revision")).toString()
                 || (state != QStringLiteral("preparing") && state != QStringLiteral("ready")
                     && state != QStringLiteral("unavailable")))
@@ -599,7 +598,7 @@ void SourceHub::syncBrowse()
             entry.browse = browse;
             if (entry.accountId == m_itemActionsAccount)
                 cancelItemActions();
-            emit extensionSupportChanged(entry.accountId);
+            emit capabilitySupportChanged(entry.accountId);
         }
     }
     if (changed) {
@@ -732,7 +731,7 @@ QVariantList SourceHub::baselineItemActions(const QString& itemId, const QString
     const auto owner = std::find_if(accounts.begin(), accounts.end(), [&](const auto& a) { return a.id == account; });
     const ProviderModule *module = owner == accounts.end() ? nullptr : m_registry->module(owner->module);
     QVariantList actions;
-    if (!module || module->manifest.extensions.contains(QStringLiteral("spool.item-actions")))
+    if (!module || module->manifest.capabilities.contains(QStringLiteral("itemActions")))
         return actions;
     for (const QVariant& value : module->manifest.actions) {
         const QVariantMap action = value.toMap();
@@ -751,15 +750,15 @@ QCoro::Task<QVariantList> SourceHub::fetchItemActions(
         throw std::runtime_error("source_unavailable");
     if (!containerId.isEmpty() && accountOf(containerId) != account)
         throw std::runtime_error("mixed_source_collection");
-    if (m_registry->extensionVersion(account, QStringLiteral("spool.item-actions")) != 1)
+    if (!m_registry->hasCapability(account, QStringLiteral("itemActions")))
         co_return baselineItemActions(itemId, itemType);
     QVariantMap args { { QStringLiteral("itemId"), rawId(itemId) }, { QStringLiteral("itemType"), itemType } };
     if (!containerId.isEmpty())
         args.insert(QStringLiteral("containerId"), rawId(containerId));
     if (!entryId.isEmpty())
         args.insert(QStringLiteral("entryId"), entryId);
-    const auto result = co_await m_registry->callExtension(account, QStringLiteral("spool.item-actions"),
-        QStringLiteral("itemActions"), std::move(args), std::move(scope));
+    const auto result
+        = co_await m_registry->callSource(account, QStringLiteral("itemActions"), std::move(args), std::move(scope));
     const auto actions = result.value(QStringLiteral("actions")).toList();
     if (result.value(QStringLiteral("actions")).metaType().id() != QMetaType::QVariantList)
         throw std::runtime_error("invalid_item_actions");
@@ -876,32 +875,32 @@ bool SourceHub::collectionEditingAvailable(const QString& containerId) const
 {
     const auto account = accountOf(containerId);
     return source(account) && accountEnabled(account)
-        && m_registry->extensionVersion(account, QStringLiteral("spool.collection-editing")) == 1;
+        && m_registry->hasCapability(account, QStringLiteral("collectionEditing"));
 }
 
 QCoro::Task<QVariantMap> SourceHub::collectionCall(QString containerId, QString operation, QVariantMap arguments)
 {
     if (!collectionEditingAvailable(containerId))
-        throw std::runtime_error("unsupported_extension");
+        throw std::runtime_error("unsupported_capability");
     if (operation != QStringLiteral("collectionInfo") && operation != QStringLiteral("collectionRemove")
         && operation != QStringLiteral("collectionMove"))
-        throw std::runtime_error("unsupported_extension");
+        throw std::runtime_error("unsupported_capability");
     arguments.insert(QStringLiteral("containerId"), rawId(containerId));
-    co_return co_await m_registry->callExtension(accountOf(containerId), QStringLiteral("spool.collection-editing"),
-        std::move(operation), std::move(arguments), QStringLiteral("collection-editor"));
+    co_return co_await m_registry->callSource(
+        accountOf(containerId), std::move(operation), std::move(arguments), QStringLiteral("collection-editor"));
 }
 
 QCoro::Task<PagedMovieItems> SourceHub::collectionEntries(QString containerId, std::optional<QString> cursor)
 {
     if (!collectionEditingAvailable(containerId))
-        throw std::runtime_error("unsupported_extension");
+        throw std::runtime_error("unsupported_capability");
     const QString account = accountOf(containerId);
     QVariantMap args { { QStringLiteral("containerId"), rawId(containerId) }, { QStringLiteral("limit"), 50 } };
     if (cursor)
         args.insert(QStringLiteral("cursor"), *cursor);
     QPointer<SourceHub> guard(this);
-    auto page = co_await m_registry->callExtensionMediaPage(account, QStringLiteral("spool.collection-editing"),
-        QStringLiteral("collectionEntries"), std::move(args), 50, QStringLiteral("collection-editor"));
+    auto page = co_await m_registry->callSourceMediaPage(
+        account, QStringLiteral("collectionEntries"), std::move(args), 50, QStringLiteral("collection-editor"));
     if (!guard)
         throw std::runtime_error("cancelled");
     PagedMovieItems result;

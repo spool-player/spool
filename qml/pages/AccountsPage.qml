@@ -20,7 +20,6 @@ FocusScope {
     readonly property string onboardingId: String(routeArgs.onboarding || "")
 
     property string pendingAccountId: ""
-    property string attemptedPerson: ""
     property string notice: ""
     property var menuPerson: null
     property string startupMenuSet: ""
@@ -88,6 +87,8 @@ FocusScope {
 
     function stateOf(entry) {
         const rows = entry ? entry.accounts : []
+        if (rows.some(account => account.removing))
+            return "removing"
         if (rows.some(account => account.pending))
             return "pending"
         if (rows.some(account => account.running && account.enabled))
@@ -107,6 +108,8 @@ FocusScope {
 
     function stateLabel(state) {
         switch (state) {
+        case "removing":
+            return "Removing…"
         case "pending":
             return "Opening…"
         case "active":
@@ -129,23 +132,11 @@ FocusScope {
         return failing ? String(failing.errorText) : ""
     }
 
-    // The single line under the title: what is happening, or what went wrong
-    // with the person in question. Tiles carry only a short state.
-    readonly property var focusedPerson: {
-        const item = activeTile()
-        return item ? person(item.personKey) : null
-    }
     readonly property string statusText: {
         const pending = pendingAccountId.length > 0 ? personOf(pendingAccountId) : null
         if (pending)
-            return "Opening " + pending.label + "… Complete any PIN request, or go back to cancel."
-        return statusError.length > 0 ? statusError : notice
-    }
-    readonly property string statusError: {
-        if (pendingAccountId.length > 0)
-            return ""
-        const failed = focusedPerson && errorOf(focusedPerson).length > 0 ? focusedPerson : person(attemptedPerson)
-        return errorOf(failed)
+            return "Opening " + pending.label + "… Complete any PIN request, or cancel."
+        return notice
     }
 
     Connections {
@@ -156,7 +147,10 @@ FocusScope {
             root.pendingAccountId = ""
             const entry = root.personOf(accountId)
             if (selected) {
-                root.attemptedPerson = ""
+                if (root.onboardingId.length > 0 && entry && entry.accounts.some(account => account.onboarding)) {
+                    root.onboardingAsked = true
+                    return
+                }
                 if (root.startupMode && Providers.startupChoicePending) {
                     root.notice = "Now choose who's watching on the next server."
                     return
@@ -164,7 +158,6 @@ FocusScope {
                 root.shell.goHome()
                 return
             }
-            root.attemptedPerson = entry ? entry.key : ""
             // A removed profile needs no explanation; a cancelled one does.
             if (entry && root.errorOf(entry).length === 0) {
                 const section = root.sections.find(candidate => candidate.key === entry.set)
@@ -178,15 +171,20 @@ FocusScope {
         if (!entry || pendingAccountId.length > 0)
             return
         notice = ""
-        attemptedPerson = entry.key
         const state = stateOf(entry)
+        if (state === "removing")
+            return
         if (state === "pending")
             return
         if (state === "signIn") {
-            shell.openProviderScreen(Providers.beginSetup(entry.moduleId))
+            shell.openProviderScreen(Providers.beginSetup(entry.moduleId, entry.accounts[0].id, "reconnect"))
             return
         }
         if (state === "active") {
+            if (onboardingId.length > 0 && entry.accounts.some(account => account.onboarding)) {
+                onboardingAsked = true
+                return
+            }
             shell.goHome()
             return
         }
@@ -205,6 +203,8 @@ FocusScope {
 
     function personActions(entry) {
         const state = stateOf(entry)
+        if (state === "removing")
+            return []
         const actions = []
         if (state === "pending")
             actions.push({
@@ -248,7 +248,7 @@ FocusScope {
         if (action === "cancel")
             entry.accounts.forEach(account => Providers.cancelActivation(account.id))
         else if (action === "signIn")
-            shell.openProviderScreen(Providers.beginSetup(entry.moduleId))
+            shell.openProviderScreen(Providers.beginSetup(entry.moduleId, entry.accounts[0].id, "reconnect"))
         else if (action === "open")
             openPerson(entry)
         else if (action === "settings")
@@ -264,12 +264,14 @@ FocusScope {
         const options = []
         if (active)
             options.push({
-                             label: "Always use " + active.label,
+                             label: "Always use " + active.label + (active.accounts.some(account
+                                                                                         => account.startupDefault)
+                                                                    ? " ✓" : ""),
                              mode: "always",
                              account: active.accounts.find(account => account.running).id
                          })
         options.push({
-                         label: "Ask who's watching",
+                         label: "Choose a profile at startup" + (section && section.startupMode === "ask" ? " ✓" : ""),
                          mode: "ask",
                          account: section ? section.people[0].accounts[0].id : ""
                      })
@@ -278,17 +280,19 @@ FocusScope {
 
     function startupText(section) {
         if (section.startupMode === "ask")
-            return "At startup: ask who's watching"
+            return "At startup: choose a profile"
         const pinned = section.people.find(entry => entry.accounts.some(account => account.startupDefault))
         if (section.startupMode === "always" && pinned)
             return "At startup: " + pinned.label
-        return "At startup: last profile used"
+        return "Choose startup behavior"
     }
 
     // Focus moves between real items: each section offers a row of header
     // controls and a row of people, and the page ends with Add server.
     function focusRows() {
         const rows = []
+        if (cancelButton.visible)
+            rows.push([cancelButton])
         for (let i = 0; i < sectionRepeater.count; ++i) {
             const section = sectionRepeater.itemAt(i)
             if (!section)
@@ -463,6 +467,11 @@ FocusScope {
         }
         if (cancelPending())
             return true
+        if (startupMode && Providers.startupChoicePending) {
+            notice = "Choose a profile before opening Home."
+            focusInitial()
+            return true
+        }
         if (startupMode || onboardingId.length > 0) {
             if (onboardingId.length > 0)
                 Providers.finishOnboarding(onboardingId)
@@ -503,17 +512,16 @@ FocusScope {
             focusInitial()
     }
 
-    onOnboardingReadyChanged: maybeAskOnboarding()
+    onOnboardingReadyChanged: if (onboardingReady)
+                                  Qt.callLater(focusInitial)
     Component.onCompleted: {
         Qt.callLater(focusInitial)
         Qt.callLater(maybeAskOnboarding)
     }
 
     function maybeAskOnboarding() {
-        if (!onboardingReady || onboardingAsked)
-            return
-        onboardingAsked = true
-        focusStop(tileFor(onboardingPerson.key))
+        if (onboardingReady)
+            focusStop(tileFor(onboardingPerson.key))
     }
 
     function answerOnboarding(mode) {
@@ -548,7 +556,7 @@ FocusScope {
             AppText {
                 Layout.fillWidth: true
                 Layout.topMargin: Metrics.scaled(12)
-                text: root.startupMode ? "Who's watching?" : "Profiles & servers"
+                text: root.startupMode || root.onboardingId.length > 0 ? "Who's watching?" : "Profiles & servers"
                 font.pixelSize: Metrics.titleSizePx
                 font.weight: Font.DemiBold
                 horizontalAlignment: Text.AlignHCenter
@@ -556,8 +564,10 @@ FocusScope {
 
             AppText {
                 Layout.fillWidth: true
-                text: root.startupMode ? "Choose a profile for each server that asks. Other servers are already open." :
-                                         "One person watches on each server at a time. Independent servers appear on Home together."
+                text: root.onboardingId.length > 0 ? "Select your watching profile, then choose how Spool starts." :
+                                                     root.startupMode
+                                                     ? "Choose a profile for each server that asks. Other servers are already open." :
+                                                       "One person watches on each server at a time. Independent servers appear on Home together."
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.WordWrap
                 color: Theme.textSecondary
@@ -574,7 +584,7 @@ FocusScope {
                     text: root.statusText
                     wrapMode: Text.WordWrap
                     horizontalAlignment: Text.AlignHCenter
-                    color: root.statusError.length > 0 ? Theme.errorText : Theme.textSecondary
+                    color: Theme.textSecondary
                     Accessible.role: Accessible.StaticText
                     Accessible.name: text
                 }
@@ -610,55 +620,63 @@ FocusScope {
                         return tiles
                     }
 
-                    RowLayout {
+                    ColumnLayout {
                         Layout.fillWidth: true
                         spacing: Metrics.scaled(12)
-
-                        ProviderIcon {
-                            Layout.preferredWidth: Metrics.scaled(36)
-                            Layout.preferredHeight: Metrics.scaled(36)
-                            source: sectionItem.modelData.iconUrl
-                            name: sectionItem.modelData.providerName
-                            seed: sectionItem.modelData.moduleId
-                        }
-                        ColumnLayout {
+                        RowLayout {
                             Layout.fillWidth: true
-                            spacing: 0
-                            AppText {
-                                Layout.fillWidth: true
-                                text: sectionItem.modelData.title
-                                font.pixelSize: Metrics.bodySizePx + 4
-                                font.weight: Font.DemiBold
-                                elide: Text.ElideRight
+                            spacing: Metrics.scaled(12)
+
+                            ProviderIcon {
+                                Layout.preferredWidth: Metrics.scaled(36)
+                                Layout.preferredHeight: Metrics.scaled(36)
+                                source: sectionItem.modelData.iconUrl
+                                name: sectionItem.modelData.providerName
+                                seed: sectionItem.modelData.moduleId
                             }
-                            SecondaryText {
+                            ColumnLayout {
                                 Layout.fillWidth: true
-                                text: sectionItem.modelData.subtitle
-                                elide: Text.ElideRight
+                                spacing: 0
+                                AppText {
+                                    Layout.fillWidth: true
+                                    text: sectionItem.modelData.title
+                                    font.pixelSize: Metrics.bodySizePx + 4
+                                    font.weight: Font.DemiBold
+                                    elide: Text.ElideRight
+                                }
+                                SecondaryText {
+                                    Layout.fillWidth: true
+                                    text: sectionItem.modelData.subtitle
+                                    elide: Text.ElideRight
+                                }
                             }
                         }
-                        ActionButton {
-                            id: startupButton
-                            readonly property string focusKey: "startup:" + sectionItem.modelData.key
-                            onActiveFocusChanged: if (activeFocus)
-                                                      root.lastFocus = focusKey
-                            visible: sectionItem.modelData.profiles
-                            kind: "flat"
-                            iconName: "power_settings_new"
-                            text: root.startupText(sectionItem.modelData)
-                            onClicked: root.openStartupMenu(sectionItem.modelData, startupButton)
-                        }
-                        ActionButton {
-                            id: addProfileButton
-                            readonly property string focusKey: "add:" + sectionItem.modelData.key
-                            onActiveFocusChanged: if (activeFocus)
-                                                      root.lastFocus = focusKey
-                            visible: sectionItem.modelData.profiles
-                            kind: "flat"
-                            iconName: "person_add"
-                            text: "Add profile"
-                            onClicked: root.shell.openProviderScreen(Providers.beginSetup(
-                                                                         sectionItem.modelData.moduleId))
+                        Flow {
+                            Layout.fillWidth: true
+                            spacing: Metrics.scaled(12)
+                            ActionButton {
+                                id: startupButton
+                                readonly property string focusKey: "startup:" + sectionItem.modelData.key
+                                onActiveFocusChanged: if (activeFocus)
+                                                          root.lastFocus = focusKey
+                                kind: "flat"
+                                iconName: "power_settings_new"
+                                text: root.startupText(sectionItem.modelData)
+                                onClicked: root.openStartupMenu(sectionItem.modelData, startupButton)
+                            }
+                            ActionButton {
+                                id: addProfileButton
+                                readonly property string focusKey: "add:" + sectionItem.modelData.key
+                                onActiveFocusChanged: if (activeFocus)
+                                                          root.lastFocus = focusKey
+                                visible: sectionItem.modelData.profiles
+                                kind: "flat"
+                                iconName: "person_add"
+                                text: "Add profile"
+                                onClicked: root.shell.openProviderScreen(Providers.beginSetup(
+                                                                             sectionItem.modelData.moduleId,
+                                                                             sectionItem.modelData.people[0].accounts[0].id))
+                            }
                         }
                     }
 
@@ -683,6 +701,7 @@ FocusScope {
                                 tileSize: Metrics.scaled(Metrics.laneAtLeast(root.width, "regular") ? 120 : 96)
                                 focused: activeFocus && Metrics.keyboardFocusActive
                                 username: modelData.label
+                                errorText: root.errorOf(modelData)
                                 detail: {
                                     const label = root.stateLabel(tile.profileState)
                                     // One person can span several servers of an activation family.
@@ -698,6 +717,7 @@ FocusScope {
                                                                               ? "error_outline" : ""
                                 badgeAlert: tile.profileState === "failed" || tile.profileState === "signIn"
                                 busy: tile.profileState === "pending" || tile.profileState === "starting"
+                                      || tile.profileState === "removing"
                                 opacity: tile.profileState === "active" || tile.profileState === "pending" ? 1 : 0.85
                                 onAccepted: {
                                     root.focusStop(tile)
@@ -740,7 +760,7 @@ FocusScope {
             anchorItem: root.menuAnchor
             title: root.menuPerson ? root.menuPerson.label : "At startup"
             options: actions.map(action => action.label)
-            currentIndex: 0
+            currentIndex: root.menuPerson ? 0 : Math.max(0, actions.findIndex(action => action.label.endsWith(" ✓")))
             onSelected: index => {
                 const action = actions[index]
                 const anchor = root.menuAnchor
@@ -770,7 +790,7 @@ FocusScope {
             message: "Open " + root.onboardingPerson.label + " on " + (section ? section.title : "this server")
                      + " every time, or ask who's watching first? You can change this here later."
             cancelText: "Not now"
-            alternativeText: "Ask at startup"
+            alternativeText: "Choose a profile at startup"
             confirmText: "Always use " + root.onboardingPerson.label
             focusConfirm: true
             onAccepted: root.answerOnboarding("always")

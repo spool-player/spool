@@ -1,5 +1,5 @@
 #include "ProviderPackage.h"
-#include "ProviderExtensions.h"
+#include "ProviderCapabilityContract.h"
 
 #include "../../third_party/zstd/bounded_zstd.h"
 
@@ -140,7 +140,8 @@ std::optional<ProviderManifest> ProviderManifest::parse(const QByteArray& json, 
         fail(error, QStringLiteral("manifest.json is not a JSON object"));
         return std::nullopt;
     }
-    if (root.value(QStringLiteral("format")).toInt() != 2 || string(root, "api") != QStringLiteral("0.2")) {
+    if (!root.value(QStringLiteral("format")).isDouble() || root.value(QStringLiteral("format")).toDouble() != 3
+        || root.contains(QStringLiteral("api")) || root.contains(QStringLiteral("extensions"))) {
         fail(error, QStringLiteral("This provider was built for a different version of Spool"));
         return std::nullopt;
     }
@@ -155,16 +156,24 @@ std::optional<ProviderManifest> ProviderManifest::parse(const QByteArray& json, 
     manifest.icon = string(root, "icon");
     manifest.entry = string(root, "entry");
     manifest.homepage = string(root, "homepage");
-    if (root.contains(QStringLiteral("extensions"))) {
-        try {
-            manifest.extensions = ProviderExtensions::decode(root.value(QStringLiteral("extensions")).toVariant());
-        } catch (const std::runtime_error&) {
-            fail(error, QStringLiteral("manifest.extensions is invalid (invalid_extensions)"));
+    const QJsonValue declared = root.value(QStringLiteral("capabilities"));
+    if (!declared.isArray() || declared.toArray().size() > 24) {
+        fail(error, QStringLiteral("manifest.capabilities is invalid (invalid_capabilities)"));
+        return std::nullopt;
+    }
+    for (const QJsonValue& value : declared.toArray()) {
+        if (!value.isString()) {
+            fail(error, QStringLiteral("manifest.capabilities is invalid (invalid_capabilities)"));
             return std::nullopt;
         }
-    }
-    for (const QJsonValue& value : root.value(QStringLiteral("capabilities")).toArray())
         manifest.capabilities.append(value.toString());
+    }
+    try {
+        ProviderCapabilityContract::declarations(manifest.capabilities);
+    } catch (const std::runtime_error&) {
+        fail(error, QStringLiteral("manifest.capabilities is invalid (invalid_capabilities)"));
+        return std::nullopt;
+    }
     for (const QJsonValue& value : root.value(QStringLiteral("origins")).toArray())
         manifest.origins.append(value.toString());
     const QJsonObject ui = root.value(QStringLiteral("ui")).toObject();

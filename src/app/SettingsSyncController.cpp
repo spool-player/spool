@@ -16,8 +16,8 @@
 namespace Spool {
 namespace {
     namespace Doc = SettingsSyncDocument;
-    const QString Preferences = QStringLiteral("spool.playback-preferences");
-    const QString Storage = QStringLiteral("spool.settings-storage");
+    const QString Preferences = QStringLiteral("playbackPreferences");
+    const QString Storage = QStringLiteral("settingsStorage");
     const QString DocumentId = QStringLiteral("278fca80-aaf9-4d32-8458-388836790234");
     const QString Scope = QStringLiteral("settings-sync");
     QString stateKey(const QString& account)
@@ -78,7 +78,7 @@ SettingsSyncController::SettingsSyncController(
     });
     connect(registry, &ProviderRegistry::accountsChanged, this, &SettingsSyncController::reconcileAccounts);
     connect(registry, &ProviderRegistry::restoredChanged, this, &SettingsSyncController::reconcileAccounts);
-    connect(registry, &ProviderRegistry::extensionsChanged, this, [this](const QString& account) {
+    connect(registry, &ProviderRegistry::capabilitiesChanged, this, [this](const QString& account) {
         if (account == m_accountId) {
             invalidate();
             m_settings->cancelRemoteApplications({}, false);
@@ -152,11 +152,10 @@ QVariantList SettingsSyncController::accounts() const
         const auto id = row.value(QStringLiteral("id")).toString();
         const auto *module = m_registry->module(row.value(QStringLiteral("moduleId")).toString());
         const bool declared = module
-            && (module->manifest.extensions.value(Preferences).toInt() == 1
-                || module->manifest.extensions.value(Storage).toInt() == 1);
+            && (module->manifest.capabilities.contains(Preferences) || module->manifest.capabilities.contains(Storage));
         row.insert(QStringLiteral("syncSupported"),
             row.value(QStringLiteral("connectionState")).toString() == QStringLiteral("active")
-                ? m_registry->extensionVersion(id, Preferences) == 1 || m_registry->extensionVersion(id, Storage) == 1
+                ? m_registry->hasCapability(id, Preferences) || m_registry->hasCapability(id, Storage)
                 : declared);
         row.insert(QStringLiteral("syncLabel"),
             row.value(QStringLiteral("providerName")).toString() + QStringLiteral(" — ")
@@ -562,7 +561,7 @@ void SettingsSyncController::selectAccount(const QString& id)
     m_deferred.clear();
     m_nativeKnown = false;
     m_nativeWritable.clear();
-    m_storageAvailable = m_registry->extensionVersion(id, Storage) == 1;
+    m_storageAvailable = m_registry->hasCapability(id, Storage);
     m_lastConnectionState.clear();
     m_problem.clear();
     m_nativeProblem.clear();
@@ -650,15 +649,14 @@ void SettingsSyncController::reconcileAccounts()
             if (state == QStringLiteral("starting")) {
                 const auto *module = m_registry->module(row.value(QStringLiteral("moduleId")).toString());
                 if (module
-                    && (module->manifest.extensions.value(Preferences).toInt() == 1
-                        || module->manifest.extensions.value(Storage).toInt() == 1))
+                    && (module->manifest.capabilities.contains(Preferences)
+                        || module->manifest.capabilities.contains(Storage)))
                     break;
                 continue;
             }
             const auto id = row.value(QStringLiteral("id")).toString();
             if (state == QStringLiteral("active")
-                && (m_registry->extensionVersion(id, Preferences) == 1
-                    || m_registry->extensionVersion(id, Storage) == 1)) {
+                && (m_registry->hasCapability(id, Preferences) || m_registry->hasCapability(id, Storage))) {
                 selectAccount(id);
                 break;
             }
@@ -671,7 +669,7 @@ void SettingsSyncController::reconcileAccounts()
                 continue;
             found = true;
             const auto state = row.value(QStringLiteral("connectionState")).toString();
-            m_storageAvailable = m_registry->extensionVersion(m_accountId, Storage) == 1;
+            m_storageAvailable = m_registry->hasCapability(m_accountId, Storage);
             if (state != m_lastConnectionState) {
                 invalidate();
                 m_lastConnectionState = state;
@@ -929,7 +927,7 @@ QCoro::Task<void> SettingsSyncController::cycle(Token token)
     co_await m_settings->recoverUnfinishedApplications();
     if (!guard || !current(token))
         co_return;
-    if (m_registry->extensionVersion(m_accountId, Preferences) == 1) {
+    if (m_registry->hasCapability(m_accountId, Preferences)) {
         try {
             co_await nativeCycle(token);
         } catch (const std::exception& error) {
@@ -971,8 +969,7 @@ QCoro::Task<void> SettingsSyncController::nativeCycle(Token token)
     for (const auto& spec : settingSpecs())
         if (spec.nativePreference[0])
             readGenerations.insert(QString::fromLatin1(spec.key), keyGeneration(QString::fromLatin1(spec.key)));
-    const auto response
-        = co_await m_registry->callExtension(m_accountId, Preferences, QStringLiteral("preferencesRead"), {}, Scope);
+    const auto response = co_await m_registry->callSource(m_accountId, QStringLiteral("preferencesRead"), {}, Scope);
     if (!guard || !current(token))
         co_return;
     m_nativeKnown = true;
@@ -1039,12 +1036,11 @@ QCoro::Task<void> SettingsSyncController::nativeCycle(Token token)
     }
     if (writeValues.isEmpty())
         co_return;
-    co_await m_registry->callExtension(m_accountId, Preferences, QStringLiteral("preferencesWrite"),
-        { { QStringLiteral("values"), writeValues } }, Scope);
+    co_await m_registry->callSource(
+        m_accountId, QStringLiteral("preferencesWrite"), { { QStringLiteral("values"), writeValues } }, Scope);
     if (!guard || !current(token))
         co_return;
-    const auto readback
-        = co_await m_registry->callExtension(m_accountId, Preferences, QStringLiteral("preferencesRead"), {}, Scope);
+    const auto readback = co_await m_registry->callSource(m_accountId, QStringLiteral("preferencesRead"), {}, Scope);
     if (!guard || !current(token))
         co_return;
     const auto actual = readback.value(QStringLiteral("values")).toMap();
@@ -1149,7 +1145,7 @@ SettingsSyncController::Entries SettingsSyncController::documentToWrite(const En
 QCoro::Task<void> SettingsSyncController::storageCycle(Token token)
 {
     QPointer<SettingsSyncController> guard(this);
-    const auto info = co_await m_registry->callExtension(m_accountId, Storage, QStringLiteral("dataInfo"), {}, Scope);
+    const auto info = co_await m_registry->callSource(m_accountId, QStringLiteral("dataInfo"), {}, Scope);
     if (!guard || !current(token))
         co_return;
     const auto maximum = std::min<qsizetype>(Doc::MaximumBytes, info.value(QStringLiteral("maxBytes")).toInt());
@@ -1159,8 +1155,8 @@ QCoro::Task<void> SettingsSyncController::storageCycle(Token token)
     QMap<QString, quint64> readGenerations;
     for (const auto& spec : settingSpecs())
         readGenerations.insert(QString::fromLatin1(spec.key), keyGeneration(QString::fromLatin1(spec.key)));
-    auto response = co_await m_registry->callExtension(
-        m_accountId, Storage, QStringLiteral("dataRead"), { { QStringLiteral("key"), DocumentId } }, Scope);
+    auto response = co_await m_registry->callSource(
+        m_accountId, QStringLiteral("dataRead"), { { QStringLiteral("key"), DocumentId } }, Scope);
     if (!guard || !current(token))
         co_return;
     const auto decode = [maximum](const QVariantMap& data) {
@@ -1207,7 +1203,7 @@ QCoro::Task<void> SettingsSyncController::storageCycle(Token token)
                     args.insert(QStringLiteral("expectedRevision"), QVariant::fromValue(nullptr));
             }
             try {
-                co_await m_registry->callExtension(m_accountId, Storage, QStringLiteral("dataWrite"), args, Scope);
+                co_await m_registry->callSource(m_accountId, QStringLiteral("dataWrite"), args, Scope);
             } catch (const std::exception& error) {
                 if (!conditional || !QString::fromUtf8(error.what()).contains(QStringLiteral("conflict")))
                     throw;
@@ -1215,8 +1211,8 @@ QCoro::Task<void> SettingsSyncController::storageCycle(Token token)
             }
             if (!guard || !current(token))
                 co_return;
-            response = co_await m_registry->callExtension(
-                m_accountId, Storage, QStringLiteral("dataRead"), { { QStringLiteral("key"), DocumentId } }, Scope);
+            response = co_await m_registry->callSource(
+                m_accountId, QStringLiteral("dataRead"), { { QStringLiteral("key"), DocumentId } }, Scope);
             if (!guard || !current(token))
                 co_return;
             observed = decode(response);

@@ -11,7 +11,7 @@
 
 namespace Spool {
 
-// manifest.json, format 2. Everything the host needs to list, install and
+// manifest.json, format 3. Everything the host needs to list, install and
 // mount a provider without running any of its code.
 struct ProviderManifest {
     QString id;
@@ -23,8 +23,6 @@ struct ProviderManifest {
     QString entry;
     QString homepage;
     QStringList capabilities;
-    // Optional exact wire-major versions; unsupported declarations remain visible.
-    QVariantMap extensions;
     // Origins every account may reach besides the ones it was configured
     // with; "*" allows any HTTP(S) origin.
     QStringList origins;

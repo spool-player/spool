@@ -463,19 +463,21 @@ KeyRouter {
     function applyInitializedRoute() {
         if (!Providers.restored)
             return
+        // A recovered page must never bypass a server's startup viewer choice.
+        if (Providers.startupChoicePending) {
+            Router.finishRecovery()
+            Router.reset("accounts", {
+                             "startup": true
+                         })
+            return
+        }
         if (Router.recoveryPending) {
             if (root.restoreRecoveredRoute())
                 return
             if (root.signedIn)
                 return
         }
-        // Startup asks who is watching only on servers set to ask.
-        if (root.signedIn && Providers.startupChoicePending)
-            Router.reset("accounts", {
-                             "startup": true
-                         })
-        else
-            Router.reset(root.defaultRoute())
+        Router.reset(root.defaultRoute())
     }
 
     // Every platform states its own text rendering rather than inheriting a
@@ -632,6 +634,14 @@ KeyRouter {
     }
 
     function goHome() {
+        if (Providers.startupChoicePending) {
+            Router.reset("accounts", {
+                             "startup": true
+                         })
+            navigationTarget = routeStack
+            InputKeys.focus(routeStack)
+            return
+        }
         Router.reset("home")
         App.goHome()
         navigationTarget = routeStack
@@ -1072,9 +1082,9 @@ KeyRouter {
                 // window lane; top and bottom can briefly coexist and leave the
                 // bar stretched across the viewport.
                 y: root.navBarAtBottom ? Math.max(0, parent.height - height) : 0
-                height: root.setupRoute ? 0 : Metrics.topBarHeightPx
+                height: root.setupRoute || Providers.startupChoicePending ? 0 : Metrics.topBarHeightPx
                 edge: root.navBarAtBottom ? "bottom" : "top"
-                visible: !root.setupRoute
+                visible: !root.setupRoute && !Providers.startupChoicePending
                 z: 1
                 // Same reason as the height above: the rail marks where you are,
                 // not where you are going, so it does not blink its selection off

@@ -53,8 +53,6 @@ class ProviderStore final : public QObject {
     Q_PROPERTY(bool linksAllowed READ linksAllowed CONSTANT)
 
 public:
-    static constexpr auto kApi = "0.2";
-
     ProviderStore(ProviderRegistry *registry, DatabaseManager *database, QNetworkAccessManager *network,
         QUrl catalogBase, ProviderSources sources = ProviderSources::Open, QObject *parent = nullptr);
 

@@ -53,7 +53,9 @@ QByteArray png(QColor color)
 
 SPOOL_TEST_MAIN("artwork-authentication")
 {
+#if !defined(Q_OS_ANDROID) && !defined(SPOOL_APPLE_MOBILE)
     qputenv("QT_QPA_PLATFORM", "offscreen");
+#endif
     QGuiApplication app(argc, argv);
     using namespace Spool;
     QTemporaryDir directory;
@@ -113,7 +115,7 @@ SPOOL_TEST_MAIN("artwork-authentication")
     require(database.initialize(directory.filePath("cache.sqlite")), "database opens");
     auto package = ProviderFixture::package();
     auto manifest = QJsonDocument::fromJson(package.files.value("manifest.json")).object();
-    manifest.insert("extensions", QJsonObject { { "spool.remote-targets", 1 } });
+    manifest.insert("capabilities", QJsonArray { "remoteTargets" });
     manifest.insert("origins", QJsonArray { origin });
     package.files["manifest.json"] = QJsonDocument(manifest).toJson();
     package.manifest = *ProviderManifest::parse(package.files.value("manifest.json"));
@@ -121,7 +123,7 @@ SPOOL_TEST_MAIN("artwork-authentication")
 export function createSource(config) {
     let remoteRevision = 0;
     return {
-        describe: function() { return {extensions: {'spool.remote-targets': 1}}; },
+        describe: function() { return {capabilities: {remoteTargets: true}}; },
         remoteState: function() {
             const revision = remoteRevision++;
             const token = revision < 2 ? config.token : 'bob-secret';

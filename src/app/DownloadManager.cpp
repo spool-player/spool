@@ -70,6 +70,9 @@ bool DownloadManager::canChooseFolder()
 }
 QString DownloadManager::defaultDestination()
 {
+    const QString configured = qEnvironmentVariable("SPOOL_DATA_HOME");
+    if (!configured.isEmpty())
+        return QDir(configured).filePath(QStringLiteral("downloads"));
     // Mobile application storage requires neither a shared-storage permission
     // nor an expiring document-provider grant. iOS AppData is backup-excluded.
 #if defined(SPOOL_WEBOS) || defined(Q_OS_TVOS)
