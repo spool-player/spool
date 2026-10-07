@@ -72,7 +72,7 @@ for bundle, arguments, expected in checks:
         native_error = next((index for index, line in enumerate(lines)
                              if line.startswith("An error was encountered processing the command")), None)
         if native_error is not None:
-            for line in lines[native_error:native_error + 20]:
+            for line in lines[native_error:]:
                 print(re.sub(r"https?://\S+", "[redacted-url]", line))
         for line in lines:
             if arguments == ["mpv-video-item"] and any(
