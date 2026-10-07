@@ -136,6 +136,11 @@ bool LocalCommandServer::startInternal(const QString& requestedInstance, int tcp
                 m_lock.reset();
                 return false;
             }
+            if (live.error() != QLocalSocket::ConnectionRefusedError) {
+                *error = QStringLiteral("Cannot establish that the reserved control socket is stale");
+                m_lock.reset();
+                return false;
+            }
             // The selected registry/instance lock is held. Remove only its
             // unreachable, owned socket left by an interrupted process.
             if (!QLocalServer::removeServer(endpoint)) {

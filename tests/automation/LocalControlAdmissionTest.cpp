@@ -113,6 +113,17 @@ SPOOL_TEST_MAIN("spoolet-admission")
         require(!control.start(QStringLiteral("admission"), &error), "live socket cannot be replaced");
         require(live.isListening() && QFileInfo::exists(endpoint), "live socket remains intact");
     }
+    if (::geteuid() != 0) {
+        QLocalServer live;
+        live.setSocketOptions(QLocalServer::UserAccessOption);
+        require(live.listen(endpoint), "real permission-denied live endpoint");
+        require(::chmod(QFile::encodeName(endpoint).constData(), 0000) == 0, "deny connections without closing listener");
+        auto control = server();
+        require(!control.start(QStringLiteral("admission"), &error),
+            "an inconclusive access-denied probe cannot authorize socket removal");
+        require(live.isListening() && QFileInfo::exists(endpoint), "unconnectable live socket remains intact");
+        require(::chmod(QFile::encodeName(endpoint).constData(), 0600) == 0, "restore owned test socket permissions");
+    }
     leaveSocket(endpoint);
     {
         auto control = server();

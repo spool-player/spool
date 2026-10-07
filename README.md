@@ -821,9 +821,11 @@ Explicit retry also permits failed, timed-out and start-failed cases, never
 known crashes.
 Use `--config Release` for Xcode or another multi-configuration CMake generator.
 The additional `linux-sanitizers` CI job uses `SPOOL_SANITIZERS=ON` to instrument
-the actual production core and unified native tests. It runs the real
-`bounded-zstd` and `provider-package-unpack` consumers under ASan/UBSan with
-allocator-failure unwind coverage, preserving their supervisor results/logs.
+the actual production core, official upstream libzstd static decoder, and unified
+native tests. It runs `bounded-zstd` and `provider-package-unpack` consumers under
+ASan/UBSan for compressed entropy/checksum corruption and package bounds,
+preserving supervisor results/logs. No educational decoder, private allocator
+probe or test-only decompression context remains.
 It does not replace or exclude the normal host GPU/OpenGL/Vulkan GUI phase.
 Linux CI also runs `spool-tests --child spoolet-admission --require-foreign-owner`
 under `sudo`, using only the selector's private temporary runtime directory to
@@ -866,10 +868,10 @@ binary drives the actual mobile application; `native-spool-e2e-path.txt` in the
 host build directory supplies its generated target path without bundle guesses.
 Device phases run serially because one installed activity/application cannot
 host parallel native processes safely. Native traditional coverage includes
-the real bounded-zstd decoder's compressed, corrupt and truncated inputs.
-Linux additionally intercepts the production allocator to check every observed
-allocation-failure boundary and live-allocation unwind; configure
-`-DSPOOL_SANITIZERS=ON` for its ASan/UBSan run. The supervisor and phase-order tests
+the package consumer's compressed, corrupt, truncated and checksummed inputs
+through the official upstream decoder. Configure `-DSPOOL_SANITIZERS=ON` to
+instrument that static library together with the core and test binaries.
+The supervisor and phase-order tests
 exercise real subprocess crashes, concurrency, resume and CTest barriers.
 Per-selector watchdogs bound hangs without an earlier outer phase deadline
 cancelling unprocessed selectors. webOS cross-builds and unsigned Apple device

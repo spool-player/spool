@@ -416,6 +416,7 @@ int supervise(QCoreApplication& app)
         if (interruptedSignal) {
             // Leave running rows intact: resume records interrupted evidence,
             // not a genuine crash that this supervisor never observed.
+            running.clear();
             std::signal(SIGTERM, previousTerm);
             std::signal(SIGINT, previousInt);
             return 1;
