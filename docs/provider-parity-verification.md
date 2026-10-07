@@ -42,6 +42,18 @@ of the unrelated account leaves the joined group intact. The focused followup
 build and four selectors (`group-playback-policy`, `group-clock`,
 `provider-registry`, `source-hub`) passed.
 
+A subsequent real-display run on a headless Weston compositor exposed
+a harness prerequisite rather than withheld capabilities: at the remote chooser
+boundary Qt reported `ApplicationInactive`, the native window was inactive,
+remote availability was true, no request was busy, and only the local target
+existed. Qt Quick Test also reported that `requestActivate()` had not activated
+the window. Production correctly suppresses discovery while backgrounded.
+The retained integration test now requires actual native window/application
+activation before exercising foreground-only behavior; its original target,
+queue and PIN assertions are unchanged. The updated offscreen contract passed.
+Real GPU/display acceptance still requires the isolated launcher to provide
+working native input/activation; offscreen success does not establish that.
+
 ## Earlier parity verification
 
 Verified again on 2026-09-30 after the provider UI/local-library cutover: the
