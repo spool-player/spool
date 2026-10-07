@@ -66,7 +66,15 @@ for bundle, arguments, expected in checks:
     if not passed:
         # Report only controlled native smoke diagnostics; URLs/auth are absent
         # from these test result lines and provider logs are deliberately omitted.
-        for line in process.stdout.splitlines():
+        lines = process.stdout.splitlines()
+        # simctl rejects a process before any app/provider code runs. Preserve
+        # its nested native launch error, not unrelated application output.
+        native_error = next((index for index, line in enumerate(lines)
+                             if line.startswith("An error was encountered processing the command")), None)
+        if native_error is not None:
+            for line in lines[native_error:native_error + 20]:
+                print(re.sub(r"https?://\S+", "[redacted-url]", line))
+        for line in lines:
             if arguments == ["mpv-video-item"] and any(
                     marker in line for marker in ["[vd]", "[vo/libmpv]", "[libmpv_render", "[ffmpeg/video]",
                                                  "player: render backend"]):
@@ -75,8 +83,7 @@ for bundle, arguments, expected in checks:
                                                 "render context was not ready", "failed to initialize mpv",
                                                 "tvOS audio smoke:", "tvOS credentials smoke:",
                                                 "startup:", "[qml]", "font registration failed:",
-                                                "database initialization failed:", "dyld[",
-                                                "An error was encountered processing the command"]):
+                                                "database initialization failed:", "dyld["]):
                 print(re.sub(r"https?://\S+", "[redacted-url]", line))
         if arguments == ["mpv-video-item"]:
             container = subprocess.check_output(
