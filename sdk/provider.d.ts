@@ -98,7 +98,7 @@ export interface SourceHost {
 export interface OperationHost extends SourceHost {
     /** 0–10000 ms. */
     delay(milliseconds: number): Promise<void>;
-    /** UDP broadcast on the local network; replies within `timeout` ms (100–5000). */
+    /** Requires discovery declaration. UDP broadcast; replies within `timeout` ms (100–5000). */
     discover(options: { port: number; message: string; timeout?: number }): Promise<{ address: string; text: string }[]>;
     /** lanProbe, login draft after allowLanDiscovery consent only.
      * No authentication, cookies, redirects or origin grants. Up to 32 targets,
@@ -109,7 +109,7 @@ export interface OperationHost extends SourceHost {
         cursor: string | null; exhausted: boolean;
     }>;
     /**
-     * Measures on the native provider worker, discarding response bodies.
+     * Requires speedTest declaration. Measures on the native provider worker, discarding response bodies.
      * Same origin/TLS policy as http; no redirects or cookies. Cancelled with
      * this operation. Generated endpoints return exactly the requested bytes;
      * range endpoints must honor the native Range header and Content-Range.

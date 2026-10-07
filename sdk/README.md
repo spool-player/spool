@@ -388,6 +388,10 @@ missing-host notices or compatibility-status operation.
 
 ### Optional network facilities
 
+Native facilities also enforce their package declarations before starting work:
+`host.speedTest` requires `speedTest`, and UDP `host.discover` requires `discovery`.
+These static checks do not replace live account operation guards or consent.
+
 `httpMetadata` allows `host.http` to request up to 16 response-header
 names. Only those lowercase names are returned, with a 64 KiB aggregate bound;
 cookie-setting headers are forbidden. Redirect and cookie policy is unchanged.
