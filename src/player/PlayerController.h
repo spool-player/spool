@@ -18,6 +18,10 @@
 #include <QTimer>
 #include <QVariant>
 
+#ifdef Q_OS_ANDROID
+#include <QFile>
+#endif
+
 #include <atomic>
 #include <utility>
 #include <vector>
@@ -288,8 +292,9 @@ private:
     mpv_handle *takeIdleMpvHandle();
     bool configureAndInitializeMpv(mpv_handle *handle, bool needsVideoSurface, bool embeddedVideo);
     void observeMpvProperties(mpv_handle *handle);
+    void synchronizeWindowFullscreen(mpv_handle *handle);
     void scheduleMpvTeardown();
-    void handleMpvEvent(mpv_event *event, quint64 generation);
+    void handleMpvEvent(mpv_event *event, quint64 generation, mpv_handle *handle);
     template <typename Callback> void postMpvEvent(quint64 generation, Callback callback)
     {
         QMetaObject::invokeMethod(this, [this, generation, callback = std::move(callback)]() mutable {
@@ -342,6 +347,10 @@ private:
     TrickplayService *m_trickplay = nullptr;
     PlaybackSession m_session;
     PlaybackReporter m_reporter;
+#ifdef Q_OS_ANDROID
+    // Declared before the lifecycle so its destructor also runs after mpv's.
+    QFile m_contentPlaybackFile;
+#endif
     MpvLifecycle m_mpvLifecycle;
     quint64 m_mpvTeardownGeneration = 0;
     quint64 m_mpvEventGeneration = 0;
@@ -407,6 +416,7 @@ private:
     QByteArray m_demuxerMaxBytes = QByteArrayLiteral("64M");
     QByteArray m_demuxerMaxBackBytes = QByteArrayLiteral("32M");
     MpvConfigPolicy m_mpvConfigPolicy;
+    quint64 m_fullscreenSyncSerial = 0;
     bool m_activeUserMpvConfig = false;
     TlsTrustController *m_tlsTrust = nullptr;
     const QByteArray m_subtitleFontsPath;

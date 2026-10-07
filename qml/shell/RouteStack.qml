@@ -45,6 +45,8 @@ FocusScope {
             return "openSourceNotices"
         case "settings":
             return "settings"
+        case "settingsSync":
+            return "settingsSync"
         case "subtitleSettings":
             return "subtitleSettings"
         default:
@@ -76,6 +78,8 @@ FocusScope {
             return Qt.resolvedUrl("../pages/OpenSourceNoticesPage.qml")
         case "settings":
             return Qt.resolvedUrl("../pages/SettingsPage.qml")
+        case "settingsSync":
+            return Qt.resolvedUrl("../pages/SettingsSyncPage.qml")
         case "subtitleSettings":
             return Qt.resolvedUrl("../pages/SubtitleSettingsPanel.qml")
         default:

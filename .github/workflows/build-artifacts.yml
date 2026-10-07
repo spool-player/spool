@@ -33,8 +33,13 @@ on:
         required: true
         default: false
         type: boolean
+      build_tvos:
+        description: "Build unsigned Apple TV device IPA and run simulator smoke"
+        required: true
+        default: true
+        type: boolean
       release:
-        description: "Take the release path: sign with the release key and verify the signing identity. Publishes nothing."
+        description: "Use release signing and identity gates where applicable; tvOS remains unsigned. Publishes nothing."
         required: false
         default: false
         type: boolean
@@ -688,6 +693,117 @@ jobs:
             build/macos/app
             ~/Library/Caches/ccache
           key: ${{ steps.macos-build-cache.outputs.cache-primary-key }}
+
+  tvos:
+    name: tvOS (${{ matrix.sdk }} arm64)
+    runs-on: macos-15
+    timeout-minutes: 180
+    needs: [lint, toolchain]
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_tvos }}
+    strategy:
+      fail-fast: false
+      matrix:
+        sdk: [appletvos, appletvsimulator]
+    env:
+      APPLE_SDK: ${{ matrix.sdk }}
+      APPLE_ARCH: arm64
+      APPLE_DEPLOYMENT_TARGET: "16.0"
+      CODE_SIGNING_ALLOWED: "NO"
+      JOBS: "3"
+      BUILD_JOBS: "3"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - name: Install native source-build tools
+        run: brew install cmake ninja meson pkg-config bash python imagemagick gpatch
+      - name: Identify the exact Apple source toolchain
+        id: apple-toolchain
+        run: |
+          set -euo pipefail
+          # No prefix restore: patched source trees and configured cross-builds
+          # must never survive a source, SDK, compiler, or toolchain change.
+          identity="$(
+            {
+              xcodebuild -version
+              xcrun --sdk "$APPLE_SDK" --show-sdk-build-version
+              xcrun --sdk "$APPLE_SDK" --show-sdk-path
+              xcrun --sdk "$APPLE_SDK" clang --version
+              brew list --versions
+              git -C mpv rev-parse HEAD
+            } | shasum -a 256
+          )"
+          echo "key=${identity%% *}" >>"$GITHUB_OUTPUT"
+          echo "QT_HOST_PATH=$GITHUB_WORKSPACE/build/apple/host-qt/${{ needs.toolchain.outputs.qt_version }}/macos" >>"$GITHUB_ENV"
+      - uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
+        id: tvos-source-cache
+        with:
+          path: |
+            build/apple/host-qt
+            build/apple/qmlimportscanner
+            build/apple/downloads
+            build/apple/qt-sources
+            build/apple/sources
+            build/apple/qt-${{ matrix.sdk }}-arm64
+            build/apple/${{ matrix.sdk }}-arm64
+            build/downloads
+          key: tvos-source1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.sdk }}-16.0-${{ steps.apple-toolchain.outputs.key }}-${{ hashFiles('tools/manifests/toolchain.json', 'tools/manifests/android-third-party.json', 'tools/manifests/ffmpeg-capabilities.json', 'tools/apple/**', 'tools/build-tvos.sh', 'tools/ffmpeg-capabilities.py', 'tools/lib/manifest-sources.sh', 'tools/webos-native/patches/qtdeclarative-*-qmlimportscanner-exclude-subtrees.patch', 'third_party/**', 'mpv/meson.build', 'mpv/meson.options') }}
+      - name: Install matching macOS Qt host tools
+        if: ${{ steps.tvos-source-cache.outputs.cache-hit != 'true' }}
+        env:
+          QT_VERSION: ${{ needs.toolchain.outputs.qt_version }}
+        run: |
+          python3 -m venv "$RUNNER_TEMP/aqt"
+          "$RUNNER_TEMP/aqt/bin/pip" install aqtinstall
+          "$RUNNER_TEMP/aqt/bin/aqt" install-qt mac desktop "$QT_VERSION" clang_64 \
+            -O "$GITHUB_WORKSPACE/build/apple/host-qt" \
+            -m qtshadertools qttasktree qtwebsockets qtimageformats
+      - name: Build actual source Qt, media closure, and tvOS app
+        run: bash tools/build-tvos.sh
+      - name: Exercise native Apple TV simulator UI and playback
+        if: ${{ matrix.sdk == 'appletvsimulator' }}
+        run: bash tools/apple/smoke-tvos.sh build/tvos/appletvsimulator-arm64/install/Spool.app
+      - name: Package validated unsigned device IPA
+        if: ${{ matrix.sdk == 'appletvos' }}
+        run: bash tools/package-tvos.sh build/tvos/appletvos-arm64/install/Spool.app dist/tvos
+      - name: Upload only the device release package
+        if: ${{ matrix.sdk == 'appletvos' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: spool-tvos-device-arm64
+          path: dist/tvos/Spool-*-tvOS-arm64.ipa
+          if-no-files-found: error
+          retention-days: ${{ inputs.release && 1 || 7 }}
+      - name: Archive simulator proof without losing executable permissions
+        if: ${{ matrix.sdk == 'appletvsimulator' }}
+        run: |
+          tar -czf "$RUNNER_TEMP/tvos-simulator-arm64.tar.gz" \
+            -C build/tvos/appletvsimulator-arm64 install
+      - name: Keep simulator artifacts internal
+        if: ${{ always() && matrix.sdk == 'appletvsimulator' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: internal-tvos-simulator-arm64
+          path: |
+            ${{ runner.temp }}/tvos-simulator-arm64.tar.gz
+            build/tvos/smoke/*.png
+            build/tvos/smoke/result.json
+          retention-days: ${{ inputs.release && 1 || 7 }}
+      - name: Save coherent Apple dependency cache
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release && steps.tvos-source-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
+        with:
+          path: |
+            build/apple/host-qt
+            build/apple/qmlimportscanner
+            build/apple/downloads
+            build/apple/qt-sources
+            build/apple/sources
+            build/apple/qt-${{ matrix.sdk }}-arm64
+            build/apple/${{ matrix.sdk }}-arm64
+            build/downloads
+          key: ${{ steps.tvos-source-cache.outputs.cache-primary-key }}
 
   webos-ipk:
     name: webOS IPK

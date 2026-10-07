@@ -21,6 +21,11 @@ TestCase {
             id: settingsPage
             anchors.fill: parent
         }
+        Pages.SettingsSyncPage {
+            id: syncPage
+            anchors.fill: parent
+            visible: false
+        }
         Pages.SubtitleSettingsPanel {
             id: subtitlePage
             anchors.fill: parent
@@ -99,16 +104,33 @@ TestCase {
         compare(state("audio/trackMode").status, "synced")
         compare(state("theme/reducedMotion").status, "synced")
 
-        settingsPage.routeKey(Qt.Key_Right, "press", false)
-        compare(settingsPage.navigationMode, "sync-action")
-        settingsPage.activate()
+        // Customization is isolated on the sync page, not a horizontal focus
+        // stop beside every ordinary value editor.
+        settingsPage.visible = false
+        syncPage.visible = true
+        syncPage.forceActiveFocus()
+        syncPage.activateRow(2)
+        verify(syncPage.advancedExpanded)
+        const categoryIndex = syncPage.categories.findIndex(category => category.keys.indexOf("theme/reducedMotion")
+                                                                        >= 0)
+
+        verify(categoryIndex >= 0)
+        syncPage.activateRow(3 + categoryIndex)
         tryVerify(() => !state("theme/reducedMotion").enabled)
-        settingsPage.routeKey(Qt.Key_Left, "press", false)
-        compare(settingsPage.navigationMode, "row")
+        tryVerify(() => SettingsSync.customized)
+        capture("sync-custom-categories")
+        syncPage.visible = false
+        settingsPage.visible = true
         settingsPage.activateRow(settingsPage.currentRow(), settingsPage.currentIndex)
         cycle()
         compare(Settings.values["theme/reducedMotion"], false)
         compare(record("first", "theme/reducedMotion"), true)
+        SettingsSync.resetSettingOverrides()
+        cycle()
+        verify(!SettingsSync.customized)
+        verify(state("theme/reducedMotion").enabled)
+        compare(Settings.values["theme/reducedMotion"], true)
+        verify(!state("playback/maxStreamingHeight").enabled)
 
         // Account replacement during a delayed HTTP snapshot cannot apply A's
         // in-flight response to B or alter the explicitly selected sync source.
@@ -167,6 +189,9 @@ TestCase {
                     selectSetting("theme/reducedMotion")
                     capture("settings-" + suffix)
                     settingsPage.visible = false
+                    syncPage.visible = true
+                    capture("sync-" + suffix)
+                    syncPage.visible = false
                     subtitlePage.visible = true
                     capture("subtitles-" + suffix)
                     if (status === "pending") {
@@ -224,5 +249,25 @@ TestCase {
         mouseClick(findChild(surface.screen, "integrationSubmit"))
         tryVerify(() => Integration.running(Integration.protectedAccount), 10000)
         surface.context = null
+        remotePage.visible = false
+        settingsPage.visible = false
+        subtitlePage.visible = false
+        syncPage.visible = true
+        Metrics.keyboardFocusActive = true
+        SettingsSync.setEnabled(false)
+        syncPage.forceActiveFocus()
+        syncPage.focusEntry()
+        const recovery = findChild(syncPage, "syncRecovery")
+        const syncList = findChild(syncPage, "syncSettingsList")
+        tryCompare(recovery, "activeFocus", true)
+        syncPage.routeKey(Qt.Key_Down, "press", false)
+        tryCompare(syncList, "activeFocus", true)
+        syncList.currentIndex = 0
+        syncPage.routeKey(Qt.Key_Up, "press", false)
+        tryCompare(recovery, "activeFocus", true)
+        syncPage.activate()
+        tryVerify(() => SettingsSync.enabled)
+        cycle()
+        capture("sync-recovered")
     }
 }

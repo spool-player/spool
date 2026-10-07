@@ -72,6 +72,47 @@ no Node or browser globals, and Qt's engine lacks some newer built-ins such as `
 
 This is a reviewed, in-process profile, not a sandbox: install providers you trust.
 
+### Provider logging
+
+Both hosts expose `isLogEnabled(level)` and `log(level, message, fields?)` for
+`trace`, `debug`, `info`, `warn`, and `error`. Messages may be strings or lazy
+zero-argument functions returning strings. The native guard runs before the
+function, field access, conversion, redaction, or JSON encoding. There is no
+`console` shim and providers must not build a separate logger or log sink.
+
+```js
+host.log('debug', function() { return 'Catalogue request completed'; });
+if (host.isLogEnabled('trace')) {
+    host.log('trace', 'Catalogue page', { count: items.length, status: response.status });
+}
+```
+
+Use the guard before expensive formatting or constructing `fields`; JavaScript
+evaluates ordinary arguments before calling `log`. Fields are flat JSON scalars:
+at most 16 identifier-like keys (48 characters), string values up to 256
+characters, and a 1,536-character aggregate budget. Non-scalar fields are ignored.
+Messages exceeding 2,048 UTF-16 units are replaced with a limit marker; final
+native lines are limited to 4,096 units and control characters are flattened.
+
+Logs use the same Qt filtering and application log sink as native diagnostics:
+`spool.provider` maps debug/info/warn/error to Qt debug/info/warning/critical.
+Info and above are enabled by default. Trace uses Qt debug severity on the
+separate, default-off `spool.provider.trace` category, with a `trace:` label.
+For example, `QT_LOGGING_RULES='spool.provider.debug=true;spool.provider.trace.debug=true'`
+enables both diagnostic levels; `spool.provider.info=false` disables info.
+Filters are checked for every call, so no per-provider cached enablement flags.
+
+Spool adds the trusted provider ID and a short opaque account fingerprint, not
+account labels, usernames, server addresses or configuration. URLs, recognizable
+credentials and personal fields are always redacted, even with
+`--unredacted-urls`. Textual Cookie, Set-Cookie and Authorization values are
+redacted in both header lines and quoted JSON, including credentials acquired
+after source creation. Known credentials in source configuration are also removed
+when present as bare message/field text. This is defense in depth, not permission
+to log secrets: never log credentials, cookies, authentication/request/response
+bodies, signed stream URLs, titles or torrent hashes. Use stable event descriptions,
+counts, timing and HTTP status codes instead.
+
 ## Connection speed
 
 Declare `speedTest` when the service offers a bounded download endpoint, then
@@ -167,6 +208,30 @@ bounded endpoint, omit `speedTest`; retain explicit quality/source choices
 instead of inventing a measurement. Per-account measurements are appropriate
 for a fixed media server, not interchangeable across arbitrary stream origins.
 
+## Offline downloads
+
+Declare `downloads` for original media and additionally `downloadTranscode` only
+when the server can produce a finite, complete encoded media file. Implement
+`download({itemId, mode, maxBitrate?, maxHeight?, variantId?}, host)` and return
+`{url, container, headers?, size?, cleanup?}`. `mode` is `original` or `transcoded`;
+encoding is performed by the server, never on the viewer's device. `container`
+is a local-playable media suffix, such as `mp4`, `mkv`, or `flac`.
+
+The endpoint must finish at EOF and contain the whole item from its beginning.
+An HLS/DASH manifest, live resource, or saved online playlist is not a download.
+Progressive finite server endpoints are supported, including responses without
+a known length. The host streams bounded chunks to a temporary file and publishes
+the copy only after success. URLs must be approved account origins; native requests
+reuse account TLS trust, reject redirects, omit cookies, and use only the returned
+headers. Do not put credentials in filenames or metadata.
+
+A provider-owned release/file picker can return `PickRequest`; the host repeats
+`download` with the submitted choice merged in, preserving the selected item,
+mode and quality ceilings. A `cleanup` object is opaque and lives only in memory.
+Implement `downloadRelease({cleanup}, host)` when server-session cleanup is needed;
+it is called on completion, cancellation and failure. Interrupted downloads are
+shown as retryable failures after restart, not silently resumed with stale URLs.
+
 ## Artwork ownership
 
 An image tag belongs to an item, not necessarily the row that displays it.
@@ -186,6 +251,14 @@ HTTP(S) template has one `{index}` substitution. BIF sequences use
 `{format: "bif", url}` with optional `width`/`height`. Pass the whole sequence
 URL, not individual JPEGs: C++ parses its timestamp/offset index and decodes
 the selected frame. Missing server-generated previews mean omit `trickplay`.
+
+`PlaybackContext.videoPreviews` is the global seek-preview preference (default
+true). When false, omit `trickplay` and do not request/prefetch preview-only
+metadata. `details`, `remoteConnect` and `remoteState` receive the same
+`videoPreviews` boolean: skip preview-only metadata and omit `preview` when
+disabled. Metadata required for playback, tracks, or the ordinary catalogue remains independent.
+The native loader immediately cancels active preview work and clears decoded
+frames when the viewer turns previews off.
 
 Both formats use the account's `resolve().headers`; keep tokens out of URLs.
 The native loader prefetches the resume preview, caches bounded preview data
@@ -248,8 +321,8 @@ namespaced IDs of at most 128 characters. Unknown valid IDs or majors do not
 prevent baseline loading; malformed declarations are rejected.
 
 Both source and operation hosts expose the same frozen `host.extensions` map
-of supported declared versions. An older API 0.2 host has no such property:
-treat that as no optional support, never infer it from the application version.
+of supported declared versions. Negotiate exact feature versions from this map,
+never infer support from the application version.
 Return account/server offers in `describe().extensions`; effective support is
 the exact intersection of declarations, host support and account offers.
 `host.emit('extensionsChanged', {extensions})` replaces only that account's
@@ -257,15 +330,14 @@ offers; support loss cancels affected calls and updates controls.
 
 Optional operations are checked before provider execution and fail with
 `unsupported_extension` when unavailable. Providers must also check support.
-New speed-test implementations declare `spool.speed-test` instead of adding
-the old unversioned capability. Inherited artwork owners require
-`spool.artwork-owners`; omit inherited child tags on old hosts while retaining
-own artwork and ordinary series/album fallback.
+Speed-test implementations declare `spool.speed-test`; inherited artwork owners
+require `spool.artwork-owners`. When that feature is unavailable, retain own artwork
+and ordinary series/album fallback without inherited child tags.
 
-Keep `extensionStatus` baseline-callable and ship provider-owned notices for
-old hosts. Missing host features show “Update Spool to use all features of this
-provider.” Server permissions and missing endpoints are separate conditions,
-not reasons to request an application update.
+Provider and host builds are released together against the current prerelease
+contract. Older host compatibility is not supported; do not add aliases or logging
+fallbacks to make current providers run on frozen host glue. Missing declared host
+features and server permission/endpoint failures remain distinct conditions.
 
 ### Optional network facilities
 

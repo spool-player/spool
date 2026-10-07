@@ -26,6 +26,9 @@ class SettingsSyncController final : public QObject {
     Q_PROPERTY(QVariantList accounts READ accounts NOTIFY changed)
     Q_PROPERTY(QVariantMap states READ states NOTIFY changed)
     Q_PROPERTY(QString summary READ summary NOTIFY changed)
+    Q_PROPERTY(QString status READ status NOTIFY changed)
+    Q_PROPERTY(QString problemDetail READ problemDetail NOTIFY changed)
+    Q_PROPERTY(bool customized READ customized NOTIFY changed)
     Q_PROPERTY(bool accountChangePending READ accountChangePending NOTIFY changed)
     Q_PROPERTY(QString pendingAccountId READ pendingAccountId NOTIFY changed)
     Q_PROPERTY(QString accountChangeWarning READ accountChangeWarning NOTIFY changed)
@@ -45,6 +48,9 @@ public:
     QVariantList accounts() const;
     QVariantMap states() const;
     QString summary() const;
+    QString status() const;
+    QString problemDetail() const;
+    bool customized() const;
     bool accountChangePending() const
     {
         return !m_pendingAccountId.isEmpty();
@@ -63,6 +69,8 @@ public:
     Q_INVOKABLE void setAccountId(const QString& accountId);
     Q_INVOKABLE void confirmAccountChange(bool approved);
     Q_INVOKABLE void setSettingEnabled(const QString& key, bool enabled);
+    Q_INVOKABLE void setSettingsEnabled(const QStringList& keys, bool enabled);
+    Q_INVOKABLE void resetSettingOverrides();
     Q_INVOKABLE void retry();
     Q_INVOKABLE void refresh();
     Q_INVOKABLE void setForeground(bool foreground);

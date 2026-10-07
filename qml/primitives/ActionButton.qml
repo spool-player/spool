@@ -16,6 +16,10 @@ T.Control {
     implicitWidth: Math.max(Metrics.scaled(132), buttonContent.implicitWidth + Metrics.scaled(34))
     implicitHeight: Metrics.controlHeightPx
     focusPolicy: Metrics.keyboardFocusActive ? Qt.StrongFocus : Qt.NoFocus
+    Accessible.role: Accessible.Button
+    Accessible.name: text
+    Accessible.onPressAction: if (enabled)
+                                  clicked()
 
     background: Rectangle {
         radius: Theme.radiusMedium

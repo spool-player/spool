@@ -1,5 +1,6 @@
 #pragma once
 
+#include "app/DownloadManager.h"
 #include "app/LocalizationManager.h"
 #include "app/RemoteTargetsController.h"
 #include "app/SettingsController.h"
@@ -112,6 +113,7 @@ public:
             emit changed();
         });
         remote = std::make_unique<Spool::RemoteTargetsController>(hub.get(), registry.get(), nullptr);
+        downloads = std::make_unique<Spool::DownloadManager>(hub.get(), directory.filePath("downloads"));
         QCoro::waitFor(settings->loadLocalAsync());
         QCoro::waitFor(sync->loadLocalAsync());
     }
@@ -123,6 +125,8 @@ public:
         context->setContextProperty("SettingsSync", sync.get());
         context->setContextProperty("Providers", registry.get());
         context->setContextProperty("RemoteTargets", remote.get());
+        context->setContextProperty("Downloads", downloads.get());
+        context->setContextProperty("Sources", hub.get());
         context->setContextProperty("I18n", &localization);
         auto *placeholders = QQmlPropertyMap::create(this);
         placeholders->insert("enabled", false);
@@ -245,6 +249,7 @@ private:
     std::unique_ptr<Spool::SettingsController> settings;
     std::unique_ptr<Spool::SettingsSyncController> sync;
     std::unique_ptr<Spool::RemoteTargetsController> remote;
+    std::unique_ptr<Spool::DownloadManager> downloads;
     QPointer<QObject> context;
     QString first, second, protectedAccount;
     int cycles = 0, delayRead = 0, commands = 0;

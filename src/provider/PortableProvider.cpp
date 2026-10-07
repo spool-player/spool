@@ -1,5 +1,6 @@
 #include "PortableProvider.h"
 
+#include "ProviderLogging.h"
 #include "ProviderRegistry.h"
 
 #include <QCoroFuture>
@@ -192,6 +193,22 @@ public:
         session.mediaStreams.append(externalSubtitles);
         session.segments = segmentsFrom(result.value(QStringLiteral("segments")).toList());
         const QVariantMap trickplay = result.value(QStringLiteral("trickplay")).toMap();
+        const bool previewsEnabled = m_owner->m_playbackContext.value(QStringLiteral("videoPreviews"), true).toBool();
+        if (providerLogEnabled(ProviderLogLevel::Trace)) {
+            const QString format = trickplay.value(QStringLiteral("format")).toString();
+            const bool supported
+                = format.isEmpty() || format == QLatin1String("sprites") || format == QLatin1String("bif");
+            writeProviderLog(ProviderLogLevel::Trace,
+                QStringLiteral("preview metadata item=%1 enabled=%2 availability=%3 format=%4")
+                    .arg(item.id)
+                    .arg(previewsEnabled)
+                    .arg(trickplay.isEmpty() ? QStringLiteral("missing")
+                            : supported      ? QStringLiteral("supported")
+                                             : QStringLiteral("unsupported"))
+                    .arg(format.isEmpty() ? QStringLiteral("sprites")
+                            : supported   ? format
+                                          : QStringLiteral("unknown")));
+        }
         session.trickplay.width = trickplay.value(QStringLiteral("width")).toInt();
         session.trickplay.height = trickplay.value(QStringLiteral("height")).toInt();
         session.trickplay.tileWidth = trickplay.value(QStringLiteral("columns")).toInt();
@@ -330,6 +347,62 @@ QCoro::Task<QVariantMap> PortableProvider::call(QString operation, QVariantMap a
     return m_registry->callSource(m_accountId, std::move(operation), std::move(arguments));
 }
 
+QCoro::Task<DownloadPlan> PortableProvider::negotiateDownload(DownloadRequest request, QString scope)
+{
+    QPointer<PortableProvider> guard(this);
+    QPointer<ProviderRegistry> registry(m_registry);
+    const QString accountId = m_accountId;
+    bool cancelled = false;
+    const auto cancellation = connect(registry, &ProviderRegistry::sourceScopeCancelled, registry,
+        [&cancelled, accountId, scope](const QString& sourceId, const QString& cancelledScope) {
+            if (sourceId == accountId && (cancelledScope.isEmpty() || cancelledScope == scope))
+                cancelled = true;
+        });
+    const auto disconnectCancellation = qScopeGuard([cancellation] { QObject::disconnect(cancellation); });
+    QVariantMap args { { QStringLiteral("itemId"), request.itemId },
+        { QStringLiteral("mode"), request.transcode ? QStringLiteral("transcoded") : QStringLiteral("original") } };
+    if (!request.variantId.isEmpty())
+        args.insert(QStringLiteral("variantId"), request.variantId);
+    if (request.maxBitrate > 0)
+        args.insert(QStringLiteral("maxBitrate"), request.maxBitrate);
+    if (request.maxHeight > 0)
+        args.insert(QStringLiteral("maxHeight"), request.maxHeight);
+    QVariantMap result = co_await registry->callSource(accountId, QStringLiteral("download"), args, scope);
+    if (!guard || !registry)
+        throw std::runtime_error("source_unavailable");
+    if (result.contains(QStringLiteral("pick"))) {
+        if (cancelled)
+            throw std::runtime_error("download_cancelled");
+        const QVariantMap choice
+            = co_await registry->pick(accountId, result.value(QStringLiteral("pick")).toMap(), scope);
+        if (!guard || !registry)
+            throw std::runtime_error("source_unavailable");
+        if (cancelled || choice.isEmpty())
+            throw std::runtime_error("download_cancelled");
+        args.insert(choice);
+        // A picker cannot replace the native-controlled item or quality request.
+        args.insert(QStringLiteral("itemId"), request.itemId);
+        args.insert(
+            QStringLiteral("mode"), request.transcode ? QStringLiteral("transcoded") : QStringLiteral("original"));
+        args.remove(QStringLiteral("maxBitrate"));
+        args.remove(QStringLiteral("maxHeight"));
+        if (request.maxBitrate > 0)
+            args.insert(QStringLiteral("maxBitrate"), request.maxBitrate);
+        if (request.maxHeight > 0)
+            args.insert(QStringLiteral("maxHeight"), request.maxHeight);
+        result = co_await registry->callSource(accountId, QStringLiteral("download"), args, scope);
+    }
+    co_return DownloadPlan { QUrl(result.value(QStringLiteral("url")).toString()),
+        result.value(QStringLiteral("container")).toString().toLower(), result.value(QStringLiteral("headers")).toMap(),
+        result.value(QStringLiteral("size"), -1).toLongLong(), result.value(QStringLiteral("cleanup")).toMap() };
+}
+
+QCoro::Task<void> PortableProvider::releaseDownload(QVariantMap cleanup)
+{
+    if (!cleanup.isEmpty())
+        co_await call(QStringLiteral("downloadRelease"), { { QStringLiteral("cleanup"), cleanup } });
+}
+
 QCoro::Task<ProviderMediaPage> PortableProvider::listPage(
     QString operation, QVariantMap arguments, int limit, std::optional<QString> cursor, QString scope)
 {
@@ -440,7 +513,9 @@ QCoro::Task<PagedMovieItems> PortableProvider::fetchBrowsePage(
 
 QCoro::Task<MovieItem> PortableProvider::fetchItemDetails(QString itemId)
 {
-    return m_registry->callSourceItem(m_accountId, QStringLiteral("details"), { { QStringLiteral("itemId"), itemId } });
+    return m_registry->callSourceItem(m_accountId, QStringLiteral("details"),
+        { { QStringLiteral("itemId"), itemId },
+            { QStringLiteral("videoPreviews"), m_playbackContext.value(QStringLiteral("videoPreviews"), true) } });
 }
 
 QCoro::Task<std::vector<MovieItem>> PortableProvider::fetchSeasons(QString seriesId)

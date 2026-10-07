@@ -3,7 +3,6 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import "../theme"
 import "../primitives"
-import "../shell" as Shell
 import "SettingsNavigation.js" as SettingsNavigation
 
 FocusScope {
@@ -38,31 +37,6 @@ FocusScope {
     property string navigationMode: "row"
     property string editingKey: ""
     property var editingInitialValue
-    readonly property var syncAccounts: {
-        const result = []
-        const accounts = SettingsSync.accounts
-        for (let index = 0; index < accounts.length; ++index)
-            if (accounts[index].syncSupported || accounts[index].id === SettingsSync.accountId)
-                result.push(accounts[index])
-        return result
-    }
-    readonly property string syncSourceLabel: {
-        const accounts = SettingsSync.accounts
-        for (let index = 0; index < accounts.length; ++index)
-            if (accounts[index].id === SettingsSync.accountId)
-                return String(accounts[index].syncLabel)
-        return SettingsSync.accountId.length ? "Selected account unavailable" : "No sync account"
-    }
-
-    function syncState(row) {
-        return row ? SettingsSync.states[row.key] || null : null
-    }
-
-    function hasSync(row) {
-        const state = syncState(row)
-        return Boolean(state && state.eligible)
-    }
-
     function beginRowEdit(row) {
         if (!row || editingKey === row.key)
             return
@@ -80,16 +54,6 @@ FocusScope {
         SettingsSync.endEdit(key, Settings.values[key] !== editingInitialValue)
     }
 
-    function toggleSync(row) {
-        const state = syncState(row)
-        if (state && state.eligible)
-            SettingsSync.setSettingEnabled(row.key, !state.enabled)
-    }
-
-    function reconcileSyncFocus() {
-        navigationMode = SettingsNavigation.normalizeSyncMode(navigationMode, hasSync(currentRow()))
-    }
-
     ListModel {
         id: settingsRows
     }
@@ -97,6 +61,10 @@ FocusScope {
     function rowAvailable(row) {
         if (row.key === "action/connectionSpeed" && !ProviderCapabilities.speedTest)
             return false
+        if (row.key === "action/downloadDestination")
+            return Downloads.supported && !Downloads.mobile && Downloads.canChooseFolder
+        if (row.key === "action/mobileDownloadDestination")
+            return Downloads.supported && Downloads.mobile && Downloads.canChooseFolder
         return SettingsNavigation.rowAvailable(row, Platform, Player.hdrPlayback, function (key) {
             return settingsValue({
                                      "key": key,
@@ -174,29 +142,6 @@ FocusScope {
         }
         if (group.length > 0)
             appendVisibleGroup(visibleRows, group, groupEntries)
-        const reachable = SettingsNavigation.subtitleReachableKeys(Settings.settingsSchema, Platform, Player.hdrPlayback,
-                                                                   function (key) {
-                                                                       return Settings.values[key]
-                                                                   })
-        for (let index = 0; index < allSettingsRows.length; ++index) {
-            const row = rowsByKey[allSettingsRows[index].rowKey]
-            if (rowAvailable(row))
-                reachable.push(row.key)
-        }
-        const extra = SettingsNavigation.extraSyncRows(Settings.settingsSchema, Platform, reachable)
-        visibleRows.push({
-                             "rowKey": "action/settingsSyncRetry",
-                             "showHeader": true,
-                             "advanced": false,
-                             "sourceIndex": allSettingsRows.length * 2 + 1
-                         })
-        for (let index = 0; index < extra.length; ++index)
-            visibleRows.push({
-                                 "rowKey": "sync-only/" + extra[index].key,
-                                 "showHeader": false,
-                                 "advanced": false,
-                                 "sourceIndex": allSettingsRows.length * 2 + 2 + index
-                             })
         return visibleRows
     }
 
@@ -206,35 +151,15 @@ FocusScope {
         const schema = Settings.settingsSchema
         const rowMap = {}
         const sourceRows = []
-        rowMap["settingsSync/enabled"] = {
-            "key": "settingsSync/enabled",
-            "group": "Appearance",
-            "title": "Sync settings",
-            "description": "Use one account to synchronize settings between devices",
-            "type": "toggle"
-        }
-        rowMap["settingsSync/accountId"] = {
-            "key": "settingsSync/accountId",
-            "group": "Appearance",
-            "title": "Sync account",
+        rowMap["action/settingsSync"] = {
+            "key": "action/settingsSync",
+            "group": "Accounts",
+            "title": "Settings sync",
             "description": "",
-            "type": "select"
-        }
-        rowMap["action/settingsSyncRetry"] = {
-            "key": "action/settingsSyncRetry",
-            "group": "More sync controls",
-            "title": "Retry settings sync",
-            "description": "Refresh the selected account and retry pending changes",
             "type": "action"
         }
         for (let index = 0; index < schema.length; ++index) {
             const row = schema[index]
-            if (row.syncPolicy === "portable" || row.syncPolicy === "device")
-                rowMap["sync-only/" + row.key] = Object.assign({}, row, {
-                                                                   "type": "sync-only",
-                                                                   "valueType": row.type,
-                                                                   "group": "More sync controls"
-                                                               })
             if (row.group === "Subtitle Appearance" || row.key === "settings/audioDelayMs")
                 continue
             rowMap[row.key] = row
@@ -244,20 +169,13 @@ FocusScope {
                                 "group": row.group,
                                 "sourceIndex": index * 2
                             })
-            if (row.key === "i18n/locale") {
+            if (row.key === "action/accounts")
                 sourceRows.push({
-                                    "rowKey": "settingsSync/enabled",
+                                    "rowKey": "action/settingsSync",
                                     "detailLevel": 0,
-                                    "group": "Appearance",
-                                    "sourceIndex": index * 2 + 0.5
-                                })
-                sourceRows.push({
-                                    "rowKey": "settingsSync/accountId",
-                                    "detailLevel": 0,
-                                    "group": "Appearance",
+                                    "group": row.group,
                                     "sourceIndex": index * 2 + 1
                                 })
-            }
             const key = disclosureKey(row.group)
             if (!rowMap[key]) {
                 rowMap[key] = {
@@ -313,7 +231,6 @@ FocusScope {
         if (SettingsNavigation.indexForRowKey(nextRows, targetKey) < 0 && nextRows.length > 0)
             targetKey = nextRows[0].rowKey
         reconcileSettingsRows(nextRows, targetKey, false)
-        reconcileSyncFocus()
     }
 
     function currentRow() {
@@ -368,10 +285,6 @@ FocusScope {
 
     function settingsValue(row) {
         switch (row.key) {
-        case "settingsSync/enabled":
-            return SettingsSync.enabled
-        case "settingsSync/accountId":
-            return SettingsSync.accountId
         case "subtitles/language":
             return Settings.subtitleLanguageIndex
         case "audio/language":
@@ -383,12 +296,15 @@ FocusScope {
     }
 
     function rowDescription(row) {
-        if (row.key === "settingsSync/accountId")
-            return syncSourceLabel
-        if (row.type === "sync-only")
-            return "Value editor is available during playback or when its related options are enabled"
+        if (row.key === "action/settingsSync")
+            return SettingsSync.summary
         if (row.key === "action/connectionSpeed")
             return App.connectionSpeedDescription
+        if (row.key === "action/downloads")
+            return Downloads.jobs.length ? Downloads.jobs.length + " downloads · Play saved files offline" :
+                                           "Manage downloads and play saved files offline"
+        if (row.key === "action/downloadDestination" || row.key === "action/mobileDownloadDestination")
+            return Downloads.destination + " · Applies only to new downloads"
         if (row.key === "action/accounts") {
             const count = Providers.accounts.length
             return count === 1 ? "1 account" : count + " accounts"
@@ -422,26 +338,14 @@ FocusScope {
     }
 
     function rowValueText(row) {
-        if (row.type === "sync-only") {
-            if (row.valueType === "toggle")
-                return Boolean(settingsValue(row)) ? "On" : "Off"
-            if (row.valueType === "select") {
-                const options = rowOptions(row)
-                const index = rowCurrentIndex(row)
-                const value = Settings.values[row.key]
-                const values = rowChoiceValues(row)
-                if (values.some(function (choice) {
-                    return String(choice) === String(value)
-                }))
-                    return options[index] || String(value)
-                return String(value === undefined ? row.defaultValue : value)
-            }
-            return String(settingsValue(row)) + String(row.unitText || "")
-        }
-        if (row.key === "action/settingsSyncRetry")
-            return SettingsSync.busy ? "Syncing" : "Retry"
+        if (row.key === "action/settingsSync")
+            return "Manage"
         if (row.key === "action/connectionSpeed")
             return "Measure again"
+        if (row.key === "action/downloads")
+            return "Manage"
+        if (row.key === "action/downloadDestination" || row.key === "action/mobileDownloadDestination")
+            return "Change…"
         if (row.key === "action/accounts" || row.key === "action/providers")
             return "Manage"
         if (row.key === "action/openSourceNotices" || row.key === "action/exportDiagnostics" || row.key
@@ -458,10 +362,6 @@ FocusScope {
     }
 
     function rowOptions(row) {
-        if (row.key === "settingsSync/accountId")
-            return syncAccounts.map(function (account) {
-                return String(account.syncLabel)
-            })
         if (row.key === "i18n/locale") {
             const result = []
             for (let index = 0; index < I18n.availableLocales.length; ++index)
@@ -476,10 +376,6 @@ FocusScope {
     }
 
     function rowChoiceValues(row) {
-        if (row.key === "settingsSync/accountId")
-            return syncAccounts.map(function (account) {
-                return String(account.id)
-            })
         if (row.key === "i18n/locale")
             return I18n.availableLocales
         if (row.key === "subtitles/language" || row.key === "audio/language")
@@ -504,12 +400,6 @@ FocusScope {
 
     function setRowValue(row, value, index) {
         switch (row.key) {
-        case "settingsSync/enabled":
-            SettingsSync.setEnabled(Boolean(value))
-            break
-        case "settingsSync/accountId":
-            SettingsSync.setAccountId(String(value))
-            break
         case "subtitles/language":
             Settings.setSubtitleLanguageIndex(index)
             break
@@ -570,14 +460,18 @@ FocusScope {
             return
         }
         if (row.type === "action") {
-            if (row.key === "action/settingsSyncRetry") {
-                SettingsSync.retry()
-                return
-            }
-            if (row.key === "action/accounts" && shell)
+            if (row.key === "action/settingsSync" && shell)
+                shell.pushRoute("settingsSync")
+            else if (row.key === "action/accounts" && shell)
                 shell.pushRoute("accounts")
             else if (row.key === "action/providers" && shell)
                 shell.pushRoute("addProvider")
+            else if (row.key === "action/downloads" && shell)
+                shell.openDownloads("", settingsList)
+            else if ((row.key === "action/downloadDestination" || row.key === "action/mobileDownloadDestination")
+                     && shell)
+
+                shell.openDownloads("", settingsList, true)
             else if (row.key === "action/manageCertificates")
                 certificateManagerVisible = true
             else if (row.key === "action/clearLatencyStatistics")
@@ -647,8 +541,7 @@ FocusScope {
         choiceDialogAnchor = null
         choiceDialogRow = null
         Qt.callLater(function () {
-            if (!SettingsSync.accountChangePending)
-                selectRow(currentIndex, true)
+            selectRow(currentIndex, true)
         })
     }
 
@@ -660,13 +553,8 @@ FocusScope {
     }
 
     function back() {
-        if (SettingsSync.accountChangePending) {
-            SettingsSync.confirmAccountChange(false)
-            InputKeys.focus(settingsList)
-            return true
-        }
         if (navigationMode !== "row")
-            return routeSyncAction("back")
+            return routeAction("back")
         if (certificateManagerVisible) {
             certificateManagerVisible = false
             InputKeys.focus(settingsList)
@@ -695,13 +583,11 @@ FocusScope {
         return false
     }
 
-    function routeSyncAction(action) {
+    function routeAction(action) {
         const row = currentRow()
         const previousMode = navigationMode
-        const route = SettingsNavigation.syncRoute(navigationMode, action, hasSync(row), Boolean(row && (row.type
-                                                                                                         === "slider"
-                                                                                                         || row.type
-                                                                                                         === "text")))
+        const route = SettingsNavigation.valueRoute(navigationMode, action, Boolean(row && (row.type === "slider"
+                                                                                            || row.type === "text")))
         navigationMode = route.mode
         if (previousMode === "value-editing" && route.mode !== "value-editing") {
             const control = rowControlAt(currentIndex)
@@ -713,9 +599,6 @@ FocusScope {
             finishRowEdit()
         }
         switch (route.effect) {
-        case "toggle-sync":
-            toggleSync(row)
-            return true
         case "begin-edit":
             beginRowEdit(row)
             if (row && row.type === "text") {
@@ -749,8 +632,6 @@ FocusScope {
     }
 
     function routeKey(key, phase, repeat) {
-        if (SettingsSync.accountChangePending)
-            return syncConfirmation.item ? syncConfirmation.item.routeKey(key, phase, repeat) : true
         if (certificateManagerVisible)
             return certificateManagerLoader.item.routeKey(key, phase, repeat)
         if (choiceDialogVisible)
@@ -758,22 +639,17 @@ FocusScope {
         if (phase === "release" && InputKeys.isDirection(key))
             return true
         if (key === Qt.Key_Right)
-            return routeSyncAction("right")
+            return routeAction("right")
         if (key === Qt.Key_Left)
-            return routeSyncAction("left")
+            return routeAction("left")
         if (key === Qt.Key_Up)
-            return routeSyncAction("up")
+            return routeAction("up")
         if (key === Qt.Key_Down)
-            return routeSyncAction("down")
+            return routeAction("down")
         return false
     }
 
     function activate() {
-        if (SettingsSync.accountChangePending) {
-            if (syncConfirmation.item)
-                syncConfirmation.item.activate()
-            return
-        }
         if (certificateManagerVisible) {
             certificateManagerLoader.item.activate()
             return
@@ -781,7 +657,7 @@ FocusScope {
         if (choiceDialogVisible)
             choiceDialog.activate()
         else
-            routeSyncAction("activate")
+            routeAction("activate")
     }
 
     focus: true
@@ -833,12 +709,6 @@ FocusScope {
         firstIndex: 0
         lastIndex: 0
     }
-    Connections {
-        target: SettingsSync
-        function onChanged() {
-            root.reconcileSyncFocus()
-        }
-    }
 
     Connections {
         target: Settings
@@ -889,7 +759,7 @@ FocusScope {
             root.selectedRowKey = currentIndex >= 0 && currentIndex < settingsRows.count ? settingsRows.get(
                                                                                                currentIndex).rowKey : ""
         }
-        onAccepted: index => root.routeSyncAction("activate")
+        onAccepted: index => root.routeAction("activate")
         onEdgeUp: if (root.shell)
                       root.shell.focusNavBar()
         delegate: Column {
@@ -920,83 +790,22 @@ FocusScope {
             Item {
                 width: Math.max(0, parent.width - (settingsDelegate.advanced ? Metrics.scaled(24) : 0))
                 x: settingsDelegate.advanced ? Metrics.scaled(24) : 0
-                height: Math.max(rowLoader.height, rowSync.visible ? rowSync.height : 0)
+                height: rowLoader.height
                 Loader {
                     id: rowLoader
-                    width: Math.max(0, parent.width - (rowSync.visible ? rowSync.width + Metrics.scaled(10) : 0))
+                    width: parent.width
                     readonly property var row: settingsDelegate.rowData
                     readonly property int rowIndex: settingsDelegate.index
                     readonly property bool rowCurrent: settingsDelegate.rowCurrent
-                    sourceComponent: row.key === "settingsSync/accountId" ? syncAccountComponent : row.type
-                                                                            === "toggle" ? toggleComponent : row.type
-                                                                                           === "select"
-                                                                                           ? selectComponent : row.type
-                                                                                             === "slider"
-                                                                                             ? sliderComponent :
-                                                                                               row.type === "text"
-                                                                                               ? textComponent :
-                                                                                                 settingComponent
+                    sourceComponent: row.type === "toggle" ? toggleComponent : row.type === "select" ? selectComponent :
+                                                                                                       row.type
+                                                                                                       === "slider"
+                                                                                                       ? sliderComponent :
+                                                                                                         row.type
+                                                                                                         === "text"
+                                                                                                         ? textComponent :
+                                                                                                           settingComponent
                 }
-                Shell.SettingSyncControl {
-                    id: rowSync
-                    objectName: "sync-" + settingsDelegate.rowKey
-                    anchors.right: parent.right
-                    anchors.verticalCenter: parent.verticalCenter
-                    settingKey: settingsDelegate.rowData.key
-                    settingTitle: settingsDelegate.rowData.title
-                    syncState: root.syncState(settingsDelegate.rowData)
-                    sourceLabel: root.syncSourceLabel
-                    actionFocused: settingsDelegate.rowCurrent && root.navigationMode === "sync-action"
-                    onToggled: {
-                        root.selectRow(settingsDelegate.index, true)
-                        root.navigationMode = "sync-action"
-                        root.toggleSync(settingsDelegate.rowData)
-                    }
-                }
-            }
-            AppText {
-                width: parent.width
-                visible: settingsDelegate.rowData.key === "settingsSync/accountId" || (settingsDelegate.rowCurrent
-                                                                                       && root.hasSync(
-                                                                                           settingsDelegate.rowData))
-                text: settingsDelegate.rowData.key === "settingsSync/accountId" ? SettingsSync.summary :
-                                                                                  root.navigationMode === "sync-action"
-                                                                                  ? "OK toggles sync. Left or Back returns to the setting." :
-                                                                                    root.navigationMode
-                                                                                    === "value-editing"
-                                                                                    ? "Left and Right edit the value. OK or Back finishes editing." :
-                                                                                      settingsDelegate.rowData.type
-                                                                                      === "slider"
-                                                                                      || settingsDelegate.rowData.type
-                                                                                      === "text"
-                                                                                      ? "OK edits the value. Right opens sync controls." :
-                                                                                        "Right opens sync controls."
-                color: Theme.textSecondary
-                font.pixelSize: Metrics.bodySizePx
-                wrapMode: Text.Wrap
-            }
-        }
-    }
-
-    Component {
-        id: syncAccountComponent
-        SettingRow {
-            readonly property var row: parent ? parent.row : null
-            readonly property int rowIndex: parent ? parent.rowIndex : -1
-            width: parent ? parent.width : settingsList.width
-            focus: false
-            focusPolicy: Qt.NoFocus
-            rowFocus: parent ? parent.rowCurrent : false
-            title: "Sync account"
-            description: "Independent of the account used for playback"
-            valueText: root.syncSourceLabel
-            onClicked: {
-                root.selectRow(rowIndex, true)
-                root.activateRow(row, rowIndex)
-            }
-            function move(direction) {
-                root.activateRow(row, rowIndex)
-                return true
             }
         }
     }
@@ -1231,27 +1040,6 @@ FocusScope {
 
         function onDismissed() {
             root.pendingCustomMpvMode = false
-        }
-    }
-
-    Loader {
-        id: syncConfirmation
-        anchors.fill: parent
-        active: SettingsSync.accountChangePending
-        z: 210
-        sourceComponent: ConfirmationDialog {
-            title: "Change settings sync account?"
-            message: SettingsSync.accountChangeWarning
-            confirmText: "Change account"
-            onAccepted: {
-                SettingsSync.confirmAccountChange(true)
-                root.navigationMode = "row"
-                InputKeys.focus(settingsList)
-            }
-            onDismissed: {
-                SettingsSync.confirmAccountChange(false)
-                InputKeys.focus(settingsList)
-            }
         }
     }
 

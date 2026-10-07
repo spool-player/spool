@@ -2,6 +2,7 @@
 
 #include "ArtworkSource.h"
 #include "Catalog.h"
+#include "DownloadSource.h"
 #include "PlaybackSource.h"
 #include "Provider.h"
 #include "SearchSource.h"
@@ -21,7 +22,8 @@ class PortableProvider final : public Provider,
                                public Catalog,
                                public SearchSource,
                                public UserItemStateSink,
-                               public ArtworkSource {
+                               public ArtworkSource,
+                               public DownloadSource {
     Q_OBJECT
 
 public:
@@ -60,6 +62,12 @@ public:
     {
         return this;
     }
+    DownloadSource *downloads() override
+    {
+        return m_capabilities.testFlag(Downloads) ? this : nullptr;
+    }
+    QCoro::Task<DownloadPlan> negotiateDownload(DownloadRequest request, QString scope) override;
+    QCoro::Task<void> releaseDownload(QVariantMap cleanup) override;
     bool ready() const override
     {
         return true;

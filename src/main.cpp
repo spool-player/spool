@@ -20,6 +20,7 @@
 #if !defined(SPOOL_ANDROID) && !defined(SPOOL_WEBOS) && !defined(SPOOL_APPLE_MOBILE)
 #include "automation/LocalCommandServer.h"
 #endif
+#include "app/DownloadManager.h"
 #include "diagnostics/Diagnostics.h"
 #include "diagnostics/InputLatencyMonitor.h"
 #include "diagnostics/RenderBenchmark.h"
@@ -730,6 +731,17 @@ int main(int argc, char **argv)
     }
 #endif
     Spool::SourceHub hub(&providers);
+    Spool::DownloadManager downloads(&hub, Spool::persistentDataRoot(), &tlsTrust);
+    std::unique_ptr<Spool::LocalProvider> offlineLibrary;
+    const auto refreshOfflineLibrary = [&] {
+        hub.removeSource(QStringLiteral("spool-downloads"));
+        offlineLibrary
+            = std::make_unique<Spool::LocalProvider>(QStringLiteral("spool-downloads"), QStringList {}, nullptr,
+                downloads.libraryFiles(), QDir(Spool::persistentDataRoot()).filePath(QStringLiteral("offline-state")));
+        hub.addSource(offlineLibrary.get());
+    };
+    QObject::connect(&downloads, &Spool::DownloadManager::libraryChanged, &app, refreshOfflineLibrary);
+    refreshOfflineLibrary();
     Spool::CollectionEditingController collectionEditing(&hub);
     Spool::ProviderCapabilities providerCapabilities;
     QObject::connect(&hub, &Spool::Provider::capabilitiesChanged, &providerCapabilities,
@@ -787,8 +799,12 @@ int main(int argc, char **argv)
         &Spool::AppController::revokeAccountIdentity);
     controller->attachSettingsSync(&settingsSync);
     controller->settings()->attachSync(&settingsSync);
-    const auto updateTrickplayDecoding = [&trickplay, &remoteTrickplay, settings = controller->settings()] {
+    const auto updateTrickplayDecoding = [&hub, &trickplay, &remoteTrickplay, settings = controller->settings()] {
         const bool accurate = settings->value(QStringLiteral("playback/accurateTrickplay")).toBool();
+        const bool enabled = settings->value(QStringLiteral("playback/seekPreviews")).toBool();
+        hub.setVideoPreviewsEnabled(enabled);
+        trickplay.setEnabled(enabled);
+        remoteTrickplay.setEnabled(enabled);
         trickplay.setAccurateDecoding(accurate);
         remoteTrickplay.setAccurateDecoding(accurate);
     };
@@ -980,6 +996,8 @@ int main(int argc, char **argv)
         &Spool::ApplicationHooks::diagnosticsReportSaved);
     QObject::connect(&applicationHooks, &Spool::ApplicationHooks::toastRequested, controller.get(),
         &Spool::AppController::toastMessage);
+    QObject::connect(
+        &downloads, &Spool::DownloadManager::toastRequested, controller.get(), &Spool::AppController::toastMessage);
     Spool::PlatformApplicationServices platformServices(app, window, applicationHooks, *router);
     platformServices.start();
     QQmlPropertyMap *platformInfo = QQmlPropertyMap::create(&app);
@@ -1018,6 +1036,7 @@ int main(int argc, char **argv)
     qmlRegisterSingletonInstance("Spool", 1, 0, "App", controller.get());
     qmlRegisterSingletonInstance("Spool", 1, 0, "ProviderCapabilities", &providerCapabilities);
     qmlRegisterSingletonInstance("Spool", 1, 0, "Providers", &providers);
+    qmlRegisterSingletonInstance("Spool", 1, 0, "Downloads", &downloads);
     qmlRegisterSingletonInstance("Spool", 1, 0, "Sources", &hub);
     qmlRegisterSingletonInstance("Spool", 1, 0, "CollectionEditing", &collectionEditing);
     qmlRegisterSingletonInstance("Spool", 1, 0, "SettingsSync", &settingsSync);
@@ -1202,7 +1221,7 @@ int main(int argc, char **argv)
 
     QTimer::singleShot(1000, router.get(), [router = router.get()] { router->beginSession(false); });
 #if !defined(SPOOL_ANDROID) && !defined(SPOOL_WEBOS) && !defined(SPOOL_APPLE_MOBILE)
-    Spool::LocalCommandServer localCommands(controller.get(), router.get(), &window);
+    Spool::LocalCommandServer localCommands(controller.get(), router.get(), &window, &downloads, &hub);
     if (!app.arguments().contains(QStringLiteral("--no-local-control"))) {
         QString error;
         const QString instance = optionValue(app.arguments(), QStringLiteral("--instance"), "SPOOL_INSTANCE");

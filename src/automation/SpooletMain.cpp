@@ -36,6 +36,8 @@ QJsonObject help()
                         QStringLiteral("preview SECONDS (actual timeline hover; key up first if controls are hidden)"),
                         QStringLiteral("qualities | quality INDEX"), QStringLiteral("screenshot FILE.png"),
                         QStringLiteral("pointer move|click|press|release|right-click X Y (window logical coordinates)"),
+                        QStringLiteral(
+                            "downloads list | options ITEM_ID | start ITEM_ID INDEX | cancel|retry|remove|play JOB_ID"),
                         QStringLiteral("settings get [KEY] | settings set KEY JSON_VALUE") } },
                 { QStringLiteral("notes"),
                     QStringLiteral(
@@ -127,6 +129,30 @@ int main(int argc, char **argv)
             if (!valid || value < 0)
                 return error(QStringLiteral("Item paging values must be nonnegative integers"));
             args.insert(index == 1 ? QStringLiteral("offset") : QStringLiteral("limit"), value);
+        }
+    } else if (command == QStringLiteral("downloads")) {
+        if (arguments.isEmpty())
+            return error(QStringLiteral("Usage: downloads list|options|start|cancel|retry|remove|play"));
+        const QString action = arguments.takeFirst();
+        args.insert(QStringLiteral("action"), action);
+        if (action == QStringLiteral("list") && count(0, 0)) {
+        } else if (action == QStringLiteral("options") && count(1, 1)) {
+            args.insert(QStringLiteral("itemId"), arguments.first());
+        } else if (action == QStringLiteral("start") && count(2, 2)) {
+            bool valid = false;
+            const int index = arguments.last().toInt(&valid);
+            if (!valid || index < 0 || index > 10000)
+                return error(QStringLiteral("Download option index must be a nonnegative integer"));
+            args.insert(QStringLiteral("itemId"), arguments.first());
+            args.insert(QStringLiteral("index"), index);
+        } else if (QStringList { QStringLiteral("cancel"), QStringLiteral("retry"), QStringLiteral("remove"),
+                       QStringLiteral("play") }
+                       .contains(action)
+            && count(1, 1)) {
+            args.insert(QStringLiteral("jobId"), arguments.first());
+        } else {
+            return error(QStringLiteral(
+                "Usage: downloads list | options ITEM_ID | start ITEM_ID INDEX | cancel|retry|remove|play JOB_ID"));
         }
     } else if (command == QStringLiteral("settings")) {
         if (arguments.isEmpty())

@@ -48,6 +48,8 @@ namespace {
             { QStringLiteral("streamQuality"), Provider::StreamQuality },
             { QStringLiteral("trickplay"), Provider::Trickplay },
             { QStringLiteral("speedTest"), Provider::SpeedTest },
+            { QStringLiteral("downloads"), Provider::Downloads },
+            { QStringLiteral("downloadTranscode"), Provider::DownloadTranscode },
         };
         return names;
     }
@@ -259,8 +261,8 @@ ScriptRuntime *ProviderRegistry::runtimeFor(ProviderModule& module)
 {
     if (!module.runtime && !module.native) {
         const QUrl entry = module.file(module.manifest.entry);
-        module.runtime
-            = new ScriptRuntime(entry.isLocalFile() ? entry.toLocalFile() : entry.toString(), m_device, m_hooks, this);
+        module.runtime = new ScriptRuntime(
+            entry.isLocalFile() ? entry.toLocalFile() : entry.toString(), m_device, m_hooks, this, module.manifest.id);
         const QString id = module.manifest.id;
         connect(module.runtime, &ScriptRuntime::event, this, &ProviderRegistry::handleEvent);
         connect(module.runtime, &ScriptRuntime::interrupted, this, [this, id] { handleInterrupted(id); });
@@ -1099,6 +1101,7 @@ void ProviderRegistry::updateExtensions(const QString& sourceId, QVariantMap off
 
 void ProviderRegistry::cancelSourceScope(const QString& sourceId, const QString& scope)
 {
+    emit sourceScopeCancelled(sourceId, scope);
     cancelNetworkConsent(sourceId, scope);
     auto state = m_running.find(sourceId);
     if (state != m_running.end())
@@ -1604,7 +1607,7 @@ QObject *ProviderRegistry::openPicker(const QString& accountId, const QVariantMa
 }
 
 QCoro::Task<ProviderRegistry::PickerResult> ProviderRegistry::pickResult(
-    QString sourceId, QVariantMap arguments, bool activation)
+    QString sourceId, QVariantMap arguments, bool activation, QString scope)
 {
     ProviderUiContext *context = nullptr;
     if (activation) {
@@ -1620,6 +1623,13 @@ QCoro::Task<ProviderRegistry::PickerResult> ProviderRegistry::pickResult(
     }
     if (!context)
         throw std::runtime_error("picker_unavailable");
+    if (!scope.isEmpty()) {
+        connect(this, &ProviderRegistry::sourceScopeCancelled, context,
+            [context, sourceId, scope](const QString& cancelledSource, const QString& cancelledScope) {
+                if (sourceId == cancelledSource && (cancelledScope.isEmpty() || cancelledScope == scope))
+                    context->close();
+            });
+    }
     QTimer::singleShot(0, context, [this, context] {
         if (!context->closed())
             emit componentRequested(context);
@@ -1630,9 +1640,9 @@ QCoro::Task<ProviderRegistry::PickerResult> ProviderRegistry::pickResult(
     co_return PickerResult { !cancelled, cancelled ? QVariantMap {} : result };
 }
 
-QCoro::Task<QVariantMap> ProviderRegistry::pick(QString accountId, QVariantMap arguments)
+QCoro::Task<QVariantMap> ProviderRegistry::pick(QString accountId, QVariantMap arguments, QString scope)
 {
-    const auto result = co_await pickResult(accountId, arguments);
+    const auto result = co_await pickResult(accountId, arguments, false, scope);
     co_return result.submitted ? result.values : QVariantMap {};
 }
 

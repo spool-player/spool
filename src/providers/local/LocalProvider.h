@@ -30,7 +30,8 @@ class LocalProvider final : public Provider,
     Q_OBJECT
 
 public:
-    LocalProvider(QString accountId, QStringList libraryRoots, QObject *parent = nullptr);
+    LocalProvider(QString accountId, QStringList libraryRoots, QObject *parent = nullptr,
+        QVariantList downloadedFiles = {}, QString stateRoot = {});
     ~LocalProvider() override;
 
     QString id() const override;
@@ -58,8 +59,7 @@ public:
         return true;
     }
 
-    // Reads the folder synchronously; construction already does so off the
-    // GUI thread, so only tests call this.
+    // Re-reads the library synchronously; initial construction scans in the background.
     void scan();
 
     // Catalog, SearchSource, UserItemStateSink
@@ -102,12 +102,16 @@ private:
 
     static std::vector<Record> scanFolders(const QStringList& folders);
     void setRecords(std::vector<Record> records);
+    void restoreState(Record& record) const;
+    void persistState(const Record& record) const;
     const Record *record(const QString& itemId) const;
     Record *record(const QString& itemId);
     std::vector<MovieItem> items(int startIndex, int limit) const;
 
     QString m_accountId;
     QStringList m_roots;
+    QVariantList m_downloadedFiles;
+    QString m_stateRoot;
     QString m_libraryName;
     std::vector<Record> m_records;
     QHash<QString, size_t> m_index;

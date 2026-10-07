@@ -116,6 +116,31 @@ succeeded. Protected profiles that need interaction stay locked on startup.
 Search uses only the viewers selected for Home, never the combined permissions
 of an adult and child profile saved on the same server.
 
+### Offline downloads
+
+Open an item's menu and choose **Download…**. Original media is offered where
+the item's provider supports it; **Server-converted** quality choices appear
+only when that provider offers a complete server-encoded file. Spool never
+encodes media on the device or saves an online playlist as an offline movie.
+**Settings → Downloads** shows preparation, byte progress, completion and
+actionable errors, with Cancel, Retry, Play offline and Remove actions.
+
+Completed media and its local metadata persist across restarts and account
+removal. The built-in **Downloads** LocalProvider library plays the local copy
+without server headers or an active connection; offline resume/played state is
+stored locally. Interrupted operations become retryable failures after restart
+and discard incomplete files. A retry negotiates fresh access with the provider.
+
+Desktop defaults to `Movies/Spool` and has a native folder chooser. On Android,
+the destination control is under Advanced: choose internal/external app storage
+or a Storage Access Framework folder with a persisted read/write grant.
+Document providers must permit creation/rename and provide seekable media;
+revoked grants or unavailable storage surface errors rather than buffering a
+copy into memory. iOS/tvOS use app-managed sandbox storage without an unsupported
+folder chooser; webOS defaults to app-managed writable storage and accepts an
+accessible folder path. Changing destination affects new downloads only.
+Downloaded media can be large: check free space and remove copies when finished.
+
 ### Built-in local automation (`spoolet`)
 
 Native desktop builds also build/install `spoolet`, a small Qt Core/Network CLI
@@ -175,6 +200,8 @@ SPOOLET=./build/linux-release-local-providers/install/bin/spoolet
 # and visual.previewTexture.ready is true, then capture immediately:
 "$SPOOLET" --instance plex-check screenshot /tmp/spool-preview.png
 "$SPOOLET" --instance plex-check settings get
+"$SPOOLET" --instance plex-check settings set playback/seekPreviews false
+"$SPOOLET" --instance plex-check settings set playback/seekPreviews true
 "$SPOOLET" --instance plex-check settings set playback/accurateTrickplay true
 "$SPOOLET" --instance plex-check settings set playback/trickplayPreviewScalePercent 150
 "$SPOOLET" --instance plex-check settings set appearance/uiScalePercent 125
@@ -188,9 +215,28 @@ existing schema validation and persisted user-change transaction. Local UI
 scale changes do not make this device-specific setting remotely syncable.
 Seek preview size is relative to interface scale and does not change the
 server's thumbnail resolution; the two scale settings are independent.
-The CLI exposes only the four settings shown above, not credentials or arbitrary
+The CLI exposes only the five settings shown above, not credentials or arbitrary
 configuration. `state` is a small allowlisted route/playback/visual snapshot,
 not unrestricted QObject inspection or script evaluation.
+
+Download automation uses the same provider negotiation, quality options and
+native transfer manager as the UI:
+
+```sh
+"$SPOOLET" downloads options ACCOUNT_PREFIX:ITEM_ID
+"$SPOOLET" downloads start ACCOUNT_PREFIX:ITEM_ID 0
+"$SPOOLET" downloads list
+"$SPOOLET" downloads cancel JOB_ID
+"$SPOOLET" downloads retry JOB_ID
+"$SPOOLET" downloads play JOB_ID
+"$SPOOLET" downloads remove JOB_ID
+```
+
+Choose the index returned by `downloads options`; zero is Original.
+Starting is asynchronous and can open the provider's edition/stream picker.
+Poll `downloads list` for job state and transferred/total bytes. The output
+excludes destination paths, media URLs, credentials and server cleanup data.
+`downloads play` launches a completed local copy without remote playback relay.
 
 For pointer testing, `pointer press X Y`, frame-paced `pointer move X Y`,
 and `pointer release X Y` perform a real held-button drag; `pointer right-click
@@ -459,6 +505,15 @@ Its footprint does not widen at strong minification, deliberately bounding
 cost; it is not an ideal scale-adaptive low-pass filter for extreme shrinking.
 Software/backend fallback uses that backend's RGB filter, not Lanczos.
 
+**Playback → Seek previews** (`playback/seekPreviews`, default on) controls
+thumbnails globally, including the remote-player timeline. Turning it off
+immediately hides existing previews, cancels preview fetch/decode work, clears
+preview caches, and tells providers to skip preview-only metadata requests.
+Turning it on restores the current descriptor when one is available; a provider
+that omitted metadata while disabled supplies it on the next playback resolve
+or remote-state refresh. The advanced accuracy and size controls are hidden
+while previews are off. This preference persists as a device default.
+
 Local and remote previews share a nominal **320 dp** layout width, independent
 of encoded thumbnail resolution, preserving the actual source aspect ratio
 and fitting the viewport (including the remote page's actual content margins).
@@ -514,6 +569,103 @@ and software/backend fallbacks are explicitly labelled. `upload` messages
 occur on decoded-output replacement, not on same-sheet crop movement.
 
 
+
+## Apple TV
+
+Releases include `Spool-<VERSION>-tvOS-arm64.ipa`, an **unsigned** device build
+for Apple TV running tvOS 16 or later. It contains the real `Payload/Spool.app`,
+but no Apple signing identity or provisioning profile. **tvOS will not install
+it as downloaded.** Spool is not distributed through the App Store or TestFlight
+and has not been reviewed by Apple. If you already have a tvOS re-signing setup,
+use your own certificate, matching entitlements, and provisioning profile; Spool
+does not supply a re-signing command or signing credentials.
+
+### Build the device package
+
+Use a Mac with Xcode and the Apple TV SDK installed. Install the build tools and
+the matching macOS Qt host tools (the version comes only from the shared pin):
+
+```sh
+brew install cmake ninja meson pkg-config bash python imagemagick gpatch
+QT_VERSION="$(python3 -c 'import json; print(json.load(open("tools/manifests/toolchain.json"))["qt"]["version"])')"
+python3 -m venv build/apple/aqt
+build/apple/aqt/bin/pip install aqtinstall
+build/apple/aqt/bin/aqt install-qt mac desktop "$QT_VERSION" clang_64 \
+  -O "$PWD/build/apple/host-qt" \
+  -m qtshadertools qttasktree qtwebsockets qtimageformats
+export QT_HOST_PATH="$PWD/build/apple/host-qt/$QT_VERSION/macos"
+APPLE_SDK=appletvos APPLE_ARCH=arm64 bash tools/build-tvos.sh
+bash tools/package-tvos.sh build/tvos/appletvos-arm64/install/Spool.app dist/tvos
+```
+
+The build compiles the pinned source Qt tvOS port and static media dependencies;
+a desktop Qt kit is only used for matching host generators, never as a target
+SDK. Qt does not list tvOS as an officially supported platform. Target Qt and
+media prefixes live under `build/apple/appletvos-arm64/`; the app lives under
+`build/tvos/appletvos-arm64/install/`. Apple builds enforce bundled-only loading
+and explicit `appleAppStore: true` provider approval; local provider checkout
+overrides are not accepted.
+
+The packager performs no signing. It rejects simulator/wrong-architecture
+binaries, mismatched bundle versions, signed/provisioned bundles, and unsafe
+archive paths before publishing the IPA. Its optional third argument must match
+`VERSION`; the embedded bundle versions must match it too.
+
+### Sign and run from source
+
+1. Add your Apple Account in Xcode's account settings, and pair your Apple TV
+   with the Mac on the same network. On the TV, open **Settings → Remotes and
+   Devices → Remote App and Devices**; use Xcode's **Manage Devices** (or
+   **Window → Devices and Simulators** on older Xcode) to pair it.
+2. Generate the device project using a unique reverse-DNS identifier you control
+   (replace `com.yourname.spool` with your identifier):
+
+   ```sh
+   APPLE_SDK=appletvos APPLE_ARCH=arm64 \
+     APPLE_BUNDLE_IDENTIFIER=com.yourname.spool bash tools/build-tvos.sh
+   open build/tvos/appletvos-arm64/app/SpoolWebOS.xcodeproj
+   ```
+
+   The source build configures the app's bundle identifier and matching Keychain
+   service together; do not manually replace only the generated plist identifier.
+   Select the `spool` application target, not the playback-smoke target.
+3. In the application target's **Build Settings**, set **Code Signing Allowed**
+   to **Yes**. Under **Signing & Capabilities**, enable **Automatically manage
+   signing**, choose your team, and retain the identifier configured above.
+4. Select your paired Apple TV and the `spool` scheme, then **Product → Run**.
+   Xcode creates the development provisioning profile and signs the app using
+   your account. These generated-project changes are local; regenerating the
+   project with the unsigned build command resets its build settings.
+
+Once Xcode has configured your signing identity and provisioning profile,
+command-line device rebuilds can use `CODE_SIGNING_ALLOWED=YES` and
+`APPLE_DEVELOPMENT_TEAM` set to your team ID. Keep `APPLE_BUNDLE_IDENTIFIER`
+set to the same identifier. The public release pipeline does not enable this
+signing path or obtain credentials from your account.
+
+Follow Apple's current [device signing and run directions](https://developer.apple.com/documentation/xcode/running-your-app-on-simulated-or-physical-devices)
+and [device pairing directions](https://developer.apple.com/documentation/xcode/managing-your-simulated-and-physical-devices-in-device-hub).
+Account eligibility, provisioning, and signature expiry are Apple's policies.
+Simulator success is not a claim of physical-device playback or App Store approval.
+
+### Simulator proof and CI artifacts
+
+```sh
+APPLE_SDK=appletvsimulator APPLE_ARCH=arm64 bash tools/build-tvos.sh
+bash tools/apple/smoke-tvos.sh build/tvos/appletvsimulator-arm64/install/Spool.app
+```
+
+The isolated simulator smoke checks the native app UI, video orientation and
+OSD rendering, AudioUnit playback-time advancement and exclusive-session
+behavior, plus a real Keychain roundtrip and sandbox file persistence. It writes
+`result.json` and `simulator.png` under `build/tvos/smoke/`. The multi-platform
+workflow builds both device and simulator on normal branches and PRs under the
+existing duplicate-build policy; manual dispatch can select `build_tvos`. Reusable
+release builds always include both. Dependency caches are exact-keyed to source
+pins, patches, build policy, SDK, architecture, and compiler/build-tool identity;
+PRs restore without publishing caches. Only `spool-tvos-device-arm64` is a public
+release artifact. Simulator apps and smoke results use
+`internal-tvos-simulator-arm64` and are never offered as installable downloads.
 
 ## Android development
 

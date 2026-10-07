@@ -437,6 +437,68 @@ PlaybackSource *SourceHub::playback()
     return m_playback;
 }
 
+QVariantList SourceHub::downloadOptions(const QString& itemId) const
+{
+    const Provider *provider = owner(itemId);
+    if (!provider || !accountEnabled(provider->id()) || !provider->capabilities().testFlag(Downloads))
+        return {};
+    QVariantList options { QVariantMap { { QStringLiteral("label"), QStringLiteral("Original") },
+        { QStringLiteral("mode"), QStringLiteral("original") } } };
+    if (provider->capabilities().testFlag(DownloadTranscode)) {
+        const auto rungs = StreamQualityControl::defaultLadder(0);
+        for (size_t index = 0; index < rungs.size(); ++index) {
+            const auto& rung = rungs[index];
+            if (rung.height > 1080 || (index + 1 < rungs.size() && rungs[index + 1].height == rung.height))
+                continue;
+            options.push_back(
+                QVariantMap { { QStringLiteral("label"), QStringLiteral("Server-converted · ") + rung.label },
+                    { QStringLiteral("mode"), QStringLiteral("transcoded") },
+                    { QStringLiteral("maxBitrate"), rung.bitrate }, { QStringLiteral("maxHeight"), rung.height } });
+        }
+    }
+    return options;
+}
+
+QCoro::Task<DownloadPlan> SourceHub::negotiateDownload(DownloadRequest request, QString scope)
+{
+    QPointer<Provider> provider = owner(request.itemId);
+    if (!provider || !accountEnabled(provider->id()) || !provider->downloads()
+        || (request.transcode && !provider->capabilities().testFlag(DownloadTranscode)))
+        throw std::runtime_error("download_unavailable");
+    const QString account = provider->id();
+    request.itemId = rawId(request.itemId);
+    DownloadPlan plan = co_await provider->downloads()->negotiateDownload(request, scope);
+    if (!plan.cleanup.isEmpty())
+        plan.cleanup = { { QStringLiteral("account"), account }, { QStringLiteral("payload"), plan.cleanup } };
+    co_return plan;
+}
+
+QCoro::Task<void> SourceHub::releaseDownload(QVariantMap cleanup)
+{
+    const QString account = cleanup.value(QStringLiteral("account")).toString();
+    const QVariantMap payload = cleanup.value(QStringLiteral("payload")).toMap();
+    QPointer<Provider> provider = source(account);
+    if (provider && provider->downloads() && !payload.isEmpty()) {
+        // The registry owns asynchronous call lifetime and source invalidation.
+        if (qobject_cast<PortableProvider *>(provider.data()))
+            co_await m_registry->callSource(
+                account, QStringLiteral("downloadRelease"), { { QStringLiteral("cleanup"), payload } });
+        else
+            co_await provider->downloads()->releaseDownload(payload);
+    }
+}
+
+bool SourceHub::downloadOriginAllowed(const QString& itemId, const QUrl& url) const
+{
+    return source(accountOf(itemId)) && accountEnabled(accountOf(itemId))
+        && m_registry->accountOriginAllowed(accountOf(itemId), url);
+}
+
+void SourceHub::cancelDownloadNegotiation(const QString& itemId, const QString& scope)
+{
+    m_registry->cancelSourceScope(accountOf(itemId), scope);
+}
+
 bool SourceHub::ready() const
 {
     return m_registry->restored();
@@ -933,6 +995,14 @@ void SourceHub::setPlaybackQueue(std::vector<ReportingQueueEntry> items, int ind
     }
 }
 
+void SourceHub::setVideoPreviewsEnabled(bool enabled)
+{
+    if (m_videoPreviewsEnabled == enabled)
+        return;
+    m_videoPreviewsEnabled = enabled;
+    pushPlaybackContext();
+}
+
 void SourceHub::pushPlaybackContext()
 {
     // The viewer's pick in the player wins over the standing preference.
@@ -941,6 +1011,7 @@ void SourceHub::pushPlaybackContext()
     context.insert(QStringLiteral("maxHeight"), m_height);
     context.insert(QStringLiteral("videoCodecs"), m_videoCodecs);
     context.insert(QStringLiteral("restrictVideoCodecs"), m_restrictVideoCodecs);
+    context.insert(QStringLiteral("videoPreviews"), m_videoPreviewsEnabled);
     for (const Entry& entry : std::as_const(m_entries)) {
         if (auto *portable = qobject_cast<PortableProvider *>(entry.provider.data())) {
             context.insert(QStringLiteral("measuredBitrate"), entry.measuredBitrate);
@@ -1398,6 +1469,8 @@ ArtworkSource::ImageResource SourceHub::resolveImage(const QUrl& url) const
     if (entry == m_entries.cend() || !entry->provider)
         return {};
     if (url.path().startsWith(QLatin1String("/preview/"))) {
+        if (!m_videoPreviewsEnabled)
+            return {};
         const auto preview = entry->playbackPreviews.constFind(url.path().mid(9));
         bool ok = false;
         const int index = QUrlQuery(url).queryItemValue(QStringLiteral("index")).toInt(&ok);
@@ -1414,6 +1487,8 @@ ArtworkSource::ImageResource SourceHub::resolveImage(const QUrl& url) const
         return { resource, preview->headers };
     }
     if (url.path().startsWith(QLatin1String("/remote/"))) {
+        if (!m_videoPreviewsEnabled)
+            return {};
         const QString target = QString::fromUtf8(QByteArray::fromBase64(
             url.path().mid(8).toLatin1(), QByteArray::Base64UrlEncoding | QByteArray::AbortOnBase64DecodingErrors));
         const auto preview = entry->remotePreviews.constFind(target);

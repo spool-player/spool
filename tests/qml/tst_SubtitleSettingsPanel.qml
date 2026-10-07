@@ -123,7 +123,6 @@ TestCase {
             height: testCase.height
             settingsController: settingsFixture
             syncController: syncFixture
-            syncSourceLabel: "Jellyfin — Test account"
             platformInfo: ({
                                isTV: false,
                                isWebOS: false,
@@ -183,37 +182,18 @@ TestCase {
         verify(panel.routeKey(key, "release", false))
     }
 
-    function test_syncSubfocusNeverEditsValueAndHasOneVerticalStop() {
+    function test_horizontalKeysEditValuesWithoutSyncSubfocus() {
         const panel = createPanel()
-        const icon = findChild(panel, "subtitleSync/subtitles/scalePercent")
-        verify(icon)
-        press(panel, Qt.Key_Right)
-        compare(panel.navigationMode, "sync-action")
-        verify(icon.actionFocused)
-        verify(icon.helpVisible)
-        press(panel, Qt.Key_Right)
-        press(panel, Qt.Key_Return)
-        compare(settingsFixture.values["subtitles/scalePercent"], 100)
-        compare(settingsFixture.commits, 0)
-        verify(!syncFixture.states["subtitles/scalePercent"].enabled)
-        press(panel, Qt.Key_Down)
-        compare(panel.currentRowIndex, 2)
-        compare(panel.navigationMode, "row")
-        press(panel, Qt.Key_Right)
-        press(panel, Qt.Key_Left)
-        compare(panel.currentRowIndex, 2)
-        compare(panel.navigationMode, "row")
-        verify(syncFixture.states["subtitles/verticalPositionPercent"].enabled)
-    }
-
-    function test_syncDisappearingRestoresSameValueRow() {
-        const panel = createPanel()
-        press(panel, Qt.Key_Right)
-        syncFixture.states = {}
-        compare(panel.navigationMode, "row")
-        compare(panel.currentRowIndex, 1)
         press(panel, Qt.Key_Right)
         compare(settingsFixture.values["subtitles/scalePercent"], 105)
+        compare(panel.navigationMode, "row")
+        press(panel, Qt.Key_Down)
+        compare(panel.currentRowIndex, 2)
+        press(panel, Qt.Key_Right)
+        compare(settingsFixture.values["subtitles/verticalPositionPercent"], 51)
+        press(panel, Qt.Key_Left)
+        compare(settingsFixture.values["subtitles/verticalPositionPercent"], 50)
+        verify(syncFixture.states["subtitles/scalePercent"].enabled)
     }
 
     function test_sliderEditDefersRemoteUntilExitAndKeepsHorizontalKeys() {
@@ -238,7 +218,7 @@ TestCase {
         compare(syncFixture.ends, 2)
     }
 
-    function test_pointerSliderPreviewsThenCommitsAndIconDoesNotBubble() {
+    function test_pointerSliderPreviewsThenCommits() {
         const panel = createPanel()
         const row = panel.rowControlAt(1)
         const slider = row.trailing[0]
@@ -255,13 +235,6 @@ TestCase {
         compare(syncFixture.begins, 1)
         compare(syncFixture.ends, 1)
         verify(syncFixture.lastChanged)
-
-        const icon = findChild(panel, "subtitleSync/subtitles/scalePercent")
-        mouseClick(icon, icon.width / 2, icon.height / 2)
-        verify(!syncFixture.states["subtitles/scalePercent"].enabled)
-        compare(settingsFixture.values["subtitles/scalePercent"], 140)
-        compare(settingsFixture.commits, 1)
-        compare(panel.navigationMode, "row")
     }
 
     function test_reachabilityIncludesCollapsedAdvancedButNotHiddenValues() {

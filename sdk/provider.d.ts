@@ -15,7 +15,7 @@
 
 export type Value = null | boolean | number | string | Value[] | { [key: string]: Value };
 
-/** Optional wire-major negotiation; absence on an API 0.2 host means no extensions. */
+/** Exact wire-major negotiation for optional declared features on the current host. */
 export type Extensions = Readonly<Record<string, number>>;
 
 export interface HttpOptions {
@@ -61,6 +61,10 @@ export interface Device {
     locale: string;
 }
 
+export type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error';
+/** Flat diagnostic metadata, never authentication, request bodies or media URLs. */
+export type LogFields = Readonly<Record<string, null | boolean | number | string>>;
+
 /**
  * Given to createSource and lives as long as the account: use it for
  * connections that outlast an operation. Everything stops when the account
@@ -70,6 +74,10 @@ export interface SourceHost {
     device: Device;
     /** Frozen host-supported exact versions requested in manifest.extensions. */
     readonly extensions?: Extensions;
+    /** Native category guard; check before constructing expensive diagnostic fields. */
+    isLogEnabled(level: LogLevel): boolean;
+    /** Lazy message runs only when enabled. Native redaction/bounds always apply. */
+    log(level: LogLevel, message: string | (() => string), fields?: LogFields): void;
     /** Only origins the account was set up with (or manifest `origins`). */
     http(url: string, options?: HttpOptions): Promise<HttpResponse>;
     /** 0–60000 ms. */
@@ -187,6 +195,8 @@ export interface PlaybackContext {
     measuredBitrate: number;
     /** Native playback range-request budget selected by the probe; two before measurement. */
     parallelRequests: 1 | 2 | 4;
+    /** Global seek-preview preference, default true. When false, omit preview descriptors and skip preview-only metadata requests/prefetch. */
+    videoPreviews: boolean;
 }
 
 export interface Resolved {
@@ -206,6 +216,26 @@ export interface Resolved {
 }
 /** Answer resolve with this to show the provider's `picker` screen first; Spool calls resolve again with what it completes with merged in. */
 export interface PickRequest { pick: Record<string, Value> }
+
+/** Finite complete media file, original or encoded by the provider's server.
+ * HLS/DASH manifests and live streams are not download endpoints.
+ * All URLs must be approved account origins. Headers belong only to this file.
+ */
+export interface DownloadPlan {
+    url: string;
+    container: string;
+    headers?: Record<string, string>;
+    size?: number;
+    /** Opaque server session cleanup; kept in memory, never persisted. */
+    cleanup?: Record<string, Value>;
+}
+export interface DownloadArgs {
+    itemId: string;
+    mode: 'original' | 'transcoded';
+    maxBitrate?: number;
+    maxHeight?: number;
+    variantId?: string;
+}
 
 export interface Segment { type: 'Intro' | 'Outro' | 'Recap' | 'Preview' | 'Commercial'; startTicks: number | string; endTicks: number | string }
 
@@ -292,8 +322,9 @@ export type RemoteTargetCommand =
     | { action: 'queueMove'; entryId: string; index: number; afterEntryId: string | null };
 export interface RemoteTargetExtensions {
     remoteTargets?: Operation<{}, { targets: RemoteTarget[] }>;
-    remoteConnect?: Operation<{ targetId: string }, RemoteState>;
-    remoteState?: Operation<{ targetId: string }, RemoteState>;
+    /** Global preview preference is also supplied when inspecting another player. */
+    remoteConnect?: Operation<{ targetId: string; videoPreviews: boolean }, RemoteState>;
+    remoteState?: Operation<{ targetId: string; videoPreviews: boolean }, RemoteState>;
     remoteQueue?: Operation<PageArgs & { targetId: string }, Page>;
     remoteCommand?: Operation<{ targetId: string; command: RemoteTargetCommand }, { commandSequence?: number }>;
 }
@@ -324,7 +355,8 @@ export interface Source extends CatalogueExtensions, PreferenceExtensions, Appli
         studio?: string; sortBy?: SortBy; sortOrder?: 'Ascending' | 'Descending'; filters?: BrowseFilters }, Page>;
     items?: Operation<PageArgs & { ids: string[] }, Page>;
     search?: Operation<PageArgs & { query: string }, Page>;
-    details?: Operation<{ itemId: string }, { item: Item }>;
+    /** Omit preview-only metadata fields/prefetch when videoPreviews is false. */
+    details?: Operation<{ itemId: string; videoPreviews: boolean }, { item: Item }>;
     seasons?: Operation<PageArgs & { seriesId: string }, Page>;
     episodes?: Operation<PageArgs & { seriesId: string; seasonId?: string }, Page>;
     resume?: Operation<PageArgs, Page>;
@@ -339,6 +371,13 @@ export interface Source extends CatalogueExtensions, PreferenceExtensions, Appli
         { genres?: string[]; years?: number[]; officialRatings?: string[]; tags?: string[]; supported?: string[] }>;
 
     resolve?: Operation<PlaybackContext & { itemId: string; variantId?: string; positionTicks: string; forceTranscode: boolean }, Resolved | PickRequest>;
+    /** Capability downloads; downloadTranscode additionally allows mode=transcoded.
+     * Negotiate only; native code streams the finite file without buffering it.
+     * A PickRequest repeats this call with picker answers merged into the arguments.
+     */
+    download?: Operation<DownloadArgs, DownloadPlan | PickRequest>;
+    /** Called on completion, cancellation or failure when a plan supplied cleanup. */
+    downloadRelease?: Operation<{ cleanup: Record<string, Value> }, {}>;
     segments?: Operation<{ itemId: string }, { segments: Segment[] }>;
     /** New packages declare spool.speed-test v1; legacy speedTest capability remains supported. */
     speedTest?: Operation<{}, SpeedTestResult>;

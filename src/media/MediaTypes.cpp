@@ -380,21 +380,27 @@ namespace {
     QString redactedCredentialText(QString url)
     {
         static const QRegularExpression credentialQuery(
-            QStringLiteral(
-                "((?:[?&]|%26)(?:secret|code|password|pw|api[_-]?key|access[_-]?token|token|x-(?:emby|plex)-token)"
-                "(?:=|%3d))[^&\\s]+"),
+            QStringLiteral("((?:[?&]|%26)(?:secret|code|password|pw|pin|api[_-]?key|(?:access|refresh)[_-]?token|token|"
+                           "x-(?:emby|plex)-token)"
+                           "(?:=|%3d))[^&\\s]+"),
             QRegularExpression::CaseInsensitiveOption);
         static const QRegularExpression credentialField(
+            QStringLiteral("((?:\\\"?(?:secret|code|password|pw|pin|api[_-]?key|(?:access|refresh)[_-]?token|token|x-(?"
+                           ":emby|plex)-token)\\\"?)"
+                           "\\s*[:=]\\s*)(?:\\\"[^\\\"]*\\\"|'[^']*'|[^\\\",}\\s]+)"),
+            QRegularExpression::CaseInsensitiveOption);
+        static const QRegularExpression credentialHeader(
             QStringLiteral(
-                "((?:\\\"?(?:secret|code|password|pw|api[_-]?key|access[_-]?token|token|x-(?:emby|plex)-token)\\\"?)"
-                "\\s*[:=]\\s*\\\"?)[^\\\",}\\s]+"),
+                R"(((?<![A-Za-z0-9_-])["']?(?:Authorization|Proxy-Authorization|Cookie|Set-Cookie|X-Emby-Token|X-Plex-Token)["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|(?:(?!["']\s*[,}])[^\r\n}])+))"),
             QRegularExpression::CaseInsensitiveOption);
-        static const QRegularExpression authorizationHeader(
-            QStringLiteral("((?:Authorization|X-Emby-Token|X-Plex-Token)\\s*[:=]\\s*)[^,\\r\\n}]+"),
-            QRegularExpression::CaseInsensitiveOption);
+        // Quoted header values stop at their own closing quote, preserving
+        // neighboring JSON metadata. Plain Cookie/Set-Cookie headers consume
+        // the whole line, including additional cookies and Expires commas.
+        // A closing JSON string delimiter also bounds header text nested in
+        // ordinary metadata strings when the native sink sanitizes it again.
+        url.replace(credentialHeader, QStringLiteral("\\1<redacted:credential>"));
         url.replace(credentialQuery, QStringLiteral("\\1<redacted:credential>"));
         url.replace(credentialField, QStringLiteral("\\1<redacted:credential>"));
-        url.replace(authorizationHeader, QStringLiteral("\\1<redacted:credential>"));
         return url;
     }
 
@@ -407,12 +413,14 @@ namespace {
                 "item[_-]?id|profile[_-]?id|cache[_-]?key|device[_-]?id)\\\"?)\\s*[:=]\\s*\\\"?)[^\\\",}\\s]+"),
             QRegularExpression::CaseInsensitiveOption);
         static const QRegularExpression url(
-            QStringLiteral("\\bhttps?://[^\\s\\\"'<>]+"), QRegularExpression::CaseInsensitiveOption);
+            QStringLiteral("\\b(?:https?|wss?)://[^\\s\\\"'<>]+|\\bmagnet:\\?[^\\s\\\"'<>]+"),
+            QRegularExpression::CaseInsensitiveOption);
         static const QRegularExpression ipv4(
             QStringLiteral("(?<![0-9])(?:[0-9]{1,3}\\.){3}[0-9]{1,3}(?::[0-9]{1,5})?(?![0-9])"));
         static const QRegularExpression bracketedIpv6(QStringLiteral("\\[[0-9A-Fa-f:]+\\](?::[0-9]{1,5})?"));
         static const QRegularExpression stableId(
-            QStringLiteral("\\b(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})\\b"));
+            QStringLiteral("\\b(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{40}|[0-9a-fA-F]{64}|[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-"
+                           "[0-9a-fA-F]{12})\\b"));
         message.replace(personalField, QStringLiteral("\\1<redacted:personal>"));
         message.replace(url, QStringLiteral("<redacted:url>"));
         message.replace(ipv4, QStringLiteral("<redacted:address>"));
@@ -442,9 +450,9 @@ QString sanitizedDiagnosticUrl(QString url, qsizetype maxLength)
     return maxLength >= 0 ? url.left(maxLength) : url;
 }
 
-QString sanitizedLogMessage(QString message)
+QString sanitizedLogMessage(QString message, bool allowDiagnosticUrls)
 {
-    if (!diagnosticUrlsUnredacted())
+    if (!allowDiagnosticUrls || !diagnosticUrlsUnredacted())
         return sanitizedLogText(std::move(message));
 
     // Preserve URLs verbatim, including encoded credentials/profile parameters;

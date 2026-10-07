@@ -31,9 +31,11 @@
 
 The app knows no media backend. Every source is a provider package (JS logic
 and QML screens) run by `src/provider/`; `docs/providers.md` describes the
-pieces and `sdk/` is the provider contract (API 0.2). Jellyfin, Emby and Plex live in
-spool-player/spool-jellyfin, spool-emby and spool-plex and are bundled from
-the pins in `providers/lock.json`.
+pieces and `sdk/` is the provider contract (API 0.2). Jellyfin, Emby, Plex and
+Stremio live in their `spool-player/spool-*` repositories; Open Movies lives in
+`spool-player/spool-provider-example`. All five are bundled from published release
+pins in `providers/lock.json`. Providers and host cut over together; do not add
+compatibility shims for older provider/host builds.
 
 - Core is everything under `src/` except `src/providers/` (native providers;
   only `LocalProvider` today) and `src/main.cpp`, the composition root. Core
@@ -65,6 +67,12 @@ the pins in `providers/lock.json`.
 - `tools/manifests/toolchain.json` sets the Qt and FFmpeg versions for every
   platform. Nothing else may name one; `tools/toolchain-versions.sh --check`
   is what CI runs to keep the Qt module manifests honest.
+- Qt source manifests use the official-listed FAU archive mirror rather than a
+  geo-selected redirect. Mirror changes must preserve version/module SHA-256 pins;
+  verify the full archive digest before changing a source URL.
+- webOS GCC coroutine calls use named argument maps before `co_await`; nesting
+  a member expression inside a temporary argument aggregate triggered a compiler
+  internal error. Keep the wire arguments unchanged when restructuring such calls.
 - The launch screen carries the version, so it is rendered per build by
   `tools/generate-splash.sh` from `tools/manifests/splash.json` and is not
   committed. Configuring the app is enough to get it on every platform.
@@ -79,6 +87,24 @@ the pins in `providers/lock.json`.
 - Use `nix develop .#native -c ...` for targeted development commands (e.g. `cmake --preset linux-dev`, then `cmake --build build/linux-dev/app --target spool`).
 - The image-diagnostics equivalents remain `nix run .#image-debug-build` followed by `nix run .#image-debug`.
 - Batch coherent edits, then run one build and one `qmlformat`/`clang-format` invocation over all touched files; don't build or format file-by-file.
+
+### Filtered preview diagnostics
+
+- Trace is opt-in: `QT_LOGGING_RULES='spool.provider.trace.debug=true'`.
+  Enable it only for the shortest necessary inspection, then unset it.
+- Never print or share unfiltered app logs, diagnostics JSON, provider responses,
+  credential stores, URLs, request headers, or account configuration. Restoration
+  must use the real app's existing credential path, never pasted tokens.
+- Always filter trace output before displaying it: select only `preview metadata`,
+  `preview session`, `preview fetch failed`, and `preview load failed` messages
+  from `spool.provider.trace`. Prefer an explicit field allowlist (item ID,
+  enabled, availability, format, dimensions/count, numeric network/status codes,
+  frame/speculative). Redact authentication, URL/query, user/account and path
+  values even if upstream logging is already sanitized.
+- `spoolet` may inspect restored-account library rows and drive an explicitly
+  requested offscreen preview smoke. Filter JSON to the required titles, IDs,
+  player/preview state and dimensions. Never dump raw provider payloads or
+  support reports to discover preview availability.
 
 ## webOS
 

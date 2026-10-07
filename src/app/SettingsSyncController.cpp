@@ -150,8 +150,14 @@ QVariantList SettingsSyncController::accounts() const
     for (const auto& item : m_registry->accounts()) {
         auto row = item.toMap();
         const auto id = row.value(QStringLiteral("id")).toString();
+        const auto *module = m_registry->module(row.value(QStringLiteral("moduleId")).toString());
+        const bool declared = module
+            && (module->manifest.extensions.value(Preferences).toInt() == 1
+                || module->manifest.extensions.value(Storage).toInt() == 1);
         row.insert(QStringLiteral("syncSupported"),
-            m_registry->extensionVersion(id, Preferences) == 1 || m_registry->extensionVersion(id, Storage) == 1);
+            row.value(QStringLiteral("connectionState")).toString() == QStringLiteral("active")
+                ? m_registry->extensionVersion(id, Preferences) == 1 || m_registry->extensionVersion(id, Storage) == 1
+                : declared);
         row.insert(QStringLiteral("syncLabel"),
             row.value(QStringLiteral("providerName")).toString() + QStringLiteral(" — ")
                 + row.value(QStringLiteral("label")).toString());
@@ -292,33 +298,92 @@ QVariantMap SettingsSyncController::states() const
     return result;
 }
 
-QString SettingsSyncController::summary() const
+QString SettingsSyncController::status() const
 {
     if (!m_enabled)
-        return tr("Settings sync is off. Your settings stay on this device.");
-    if (!m_problem.isEmpty())
-        return m_problem;
+        return QStringLiteral("off");
+    if (m_persistenceFailed)
+        return QStringLiteral("saveFailed");
     if (m_accountId.isEmpty()) {
-        for (const auto& item : m_registry->accounts())
-            if (item.toMap().value(QStringLiteral("connectionState")).toString() == QStringLiteral("starting"))
-                return tr("Waiting for connected accounts…");
-        return tr("No connected provider supports settings sync.");
+        for (const auto& item : accounts())
+            if (item.toMap().value(QStringLiteral("syncSupported")).toBool()
+                && item.toMap().value(QStringLiteral("connectionState")).toString() == QStringLiteral("starting"))
+                return QStringLiteral("starting");
+        return QStringLiteral("noAccount");
     }
-    if (!accountActive())
-        return tr("Settings sync is paused. Reconnect the selected account or choose another source.");
-    if (m_registry->extensionVersion(m_accountId, Preferences) != 1
-        && m_registry->extensionVersion(m_accountId, Storage) != 1)
-        return tr("The selected account does not support settings sync.");
-    if (!m_nativeProblem.isEmpty())
-        return m_nativeProblem;
-    if (!m_storageProblem.isEmpty())
-        return m_storageProblem;
-    if (m_busy)
+    for (const auto& item : accounts()) {
+        const auto row = item.toMap();
+        if (row.value(QStringLiteral("id")).toString() != m_accountId)
+            continue;
+        if (row.value(QStringLiteral("needsSignIn")).toBool())
+            return QStringLiteral("signedOut");
+        const auto connection = row.value(QStringLiteral("connectionState")).toString();
+        if (connection == QStringLiteral("starting"))
+            return QStringLiteral("starting");
+        if (connection == QStringLiteral("failed"))
+            return QStringLiteral("failed");
+        if (!accountActive())
+            return QStringLiteral("inactive");
+        if (!row.value(QStringLiteral("syncSupported")).toBool())
+            return QStringLiteral("unsupported");
+        if (offlineProblem(m_problem) || m_nativeOffline || m_storageOffline)
+            return QStringLiteral("offline");
+        if (!m_problem.isEmpty() || !m_nativeProblem.isEmpty() || !m_storageProblem.isEmpty())
+            return QStringLiteral("error");
+        if (busy())
+            return QStringLiteral("syncing");
+        for (const auto& value : m_keys)
+            if (value.toMap().contains(QStringLiteral("intent")))
+                return QStringLiteral("pending");
+        return QStringLiteral("synced");
+    }
+    return QStringLiteral("removed");
+}
+
+QString SettingsSyncController::summary() const
+{
+    const auto state = status();
+    if (state == QStringLiteral("off"))
+        return tr("Settings stay on this device.");
+    if (state == QStringLiteral("noAccount"))
+        return tr("Choose an account that supports settings sync.");
+    if (state == QStringLiteral("removed"))
+        return tr("Your sync account was removed. Choose another account.");
+    if (state == QStringLiteral("signedOut"))
+        return tr("Sign in to your sync account again to resume.");
+    if (state == QStringLiteral("starting"))
+        return tr("Connecting to your sync account…");
+    if (state == QStringLiteral("inactive"))
+        return tr("Sync is paused while this account is not the active profile.");
+    if (state == QStringLiteral("failed"))
+        return tr("Cannot reach your sync account. Reconnect to resume.");
+    if (state == QStringLiteral("unsupported"))
+        return tr("This account does not support settings sync.");
+    if (state == QStringLiteral("offline"))
+        return tr("Changes are kept on this device until you are back online.");
+    if (state == QStringLiteral("saveFailed"))
+        return tr("Could not save settings on this device. Retry to recover.");
+    if (state == QStringLiteral("error"))
+        return tr("Could not sync settings. Your local settings are kept.");
+    if (state == QStringLiteral("syncing"))
         return tr("Synchronizing settings…");
-    for (const auto& value : m_keys)
-        if (value.toMap().contains(QStringLiteral("intent")))
-            return tr("Local changes are waiting to sync.");
-    return tr("Settings sync is ready.");
+    if (state == QStringLiteral("pending"))
+        return tr("Local changes are waiting to sync.");
+    return tr("Settings sync is up to date.");
+}
+
+QString SettingsSyncController::problemDetail() const
+{
+    QStringList details;
+    for (const auto& problem : { m_problem, m_nativeProblem, m_storageProblem })
+        if (!problem.isEmpty())
+            details.append(problem);
+    return details.join(QLatin1Char('\n'));
+}
+
+bool SettingsSyncController::customized() const
+{
+    return !m_overrides.value(m_accountId).toMap().isEmpty();
 }
 
 QString SettingsSyncController::accountChangeWarning() const
@@ -510,17 +575,42 @@ void SettingsSyncController::selectAccount(const QString& id)
 
 void SettingsSyncController::setSettingEnabled(const QString& key, bool enabled)
 {
-    const auto *spec = findSettingSpec(key);
-    if (!spec || spec->syncPolicy == SettingSyncPolicy::Never || !settingSupportedOnPlatform(*spec)
-        || m_accountId.isEmpty())
+    setSettingsEnabled({ key }, enabled);
+}
+
+void SettingsSyncController::setSettingsEnabled(const QStringList& keys, bool enabled)
+{
+    if (m_accountId.isEmpty())
         return;
     auto overrides = m_overrides.value(m_accountId).toMap();
-    if (overrides.contains(key) && overrides.value(key).toBool() == enabled)
+    QStringList changedKeys;
+    for (const auto& key : keys) {
+        const auto *spec = findSettingSpec(key);
+        if (!spec || spec->syncPolicy == SettingSyncPolicy::Never || !settingSupportedOnPlatform(*spec)
+            || (overrides.contains(key) && overrides.value(key).toBool() == enabled))
+            continue;
+        overrides.insert(key, enabled);
+        changedKeys.append(key);
+    }
+    if (changedKeys.isEmpty())
         return;
     invalidate();
-    overrides.insert(key, enabled);
     m_overrides.insert(m_accountId, overrides);
-    resetKey(key);
+    for (const auto& key : changedKeys)
+        resetKey(key);
+    persistControls(serializedLedger());
+    emit changed();
+}
+
+void SettingsSyncController::resetSettingOverrides()
+{
+    const auto overrides = m_overrides.value(m_accountId).toMap();
+    if (overrides.isEmpty())
+        return;
+    invalidate();
+    m_overrides.remove(m_accountId);
+    for (auto it = overrides.cbegin(); it != overrides.cend(); ++it)
+        resetKey(it.key());
     persistControls(serializedLedger());
     emit changed();
 }
