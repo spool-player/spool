@@ -624,10 +624,13 @@ PRs restore without publishing caches. Only `spool-tvos-device-arm64` is a publi
 release artifact. Simulator apps and smoke results use
 `internal-tvos-simulator-arm64` and are never offered as installable downloads.
 
-Before installation, the smoke helper ad-hoc signs both simulator bundles with
-matching local application and Keychain access-group entitlements. This requires
-no Apple developer certificate, exercises the real sandboxed Keychain consumer,
-and does not sign or provision the separately built device IPA.
+Simulator builds embed matching local application and Keychain access-group
+entitlements in the Mach-O XML/DER sections used by the simulator. Before
+installation, the smoke helper ad-hoc signs both bundles with only the host
+debug entitlement: putting restricted application entitlements in that macOS
+signature prevents launch. This requires no Apple developer certificate,
+exercises the real sandboxed Keychain consumer, and does not sign or provision
+the separately built device IPA.
 
 ## Android development
 

@@ -28,17 +28,12 @@ with tempfile.TemporaryDirectory(prefix="spool-tvos-sign-") as signing:
         with (bundle / "Info.plist").open("rb") as metadata:
             identifier = plistlib.load(metadata)["CFBundleIdentifier"]
         bundle_ids.append(identifier)
-        # Simulator Keychain still enforces signed application/access-group
-        # entitlements. A local ad-hoc identity needs no developer certificate
-        # and is not a signing identity for device/App Store distribution.
-        application = "SPOOLSMOKE." + identifier
+        # Application/Keychain entitlements are embedded by the simulator
+        # linker. The host macOS signature must contain only its local debug
+        # entitlement; signing restricted iOS entitlements makes AMFI kill it.
         entitlements = Path(signing) / (identifier + ".plist")
         with entitlements.open("wb") as file:
-            plistlib.dump({
-                "application-identifier": application,
-                "com.apple.developer.team-identifier": "SPOOLSMOKE",
-                "keychain-access-groups": [application],
-            }, file)
+            plistlib.dump({"com.apple.security.get-task-allow": True}, file)
         subprocess.run(["codesign", "--force", "--sign", "-", "--timestamp=none",
                         "--entitlements", str(entitlements), "--generate-entitlement-der", str(bundle)], check=True)
         subprocess.run(["xcrun", "simctl", "install", device, str(bundle)], check=True)
@@ -62,7 +57,15 @@ for bundle, arguments, expected in checks:
     if not passed:
         # Report only controlled native smoke diagnostics; URLs/auth are absent
         # from these test result lines and provider logs are deliberately omitted.
-        for line in process.stdout.splitlines():
+        lines = process.stdout.splitlines()
+        # simctl rejects a process before any app/provider code runs. Preserve
+        # its nested native launch error, not unrelated application output.
+        native_error = next((index for index, line in enumerate(lines)
+                             if line.startswith("An error was encountered processing the command")), None)
+        if native_error is not None:
+            for line in lines[native_error:]:
+                print(re.sub(r"https?://\S+", "[redacted-url]", line))
+        for line in lines:
             if any(marker in line for marker in ["launch test:", "video result:", "orientation:", "viewport:",
                                                 "render context was not ready", "failed to initialize mpv",
                                                 "tvOS audio smoke:", "tvOS credentials smoke:",
