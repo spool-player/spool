@@ -1,5 +1,6 @@
 #include "LocalControlProtocol.h"
 
+#include <QCryptographicHash>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
@@ -10,37 +11,18 @@
 #include <QStandardPaths>
 #include <QTcpSocket>
 #include <QNetworkProxy>
+#include <algorithm>
 #include <QUuid>
 #ifdef Q_OS_UNIX
 #include <sys/stat.h>
 #include <unistd.h>
+#include <sys/un.h>
 #endif
 
 namespace Spool::LocalControl {
-QString directory(QString *error)
+namespace {
+QString privateDirectory(const QString& base, QString *error)
 {
-    QString base = qEnvironmentVariable("SPOOL_DATA_HOME");
-    if (!base.isEmpty()) {
-        if (!QDir::isAbsolutePath(base)) {
-            *error = QStringLiteral("The explicit data directory must be absolute");
-            return {};
-        }
-        base = QDir(base).filePath(QStringLiteral("runtime"));
-        if (!QDir().mkpath(base)) {
-            *error = QStringLiteral("Cannot create the explicit runtime directory");
-            return {};
-        }
-    } else {
-#if defined(SPOOL_ANDROID) || defined(SPOOL_APPLE_MOBILE)
-        // Generic cache is still app-private on mobile, without Qt's
-        // organization/application suffix on Apple sandbox paths.
-        base = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation);
-#elif defined(Q_OS_UNIX)
-        base = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
-#else
-        base = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
-#endif
-    }
     if (base.isEmpty()) {
         *error = QStringLiteral("No user-local runtime directory is available");
         return {};
@@ -65,6 +47,69 @@ QString directory(QString *error)
     }
 #endif
     return path;
+}
+}
+
+QString directory(QString *error)
+{
+    QString base = qEnvironmentVariable("SPOOL_DATA_HOME");
+    if (!base.isEmpty()) {
+        if (!QDir::isAbsolutePath(base)) {
+            *error = QStringLiteral("The explicit data directory must be absolute");
+            return {};
+        }
+        base = QDir(base).filePath(QStringLiteral("runtime"));
+        if (!QDir().mkpath(base)) {
+            *error = QStringLiteral("Cannot create the explicit runtime directory");
+            return {};
+        }
+    } else {
+#if defined(SPOOL_ANDROID) || defined(SPOOL_APPLE_MOBILE)
+        base = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation);
+#elif defined(Q_OS_UNIX)
+        base = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
+#else
+        base = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+#endif
+    }
+    return privateDirectory(base, error);
+}
+
+QString localEndpoint(const QString& registryDirectory, const QString& instance, QString *error)
+{
+    const QString root = QFileInfo(registryDirectory).canonicalFilePath();
+    if (root.isEmpty() || !validInstance(instance)) {
+        *error = QStringLiteral("Cannot resolve the control registry or instance identifier");
+        return {};
+    }
+    QByteArray identity = root.toUtf8();
+    identity.append('\0');
+    identity.append(instance.toUtf8());
+    const QString suffix = QString::fromLatin1(QCryptographicHash::hash(identity, QCryptographicHash::Sha256).toHex().left(24));
+#ifdef Q_OS_UNIX
+    QString runtime = qEnvironmentVariable("XDG_RUNTIME_DIR");
+    if (!runtime.isEmpty()) {
+        struct stat base {};
+        if (!QDir::isAbsolutePath(runtime) || lstat(QFile::encodeName(runtime).constData(), &base) != 0
+            || !S_ISDIR(base.st_mode) || base.st_uid != geteuid() || (base.st_mode & 0077) != 0) {
+            *error = QStringLiteral("XDG_RUNTIME_DIR must be an absolute private owned directory");
+            return {};
+        }
+    } else {
+        runtime = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
+    }
+    const QString sockets = privateDirectory(runtime, error);
+    if (sockets.isEmpty())
+        return {};
+    const QString endpoint = QDir(sockets).filePath(QStringLiteral("s-") + suffix);
+    if (QFile::encodeName(endpoint).size() >= qsizetype(sizeof(sockaddr_un {}.sun_path))) {
+        *error = QStringLiteral("The OS user runtime directory is too long for a UNIX socket; use a shorter private runtime directory");
+        return {};
+    }
+    return endpoint;
+#else
+    return QStringLiteral("spool-control-") + suffix;
+#endif
 }
 
 bool validInstance(const QString& instance)
@@ -106,13 +151,18 @@ QJsonObject readDescriptor(const QString& path)
     }
     if (result.contains(QStringLiteral("transport")))
         return {};
+    QString error;
+    const QString expected = localEndpoint(QFileInfo(path).absolutePath(), instance, &error);
 #ifdef Q_OS_UNIX
-    if (QFileInfo(endpoint).absolutePath() != QFileInfo(path).absolutePath()
-        || !QFileInfo(endpoint).fileName().startsWith(QStringLiteral("s-")))
+    if (expected.isEmpty() || endpoint != expected)
         return {};
 #else
-    if (!endpoint.startsWith(QStringLiteral("spool-control-")) || endpoint.contains(QLatin1Char('/'))
-        || endpoint.contains(QLatin1Char('\\')))
+    const QString prefix = expected + QLatin1Char('-');
+    const QString nonce = endpoint.mid(prefix.size());
+    if (expected.isEmpty() || !endpoint.startsWith(prefix) || nonce.size() != 32
+        || std::any_of(nonce.cbegin(), nonce.cend(), [](QChar value) {
+            return !((value >= '0' && value <= '9') || (value >= 'a' && value <= 'f'));
+        }))
         return {};
 #endif
     return result;

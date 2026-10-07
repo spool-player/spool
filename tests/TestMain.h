@@ -4,6 +4,9 @@
 // The shared runner supervises isolated SAME-binary subprocesses so a test may
 // own its Q(Core/Gui)Application, environment and exit() without harming peers.
 // Use --list, --child SELECTOR, or --run-all --workers N --results FILE.
+// Resume retains genuine crashes without rerunning them. An interrupted running
+// attempt remains distinct and is rerun on resume; every attempt keeps its log.
+// Each selector owns an isolated process tree, reclaimed at timeout or teardown.
 //
 // Write a test exactly as a standalone program, but name its entry point with
 // SPOOL_TEST_MAIN("selector") instead of main(). Keep helpers in an
@@ -15,6 +18,10 @@ using Entry = int (*)(int argc, char **argv);
 
 bool registerTest(const char *name, Entry entry);
 int invoke(const char *name, int argc, char **argv);
+
+// Only call for an observed QProcess::CrashExit: propagate its actual OS exit
+// code (Windows) or terminating signal (Unix), never infer crashes from failures.
+[[noreturn]] void propagateCrash(int exitCode);
 
 } // namespace SpoolTests
 

@@ -20,6 +20,10 @@ class SelectorCrash(RuntimeError):
     """The launched consumer did not publish a final native result."""
 
 
+class SelectorStartFailure(RuntimeError):
+    """The platform rejected starting the native consumer."""
+
+
 def command(arguments, *, check=True, timeout=30):
     return subprocess.run(arguments, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                           text=True, check=check, timeout=timeout)
@@ -66,9 +70,12 @@ class Android:
                            f"{self.bundle}/org.qtproject.qt.android.bindings.QtActivity",
                            "--es", "applicationArguments", extra, check=False)
         if result.returncode or "Error:" in result.stdout:
-            raise RuntimeError("Android rejected the native test activity launch")
+            raise SelectorStartFailure("Android rejected the native test activity launch")
         deadline = time.monotonic() + timeout
-        seen_process = False
+        # am start -W has already waited for the activity launch. A process
+        # that dies before the first pid/receipt observation is still a crash,
+        # not a reason to wait for the entire selector deadline.
+        seen_process = True
         try:
             while time.monotonic() < deadline:
                 try:
@@ -125,6 +132,10 @@ class TvOS:
     def execute(self, arguments, timeout):
         process = command(["xcrun", "simctl", "launch", "--console", "--terminate-running-process",
                            self.device, self.bundle, *arguments], check=False, timeout=timeout)
+        if (process.returncode and
+                "An error was encountered processing the command" in process.stdout and
+                not Path(self.receipt).exists()):
+            raise SelectorStartFailure("Apple simulator rejected the native consumer launch")
         return process.returncode, process.stdout
 
     def stop(self):
@@ -240,6 +251,8 @@ def main():
     if args.timeout <= 0:
         parser.error("--timeout must be positive")
     output = args.artifact_dir.resolve()
+    if args.platform == "android":
+        output /= os.environ.get("SPOOL_ANDROID_FORM_FACTOR", "phone")
     output.mkdir(parents=True, exist_ok=True)
     state_path = output / f"{args.phase}-result.json"
     device = Android(args.phase) if args.platform == "android" else TvOS(args.phase)
@@ -261,9 +274,13 @@ def main():
         results = previous["results"]
         for name, result in results.items():
             if result.get("status") == "running":
-                result.update(status="crashed", exitCode=1,
-                              reason="supervisor interrupted while selector was running")
-            if result.get("status") in ("crashed", "timeout"):
+                interrupted = {key: value for key, value in result.items() if key != "attempts"}
+                interrupted.update(status="interrupted",
+                                   reason="supervisor interrupted; native exit was not observed")
+                interrupted.pop("exitCode", None)
+                result.update(interrupted)
+                result["attempts"] = result.get("attempts", []) + [interrupted]
+            if result.get("status") == "crashed":
                 result["resumeSkipped"] = True
 
     def persist():
@@ -271,10 +288,12 @@ def main():
 
     persist()
     for name in names:
-        # A durable started row makes interrupted/crashed selectors ineligible
-        # for replay. Only an ordinary failure may be explicitly retried.
+        # Supervisor interruption is unknown, not a product crash. Resume it
+        # while retaining its attempt; only observed crashes stay resume-skipped.
         previous = results.get(name, {})
-        if previous and not (retry and previous.get("status") == "failed"):
+        resumable = previous.get("status") in ("pending", "interrupted")
+        retriable = retry and previous.get("status") in ("failed", "timed-out", "start-failed")
+        if previous and not (resumable or retriable):
             continue
         attempts = previous.get("attempts", [])
         started = time.time()
@@ -290,7 +309,8 @@ def main():
             # errors are retained, never native stdout or command payloads.
             reason = str(error) if isinstance(error, (RuntimeError, TimeoutError)) else type(error).__name__
             status = ("crashed" if isinstance(error, SelectorCrash) else
-                      "timeout" if isinstance(error, (TimeoutError, subprocess.TimeoutExpired)) else "failed")
+                      "start-failed" if isinstance(error, SelectorStartFailure) else
+                      "timed-out" if isinstance(error, (TimeoutError, subprocess.TimeoutExpired)) else "failed")
             result = {"status": status, "exitCode": 1, "reason": reason}
             if isinstance(device, TvOS):
                 try:

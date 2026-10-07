@@ -56,9 +56,31 @@
             androidEmulatorFlags =
               "-no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect";
           };
+          tvEmulator = pkgs.androidenv.emulateApp {
+            name = "spool-android-tv-emulator";
+            deviceName = "spool-android-tv";
+            # The pinned SDK metadata contains this actual Android TV image,
+            # including its x86_64 ABI; do not merely toggle the app's TV flag.
+            platformVersion = "36";
+            abiVersion = "x86_64";
+            systemImageType = "android-tv";
+            configOptions = {
+              "hw.keyboard" = "yes";
+              "hw.dPad" = "yes";
+              "hw.touchScreen" = "no";
+              "hw.lcd.width" = "1920";
+              "hw.lcd.height" = "1080";
+              "hw.lcd.density" = "320";
+              "hw.ramSize" = "3072";
+              "vm.heapSize" = "512";
+            };
+            sdkExtraArgs = androidSdkArgs;
+            androidEmulatorFlags =
+              "-no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect -cores 2";
+          };
         in {
           sdk = composition.androidsdk;
-          inherit emulator;
+          inherit emulator tvEmulator;
         };
 
       # Only Intel macOS needs the older branch; every other system stays on
@@ -442,7 +464,7 @@
         ++ [
           pkgs.elfutils pkgs.vulkan-loader pkgs.zstd
           # Isolated test displays exercise the real Qt/libmpv GPU paths.
-          pkgs.weston pkgs.xorg-server
+          pkgs.weston pkgs.xorg-server pkgs.xdotool
         ];
 
 
@@ -699,6 +721,7 @@
         native-qt-cache = cachedNativeQtPackage cachedPkgs;
       } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         android-emulator = (androidEnvironment pkgs).emulator;
+        android-tv-emulator = (androidEnvironment pkgs).tvEmulator;
       });
 
       devShells = forAllSystems (pkgs:
@@ -1185,6 +1208,10 @@
           android-emulator = {
             type = "app";
             program = "${android.emulator}/bin/run-test-emulator";
+          };
+          android-tv-emulator = {
+            type = "app";
+            program = "${android.tvEmulator}/bin/run-test-emulator";
           };
 
           gammaray = {

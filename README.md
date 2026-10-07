@@ -227,6 +227,11 @@ unsafe/symlink discovery is rejected. Descriptors are removed on clean shutdown
 and stale entries are ignored after probing. Endpoint capabilities and provider
 credentials are not returned by the CLI. Anyone already running code as your
 user can control the app; treat screenshots and media titles as private.
+With `--data-dir`, the descriptor registry stays under that selected root, but
+Unix socket addresses remain in the private OS user runtime directory. A bounded
+hash of the canonical registry and instance isolates roots without letting a
+long data path exceed `sockaddr_un`. An oversized OS runtime path is rejected
+before listen with an actionable error; it never falls back to a public socket.
 
 For developer/emulator automation, an explicit `--automation-port=PORT` enables
 the same authenticated command server over IPv4 loopback **127.0.0.1 only**.
@@ -769,6 +774,7 @@ run traditional selectors before the GUI phase in the pinned isolated emulator:
 nix develop .#native -c bash tools/build-linux-release.sh
 SPOOL_ANDROID_BUILD_TESTS=ON nix develop .#android -c bash tools/android/build.sh
 nix develop .#android -c bash tools/android/emulator-launch-test.sh
+SPOOL_ANDROID_FORM_FACTOR=tv nix develop .#android -c bash tools/android/emulator-launch-test.sh
 ```
 
 The internal `spool-e2e-app-x86_64.apk` is a standard developer build of the real
@@ -777,7 +783,13 @@ expose its private authenticated automation descriptor. The two native test APKs
 are also debuggable for selector arguments and fresh nonce receipts. None is a
 release download: the separately built `spool-x86_64.apk` stays nondebuggable.
 After native GUI selectors, the same host e2e binary drives the actual emulator
-app and checks device screenshots; both launcher categories are then checked.
+app and checks device screenshots. The lifecycle then uninstalls the developer
+app, installs the exact signed release `spool-x86_64.apk`, and checks **both**
+launcher categories on that shipped artifact. CI runs separate phone and actual
+Android TV system images, serially, retaining both failures. TV mode is derived
+from the emulator OS's leanback feature, not fabricated through an app override.
+Phone/TV receipts and screenshots live in distinct `build/android/launch-test/`
+subdirectories. Private AVD storage is removed when its owned emulator exits.
 
 On Android, **Export diagnostics** packages the app log, mpv log, rotated
 logs, and system report into a ZIP and opens the system share menu. It does
@@ -803,7 +815,20 @@ then installs the pinned test dependencies with
 requires resume and reruns ordinary failures without replaying a known crash.
 Every retry keeps its original result, receipt and attempt-specific diagnostic
 log. Crashed selectors remain failed/crashed when skipped on resume, never passed.
+A supervisor interruption is recorded as `interrupted`, not an observed product
+crash; ordinary resume runs it again while retaining the interrupted attempt.
+Explicit retry also permits failed, timed-out and start-failed cases, never
+known crashes.
 Use `--config Release` for Xcode or another multi-configuration CMake generator.
+The additional `linux-sanitizers` CI job uses `SPOOL_SANITIZERS=ON` to instrument
+the actual production core and unified native tests. It runs the real
+`bounded-zstd` and `provider-package-unpack` consumers under ASan/UBSan with
+allocator-failure unwind coverage, preserving their supervisor results/logs.
+It does not replace or exclude the normal host GPU/OpenGL/Vulkan GUI phase.
+Linux CI also runs `spool-tests --child spoolet-admission --require-foreign-owner`
+under `sudo`, using only the selector's private temporary runtime directory to
+prove actual foreign-UID ownership rejection at the server boundary. That flag
+makes missing privileged coverage fail rather than silently skip.
 
 The traditional binary is `spool-tests`; the GUI binary is `spool-e2e-tests`.
 Each contains a selector registry and supervises fresh executions of **itself**.
@@ -816,9 +841,12 @@ failure makes the aggregate invocation fail. For focused native diagnostics use
 `spool-tests --child <selector>`; GUI selectors on Linux must run through
 `bash tools/test-gpu-session.sh <command> [args...]`.
 
-Linux GUI tests use private Weston by default (or explicit
-`SPOOL_TEST_DISPLAY_BACKEND=xvfb`) with Nix-pinned Mesa llvmpipe OpenGL and
-lavapipe Vulkan drivers. Neither harness connects to the user's display.
+Linux GUI tests use Weston inside a private Xvfb X11 server by default (or
+explicit `SPOOL_TEST_DISPLAY_BACKEND=xvfb`) with Nix-pinned Mesa llvmpipe OpenGL
+and lavapipe Vulkan drivers. The nested compositor provides a real input seat
+and native foreground activation while the product still uses Wayland; a
+seatless headless compositor cannot exercise foreground-only behavior.
+Neither harness connects to the user's display.
 macOS uses its real graphics device and bundled/Nix MoltenVK, not a software
 scenegraph. Windows deliberately tests the supported OpenGL embedding path with
 SHA-256-pinned Mesa WGL llvmpipe: Qt and real libmpv share OpenGL, not D3D WARP or
@@ -826,6 +854,11 @@ Qt's software scenegraph. This Windows configuration is not proof of Vulkan or
 D3D playback. The real host app journey additionally needs Tesseract English OCR
 and the full pinned FFmpeg CLI to generate its finite FFV1 media fixture; the
 playback-only FFmpeg libraries intentionally do not contain that CLI.
+The journey resolves the same version-matched split Qt runtime paths as the
+native launcher and stages the product's shipped fonts. Failed journeys retain
+owner-private screenshots, logs and isolated data under `test-artifacts`
+(`SPOOL_E2E_ARTIFACT_DIR` can select its parent); raw logs and credentials are
+never printed. Successful journeys remove their temporary data.
 
 Android and tvOS simulator adapters launch each selector in the same installed
 phase APK/bundle and require a fresh native nonce receipt. Then the same host GUI

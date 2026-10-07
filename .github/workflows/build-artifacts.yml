@@ -229,6 +229,59 @@ jobs:
           echo "build-common.sh OK"
 
 
+  linux-sanitizers:
+    name: Linux real decoder and package consumer ASan/UBSan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    needs: lint
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_linux }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - uses: ./.github/actions/install-nix
+        with:
+          nix_conf: |
+            experimental-features = nix-command flakes
+      - uses: cachix/cachix-action@3ba601ff5bbb07c7220846facfa2cd81eeee15a1 # v16
+        with:
+          name: spool
+          skipPush: true
+      - name: Build instrumented production core and unified native tests
+        id: sanitizer-build
+        env:
+          BUILD_ROOT: ${{ github.workspace }}/build/linux-sanitizers
+          SPOOL_CMAKE_EXTRA_ARGS: -DSPOOL_SANITIZERS=ON
+          JOBS: 2
+        run: nix develop .#native -c bash tools/build-linux-release.sh
+      - name: Exercise actual bounded decoder and provider-package consumer
+        run: |
+          nix develop .#native -c env \
+            ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+            UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            build/linux-sanitizers/app/spool-tests --run-all \
+            --filter bounded-zstd,provider-package-unpack --workers 1 \
+            --results "$PWD/build/linux-sanitizers/app/sanitizer-results.json"
+      - name: Prove foreign-owner admission at the actual server boundary
+        if: ${{ !cancelled() && steps.sanitizer-build.outcome == 'success' }}
+        run: |
+          sudo env \
+            ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+            UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            "$PWD/build/linux-sanitizers/app/spool-tests" \
+            --child spoolet-admission --require-foreign-owner
+      - name: Preserve sanitizer selector evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: internal-linux-sanitizer-results
+          path: |
+            build/linux-sanitizers/app/sanitizer-results.json
+            build/linux-sanitizers/app/sanitizer-results.json.*.log
+          if-no-files-found: warn
+          retention-days: 7
+
   linux-packages:
     name: Linux packages
     runs-on: ubuntu-24.04
@@ -1147,11 +1200,16 @@ jobs:
         if: ${{ matrix.abi == 'x86_64' }}
         run: nix develop .#native -c bash tools/build-linux-release.sh
 
-      - name: Run native traditional then GPU GUI tests and both launcher contracts
+      - name: Run native and real app GUI phases on phone and actual Android TV images
         if: ${{ matrix.abi == 'x86_64' }}
         run: |
-          nix develop .#android -c bash tools/android/emulator-launch-test.sh \
-            dist/android/spool-e2e-app-x86_64.apk
+          status=0
+          for form_factor in phone tv; do
+            nix develop .#android -c env SPOOL_ANDROID_FORM_FACTOR="$form_factor" \
+              bash tools/android/emulator-launch-test.sh \
+              dist/android/spool-e2e-app-x86_64.apk || status=1
+          done
+          exit "$status"
 
       - name: Upload internal emulator test receipts and diagnostics
         if: ${{ always() && matrix.abi == 'x86_64' }}
@@ -1160,7 +1218,7 @@ jobs:
           name: internal-spool-android-tests
           path: |
             build/android/launch-test
-            build/android/emulator.log
+            build/android/emulator-*.log
             dist/android/spool-tests-x86_64.apk
             dist/android/spool-e2e-tests-x86_64.apk
             dist/android/spool-e2e-app-x86_64.apk

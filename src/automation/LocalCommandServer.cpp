@@ -28,6 +28,11 @@
 #include <QTimer>
 #include <QUuid>
 #include <cmath>
+#ifdef Q_OS_UNIX
+#include <cerrno>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 
 namespace Spool {
 namespace {
@@ -105,11 +110,45 @@ bool LocalCommandServer::startInternal(const QString& requestedInstance, int tcp
         *error = QStringLiteral("Instance identifier is already in use");
         return false;
     }
-    const QString nonce = QUuid::createUuid().toString(QUuid::Id128);
+    QString endpoint = tcpPort < 0 ? LocalControl::localEndpoint(directory, m_instance, error)
+                                  : QStringLiteral("127.0.0.1");
+    if (endpoint.isEmpty()) {
+        m_lock.reset();
+        return false;
+    }
+#ifndef Q_OS_UNIX
+    if (tcpPort < 0)
+        endpoint += QLatin1Char('-') + QUuid::createUuid().toString(QUuid::Id128);
+#endif
 #ifdef Q_OS_UNIX
-    const QString endpoint = QDir(directory).filePath(QStringLiteral("s-") + nonce);
-#else
-    const QString endpoint = QStringLiteral("spool-control-") + nonce;
+    if (tcpPort < 0) {
+        struct stat address {};
+        if (lstat(QFile::encodeName(endpoint).constData(), &address) == 0) {
+            if (!S_ISSOCK(address.st_mode) || address.st_uid != geteuid()) {
+                *error = QStringLiteral("The reserved control address is not an owned socket");
+                m_lock.reset();
+                return false;
+            }
+            QLocalSocket live;
+            live.connectToServer(endpoint);
+            if (live.waitForConnected(100)) {
+                *error = QStringLiteral("The reserved control address is already listening");
+                m_lock.reset();
+                return false;
+            }
+            // The selected registry/instance lock is held. Remove only its
+            // unreachable, owned socket left by an interrupted process.
+            if (!QLocalServer::removeServer(endpoint)) {
+                *error = QStringLiteral("Cannot remove the stale owned control socket");
+                m_lock.reset();
+                return false;
+            }
+        } else if (errno != ENOENT) {
+            *error = QStringLiteral("Cannot inspect the reserved control address");
+            m_lock.reset();
+            return false;
+        }
+    }
 #endif
     const bool listening = tcpPort < 0 ? m_server.listen(endpoint)
                                       : m_tcpServer.listen(QHostAddress::LocalHost, quint16(tcpPort));

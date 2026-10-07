@@ -1001,11 +1001,9 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
     target_link_libraries(spool-tests PRIVATE spool-core Threads::Threads)
     target_sources(spool-tests PRIVATE ${SPOOL_PROVIDER_BUNDLE_SOURCES} sdk/provider-contract-runner.cpp)
     if(TARGET spoolet)
-        target_sources(spool-tests PRIVATE tests/automation/LocalControlProtocolTest.cpp src/automation/LocalControlProtocol.cpp)
-    endif()
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        target_compile_definitions(spool-tests PRIVATE SPOOL_ZSTD_ALLOCATOR_PROBE=1)
-        target_link_options(spool-tests PRIVATE "LINKER:--wrap=malloc" "LINKER:--wrap=free")
+        target_sources(spool-tests PRIVATE tests/automation/LocalControlProtocolTest.cpp
+            tests/automation/LocalControlAdmissionTest.cpp src/automation/LocalControlProtocol.cpp
+            src/automation/LocalCommandServer.cpp)
     endif()
     add_test(NAME traditional-native COMMAND spool-tests --run-all --results "${CMAKE_CURRENT_BINARY_DIR}/traditional-results.json")
     set_tests_properties(traditional-native PROPERTIES LABELS traditional ENVIRONMENT "${SPOOL_TEST_ENV}" TIMEOUT 0)
@@ -1116,6 +1114,17 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
     endif()
     target_link_libraries(spool-e2e-tests PRIVATE spool-core Qt6::QuickTest)
     add_dependencies(spool-e2e-tests spool spoolet)
+    # The journey launches the actual build product, with its shipped runtime
+    # fonts at the platform's normal application-root location.
+    if(WIN32)
+        set(SPOOL_E2E_FONT_DIR "$<TARGET_FILE_DIR:spool>/fonts")
+    else()
+        set(SPOOL_E2E_FONT_DIR "$<TARGET_FILE_DIR:spool>/../fonts")
+    endif()
+    add_custom_command(TARGET spool-e2e-tests POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/qml/fonts"
+            "${SPOOL_E2E_FONT_DIR}"
+        VERBATIM)
         set(SPOOL_QML_TESTS
             route-policy tests/qml/tst_RoutePolicy.qml
             key-router tests/qml/tst_KeyRouter.qml
@@ -1204,7 +1213,7 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
         endforeach()
         file(APPEND "${qml_registry}" "}\n")
         target_sources(spool-e2e-tests PRIVATE "${qml_registry}")
-        add_test(NAME gui-e2e-native COMMAND spool-e2e-tests --run-all --timeout-ms 600000 --results "${CMAKE_CURRENT_BINARY_DIR}/e2e-results.json")
+        add_test(NAME gui-e2e-native COMMAND spool-e2e-tests --run-all --workers 1 --timeout-ms 600000 --results "${CMAKE_CURRENT_BINARY_DIR}/e2e-results.json")
         set_tests_properties(gui-e2e-native PROPERTIES LABELS e2e ENVIRONMENT "${SPOOL_TEST_ENV}" TIMEOUT 0)
         foreach(test_target IN ITEMS spool-tests spool-e2e-tests)
             set_target_properties(${test_target} PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF

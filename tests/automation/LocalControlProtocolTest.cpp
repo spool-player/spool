@@ -10,7 +10,7 @@
 #include <QLocalServer>
 #include <QLocalSocket>
 #include <QTemporaryDir>
-#include <QUuid>
+#include <QFileInfo>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QHostAddress>
@@ -37,11 +37,30 @@ SPOOL_TEST_MAIN("spoolet-protocol")
     QCoreApplication app(argc, argv);
     QTemporaryDir temporary;
     require(temporary.isValid(), "create private test directory");
-    const QString path = QDir(temporary.path()).filePath(QStringLiteral("test.json"));
 #ifdef Q_OS_UNIX
-    const QString endpoint = QDir(temporary.path()).filePath(QStringLiteral("s-test"));
-#else
-    const QString endpoint = QStringLiteral("spool-control-") + QUuid::createUuid().toString(QUuid::Id128);
+    QTemporaryDir runtime(QStringLiteral("/tmp/spool-protocol-runtime-XXXXXX"));
+    require(runtime.isValid(), "create private short test runtime");
+    qputenv("XDG_RUNTIME_DIR", runtime.path().toUtf8());
+#endif
+    QString dataRoot = temporary.path();
+#ifdef Q_OS_UNIX
+    dataRoot += QStringLiteral("/data-") + QString(80, QLatin1Char('a')) + QStringLiteral("/nested-")
+        + QString(80, QLatin1Char('b'));
+#endif
+    require(QDir().mkpath(dataRoot), "create long selected data root");
+    qputenv("SPOOL_DATA_HOME", dataRoot.toUtf8());
+    QString error;
+    const QString registry = Spool::LocalControl::directory(&error);
+    require(!registry.isEmpty() && registry.startsWith(dataRoot), "descriptor registry honors selected data root");
+    const QString path = QDir(registry).filePath(QStringLiteral("test.json"));
+    QString endpoint = Spool::LocalControl::localEndpoint(registry, QStringLiteral("test"), &error);
+#ifndef Q_OS_UNIX
+    endpoint += QLatin1Char('-') + QString(32, QLatin1Char('a'));
+#endif
+    require(!endpoint.isEmpty(), "resolve bounded native socket address");
+#ifdef Q_OS_UNIX
+    require(QFile::encodeName(registry).size() > 108 && QFileInfo(endpoint).absolutePath() != registry,
+        "long registry paths do not become UNIX socket addresses");
 #endif
     QJsonObject descriptor { { QStringLiteral("instance"), QStringLiteral("test") },
         { QStringLiteral("endpoint"), endpoint }, { QStringLiteral("token"), QString(64, QLatin1Char('a')) } };
@@ -69,6 +88,18 @@ SPOOL_TEST_MAIN("spoolet-protocol")
 #endif
     save();
     require(Spool::LocalControl::readDescriptor(path).isEmpty(), "discovery cannot redirect to an unrelated endpoint");
+    descriptor.insert(QStringLiteral("endpoint"), endpoint);
+    const QString otherRegistry = temporary.filePath(QStringLiteral("other-registry"));
+    require(QDir().mkdir(otherRegistry), "create independent registry");
+    QString foreignEndpoint = Spool::LocalControl::localEndpoint(otherRegistry, QStringLiteral("test"), &error);
+#ifndef Q_OS_UNIX
+    foreignEndpoint += QLatin1Char('-') + QString(32, QLatin1Char('a'));
+#endif
+    require(!foreignEndpoint.isEmpty() && foreignEndpoint != endpoint,
+        "the same instance in another registry has an independent address");
+    descriptor.insert(QStringLiteral("endpoint"), foreignEndpoint);
+    save();
+    require(Spool::LocalControl::readDescriptor(path).isEmpty(), "descriptor cannot redirect to another registry's socket");
     descriptor.insert(QStringLiteral("endpoint"), endpoint);
     descriptor.insert(QStringLiteral("transport"), QStringLiteral("tcp"));
     descriptor.insert(QStringLiteral("endpoint"), QStringLiteral("127.0.0.1"));

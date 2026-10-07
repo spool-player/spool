@@ -13,6 +13,8 @@
 #include <QSaveFile>
 #include <QThread>
 #include <algorithm>
+#include <cerrno>
+#include <csignal>
 #include <cstdlib>
 #include <iostream>
 #include <map>
@@ -25,6 +27,10 @@
 #endif
 #ifdef Q_OS_WIN
 #include <windows.h>
+#endif
+#ifdef Q_OS_UNIX
+#include <sys/mman.h>
+#include <unistd.h>
 #endif
 
 namespace SpoolTests {
@@ -46,17 +52,193 @@ int invoke(const char *name, int argc, char **argv)
     const auto selected = registry().find(name);
     return selected == registry().end() ? 2 : selected->second(argc, argv);
 }
+[[noreturn]] void propagateCrash(int exitCode)
+{
+#ifdef Q_OS_WIN
+    TerminateProcess(GetCurrentProcess(), static_cast<UINT>(exitCode));
+    std::_Exit(1); // Only reachable if the OS rejected termination.
+#else
+    std::signal(exitCode, SIG_DFL);
+    std::raise(exitCode);
+    std::abort();
+#endif
+}
 } // namespace SpoolTests
 
 namespace {
 constexpr int skipExitCode = 77;
 
+#ifdef Q_OS_WIN
+void abortAsOsCrash(int)
+{
+    // STATUS_FATAL_APP_EXIT is informational and Qt treats it as a normal exit.
+    // STATUS_NONCONTINUABLE_EXCEPTION is an actual failing NTSTATUS instead.
+    SpoolTests::propagateCrash(static_cast<int>(0xC0000025u));
+}
+#endif
+
+#ifdef Q_OS_UNIX
+volatile std::sig_atomic_t interruptedSignal = 0;
+void interruptSupervisor(int signal)
+{
+    interruptedSignal = signal;
+}
+#endif
+
+// The owner outlives QProcess and every descendant, including on early returns.
+// Windows assigns the job atomically at CreateProcess, before any child code can
+// spawn an unowned grandchild. Unix descendants inherit the selector's session.
+class SelectorProcess final : public QProcess {
+public:
+    SelectorProcess()
+    {
+        connect(this, &QProcess::started, this, [this] { treePid = processId(); });
+#ifdef Q_OS_WIN
+        job.value = CreateJobObjectW(nullptr, nullptr);
+        if (!job.value)
+            return;
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits {};
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if (!SetInformationJobObject(job.value, JobObjectExtendedLimitInformation, &limits, sizeof(limits)))
+            return;
+        SIZE_T bytes = 0;
+        InitializeProcThreadAttributeList(nullptr, 1, 0, &bytes);
+        attributes.reset(new unsigned char[bytes]);
+        startup.lpAttributeList = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attributes.get());
+        if (!InitializeProcThreadAttributeList(startup.lpAttributeList, 1, 0, &bytes)) {
+            startup.lpAttributeList = nullptr;
+            return;
+        }
+        if (!UpdateProcThreadAttribute(startup.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST,
+                &job.value, sizeof(job.value), nullptr, nullptr))
+            return;
+        setCreateProcessArgumentsModifier([this](CreateProcessArguments *arguments) {
+            startup.StartupInfo = *arguments->startupInfo;
+            startup.StartupInfo.cb = sizeof(startup);
+            arguments->startupInfo = &startup.StartupInfo;
+            arguments->flags |= EXTENDED_STARTUPINFO_PRESENT;
+        });
+        ready = true;
+#elif defined(Q_OS_UNIX)
+        setChildProcessModifier([this] {
+            if (::setsid() == -1)
+                failChildProcessModifier("setsid", errno);
+        });
+#endif
+    }
+    ~SelectorProcess() override
+    {
+        if (!stopTree())
+            std::fprintf(stderr, "cannot terminate selector process tree\n");
+        if (state() != NotRunning)
+            waitForFinished(10000);
+#ifdef Q_OS_WIN
+        if (startup.lpAttributeList)
+            DeleteProcThreadAttributeList(startup.lpAttributeList);
+#endif
+    }
+    bool ownershipReady() const
+    {
+#ifdef Q_OS_WIN
+        return ready;
+#else
+        return true;
+#endif
+    }
+    bool stopTree()
+    {
+        if (!treePid)
+            return true;
+#ifdef Q_OS_WIN
+        if (!TerminateJobObject(job.value, 1))
+            return false;
+#elif defined(Q_OS_UNIX)
+        if (::kill(-static_cast<pid_t>(treePid), SIGKILL) == -1 && errno != ESRCH)
+            return false;
+#else
+        kill();
+#endif
+        treePid = 0;
+        return true;
+    }
+private:
+    qint64 treePid = 0;
+#ifdef Q_OS_WIN
+    struct JobHandle {
+        HANDLE value = nullptr;
+        JobHandle() = default;
+        JobHandle(const JobHandle&) = delete;
+        JobHandle& operator=(const JobHandle&) = delete;
+        ~JobHandle() { if (value) CloseHandle(value); }
+    } job;
+    STARTUPINFOEXW startup {};
+    std::unique_ptr<unsigned char[]> attributes;
+    bool ready = false;
+#endif
+};
+
 // These selectors are only available to the runner's own subprocess regression.
 // They exercise OS exit/crash semantics rather than mocking QProcess results.
-int fixture(const QString& name)
+int fixture(const QString& name, int argc, char **argv)
 {
     if (name == QStringLiteral("fixture-crash"))
         std::abort();
+    if (name == QStringLiteral("fixture-access-violation")) {
+#ifdef Q_OS_WIN
+        void *page = VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_NOACCESS);
+        if (!page)
+            return 2;
+        *static_cast<volatile unsigned char *>(page) = 1;
+#else
+        std::signal(SIGSEGV, SIG_DFL);
+        void *page = ::mmap(nullptr, 4096, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (page == MAP_FAILED)
+            return 2;
+        *static_cast<volatile unsigned char *>(page) = 1;
+#endif
+        return 2;
+    }
+    if (name == QStringLiteral("fixture-forward-crash")) {
+        QCoreApplication app(argc, argv);
+        QProcess child;
+        child.start(app.applicationFilePath(),
+            { QStringLiteral("--fixture-suite"), QStringLiteral("--child"), QStringLiteral("fixture-access-violation") });
+        if (!child.waitForStarted(10000) || !child.waitForFinished(10000))
+            return 2;
+        if (child.exitStatus() == QProcess::CrashExit)
+            SpoolTests::propagateCrash(child.exitCode());
+        return 1;
+    }
+    if (name == QStringLiteral("fixture-exit-three"))
+        return 3;
+    if (name == QStringLiteral("fixture-hang-tree") || name == QStringLiteral("fixture-hang-branch")
+        || name == QStringLiteral("fixture-hang-leaf")) {
+        if (argc < 2)
+            return 2;
+        QCoreApplication app(argc, argv);
+        const QString root = qEnvironmentVariable("SPOOL_TEST_FIXTURE_TREE");
+        if (root.isEmpty())
+            return 2;
+        QProcess child;
+        if (name != QStringLiteral("fixture-hang-leaf")) {
+            const QString descendant = name == QStringLiteral("fixture-hang-tree")
+                ? QStringLiteral("fixture-hang-branch") : QStringLiteral("fixture-hang-leaf");
+            child.start(app.applicationFilePath(),
+                { QStringLiteral("--fixture-suite"), QStringLiteral("--child"), descendant });
+            if (!child.waitForStarted(10000))
+                return 2;
+        }
+        std::cout << name.toStdString() << ": deliberate hang\n" << std::flush;
+        QSaveFile pidFile(root + QLatin1Char('.') + name);
+        if (!pidFile.open(QIODevice::WriteOnly))
+            return 2;
+        const QByteArray pid = QByteArray::number(QCoreApplication::applicationPid());
+        if (pidFile.write(pid) != pid.size() || !pidFile.commit())
+            return 2;
+        for (;;) {
+            QThread::msleep(20);
+        }
+    }
     QThread::msleep(120);
     if (name == QStringLiteral("fixture-fail")) {
         std::cerr << "fixture-fail: deliberate failure\n";
@@ -136,12 +318,15 @@ int supervise(QCoreApplication& app)
     QStringList names;
     if (fixtures) {
         names = { QStringLiteral("fixture-pass-a"), QStringLiteral("fixture-fail"), QStringLiteral("fixture-crash"),
-            QStringLiteral("fixture-pass-b"), QStringLiteral("fixture-skip") };
+            QStringLiteral("fixture-access-violation"), QStringLiteral("fixture-forward-crash"), QStringLiteral("fixture-exit-three"),
+            QStringLiteral("fixture-pass-b"), QStringLiteral("fixture-skip"), QStringLiteral("fixture-hang-tree") };
     } else {
         for (const auto& [name, entry] : SpoolTests::registry())
             names.append(QString::fromStdString(name));
     }
     const QString filter = option(QStringLiteral("--filter"), {});
+    if (fixtures && filter.isEmpty())
+        names.removeAll(QStringLiteral("fixture-hang-tree"));
     if (!filter.isEmpty()) {
         const QStringList requested = filter.split(QLatin1Char(','));
         for (const auto& name : requested) {
@@ -177,16 +362,25 @@ int supervise(QCoreApplication& app)
         QJsonObject row = results.value(name).toObject();
         QString status = row.value(QStringLiteral("status")).toString();
         if (status == QStringLiteral("running")) {
-            status = QStringLiteral("crashed");
+            status = QStringLiteral("interrupted");
             row.insert(QStringLiteral("status"), status);
-            row.insert(QStringLiteral("reason"), QStringLiteral("supervisor interrupted while selector was running"));
+            const QString reason = QStringLiteral("supervisor interrupted while selector was running");
+            row.insert(QStringLiteral("reason"), reason);
+            QJsonArray attempts = row.value(QStringLiteral("attempts")).toArray();
+            attempts.append(QJsonObject { { QStringLiteral("status"), status },
+                { QStringLiteral("reason"), reason }, { QStringLiteral("startedMs"), row.value(QStringLiteral("startedMs")) },
+                { QStringLiteral("log"), row.value(QStringLiteral("log")) } });
+            row.insert(QStringLiteral("attempts"), attempts);
         }
         if (resume && status == QStringLiteral("crashed")) {
             row.insert(QStringLiteral("resumeSkipped"), true);
         } else if (!resume || status.isEmpty() || status == QStringLiteral("pending")
+            || status == QStringLiteral("interrupted")
             || (retry && (status == QStringLiteral("failed") || status == QStringLiteral("timed-out")
                 || status == QStringLiteral("start-failed")))) {
             row.insert(QStringLiteral("status"), QStringLiteral("pending"));
+            row.remove(QStringLiteral("reason"));
+            row.remove(QStringLiteral("resumeSkipped"));
             pending.append(name);
         }
         results.insert(name, row);
@@ -197,7 +391,7 @@ int supervise(QCoreApplication& app)
 
     struct Running {
         QString name;
-        std::unique_ptr<QProcess> process;
+        std::unique_ptr<SelectorProcess> process;
         qint64 started;
         QElapsedTimer elapsed;
     };
@@ -206,6 +400,11 @@ int supervise(QCoreApplication& app)
     int next = 0;
     int peakWorkers = 0;
     bool journalFailed = false;
+    bool treeFailed = false;
+#ifdef Q_OS_UNIX
+    const auto previousTerm = std::signal(SIGTERM, interruptSupervisor);
+    const auto previousInt = std::signal(SIGINT, interruptSupervisor);
+#endif
     const auto persist = [&] {
         state.insert(QStringLiteral("results"), results);
         state.insert(QStringLiteral("peakWorkers"), peakWorkers);
@@ -213,9 +412,18 @@ int supervise(QCoreApplication& app)
             journalFailed = true;
     };
     while (next < pending.size() || !running.empty()) {
+#ifdef Q_OS_UNIX
+        if (interruptedSignal) {
+            // Leave running rows intact: resume records interrupted evidence,
+            // not a genuine crash that this supervisor never observed.
+            std::signal(SIGTERM, previousTerm);
+            std::signal(SIGINT, previousInt);
+            return 1;
+        }
+#endif
         while (!journalFailed && next < pending.size() && int(running.size()) < workers) {
             const QString name = pending[next++];
-            auto process = std::make_unique<QProcess>();
+            auto process = std::make_unique<SelectorProcess>();
             const int attempt = results.value(name).toObject().value(QStringLiteral("attempts")).toArray().size() + 1;
             const QString logPath = path + QLatin1Char('.') + name + QLatin1Char('.')
                 + QString::number(attempt) + QStringLiteral(".log");
@@ -231,6 +439,8 @@ int supervise(QCoreApplication& app)
             const qint64 started = QDateTime::currentMSecsSinceEpoch();
             QJsonObject row = results.value(name).toObject();
             row.insert(QStringLiteral("status"), QStringLiteral("running"));
+            row.remove(QStringLiteral("exitCode"));
+            row.remove(QStringLiteral("finishedMs"));
             row.insert(QStringLiteral("startedMs"), started);
             row.insert(QStringLiteral("log"), logPath);
             results.insert(name, row);
@@ -240,14 +450,18 @@ int supervise(QCoreApplication& app)
             QStringList childArguments { QStringLiteral("--child"), name };
             if (fixtures)
                 childArguments.prepend(QStringLiteral("--fixture-suite"));
-            process->start(app.applicationFilePath(), childArguments);
-            if (!process->waitForStarted(10000)) {
+            if (process->ownershipReady())
+                process->start(app.applicationFilePath(), childArguments);
+            if (!process->ownershipReady() || !process->waitForStarted(10000)) {
                 row.insert(QStringLiteral("status"), QStringLiteral("start-failed"));
+                row.insert(QStringLiteral("reason"), process->ownershipReady() ? process->errorString()
+                    : QStringLiteral("cannot establish isolated selector process tree"));
                 row.insert(QStringLiteral("finishedMs"), QDateTime::currentMSecsSinceEpoch());
                 QJsonArray attempts = row.value(QStringLiteral("attempts")).toArray();
                 attempts.append(QJsonObject { { QStringLiteral("status"), QStringLiteral("start-failed") },
                     { QStringLiteral("startedMs"), started }, { QStringLiteral("finishedMs"), row.value(QStringLiteral("finishedMs")) },
-                    { QStringLiteral("log"), logPath }, { QStringLiteral("exitCode"), -1 } });
+                    { QStringLiteral("log"), logPath }, { QStringLiteral("exitCode"), -1 },
+                    { QStringLiteral("reason"), row.value(QStringLiteral("reason")) } });
                 row.insert(QStringLiteral("attempts"), attempts);
                 results.insert(name, row);
                 persist();
@@ -263,7 +477,7 @@ int supervise(QCoreApplication& app)
             process.waitForFinished(0);
             const bool timedOut = process.state() != QProcess::NotRunning && it->elapsed.elapsed() > timeout;
             if (timedOut || journalFailed) {
-                process.kill();
+                treeFailed |= !it->process->stopTree();
                 process.waitForFinished(10000);
             } else {
                 process.waitForFinished(5);
@@ -272,12 +486,17 @@ int supervise(QCoreApplication& app)
                 ++it;
                 continue;
             }
+            const bool cleanupFailed = !it->process->stopTree();
+            treeFailed |= cleanupFailed;
             const QString status = timedOut ? QStringLiteral("timed-out")
                 : process.exitStatus() == QProcess::CrashExit ? QStringLiteral("crashed")
-                : process.exitCode() == 0 ? QStringLiteral("passed")
+                : !cleanupFailed && process.exitCode() == 0 ? QStringLiteral("passed")
+                : cleanupFailed ? QStringLiteral("failed")
                 : process.exitCode() == skipExitCode ? QStringLiteral("skipped") : QStringLiteral("failed");
             QJsonObject row = results.value(it->name).toObject();
             row.insert(QStringLiteral("status"), status);
+            if (cleanupFailed)
+                row.insert(QStringLiteral("reason"), QStringLiteral("cannot terminate selector process tree"));
             row.insert(QStringLiteral("exitCode"), process.exitCode());
             row.insert(QStringLiteral("finishedMs"), QDateTime::currentMSecsSinceEpoch());
             QJsonArray attempts = row.value(QStringLiteral("attempts")).toArray();
@@ -296,7 +515,11 @@ int supervise(QCoreApplication& app)
         }
         QCoreApplication::processEvents();
     }
-    bool failed = journalFailed;
+#ifdef Q_OS_UNIX
+    std::signal(SIGTERM, previousTerm);
+    std::signal(SIGINT, previousInt);
+#endif
+    bool failed = journalFailed || treeFailed;
     for (const auto& name : names) {
         const QString status = results.value(name).toObject().value(QStringLiteral("status")).toString();
         failed |= status != QStringLiteral("passed") && status != QStringLiteral("skipped");
@@ -316,6 +539,7 @@ int main(int argc, char **argv)
 #ifdef _MSC_VER
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 #endif
+    std::signal(SIGABRT, abortAsOsCrash);
 #endif
     if (!initializeReceipt(argc, argv))
         return 2;
@@ -357,7 +581,7 @@ int main(int argc, char **argv)
     if (selectorIndex >= argc)
         return 2;
     if (fixtures)
-        return fixture(QString::fromUtf8(argv[selectorIndex]));
+        return fixture(QString::fromUtf8(argv[selectorIndex]), argc, argv);
     const auto& tests = SpoolTests::registry();
     const auto selected = tests.find(argv[selectorIndex]);
     if (selected == tests.end()) {

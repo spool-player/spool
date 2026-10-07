@@ -12,10 +12,15 @@ set -euo pipefail
 }
 work="$(mktemp -d -t spool-gpu-tests.XXXXXXXX)"
 display_pid=''
+xvfb_pid=''
 cleanup() {
   if [[ -n "$display_pid" ]]; then
     kill "$display_pid" 2>/dev/null || true
     wait "$display_pid" 2>/dev/null || true
+  fi
+  if [[ -n "$xvfb_pid" ]]; then
+    kill "$xvfb_pid" 2>/dev/null || true
+    wait "$xvfb_pid" 2>/dev/null || true
   fi
   rm -rf "$work"
 }
@@ -35,10 +40,33 @@ export LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe
 export QT_OPENGL=desktop
 export __EGL_VENDOR_LIBRARY_FILENAMES="$SPOOL_TEST_EGL_VENDOR"
 export __GLX_VENDOR_LIBRARY_NAME=mesa
+start_xvfb() {
+  # Allocate a new private X server, never :0 or a developer's existing display.
+  Xvfb -displayfd 3 -screen 0 2048x1200x24 -nolisten tcp +extension GLX \
+    3>"$work/display-number" >"$work/xvfb.log" 2>&1 &
+  xvfb_pid=$!
+  for _ in {1..100}; do
+    [[ -s "$work/display-number" ]] && break
+    kill -0 "$xvfb_pid" 2>/dev/null || break
+    sleep 0.1
+  done
+  if ! kill -0 "$xvfb_pid" 2>/dev/null || [[ ! -s "$work/display-number" ]]; then
+    cat "$work/xvfb.log" >&2
+    echo 'error: isolated Xvfb GLX display did not become ready' >&2
+    exit 1
+  fi
+  read -r number <"$work/display-number"
+  [[ "$number" =~ ^[0-9]+$ ]] || { echo 'error: invalid Xvfb display number' >&2; exit 1; }
+  export DISPLAY=":$number"
+}
 case "${SPOOL_TEST_DISPLAY_BACKEND:-weston}" in
   weston)
+    start_xvfb
     export WAYLAND_DISPLAY=spool-tests QT_QPA_PLATFORM=wayland
-    weston --backend=headless --renderer=gl --width=1920 --height=1080 \
+    # The headless backend has no wl_seat, so real application activation is
+    # impossible. X11 supplies a genuine keyboard/pointer seat to private Weston
+    # while the product and native GPU tests still use Wayland GL/Vulkan.
+    weston --backend=x11 --renderer=gl --width=1920 --height=1080 --output-count=1 \
       --socket="$WAYLAND_DISPLAY" --no-config --idle-time=0 \
       --log="$work/compositor.log" >"$work/display.log" 2>&1 &
     display_pid=$!
@@ -52,25 +80,33 @@ case "${SPOOL_TEST_DISPLAY_BACKEND:-weston}" in
       echo 'error: isolated Weston GL compositor did not become ready' >&2
       exit 1
     fi
-    ;;
-  xvfb)
-    # -displayfd allocates an unused display instead of borrowing :0 or :99.
-    Xvfb -displayfd 3 -screen 0 1920x1080x24 -nolisten tcp +extension GLX \
-      3>"$work/display-number" >"$work/display.log" 2>&1 &
-    display_pid=$!
+    # Focus the actual backend-owned X window. Its public startup diagnostic
+    # gives the ID even when there is no window manager to publish client lists.
+    focused=0
     for _ in {1..100}; do
-      [[ -s "$work/display-number" ]] && break
+      compositor_windows=()
+      while IFS= read -r line; do
+        if [[ "$line" =~ x11[[:space:]]output[[:space:]][0-9]+x[0-9]+,[[:space:]]window[[:space:]]id[[:space:]]([0-9]+) ]]; then
+          compositor_windows+=("${BASH_REMATCH[1]}")
+        fi
+      done <"$work/compositor.log"
+      if [[ ${#compositor_windows[@]} -eq 1 ]] &&
+          xdotool windowfocus --sync "${compositor_windows[0]}" 2>"$work/focus.log"; then
+        focused=1
+        break
+      fi
       kill -0 "$display_pid" 2>/dev/null || break
       sleep 0.1
     done
-    if ! kill -0 "$display_pid" 2>/dev/null || [[ ! -s "$work/display-number" ]]; then
-      cat "$work/display.log" >&2
-      echo 'error: isolated Xvfb GLX display did not become ready' >&2
+    [[ "$focused" == 1 ]] || {
+      cat "$work/compositor.log" "$work/focus.log" >&2 || true
+      echo 'error: private Weston input window could not be activated' >&2
       exit 1
-    fi
-    read -r number <"$work/display-number"
-    [[ "$number" =~ ^[0-9]+$ ]] || { echo 'error: invalid Xvfb display number' >&2; exit 1; }
-    export DISPLAY=":$number" QT_QPA_PLATFORM=xcb
+    }
+    ;;
+  xvfb)
+    start_xvfb
+    export QT_QPA_PLATFORM=xcb
     ;;
   *) echo 'error: SPOOL_TEST_DISPLAY_BACKEND must be weston or xvfb' >&2; exit 2 ;;
 esac
