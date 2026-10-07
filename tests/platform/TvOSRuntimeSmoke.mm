@@ -5,6 +5,9 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QGuiApplication>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QSaveFile>
 #include <QTemporaryFile>
 #include <QThread>
 #include <QUuid>
@@ -91,6 +94,11 @@ SPOOL_TEST_MAIN("tvos-audio")
 namespace {
 int secureStoreSmoke(int argc, char **argv)
 {
+    if (argc < 2) {
+        std::fprintf(stderr, "tvOS credentials smoke: receipt invocation token is required\n");
+        return 1;
+    }
+    const QString nonce = QString::fromUtf8(argv[1]);
     QGuiApplication app(argc, argv);
     const QString account = QStringLiteral("smoke-") + QUuid::createUuid().toString(QUuid::WithoutBraces);
     const QString value = QUuid::createUuid().toString();
@@ -100,6 +108,19 @@ int secureStoreSmoke(int argc, char **argv)
     const bool removed = Spool::CredentialStore::load(account).isEmpty();
     QTemporaryFile data(QDir(Spool::persistentDataRoot()).filePath(QStringLiteral("smoke-XXXXXX")));
     const bool writable = data.open() && data.write("sandbox") == 7 && data.flush();
+    const QByteArray report = QJsonDocument(QJsonObject {
+        { QStringLiteral("case"), QStringLiteral("tvos-credentials") },
+        { QStringLiteral("nonce"), nonce },
+        { QStringLiteral("saved"), saved },
+        { QStringLiteral("loaded"), loaded },
+        { QStringLiteral("removed"), removed },
+        { QStringLiteral("writable"), writable },
+    }).toJson(QJsonDocument::Compact);
+    QSaveFile receipt(QDir::tempPath() + QStringLiteral("/tvos-credentials-result.json"));
+    if (!receipt.open(QIODevice::WriteOnly) || receipt.write(report) != report.size() || !receipt.commit()) {
+        std::fprintf(stderr, "tvOS credentials smoke: failed to write native result receipt\n");
+        return 1;
+    }
     if (!saved || !loaded || !removed || !writable) {
         std::fprintf(stderr, "tvOS credentials smoke: saved=%d loaded=%d removed=%d writable=%d\n",
             saved, loaded, removed, writable);
