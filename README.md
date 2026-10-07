@@ -612,6 +612,9 @@ pins, patches, build policy, SDK, architecture, and compiler/build-tool identity
 PRs restore without publishing caches. Only `spool-tvos-device-arm64` is a public
 release artifact. Simulator apps and smoke results use
 `internal-tvos-simulator-arm64` and are never offered as installable downloads.
+The GLES framebuffer renderer resets shared OpenGL state at context handoffs and
+frame rendering boundaries so Qt's clipping/blend state cannot leak into mpv
+when the video viewport is resized or a playback context is replaced.
 
 Simulator builds embed matching local application and Keychain access-group
 entitlements in the Mach-O XML/DER sections used by the simulator. Before
