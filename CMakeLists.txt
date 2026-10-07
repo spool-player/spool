@@ -125,6 +125,7 @@ qt_standard_project_setup(
     I18N_TRANSLATED_LANGUAGES en_US en_GB en_AU
 )
 include(cmake/platform/Common.cmake)
+include(cmake/Zstd.cmake)
 
 # The launch screen carries the version, so it is rendered per build rather
 # than kept in the tree. tools/generate-splash.sh is the whole of the drawing;
@@ -338,8 +339,6 @@ set(SPOOL_SHELL_SOURCES
     src/provider/SourceHub.h
     src/provider/StreamQualityControl.h
     src/provider/UserItemStateSink.h
-    third_party/zstd/bounded_zstd.c
-    third_party/zstd/bounded_zstd.h
     src/diagnostics/Diagnostics.cpp
     src/diagnostics/Diagnostics.h
     src/diagnostics/InputLatencyMonitor.cpp
@@ -838,6 +837,7 @@ target_link_libraries(spool-core PUBLIC
     Qt6::Sql
     Qt6::OpenGL
     Qt6::WebSockets
+    libzstd_static
 )
 if(ANDROID)
     target_link_libraries(spool-core PUBLIC Qt6::CorePrivate)

@@ -24,7 +24,7 @@ working packages must not be described as already published releases.
 
 | | |
 | --- | --- |
-| `ProviderPackage` | Reads a `.tar.zst` (ustar + zstd, vendored decoder in `third_party/zstd`), validates manifest format 3 and every path, installs versions through a staging directory |
+| `ProviderPackage` | Reads a `.tar.zst` using the official libzstd library, validates manifest format 3 and every path, installs versions through a staging directory |
 | `ProviderRegistry` | Every module (bundled at `qrc:/providers/<id>/`, installed under the data directory; newest wins) and every account. Starts enabled accounts, owns setup drafts, screens (`ProviderUiContext`) and `pick()` |
 | `ScriptRuntime` / `ScriptBridge` | One worker thread and QJSEngine per module; `createSource(configuration, host)` per account; host HTTP, sockets, timers, discovery, events. Only snake_case error codes cross back |
 | `PortableProvider` | One running account as a `Provider`: catalogue, search, item state, playback and artwork from its operations and URL templates |

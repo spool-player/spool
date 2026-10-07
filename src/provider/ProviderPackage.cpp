@@ -1,7 +1,7 @@
 #include "ProviderPackage.h"
 #include "ProviderCapabilityContract.h"
 
-#include "../../third_party/zstd/bounded_zstd.h"
+#include <zstd.h>
 
 #include <QDir>
 #include <QDirIterator>
@@ -209,10 +209,17 @@ namespace ProviderPackage {
         }
         // The expanded tar holds every file plus a header per file and padding.
         const size_t ceiling = kMaxExpandedBytes + (kMaxFiles + 2) * 1024;
-        const size_t declared = spool_zstd_content_size(archive.constData(), archive.size());
-        QByteArray tar(static_cast<qsizetype>(std::min(declared, ceiling)), Qt::Uninitialized);
-        size_t written = 0;
-        if (spool_zstd_decompress(archive.constData(), archive.size(), tar.data(), tar.size(), &written) != 0) {
+        const auto declared = ZSTD_getFrameContentSize(archive.constData(), archive.size());
+        const size_t frameSize = ZSTD_findFrameCompressedSize(archive.constData(), archive.size());
+        if (declared == ZSTD_CONTENTSIZE_ERROR || ZSTD_isError(frameSize) || frameSize != size_t(archive.size())
+            || (declared != ZSTD_CONTENTSIZE_UNKNOWN && declared > ceiling)) {
+            fail(error, QStringLiteral("Package is not a valid .tar.zst archive"));
+            return std::nullopt;
+        }
+        const size_t capacity = declared == ZSTD_CONTENTSIZE_UNKNOWN ? ceiling : static_cast<size_t>(declared);
+        QByteArray tar(static_cast<qsizetype>(capacity), Qt::Uninitialized);
+        const size_t written = ZSTD_decompress(tar.data(), capacity, archive.constData(), archive.size());
+        if (ZSTD_isError(written)) {
             fail(error, QStringLiteral("Package is not a valid .tar.zst archive"));
             return std::nullopt;
         }
