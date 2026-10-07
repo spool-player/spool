@@ -23,7 +23,7 @@ OverlayDialog {
         const jobs = Downloads.jobs
         return itemId ? Downloads.statusFor(itemId) : ({})
     }
-    readonly property bool selecting: !!itemId && (!itemStatus.id || choosingAgain)
+    readonly property bool selecting: Downloads.enabled && !!itemId && (!itemStatus.id || choosingAgain)
     readonly property var options: selecting ? Sources.downloadOptions(itemId) : []
     readonly property var visibleJobs: itemId ? Downloads.jobs.filter(job => job.itemId === itemId) : Downloads.jobs
     readonly property var selectedJob: visibleJobs.find(job => job.id === selectedJobId) || visibleJobs[Math.max(0,
@@ -31,7 +31,8 @@ OverlayDialog {
                                        || ({})
     readonly property bool activeJob: selectedJob.state === "preparing" || selectedJob.state === "downloading"
     readonly property string selectedState: String(selectedJob.state || "")
-    readonly property bool folderControls: Downloads.canChooseFolder && (!Downloads.mobile || destinationExpanded)
+    readonly property bool folderControls: Downloads.enabled && Downloads.canChooseFolder && (!Downloads.mobile
+                                                                                              || destinationExpanded)
     readonly property bool editingDestination: destinationExpanded && folderControls
     readonly property bool folderBrowsing: editingDestination && Platform.isWebOS
     readonly property var rows: folderBrowsing ? Downloads.folderEntries(folderPath.text) : selecting ? options :
@@ -129,10 +130,12 @@ OverlayDialog {
     function focusJobAction() {
         if (!inputActive)
             return
-        InputKeys.focus(activeJob ? cancelButton : selectedJob.state === "complete" ? playButton : selectedJob.state
-                                                                                      === "failed" || selectedJob.state
-                                                                                      === "cancelled" ? retryButton :
-                                                                                                        closeButton)
+        InputKeys.focus(activeJob ? cancelButton : selectedJob.state === "complete" ? playButton : Downloads.enabled && (
+                                                                                          selectedJob.state
+                                                                                          === "failed"
+                                                                                          || selectedJob.state
+                                                                                          === "cancelled")
+                                                                                      ? retryButton : closeButton)
     }
 
     function chooseDestination() {
@@ -252,10 +255,14 @@ OverlayDialog {
 
     SecondaryText {
         Layout.fillWidth: true
-        text: root.editingDestination
-              ? "Folder changes apply only to new downloads. Existing files stay where they are." : root.selecting
-                ? "Choose the version to save. Converted versions are prepared by your server." :
-                  "Keep Spool open to finish downloads. Downloaded files are available offline."
+        text: root.editingDestination ? Platform.isWebOS
+                                        ? "Choose a folder on a USB drive, such as /media/usb/Spool. Avoid the TV's own storage and check free space. Changes apply only to new downloads." :
+                                          "Folder changes apply only to new downloads. Existing files stay where they are." :
+                                          !Downloads.enabled
+                                          ? "Downloads are off. Enable Allow downloads in Settings → Downloads to save new files. Existing files remain available offline." :
+                                            root.selecting
+                                            ? "Choose the version to save. Converted versions are prepared by your server." :
+                                              "Keep Spool open to finish downloads. Downloaded files are available offline."
         wrapMode: Text.WordWrap
     }
 
@@ -489,13 +496,16 @@ OverlayDialog {
         }
         ActionButton {
             id: retryButton
-            visible: !root.editingDestination && !root.selecting && (root.selectedJob.state === "failed"
-                                                                     || root.selectedJob.state === "cancelled")
+            visible: Downloads.enabled && !root.editingDestination && !root.selecting && (root.selectedJob.state
+                                                                                          === "failed"
+                                                                                          || root.selectedJob.state
+                                                                                          === "cancelled")
             text: "Retry"
             onClicked: Downloads.retry(root.selectedJob.id)
         }
         ActionButton {
-            visible: !root.editingDestination && !root.selecting && !!root.itemId && root.selectedJob.state === "failed"
+            visible: Downloads.enabled && !root.editingDestination && !root.selecting && !!root.itemId
+                     && root.selectedJob.state === "failed"
             text: "Choose another version"
             onClicked: root.choosingAgain = true
         }

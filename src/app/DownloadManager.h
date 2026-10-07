@@ -18,6 +18,7 @@ class DownloadManager final : public QObject {
     Q_PROPERTY(QVariantList jobs READ jobs NOTIFY changed)
     Q_PROPERTY(QString destination READ destination NOTIFY changed)
     Q_PROPERTY(bool supported READ supported CONSTANT)
+    Q_PROPERTY(bool enabled READ enabled NOTIFY enabledChanged)
     Q_PROPERTY(bool mobile READ mobile CONSTANT)
     Q_PROPERTY(bool canChooseFolder READ canChooseFolder CONSTANT)
     Q_PROPERTY(QVariantList destinationChoices READ destinationChoices CONSTANT)
@@ -35,6 +36,11 @@ public:
     }
     QVariantList libraryFiles() const;
     static bool supported();
+    bool enabled() const
+    {
+        return m_enabled;
+    }
+    void setEnabled(bool enabled);
     static bool mobile();
     static bool canChooseFolder();
     static QVariantList destinationChoices();
@@ -66,6 +72,7 @@ public:
     Q_INVOKABLE void clearFinished();
 signals:
     void changed();
+    void enabledChanged();
     void openedChanged();
     void libraryChanged();
     void toastRequested(const QString& message);
@@ -88,6 +95,11 @@ private:
     AndroidDownloadStorage *m_androidStorage;
     QHash<QString, std::shared_ptr<Job>> m_jobs;
     QStringList m_order;
+#if defined(SPOOL_WEBOS)
+    bool m_enabled = false;
+#else
+    bool m_enabled = true;
+#endif
     bool m_opened = false;
     QString m_selectionItemId;
 };

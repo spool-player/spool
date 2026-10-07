@@ -333,6 +333,10 @@ void LocalCommandServer::dispatch(QLocalSocket *socket, const QJsonObject& reque
         done(items(args));
     } else if (command == QStringLiteral("downloads")) {
         const QString action = args.value(QStringLiteral("action")).toString(QStringLiteral("list"));
+        if ((action == QStringLiteral("start") || action == QStringLiteral("retry")) && !m_downloads->enabled()) {
+            invalid(QStringLiteral("Offline downloads are disabled in Settings → Downloads"));
+            return;
+        }
         if (action == QStringLiteral("list")) {
             QJsonArray jobs;
             for (const QVariant& value : m_downloads->jobs()) {

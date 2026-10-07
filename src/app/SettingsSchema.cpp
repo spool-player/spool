@@ -551,6 +551,10 @@ const QVector<SettingSpec>& settingSpecs()
                 .onAndroid(),
 #endif
 
+            toggleSpec("downloads/enabled", "Downloads", "Allow downloads",
+                "For a USB drive plugged into this TV. Off by default because the TV's own storage is small", false,
+                SettingTarget::External)
+                .onWebOS(),
             pageSpec("action/downloads", "Downloads", "Downloads", "Manage downloads and play saved files offline",
                 SettingType::Action),
             pageSpec("action/downloadDestination", "Downloads", "Download folder", "Applies only to new downloads",

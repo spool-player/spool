@@ -77,6 +77,14 @@ without server headers or an active connection; offline resume/played state is
 stored locally. Interrupted operations become retryable failures after restart
 and discard incomplete files. A retry negotiates fresh access with the provider.
 
+LG webOS builds disable offline downloads by default to protect the TV's limited
+internal storage. With a suitable USB drive connected, enable **Settings →
+Downloads → Allow downloads**, then choose a writable folder on that drive.
+This opt-in stays local to the TV and is never synced. Turning it off cancels
+active downloads and blocks new downloads/retries, without removing saved media
+or disabling offline playback. Spool does not detect USB drives or reserve free
+space automatically; check the destination and available space before enabling.
+
 Desktop defaults to `Movies/Spool` and has a native folder chooser. On Android,
 the destination control is under Advanced: choose internal/external app storage
 or a Storage Access Framework folder with a persisted read/write grant.

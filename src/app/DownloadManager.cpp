@@ -176,8 +176,27 @@ QVariantList DownloadManager::libraryFiles() const
     }
     return files;
 }
+void DownloadManager::setEnabled(bool enabled)
+{
+    if (m_enabled == enabled)
+        return;
+    m_enabled = enabled;
+    if (!enabled)
+        cancelAll();
+    else
+        m_problem.clear();
+    emit enabledChanged();
+    emit changed();
+}
+
 void DownloadManager::open(const QString& itemId)
 {
+    if (!m_enabled && !itemId.isEmpty() && statusFor(itemId).isEmpty()) {
+        m_problem = tr("Enable Allow downloads in Settings → Downloads first.");
+        emit changed();
+        emit toastRequested(m_problem);
+        return;
+    }
     m_selectionItemId = itemId;
     m_opened = true;
     emit openedChanged();
@@ -200,6 +219,12 @@ void DownloadManager::start(const QString& itemId, const QVariantMap& option)
 {
     if (!supported() || itemId.isEmpty())
         return;
+    if (!m_enabled) {
+        m_problem = tr("Enable Allow downloads in Settings → Downloads first.");
+        emit changed();
+        emit toastRequested(m_problem);
+        return;
+    }
     const auto status = statusFor(itemId);
     const QString state = status.value(QStringLiteral("state")).toString();
     if (state == QStringLiteral("preparing") || state == QStringLiteral("downloading")

@@ -799,6 +799,14 @@ int main(int argc, char **argv)
         &Spool::AppController::revokeAccountIdentity);
     controller->attachSettingsSync(&settingsSync);
     controller->settings()->attachSync(&settingsSync);
+#if defined(SPOOL_WEBOS)
+    const auto updateDownloadsEnabled = [&downloads, settings = controller->settings()] {
+        downloads.setEnabled(settings->value(QStringLiteral("downloads/enabled")).toBool());
+    };
+    QObject::connect(
+        controller->settings(), &Spool::SettingsController::settingsValuesChanged, &app, updateDownloadsEnabled);
+    updateDownloadsEnabled();
+#endif
     const auto updateTrickplayDecoding = [&hub, &trickplay, &remoteTrickplay, settings = controller->settings()] {
         const bool accurate = settings->value(QStringLiteral("playback/accurateTrickplay")).toBool();
         const bool enabled = settings->value(QStringLiteral("playback/seekPreviews")).toBool();

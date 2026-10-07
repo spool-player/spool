@@ -241,8 +241,9 @@ FocusScope {
                              label: favoriteState ? "Remove favourite" : "Add favourite",
                              checked: favoriteState
                          })
-            if (Downloads.supported && queueable && (Downloads.statusFor(itemId).id || Sources.downloadOptions(
-                                                         itemId).length > 0))
+            if (Downloads.supported && queueable && (Downloads.statusFor(itemId).id || (Downloads.enabled
+                                                                                        && Sources.downloadOptions(
+                                                                                            itemId).length > 0)))
                 options.push({
                                  action: "download",
                                  icon: "download",

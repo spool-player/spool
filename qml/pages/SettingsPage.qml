@@ -58,13 +58,18 @@ FocusScope {
         id: settingsRows
     }
 
+    readonly property bool downloadsAvailable: Downloads.supported && (Downloads.enabled || Downloads.jobs.length > 0)
+    onDownloadsAvailableChanged: refreshSettingsFilter(false)
+
     function rowAvailable(row) {
         if (row.key === "action/connectionSpeed" && !ProviderCapabilities.speedTest)
             return false
+        if (row.key === "action/downloads")
+            return downloadsAvailable
         if (row.key === "action/downloadDestination")
-            return Downloads.supported && !Downloads.mobile && Downloads.canChooseFolder
+            return Downloads.supported && Downloads.enabled && !Downloads.mobile && Downloads.canChooseFolder
         if (row.key === "action/mobileDownloadDestination")
-            return Downloads.supported && Downloads.mobile && Downloads.canChooseFolder
+            return Downloads.supported && Downloads.enabled && Downloads.mobile && Downloads.canChooseFolder
         return SettingsNavigation.rowAvailable(row, Platform, Player.hdrPlayback, function (key) {
             return settingsValue({
                                      "key": key,
@@ -720,6 +725,12 @@ FocusScope {
     Connections {
         target: ProviderCapabilities
         function onChanged() {
+            root.refreshSettingsFilter(false)
+        }
+    }
+    Connections {
+        target: Downloads
+        function onEnabledChanged() {
             root.refreshSettingsFilter(false)
         }
     }

@@ -229,6 +229,11 @@ export function createSource(config, sourceHost) {
     {
         DownloadManager downloads(&hub, root.filePath("ledger"));
         downloads.setDestination(QUrl::fromLocalFile(root.filePath("media")));
+        downloads.setEnabled(false);
+        downloads.start(movie, hub.downloadOptions(movie).front().toMap());
+        require(downloads.jobs().isEmpty() && authenticated == 0,
+            "disabled downloads cannot create a job or start a media request");
+        downloads.setEnabled(true);
         const QString pickerCancelledItem = hub.scoped(account, "picker-cancelled");
         const QString pickerOtherItem = hub.scoped(account, "picker-other");
         downloads.start(pickerCancelledItem, hub.downloadOptions(pickerCancelledItem).front().toMap());
@@ -291,11 +296,18 @@ export function createSource(config, sourceHost) {
         waitUntil([&] { return downloads.statusFor(cancelItem).value("received").toLongLong() > 0; },
             "cancel transfer starts");
         const QString cancelledId = downloads.statusFor(cancelItem).value("id").toString();
-        downloads.cancel(cancelledId);
+        downloads.setEnabled(false);
         require(downloads.statusFor(cancelItem).value("state").toString() == "cancelled",
             "cancel is explicit and terminal");
         require(QDir(root.filePath("media")).entryList(QDir::Files).size() == 1,
             "cancel deletes partial output without damaging completed files");
+        downloads.retry(cancelledId);
+        require(downloads.statusFor(cancelItem).value("id").toString() == cancelledId
+                && downloads.statusFor(cancelItem).value("state").toString() == "cancelled",
+            "disabled downloads cannot retry a cancelled transfer");
+        require(downloads.offlineItemId(completedId).startsWith(hub.scoped("spool-downloads", "")),
+            "turning downloads off preserves completed offline media");
+        downloads.setEnabled(true);
         for (const QString& failure :
             { QStringLiteral("playlist"), QStringLiteral("redirect"), QStringLiteral("truncated") }) {
             const QString item = hub.scoped(account, failure);
