@@ -92,6 +92,26 @@ namespace {
                 double(nativeVertexData[2]), double(nativeVertexData[3]), double(nativeVertexData[4]), double(nativeVertexData[5]),
                 double(nativeVertexData[6]), double(nativeVertexData[7]), double(nativeVertexData[8]), double(nativeVertexData[9]),
                 double(nativeVertexData[10]), double(nativeVertexData[11]), unsigned(::glGetError()));
+            for (const char *name : { "texture_size0", "texture_rot0", "texture_off0", "pixel_size0" }) {
+                const GLint location = ::glGetUniformLocation(program, name);
+                GLfloat values[16] {};
+                if (location >= 0)
+                    ::glGetUniformfv(program, location, values);
+                std::fprintf(stderr, "native uniform: name=%s location=%d values=%g,%g,%g,%g\n", name, location,
+                    double(values[0]), double(values[1]), double(values[2]), double(values[3]));
+            }
+            const GLint sampler = ::glGetUniformLocation(program, "texture0");
+            if (sampler >= 0) {
+                GLint unit = 0, active = 0, texture = 0, width = 0, height = 0;
+                ::glGetUniformiv(program, sampler, &unit);
+                ::glGetIntegerv(GL_ACTIVE_TEXTURE, &active);
+                ::glActiveTexture(GL_TEXTURE0 + unit);
+                ::glGetIntegerv(GL_TEXTURE_BINDING_2D, &texture);
+                ::glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &width);
+                ::glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &height);
+                std::fprintf(stderr, "native sampler: unit=%d texture=%d size=%dx%d\n", unit, texture, width, height);
+                ::glActiveTexture(active);
+            }
         }
         ::glDrawArrays(mode, first, count);
     }
