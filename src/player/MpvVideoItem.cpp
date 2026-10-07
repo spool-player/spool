@@ -88,7 +88,8 @@ namespace {
     {
         GLint viewport[4] {}, scissor[4] {}, fbo = 0, program = 0, vao = 0;
         ::glGetIntegerv(GL_VIEWPORT, viewport);
-        if (viewport[2] >= 2000 && nativeDrawDiagnostics++ < 12) {
+        const bool inspect = nativeDrawDiagnostics++ < 28;
+        if (inspect) {
             ::glGetIntegerv(GL_SCISSOR_BOX, scissor);
             ::glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fbo);
             ::glGetIntegerv(GL_CURRENT_PROGRAM, &program);
@@ -124,6 +125,33 @@ namespace {
             }
         }
         ::glDrawArrays(mode, first, count);
+        if (inspect) {
+            GLint format = 0, type = 0, pack = 0, length = 0, skipRows = 0, skipPixels = 0;
+            ::glGetIntegerv(GL_IMPLEMENTATION_COLOR_READ_FORMAT, &format);
+            ::glGetIntegerv(GL_IMPLEMENTATION_COLOR_READ_TYPE, &type);
+            ::glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &pack);
+            ::glGetIntegerv(GL_PACK_ROW_LENGTH, &length);
+            ::glGetIntegerv(GL_PACK_SKIP_ROWS, &skipRows);
+            ::glGetIntegerv(GL_PACK_SKIP_PIXELS, &skipPixels);
+            ::glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+            ::glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+            ::glPixelStorei(GL_PACK_SKIP_ROWS, 0);
+            ::glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
+            unsigned char quarter[16] {}, threeQuarter[16] {};
+            ::glReadPixels(viewport[2] / 2, viewport[3] / 4, 1, 1, format, type, quarter);
+            ::glReadPixels(viewport[2] / 2, 3 * viewport[3] / 4, 1, 1, format, type, threeQuarter);
+            std::fprintf(stderr,
+                "native pass pixels: size=%dx%d fbo=%d program=%d format=%d type=%d error=%u y25=%02x%02x%02x%02x%02x%02x%02x%02x y75=%02x%02x%02x%02x%02x%02x%02x%02x\n",
+                viewport[2], viewport[3], fbo, program, format, type, unsigned(::glGetError()),
+                unsigned(quarter[0]), unsigned(quarter[1]), unsigned(quarter[2]), unsigned(quarter[3]),
+                unsigned(quarter[4]), unsigned(quarter[5]), unsigned(quarter[6]), unsigned(quarter[7]),
+                unsigned(threeQuarter[0]), unsigned(threeQuarter[1]), unsigned(threeQuarter[2]), unsigned(threeQuarter[3]),
+                unsigned(threeQuarter[4]), unsigned(threeQuarter[5]), unsigned(threeQuarter[6]), unsigned(threeQuarter[7]));
+            ::glBindBuffer(GL_PIXEL_PACK_BUFFER, pack);
+            ::glPixelStorei(GL_PACK_ROW_LENGTH, length);
+            ::glPixelStorei(GL_PACK_SKIP_ROWS, skipRows);
+            ::glPixelStorei(GL_PACK_SKIP_PIXELS, skipPixels);
+        }
     }
 #endif
 
@@ -411,6 +439,9 @@ namespace {
     private:
         void createRenderContext(mpv_handle *next)
         {
+#ifdef Q_OS_TVOS
+            nativeDrawDiagnostics = 0;
+#endif
             if (auto *gl = QOpenGLContext::currentContext()) {
                 auto *functions = gl->functions();
                 qInfo() << "player: OpenGL context" << gl->format()
