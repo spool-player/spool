@@ -16,7 +16,7 @@ xcrun simctl install "$device" "$app"
 # simctl's console mode returns after process exit. Parse only the exact
 # credential-free consumer-test result, never dump full app/provider logs.
 python3 - "$device" "$app" "$result" <<'PY'
-import json, subprocess, sys
+import json, re, subprocess, sys
 from pathlib import Path
 
 device, app, output = sys.argv[1:]
@@ -45,8 +45,11 @@ for bundle, arguments, expected in checks:
         for line in process.stdout.splitlines():
             if any(marker in line for marker in ["launch test:", "video result:", "orientation:",
                                                 "render context was not ready", "failed to initialize mpv",
-                                                "tvOS audio smoke:", "tvOS credentials smoke:"]):
-                print(line)
+                                                "tvOS audio smoke:", "tvOS credentials smoke:",
+                                                "startup:", "[qml]", "font registration failed:",
+                                                "database initialization failed:", "dyld[",
+                                                "An error was encountered processing the command"]):
+                print(re.sub(r"https?://\S+", "[redacted-url]", line))
         (output / "result.json").write_text(json.dumps(results, indent=2) + "\n")
         raise SystemExit(1)
 (output / "result.json").write_text(json.dumps(results, indent=2) + "\n")

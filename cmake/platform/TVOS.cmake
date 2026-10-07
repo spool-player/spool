@@ -24,6 +24,7 @@ function(spool_configure_tvos_targets native_target core_target)
         PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
     target_sources(${native_target} PRIVATE app/tvos/PrivacyInfo.xcprivacy)
     if(SPOOL_TVOS_ASSETS)
+        set_source_files_properties("${SPOOL_TVOS_ASSETS}" PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
         target_sources(${native_target} PRIVATE "${SPOOL_TVOS_ASSETS}")
     endif()
     # Exercise the existing renderer consumer test on the actual UIKit/EAGL
