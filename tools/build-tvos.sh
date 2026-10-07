@@ -17,6 +17,9 @@ case "$APPLE_SDK:$APPLE_ARCH" in
   *) echo "error: unsupported tvOS SDK/architecture: $APPLE_SDK/$APPLE_ARCH" >&2; exit 1 ;;
 esac
 xcrun --sdk "$APPLE_SDK" --show-sdk-path >/dev/null
+if [[ "$APPLE_SDK" == appletvsimulator ]]; then
+  xcrun --find derq >/dev/null
+fi
 bash "$ROOT/tools/apple/build-qt-tvos.sh"
 bash "$ROOT/tools/apple/build-dependencies.sh"
 export PKG_CONFIG_LIBDIR="$APPLE_DEPS_PREFIX/lib/pkgconfig"

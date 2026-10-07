@@ -43,4 +43,32 @@ function(spool_configure_tvos_targets native_target core_target)
     )
     install(TARGETS spool-tvos-playback-smoke BUNDLE DESTINATION smoke)
     set_source_files_properties(tests/platform/TvOSRuntimeSmoke.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    string(TOLOWER "${CMAKE_OSX_SYSROOT}" tvos_sysroot)
+    if(tvos_sysroot MATCHES "appletvsimulator")
+        # Simulator application/Keychain entitlements belong in Mach-O sections,
+        # not the macOS code signature, where these are restricted entitlements.
+        foreach(target IN ITEMS ${native_target} spool-tvos-playback-smoke)
+            get_target_property(identifier ${target} MACOSX_BUNDLE_GUI_IDENTIFIER)
+            set(xml "${CMAKE_CURRENT_BINARY_DIR}/${target}-simulator.xcent")
+            set(der "${xml}.der")
+            file(CONFIGURE OUTPUT "${xml}" CONTENT
+"<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">
+<plist version=\"1.0\"><dict>
+<key>application-identifier</key><string>SPOOLSMOKE.${identifier}</string>
+<key>com.apple.developer.team-identifier</key><string>SPOOLSMOKE</string>
+<key>keychain-access-groups</key><array><string>SPOOLSMOKE.${identifier}</string></array>
+</dict></plist>
+")
+            add_custom_command(OUTPUT "${der}"
+                COMMAND xcrun derq query -f xml -i "${xml}" -o "${der}" --raw
+                DEPENDS "${xml}"
+                VERBATIM)
+            target_sources(${target} PRIVATE "${der}")
+            target_link_options(${target} PRIVATE
+                "LINKER:-sectcreate,__TEXT,__entitlements,${xml}"
+                "LINKER:-sectcreate,__TEXT,__ents_der,${der}")
+            set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS "${xml}" "${der}")
+        endforeach()
+    endif()
 endfunction()

@@ -15,7 +15,7 @@ xcrun simctl bootstatus "$device" -b
 # simctl's console mode returns after process exit. Parse only the exact
 # credential-free consumer-test result, never dump full app/provider logs.
 python3 - "$device" "$app" "$result" <<'PY'
-import json, os, plistlib, re, subprocess, sys, tempfile
+import json, plistlib, re, subprocess, sys, tempfile
 from pathlib import Path
 
 device, app, output = sys.argv[1:]
@@ -28,17 +28,12 @@ with tempfile.TemporaryDirectory(prefix="spool-tvos-sign-") as signing:
         with (bundle / "Info.plist").open("rb") as metadata:
             identifier = plistlib.load(metadata)["CFBundleIdentifier"]
         bundle_ids.append(identifier)
-        # Simulator Keychain still enforces signed application/access-group
-        # entitlements. A local ad-hoc identity needs no developer certificate
-        # and is not a signing identity for device/App Store distribution.
-        application = "SPOOLSMOKE." + identifier
+        # Application/Keychain entitlements are embedded by the simulator
+        # linker. The host macOS signature must contain only its local debug
+        # entitlement; signing restricted iOS entitlements makes AMFI kill it.
         entitlements = Path(signing) / (identifier + ".plist")
         with entitlements.open("wb") as file:
-            plistlib.dump({
-                "application-identifier": application,
-                "com.apple.developer.team-identifier": "SPOOLSMOKE",
-                "keychain-access-groups": [application],
-            }, file)
+            plistlib.dump({"com.apple.security.get-task-allow": True}, file)
         subprocess.run(["codesign", "--force", "--sign", "-", "--timestamp=none",
                         "--entitlements", str(entitlements), "--generate-entitlement-der", str(bundle)], check=True)
         subprocess.run(["xcrun", "simctl", "install", device, str(bundle)], check=True)
@@ -54,12 +49,8 @@ checks = [
 ]
 results = {}
 for bundle, arguments, expected in checks:
-    environment = os.environ.copy()
-    if arguments == ["mpv-video-item"]:
-        environment["SIMCTL_CHILD_SPOOL_TEST_MPV_LOG"] = "1"
     process = subprocess.run(["xcrun", "simctl", "launch", "--console", device, bundle, *arguments],
-                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=90,
-                             env=environment)
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=90)
     passed = process.returncode == 0 and expected in process.stdout
     results[arguments[0]] = passed
     print(f"{arguments[0]}: {'passed' if passed else 'FAILED'}")
@@ -74,17 +65,6 @@ for bundle, arguments, expected in checks:
         if native_error is not None:
             for line in lines[native_error:]:
                 print(re.sub(r"https?://\S+", "[redacted-url]", line))
-            predicate = '(process == "amfid" OR process == "kernel") AND (eventMessage CONTAINS[c] "spool")'
-            native = subprocess.run(["/usr/bin/log", "show", "--last", "2m", "--style", "compact",
-                                     "--predicate", predicate], stdout=subprocess.PIPE,
-                                    stderr=subprocess.STDOUT, text=True, timeout=30)
-            print(re.sub(r"https?://\S+", "[redacted-url]", native.stdout))
-            for report in (Path.home() / "Library/Logs/DiagnosticReports").glob("Spool*.ips"):
-                payload = report.read_text()
-                metadata, offset = json.JSONDecoder().raw_decode(payload)
-                details = json.loads(payload[offset:])
-                print("native termination:", json.dumps({
-                    "exception": details.get("exception"), "termination": details.get("termination")}))
         for line in lines:
             if arguments == ["mpv-video-item"] and any(
                     marker in line for marker in ["[vd]", "[vo/libmpv]", "[libmpv_render", "[ffmpeg/video]",
