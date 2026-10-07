@@ -14,7 +14,7 @@ TestCase {
     QtObject {
         id: provider
         property bool closed: false
-        property var missingHostExtensions: []
+        property var capabilities: ({discovery: true})
         property var arguments: ({
                                      kind: "homePin",
                                      title: "Protected account"
@@ -25,10 +25,6 @@ TestCase {
         property var pendingPoll: null
         property int closes: 0
         function request(operation, args) {
-            if (operation === "extensionStatus")
-                return Promise.resolve({
-                                           enabled: {}
-                                       })
             if (operation === "discover")
                 return Promise.resolve({
                                            servers: []

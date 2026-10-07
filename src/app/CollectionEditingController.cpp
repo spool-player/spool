@@ -17,7 +17,7 @@ CollectionEditingController::CollectionEditingController(SourceHub *sources, QOb
     : QObject(parent)
     , m_sources(sources)
 {
-    connect(sources, &SourceHub::extensionSupportChanged, this, [this](const QString& account) {
+    connect(sources, &SourceHub::capabilitySupportChanged, this, [this](const QString& account) {
         if (!m_containerId.isEmpty() && account == m_accountId) {
             // A permission/offer or source generation change invalidates every
             // loaded occurrence and in-flight result, not just the buttons.

@@ -25,7 +25,7 @@ FocusScope {
     property bool busy: false
     property bool discovering: false
     property bool validAddress: false
-    property bool lanAvailable: false
+    readonly property bool lanAvailable: !closed && provider.capabilities.lanProbe === true
     property bool lanSearching: false
     property string error: ""
     property string code: ""
@@ -60,7 +60,7 @@ FocusScope {
         servers = merged
     }
     function discoverServers() {
-        if (discovering || closed || alternateActive || step !== "server")
+        if (discovering || closed || provider.capabilities.discovery !== true || alternateActive || step !== "server")
             return
         discovering = true
         const stamp = discoveryGeneration
@@ -281,10 +281,6 @@ FocusScope {
     }
     Component.onCompleted: {
         discoverServers()
-        provider.request("extensionStatus").then(result => {
-            if (!closed)
-                lanAvailable = !!result.enabled["spool.lan-probe"]
-        }, () => {})
         Qt.callLater(() => address.focusRow())
     }
     Component.onDestruction: {

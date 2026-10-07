@@ -42,36 +42,36 @@ SPOOL_TEST_MAIN("script-runtime")
     QCoreApplication app(argc, argv);
     using Spool::ScriptRuntime;
     {
-        ScriptRuntime extensions(
-            QStringLiteral(TEST_SOURCE_DIR "/tests/providers/fixtures/extensions.mjs"), QVariantMap {});
-        const QVariantMap supported { { "spool.speed-test", 1 } };
-        QCoro::waitFor(extensions.addSource("enabled", {}, {}, supported));
-        QCoro::waitFor(extensions.addSource("baseline", {}, {}));
+        ScriptRuntime runtime(
+            QStringLiteral(TEST_SOURCE_DIR "/tests/providers/fixtures/capabilities.mjs"), QVariantMap {});
+        const QVariantMap declared { { "speedTest", true } };
+        QCoro::waitFor(runtime.addSource("enabled", {}, {}, declared));
+        QCoro::waitFor(runtime.addSource("baseline", {}, {}));
         for (int attempt = 0; attempt < 2; ++attempt) {
-            const auto enabled = QCoro::waitFor(extensions.call("enabled", "inspect"));
-            require(enabled.value("extensions").toMap() == supported && enabled.value("blocked").toInt() == 8,
-                "providers cannot overwrite, extend, remove or replace negotiated host support");
+            const auto enabled = QCoro::waitFor(runtime.call("enabled", "inspect"));
+            require(enabled.value("capabilities").toMap() == declared && enabled.value("blocked").toInt() == 8,
+                "providers cannot overwrite, extend, remove or replace package declarations");
             require(enabled.value("shared").toBool() && enabled.value("frozen").toBool(),
-                "source and successive operation hosts share one frozen extension map");
-            const auto baseline = QCoro::waitFor(extensions.call("baseline", "inspect"));
-            require(baseline.value("extensions").toMap().isEmpty() && baseline.value("frozen").toBool(),
-                "a source without declared host support cannot inherit another source's extensions");
+                "source and successive operation hosts share one frozen capability map");
+            const auto baseline = QCoro::waitFor(runtime.call("baseline", "inspect"));
+            require(baseline.value("capabilities").toMap().isEmpty() && baseline.value("frozen").toBool(),
+                "a source without declarations cannot inherit another source's capabilities");
         }
 
         QList<QVariantMap> events;
-        QObject::connect(&extensions, &ScriptRuntime::event, &app,
+        QObject::connect(&runtime, &ScriptRuntime::event, &app,
             [&](const QString&, const QString&, const QVariantMap& payload) { events.append(payload); });
         // Queue replacement before the main loop can deliver the old factory's
         // event. Even a reused account id must not acquire old generation offers.
-        auto removed = extensions.addSource("reused", { { "event", supported } }, {}, supported);
-        extensions.removeSource("reused");
-        const QVariantMap newOffer { { "spool.suggestions", 1 } };
-        auto replacement = extensions.addSource("reused", { { "event", newOffer } }, {}, newOffer);
+        auto removed = runtime.addSource("reused", { { "event", declared } }, {}, declared);
+        runtime.removeSource("reused");
+        const QVariantMap newOffer { { "suggestions", true } };
+        auto replacement = runtime.addSource("reused", { { "event", newOffer } }, {}, newOffer);
         QCoro::waitFor(std::move(removed));
         QCoro::waitFor(std::move(replacement));
-        QCoro::waitFor(extensions.call("reused", "inspect"));
-        require(events == QList<QVariantMap> { QVariantMap { { "extensions", newOffer } } },
-            "queued extension events from a removed generation cannot change a replacement account");
+        QCoro::waitFor(runtime.call("reused", "inspect"));
+        require(events == QList<QVariantMap> { QVariantMap { { "capabilities", newOffer } } },
+            "queued capability events from a removed generation cannot change a replacement account");
     }
     QTcpServer server;
     require(server.listen(QHostAddress::LocalHost), "fixture server listens");
@@ -220,8 +220,9 @@ SPOOL_TEST_MAIN("script-runtime")
     const QString entry = QStringLiteral(TEST_SOURCE_DIR "/tests/providers/fixtures/provider.mjs");
     auto runtime = std::make_unique<ScriptRuntime>(entry, QVariantMap {});
     const auto add = [&](const QString& id) {
-        return runtime->addSource(
-            id, { { "origin", origin }, { "label", id }, { "token", id + "-token" } }, { QUrl(origin) });
+        return runtime->addSource(id,
+            { { "origin", origin }, { "label", id }, { "token", id + "-token" } }, { QUrl(origin) },
+            { { "speedTest", true } });
     };
     QCoro::waitFor(add("a"));
     QCoro::waitFor(add("b"));

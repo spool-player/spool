@@ -260,18 +260,6 @@ FocusScope {
             color: Theme.textSecondary
         }
 
-        AppText {
-            readonly property var selectedAccount: root.accountAt(grid.currentIndex)
-            Layout.fillWidth: true
-            visible: Boolean(selectedAccount && selectedAccount.missingHostExtensions
-                             && selectedAccount.missingHostExtensions.length > 0)
-            text: "Update Spool to use all features of this provider."
-            horizontalAlignment: Text.AlignHCenter
-            wrapMode: Text.WordWrap
-            font.pixelSize: Metrics.bodySizePx
-            color: Theme.textSecondary
-        }
-
         GridView {
             id: grid
             Layout.alignment: Qt.AlignHCenter

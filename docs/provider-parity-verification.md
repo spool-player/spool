@@ -1,9 +1,10 @@
 # Provider parity verification
 
 The provider parity plan is implemented across Spool and the sibling Jellyfin,
-Emby and Plex providers. The API remains 0.2; optional features negotiate exact
-extension versions per account. Local provider builds use the sibling working
-trees. Published provider pins are unchanged until a separately authorized release.
+Emby and Plex providers. The current contract uses manifest format 3 with one
+declared-and-account-offered boolean capability map, not API or extension-major
+negotiation. Local provider builds use the sibling working trees. The evidence
+below records the earlier parity verification, not proof of the current cutover.
 
 Verified again on 2026-09-30 after the provider UI/local-library cutover: the
 local-provider release build succeeded, all 98 non-GPU tests passed, all six
@@ -49,7 +50,7 @@ confirmed read-back states, keyboard sync opt-out, stale responses after an acco
 change, remote target selection without playback, removal of the second duplicate
 queue entry, and rejected/successful PIN submission through a provider surface.
 Existing native and provider tests cover service-specific protocols, activation
-families, generation races, old-host compatibility and settings convergence.
+families, generation races, capability withdrawal and settings convergence.
 
 For screenshots, supply an output directory:
 

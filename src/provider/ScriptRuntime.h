@@ -17,7 +17,7 @@ class QWebSocket;
 
 namespace Spool {
 
-// One provider module on its own worker thread and QJSEngine (API 0.2). JS
+// One provider module on its own worker thread and QJSEngine. JS
 // values never leave the worker; results are converted to native values
 // there. The host picks source IDs and the origins each source may reach.
 class ScriptRuntime final : public QObject {
@@ -37,16 +37,17 @@ public:
     ~ScriptRuntime() override;
 
     // An origin of "*" lets the source reach any HTTP(S) origin.
-    // extensions is the host-supported subset of the module's declarations.
+    // capabilities maps the module's manifest declarations to true, not authorization.
     QCoro::Task<QVariantMap> addSource(QString sourceId, QVariantMap configuration, QList<QUrl> origins,
-        QVariantMap extensions = {}, bool loginDraft = false,
+        QVariantMap capabilities = {}, bool loginDraft = false,
         std::shared_ptr<std::atomic_bool> activationApproval = {});
     QCoro::Task<QVariantMap> call(QString sourceId, QString method, QVariantMap arguments = {}, QString scope = {});
     // Listing path: decoded on the worker straight into native items.
     QCoro::Task<ProviderMediaPage> callMediaPage(
         QString sourceId, QString method, QVariantMap arguments = {}, QString scope = {}, int maximumItems = 100);
     // Details path: `{item: {...}}` decoded on the worker.
-    QCoro::Task<MovieItem> callItem(QString sourceId, QString method, QVariantMap arguments = {});
+    QCoro::Task<MovieItem> callItem(
+        QString sourceId, QString method, QVariantMap arguments = {}, QString scope = {});
     void cancelScope(const QString& sourceId, const QString& scope);
     void removeSource(const QString& sourceId);
     // A supplied false token stages the grant without authorizing traffic.

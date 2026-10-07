@@ -30,7 +30,7 @@ namespace {
     {
         return code.contains("target_unavailable") || code.contains("target_not_found")
             || code.contains("remote_target_gone") || code.contains("target_unauthorized")
-            || code.contains("source_unavailable") || code.contains("unsupported_extension");
+            || code.contains("source_unavailable") || code.contains("unsupported_capability");
     }
 }
 
@@ -60,7 +60,7 @@ RemoteTargetsController::RemoteTargetsController(
         connect(app, &QGuiApplication::applicationStateChanged, this,
             [this](Qt::ApplicationState state) { setForeground(state == Qt::ApplicationActive); });
     }
-    connect(hub, &SourceHub::extensionSupportChanged, this, [this](const QString& account) {
+    connect(hub, &SourceHub::capabilitySupportChanged, this, [this](const QString& account) {
         emit availableChanged();
         if (!m_hub->remoteAvailable(account)) {
             m_accountTargets.remove(account);

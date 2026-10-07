@@ -7,8 +7,8 @@ the pieces fit; `sdk/README.md` and `sdk/provider.d.ts` are the provider author'
 
 ## Release installation flow
 
-Spool 0.8.12 bundles Jellyfin 0.2.9, Emby 0.1.5 and Plex 0.1.6, pinned to their
-published release archives. Saved accounts normally open Home. The provider
+Spool bundles the five provider versions pinned in `providers/lock.json`.
+Saved accounts normally open Home. The provider
 chooser is used to add a server or sign in as another viewer. Selecting an
 uninstalled provider downloads, verifies and installs it, then opens sign-in;
 selecting an available update likewise continues into sign-in.
@@ -20,13 +20,39 @@ update policy; background updates use the same progress display.
 
 | | |
 | --- | --- |
-| `ProviderPackage` | Reads a `.tar.zst` (ustar + zstd, vendored decoder in `third_party/zstd`), validates manifest format 2 and every path, installs versions through a staging directory |
+| `ProviderPackage` | Reads a `.tar.zst` (ustar + zstd, vendored decoder in `third_party/zstd`), validates manifest format 3 and every path, installs versions through a staging directory |
 | `ProviderRegistry` | Every module (bundled at `qrc:/providers/<id>/`, installed under the data directory; newest wins) and every account. Starts enabled accounts, owns setup drafts, screens (`ProviderUiContext`) and `pick()` |
 | `ScriptRuntime` / `ScriptBridge` | One worker thread and QJSEngine per module; `createSource(configuration, host)` per account; host HTTP, sockets, timers, discovery, events. Only snake_case error codes cross back |
 | `PortableProvider` | One running account as a `Provider`: catalogue, search, item state, playback and artwork from its operations and URL templates |
 | `SourceHub` | The single `Provider` the app sees. Scopes IDs as `<8 hex of account>:<id>`, fans list requests out to every account in parallel and interleaves them, routes everything else to the owning account. Search is planned per server (below) and shown as each answer lands |
 | `ProviderStore` | `official.json` and `index.json` from spool-player/spool-providers (Pages), install by link, update checks and the `providers/updates` policy |
 | `app/GroupPlaybackController` | Watching together over whichever account the group is on: clock, drift, buffering, queue handoff. Providers translate their protocol into `group` events |
+
+### Current capability contract
+
+Format 3 is the single package schema boundary; manifests and feed entries do
+not carry a separate API version or extension wire-major map. A manifest's
+`capabilities` is a bounded list of known feature names. The worker exposes
+those declarations as the frozen boolean map `host.capabilities`.
+
+Each account's required `describe()` operation returns its current boolean
+`capabilities` offers. Only a declared capability explicitly offered as `true`
+is enabled; absent offers are disabled. Providers replace their account offers
+with `host.emit('capabilitiesChanged', {capabilities})`. The registry updates
+native feature flags and provider screens together, cancels affected operation
+scopes, and rejects results from a withdrawn capability even if it is offered
+again before completion. `callSource`, `callSourceMediaPage` and `callSourceItem`
+are the single operation boundary: optional operations are guarded before
+provider execution, including the validated native preferences and settings
+storage paths. Unsupported operations fail with `unsupported_capability`.
+
+Capabilities advertise behavior, not permission: per-account server policy,
+private activation approval, explicit origin/LAN consent, cancellation and
+conditional storage writes remain independent guards. Provider screens read
+`provider.capabilities`; login drafts see declarations and live account screens
+see effective offers. Closed screens see no capabilities. Providers and host
+cut over together; old package schemas are not adapted or negotiated.
+
 
 `src/providers/local/LocalProvider` is the one native provider: explicitly
 selected desktop folders form a library, with no implicit Movies-folder account.
@@ -244,7 +270,7 @@ card resizing, and checks the rendered pixels as well as inherited ownership.
 
 Generic provider forms live in the app's precompiled `Spool` module:
 `ServerLogin`, `ServerIdentityRow`, `ProviderLinkScreen`, `ProviderCodePanel`,
-`ProviderActionPicker`, `ProviderRemoteControls`, and `ProviderCompatibilityNotice`.
+`ProviderActionPicker` and `ProviderRemoteControls`.
 Provider QML supplies protocol operation names, labels, capabilities and genuinely
 service-specific flows (such as Connect membership selection and Home activation),
 not duplicate form, list, navigation or PIN layouts. Providers using these forms
@@ -282,8 +308,8 @@ of inheriting Qt's unscaled default text size or clipping inside a fixed-height 
 
 ## Connection speed
 
-New providers with a download-test endpoint declare `spool.speed-test: 1` in
-`extensions` and implement `speedTest(args, host)` with `host.speedTest({url, headers})`.
+Providers with a download-test endpoint declare and offer `speedTest` in
+`capabilities` and implement `speedTest(args, host)` with `host.speedTest({url, headers})`.
 The URL contains `{bytes}` and `{nonce}` placeholders; endpoint paths and authentication
 stay inside the provider package. The native worker applies the account's
 origin allowlist and TLS trust policy, never follows redirects, and drains

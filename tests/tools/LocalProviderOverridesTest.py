@@ -24,8 +24,8 @@ class DiscoveryTest(unittest.TestCase):
         checkout = self.workspace / folder
         (checkout / "logic").mkdir(parents=True)
         (checkout / "logic/main.mjs").write_text("export function createSource() {}\n")
-        manifest = {"format": 2, "api": tool.SDK.API, "id": identifier, "name": "Test", "version": "0.1.0",
-                    "entry": "logic/main.mjs"}
+        manifest = {"format": 3, "id": identifier, "name": "Test", "version": "0.1.0",
+                    "entry": "logic/main.mjs", "capabilities": []}
         manifest.update(changes)
         (checkout / "manifest.json").write_text(json.dumps(manifest))
         return checkout
@@ -65,7 +65,7 @@ class DiscoveryTest(unittest.TestCase):
         candidate = self.provider("candidate")
         manifest_path = candidate / "manifest.json"
         original = json.loads(manifest_path.read_text())
-        for changes in ({"api": "999"}, {"format": 1}, {"id": "invalid"},
+        for changes in ({"api": "999"}, {"extensions": {}}, {"format": 2}, {"id": "invalid"},
                         {"entry": "logic/missing.mjs"}, {"entry": "../escape.mjs"},
                         {"icon": "assets/missing.svg"}, {"ui": {"login": "ui/Missing.qml"}},
                         {"entry": "unpackaged/main.mjs"}):

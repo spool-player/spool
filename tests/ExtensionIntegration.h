@@ -80,8 +80,8 @@ public:
         auto package = ProviderFixture::package("fixture.integration");
         auto manifest = QJsonDocument::fromJson(package.files["manifest.json"]).object();
         manifest["origins"] = QJsonArray { QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort()) };
-        manifest["extensions"] = QJsonObject { { "spool.settings-storage", 1 }, { "spool.playback-preferences", 1 },
-            { "spool.remote-targets", 1 }, { "spool.account-activation", 1 } };
+        manifest["capabilities"] = QJsonArray { "settingsStorage", "playbackPreferences", "remoteTargets",
+            "accountActivation" };
         package.files["manifest.json"] = QJsonDocument(manifest).toJson();
         package.manifest = *Spool::ProviderManifest::parse(package.files["manifest.json"]);
         for (const auto& file : { QString("extension-integration.mjs"), QString("IntegrationPin.qml") }) {

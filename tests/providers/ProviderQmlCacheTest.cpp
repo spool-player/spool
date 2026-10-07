@@ -38,7 +38,9 @@ void waitUntil(const std::function<bool()>& condition)
 
 SPOOL_TEST_MAIN("provider-qml-cache")
 {
+#if !defined(Q_OS_ANDROID) && !defined(SPOOL_APPLE_MOBILE)
     qputenv("QT_QPA_PLATFORM", "offscreen");
+#endif
     QGuiApplication app(argc, argv);
     QTemporaryDir directory;
     QTemporaryDir installedDirectory;

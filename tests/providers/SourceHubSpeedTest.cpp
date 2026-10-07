@@ -45,7 +45,9 @@ void waitUntil(const std::function<bool()>& condition, const char *message)
 
 SPOOL_TEST_MAIN("source-hub-speed-test")
 {
+#if !defined(Q_OS_ANDROID) && !defined(SPOOL_APPLE_MOBILE)
     qputenv("QT_QPA_PLATFORM", "offscreen");
+#endif
     QGuiApplication app(argc, argv);
     QTemporaryDir directory;
     qputenv("SPOOL_CREDENTIAL_STORE_DIR", directory.filePath("credentials").toUtf8());
@@ -59,7 +61,7 @@ SPOOL_TEST_MAIN("source-hub-speed-test")
     package.files["logic/provider.mjs"] = R"JS(
 export function createSource(configuration) {
     return {
-        describe() { return {}; },
+        describe() { return {capabilities: {speedTest:true, streamQuality:true}}; },
         speedTest(args, host) {
             host.emit('probeStarted', {});
             return host.delay(40).then(function() {
