@@ -7,7 +7,7 @@
 #include "TestMain.h"
 
 #include <QDir>
-#include <QElapsedTimer>
+#include <QEventLoop>
 #include <QGuiApplication>
 #include <QImage>
 #include <QQuickWindow>
@@ -15,7 +15,7 @@
 #include <QSGTextureProvider>
 #include <QSurfaceFormat>
 #include <QTemporaryFile>
-#include <QThread>
+#include <QTimer>
 #include <algorithm>
 #include <atomic>
 #if SPOOL_MPV_ITEM_RHI
@@ -153,10 +153,8 @@ SPOOL_TEST_MAIN("mpv-video-item")
 #if SPOOL_MPV_ITEM_RHI
     std::atomic_int textureFormat { -1 };
 #endif
-    bool framePresented = false;
     QQuickWindow window;
     window.setColor(Qt::black);
-    QObject::connect(&window, &QQuickWindow::frameSwapped, &window, [&] { framePresented = true; });
     window.resize(320, 180);
     Spool::MpvVideoItem videoItem(window.contentItem());
     // Match production's anchors.fill: parent. UIKit can replace requested
@@ -194,6 +192,27 @@ SPOOL_TEST_MAIN("mpv-video-item")
 #else
         return image;
 #endif
+    };
+    const auto waitForPresentedFrame = [&](const auto& matches) {
+        bool matched = false;
+        QEventLoop loop;
+        QTimer timeout;
+        timeout.setSingleShot(true);
+        QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+        QObject::connect(
+            &window, &QQuickWindow::frameSwapped, &loop,
+            [&] {
+                if (!matched && matches(captureItem())) {
+                    matched = true;
+                    loop.quit();
+                }
+            },
+            Qt::QueuedConnection);
+        timeout.start(5000);
+        // UIKit returns to UIApplicationMain only for EventLoopExec, not a
+        // manual processEvents pump. Read back after its real presentation.
+        loop.exec();
+        return matched;
     };
 
     // Reusing an item after detach must reset first-frame state and publish
@@ -254,20 +273,7 @@ SPOOL_TEST_MAIN("mpv-video-item")
             return 1;
         }
 
-        bool rendered = false;
-        framePresented = false;
-        QElapsedTimer timer;
-        timer.start();
-        while (!rendered && timer.elapsed() < 5000) {
-            app.processEvents(QEventLoop::AllEvents, 20);
-            // grabWindow renders a readback frame, not a presented frame.
-            // Let the normal window swap (and libmpv feedback) happen first.
-            if (framePresented) {
-                framePresented = false;
-                rendered = isRightWayUp(captureItem());
-            }
-            QThread::msleep(10);
-        }
+        const bool rendered = waitForPresentedFrame(isRightWayUp);
         if (!rendered) {
             int64_t decodedWidth = 0;
             int64_t decodedHeight = 0;
@@ -307,17 +313,8 @@ SPOOL_TEST_MAIN("mpv-video-item")
         const QImage beforeOsd = captureItem();
         const char *osdCommand[] = { "show-text", "SDR white", "10000", nullptr };
         bool neutralOsd = false;
-        framePresented = false;
         if (mpv_command(handle, osdCommand) >= 0) {
-            timer.restart();
-            while (!neutralOsd && timer.elapsed() < 5000) {
-                app.processEvents(QEventLoop::AllEvents, 20);
-                if (framePresented) {
-                    framePresented = false;
-                    neutralOsd = containsNeutralOsd(captureItem(), beforeOsd);
-                }
-                QThread::msleep(10);
-            }
+            neutralOsd = waitForPresentedFrame([&](const QImage& image) { return containsNeutralOsd(image, beforeOsd); });
         }
         const bool released = videoItem.releaseMpvHandle();
         mpv_terminate_destroy(handle);

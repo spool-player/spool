@@ -617,6 +617,8 @@ frame rendering boundaries so Qt's clipping/blend state cannot leak into mpv
 when the video viewport is resized or a playback context is replaced.
 The pixel consumer waits for a real window swap before readback; grabbing an
 offscreen frame cannot substitute for native presentation feedback.
+Those waits enter Qt's native event loop: on UIKit a manual event pump does not
+transfer control to `UIApplicationMain` for normal system presentation.
 Each consumer selector launches a fresh native process, terminating any previous
 instance of the harness before dispatching its next argument vector.
 
