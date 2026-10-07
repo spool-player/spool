@@ -119,7 +119,7 @@ jobs:
       - name: Repeat actual native renderer lifecycle
         run: |
           python3 - <<'PY'
-          import json, subprocess
+          import json, os, subprocess, threading
           from pathlib import Path
           def sim(*arguments, **options):
               return subprocess.check_output(["xcrun", "simctl", *arguments], text=True, **options).strip()
@@ -135,20 +135,42 @@ jobs:
               sim("boot", device)
               print(sim("bootstatus", device, "-b"))
               sim("install", device, "build/tvos/appletvsimulator-arm64/install/smoke/spool-tvos-playback-smoke.app")
+              container = Path(sim("get_app_container", device, "com.sachk.spool.playback-smoke", "data"))
+              failed = container / "tmp/mpv-video-item-failure.png"
               for attempt in range(1, 4):
-                  process = subprocess.run(["xcrun", "simctl", "launch", "--console", "--terminate-running-process",
-                                            device, "com.sachk.spool.playback-smoke", "mpv-video-item"],
-                                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=90)
+                  failed.unlink(missing_ok=True)
+                  finished = threading.Event()
+                  def observe():
+                      while not finished.wait(0.1):
+                          if failed.exists():
+                              subprocess.run(["xcrun", "simctl", "io", device, "screenshot",
+                                              f"build/tvos/smoke/native-presentation-repeat-{attempt}.png"], check=True)
+                              print(f"Captured live native presentation for renderer round {attempt}")
+                              return
+                  environment = os.environ.copy()
+                  environment["SIMCTL_CHILD_SPOOL_TEST_MPV_LOG"] = "1"
+                  environment["SIMCTL_CHILD_QT_MESSAGE_PATTERN"] = "%{time process} %{message}"
+                  process = subprocess.Popen(["xcrun", "simctl", "launch", "--console", "--terminate-running-process",
+                                              device, "com.sachk.spool.playback-smoke", "mpv-video-item"],
+                                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=environment)
+                  observer = threading.Thread(target=observe)
+                  observer.start()
+                  try:
+                      transcript, _ = process.communicate(timeout=90)
+                  finally:
+                      finished.set()
+                      observer.join()
                   passed = process.returncode == 0 and (
-                      "mpv video smoke: upright frames and OSD rendered across detach and resize" in process.stdout)
+                      "mpv video smoke: upright frames and OSD rendered across detach and resize" in transcript)
                   results.append(passed)
                   print(f"Native renderer lifecycle round {attempt}: {'passed' if passed else 'FAILED'}")
                   Path("build/tvos/smoke/repeat-renderer.json").write_text(json.dumps(results) + "\n")
                   if not passed:
                       print("native consumer exit:", process.returncode)
-                      for line in process.stdout.splitlines():
+                      for line in transcript.splitlines():
                           if any(marker in line for marker in ["orientation:", "decoder:", "viewport:", "video result:",
-                                                               "render context was not ready", "first video frame"]):
+                                                               "render context was not ready", "first video frame",
+                                                               "render context handoff did not complete"]):
                               print(line)
                       raise SystemExit(1)
           finally:
