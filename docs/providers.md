@@ -15,6 +15,10 @@ selecting an available update likewise continues into sign-in.
 A modal reports download progress and the verification/installation stage, then
 closes automatically on success or failure. Settings retain the existing provider
 update policy; background updates use the same progress display.
+For a package-schema cutover, verification may bundle archives built from the
+canonical provider checkouts. Release promotion must publish those exact bytes
+and replace the curated catalogue entries with the real release URLs and digests;
+working packages must not be described as already published releases.
 
 ## Moving parts (`src/provider/`)
 
@@ -232,13 +236,13 @@ signed-64-bit ticks and byte sizes as decimal strings.
 
 ### Item menus and collection editing
 
-Menus request `spool.item-actions` policy only when opened, using the item's owning
-account. A negotiated list replaces manifest actions; older providers without that
-declaration retain their type-filtered manifest list. Closing a menu cancels its
+Menus request `itemActions` policy only when opened, using the item's owning
+account. Its current list replaces manifest actions; packages that intentionally
+use only static manifest actions retain their type-filtered list. Closing a menu cancels its
 request, and execution checks the current policy again. Disabled actions retain their
 reason rather than claiming that server permissions require an app update.
 
-`spool.collection-editing` exposes **Manage entries** on playlist/collection menus.
+`collectionEditing` exposes **Manage entries** on playlist/collection menus.
 The shared editor reads native-order pages of at most 50 entries, retaining duplicate
 media as distinct opaque entry IDs. Remove and move controls follow `collectionInfo`;
 smart/read-only lists cannot gain controls from another account's capabilities.
@@ -414,7 +418,7 @@ confirmation; destructive provider action pickers also start on Cancel.
 
 ## Outbound playback devices
 
-`spool.remote-targets` is independent of inbound `remoteControl` and the local
+`remoteTargets` is independent of inbound `remoteControl` and the local
 “Allow remote control” preference. The chooser lists This device first and
 loads enabled accounts progressively. Selecting a peer never starts or transfers
 media. Transfer is explicit; failed remote starts leave the local queue intact.
@@ -462,15 +466,18 @@ for an unadvertised backend command.
 
 ## Testing
 
-- `providers-tests` (ctest `provider-*`, `source-hub`, `script-runtime`, `local-provider`): package
-  format, registry, hub, store (against a local HTTP server) and screens, with the fixture provider in
-  `tests/providers/fixtures/`.
+- `spool-tests --child <selector>` drives native provider contracts for package
+  format, registry, hub, store (against a local HTTP server) and the fixtures in
+  `tests/providers/fixtures/`. `spool-e2e-tests` owns GUI/provider-screen contracts.
+  Run the common supervisor with
+  `python3 tools/run-tests.py --build-dir <dir> --workers N`; all traditional
+  selectors settle before the GUI e2e phase begins.
 - `bundled-jellyfin` runs a small contract against the pinned package in this Qt; each provider
   repository carries its full `tests/contract.mjs`.
 - `live-jellyfin` runs sign-in to playback against a real server when `SPOOL_LIVE_JELLYFIN`,
   `SPOOL_LIVE_USER` and `SPOOL_LIVE_PASSWORD` are set; otherwise it skips.
 
-The top-right playback-device menu consumes `spool.remote-targets` data and can
+The top-right playback-device menu consumes `remoteTargets` data and can
 mount provider QML for advanced controls in place. `ProviderSurface.embedded`
 omits shell page chrome for those sections; `overlay` retains the underlying page
 and adds a modal scrim for playback choices and item actions. Successful login
