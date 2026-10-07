@@ -16,12 +16,6 @@
 #include <QSurfaceFormat>
 #include <QTemporaryFile>
 #include <QTimer>
-#ifdef Q_OS_TVOS
-#include <QOpenGLContext>
-#include <QOpenGLExtraFunctions>
-#include <QPointer>
-#include <QRunnable>
-#endif
 #include <algorithm>
 #include <atomic>
 #if SPOOL_MPV_ITEM_RHI
@@ -392,64 +386,6 @@ SPOOL_TEST_MAIN("mpv-video-item")
                 static_cast<long long>(decodedWidth), widthStatus, static_cast<long long>(decodedHeight), heightStatus,
                 position, positionStatus, eof, eofStatus);
             captureItem().save(QDir::tempPath() + QStringLiteral("/mpv-video-item-failure.png"));
-#ifdef Q_OS_TVOS
-            if (verbose) {
-                std::fprintf(stderr, "native presentation diagnostic: holding failed live viewport\n");
-                window.scheduleRenderJob(
-                    QRunnable::create([item = QPointer<Spool::MpvVideoItem>(&videoItem),
-                                          surface = QPointer<QQuickWindow>(&window)] {
-                        if (!item || !surface || !QOpenGLContext::currentContext())
-                            return;
-                        const auto *provider = item->textureProvider();
-                        const auto *texture = provider ? provider->texture() : nullptr;
-                        const auto *native = texture ? texture->nativeInterface<QNativeInterface::QSGOpenGLTexture>() : nullptr;
-                        if (!native)
-                            return;
-                        const QSize size = texture->textureSize();
-                        surface->beginExternalCommands();
-                        auto *gl = QOpenGLContext::currentContext()->extraFunctions();
-                        GLint readFbo = 0, drawFbo = 0, packBuffer = 0, rowLength = 0, skipRows = 0, skipPixels = 0;
-                        gl->glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &readFbo);
-                        gl->glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &drawFbo);
-                        gl->glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &packBuffer);
-                        gl->glGetIntegerv(GL_PACK_ROW_LENGTH, &rowLength);
-                        gl->glGetIntegerv(GL_PACK_SKIP_ROWS, &skipRows);
-                        gl->glGetIntegerv(GL_PACK_SKIP_PIXELS, &skipPixels);
-                        GLuint probe = 0;
-                        gl->glGenFramebuffers(1, &probe);
-                        gl->glBindFramebuffer(GL_FRAMEBUFFER, probe);
-                        gl->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
-                            native->nativeTexture(), 0);
-                        const GLenum status = gl->glCheckFramebufferStatus(GL_FRAMEBUFFER);
-                        unsigned char quarter[4] {}, threeQuarter[4] {};
-                        gl->glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
-                        gl->glPixelStorei(GL_PACK_ROW_LENGTH, 0);
-                        gl->glPixelStorei(GL_PACK_SKIP_ROWS, 0);
-                        gl->glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
-                        if (status == GL_FRAMEBUFFER_COMPLETE) {
-                            gl->glReadPixels(size.width() / 2, size.height() / 4, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, quarter);
-                            gl->glReadPixels(size.width() / 2, 3 * size.height() / 4, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, threeQuarter);
-                        }
-                        gl->glPixelStorei(GL_PACK_ROW_LENGTH, rowLength);
-                        gl->glPixelStorei(GL_PACK_SKIP_ROWS, skipRows);
-                        gl->glPixelStorei(GL_PACK_SKIP_PIXELS, skipPixels);
-                        gl->glBindBuffer(GL_PIXEL_PACK_BUFFER, packBuffer);
-                        gl->glBindFramebuffer(GL_READ_FRAMEBUFFER, readFbo);
-                        gl->glBindFramebuffer(GL_DRAW_FRAMEBUFFER, drawFbo);
-                        gl->glDeleteFramebuffers(1, &probe);
-                        surface->endExternalCommands();
-                        std::fprintf(stderr, "native target: size=%dx%d status=%u y25=%u,%u,%u,%u y75=%u,%u,%u,%u\n",
-                            size.width(), size.height(), unsigned(status),
-                            unsigned(quarter[0]), unsigned(quarter[1]), unsigned(quarter[2]), unsigned(quarter[3]),
-                            unsigned(threeQuarter[0]), unsigned(threeQuarter[1]), unsigned(threeQuarter[2]), unsigned(threeQuarter[3]));
-                    }),
-                    QQuickWindow::AfterRenderingStage);
-                window.update();
-                QEventLoop hold;
-                QTimer::singleShot(15000, &hold, &QEventLoop::quit);
-                hold.exec();
-            }
-#endif
         }
 
         // Diagnostic, not an assertion: what the swapchain can present depends on

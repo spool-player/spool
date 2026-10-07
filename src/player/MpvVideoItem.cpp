@@ -16,12 +16,6 @@
 #include <QQuickWindow>
 #include <QTimer>
 #include <QtDebug>
-#ifdef Q_OS_TVOS
-#include <OpenGLES/ES3/gl.h>
-#include <cstring>
-#include <cstdio>
-#include <dlfcn.h>
-#endif
 
 #if SPOOL_MPV_ITEM_RHI
 #include <QSGRendererInterface>
@@ -63,173 +57,13 @@ extern "C" {
 namespace Spool {
 
 namespace {
-#ifdef Q_OS_TVOS
-    thread_local int nativeDrawDiagnostics = 0;
-    thread_local GLfloat nativeVertexData[12] {};
-    void diagnosticBufferData(GLenum target, GLsizeiptr size, const void *data, GLenum usage)
-    {
-        if (target == GL_ARRAY_BUFFER && data && size >= GLsizeiptr(sizeof(nativeVertexData)))
-            std::memcpy(nativeVertexData, data, sizeof(nativeVertexData));
-        ::glBufferData(target, size, data, usage);
-    }
-    void diagnosticTexImage2D(GLenum target, GLint level, GLint internal, GLsizei width, GLsizei height,
-        GLint border, GLenum format, GLenum type, const void *data)
-    {
-        static thread_local int allocations = 0;
-        if (allocations++ < 40) {
-            GLint texture = 0;
-            ::glGetIntegerv(GL_TEXTURE_BINDING_2D, &texture);
-            std::fprintf(stderr, "native texture allocation: texture=%d size=%dx%d level=%d format=%d\n",
-                texture, width, height, level, internal);
-        }
-        if (data && width == 2 && height == 256 && format == GL_RGBA && type == GL_FLOAT) {
-            const auto *values = static_cast<const GLfloat *>(data);
-            GLint rowLength = 0, skipRows = 0, skipPixels = 0, unpackBuffer = 0;
-            ::glGetIntegerv(GL_UNPACK_ROW_LENGTH, &rowLength);
-            ::glGetIntegerv(GL_UNPACK_SKIP_ROWS, &skipRows);
-            ::glGetIntegerv(GL_UNPACK_SKIP_PIXELS, &skipPixels);
-            ::glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &unpackBuffer);
-            std::fprintf(stderr,
-                "native LUT input: rowLength=%d skipRows=%d skipPixels=%d unpackBuffer=%d row0=%g,%g,%g,%g,%g,%g,%g,%g row1=%g,%g,%g,%g,%g,%g,%g,%g\n",
-                rowLength, skipRows, skipPixels, unpackBuffer,
-                double(values[0]), double(values[1]), double(values[2]), double(values[3]),
-                double(values[4]), double(values[5]), double(values[6]), double(values[7]),
-                double(values[8]), double(values[9]), double(values[10]), double(values[11]),
-                double(values[12]), double(values[13]), double(values[14]), double(values[15]));
-        }
-        ::glTexImage2D(target, level, internal, width, height, border, format, type, data);
-        if (data && width == 2 && height == 256 && format == GL_RGBA && type == GL_FLOAT) {
-            GLint texture = 0, read = 0, draw = 0, pack = 0, length = 0, rows = 0, pixels = 0;
-            ::glGetIntegerv(GL_TEXTURE_BINDING_2D, &texture);
-            ::glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &read);
-            ::glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &draw);
-            ::glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &pack);
-            ::glGetIntegerv(GL_PACK_ROW_LENGTH, &length);
-            ::glGetIntegerv(GL_PACK_SKIP_ROWS, &rows);
-            ::glGetIntegerv(GL_PACK_SKIP_PIXELS, &pixels);
-            GLuint probe = 0;
-            ::glGenFramebuffers(1, &probe);
-            ::glBindFramebuffer(GL_FRAMEBUFFER, probe);
-            ::glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, target, texture, 0);
-            const GLenum status = ::glCheckFramebufferStatus(GL_FRAMEBUFFER);
-            unsigned short values[8] {};
-            if (status == GL_FRAMEBUFFER_COMPLETE) {
-                ::glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
-                ::glPixelStorei(GL_PACK_ROW_LENGTH, 0);
-                ::glPixelStorei(GL_PACK_SKIP_ROWS, 0);
-                ::glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
-                ::glReadPixels(0, 0, 2, 1, GL_RGBA, GL_HALF_FLOAT, values);
-            }
-            std::fprintf(stderr, "native LUT pixels: texture=%d status=%u error=%u row0=%04x,%04x,%04x,%04x,%04x,%04x,%04x,%04x\n",
-                texture, unsigned(status), unsigned(::glGetError()), unsigned(values[0]), unsigned(values[1]),
-                unsigned(values[2]), unsigned(values[3]), unsigned(values[4]), unsigned(values[5]),
-                unsigned(values[6]), unsigned(values[7]));
-            ::glBindBuffer(GL_PIXEL_PACK_BUFFER, pack);
-            ::glPixelStorei(GL_PACK_ROW_LENGTH, length);
-            ::glPixelStorei(GL_PACK_SKIP_ROWS, rows);
-            ::glPixelStorei(GL_PACK_SKIP_PIXELS, pixels);
-            ::glBindFramebuffer(GL_READ_FRAMEBUFFER, read);
-            ::glBindFramebuffer(GL_DRAW_FRAMEBUFFER, draw);
-            ::glDeleteFramebuffers(1, &probe);
-        }
-    }
-    void diagnosticDrawArrays(GLenum mode, GLint first, GLsizei count)
-    {
-        GLint viewport[4] {}, scissor[4] {}, fbo = 0, program = 0, vao = 0;
-        ::glGetIntegerv(GL_VIEWPORT, viewport);
-        const bool inspect = nativeDrawDiagnostics++ < 28;
-        if (inspect) {
-            ::glGetIntegerv(GL_SCISSOR_BOX, scissor);
-            ::glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fbo);
-            ::glGetIntegerv(GL_CURRENT_PROGRAM, &program);
-            ::glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &vao);
-            GLint enabled = 0, stride = 0, buffer = 0;
-            ::glGetVertexAttribiv(0, GL_VERTEX_ATTRIB_ARRAY_ENABLED, &enabled);
-            ::glGetVertexAttribiv(0, GL_VERTEX_ATTRIB_ARRAY_STRIDE, &stride);
-            ::glGetVertexAttribiv(0, GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING, &buffer);
-            std::fprintf(stderr,
-                "native draw: vp=%d,%d,%d,%d scissor=%d,%d,%d,%d fbo=%d program=%d vao=%d attrib0=%d stride=%d buffer=%d vertices=%g,%g,%g,%g;%g,%g,%g,%g;%g,%g,%g,%g error=%u\n",
-                viewport[0], viewport[1], viewport[2], viewport[3], scissor[0], scissor[1], scissor[2], scissor[3],
-                fbo, program, vao, enabled, stride, buffer, double(nativeVertexData[0]), double(nativeVertexData[1]),
-                double(nativeVertexData[2]), double(nativeVertexData[3]), double(nativeVertexData[4]), double(nativeVertexData[5]),
-                double(nativeVertexData[6]), double(nativeVertexData[7]), double(nativeVertexData[8]), double(nativeVertexData[9]),
-                double(nativeVertexData[10]), double(nativeVertexData[11]), unsigned(::glGetError()));
-            for (const char *name : { "texture_size0", "texture_rot0", "texture_off0", "pixel_size0" }) {
-                const GLint location = ::glGetUniformLocation(program, name);
-                GLfloat values[16] {};
-                if (location >= 0)
-                    ::glGetUniformfv(program, location, values);
-                std::fprintf(stderr, "native uniform: name=%s location=%d values=%g,%g,%g,%g\n", name, location,
-                    double(values[0]), double(values[1]), double(values[2]), double(values[3]));
-            }
-            const GLint sampler = ::glGetUniformLocation(program, "texture0");
-            if (sampler >= 0) {
-                GLint unit = 0, active = 0, texture = 0;
-                ::glGetUniformiv(program, sampler, &unit);
-                ::glGetIntegerv(GL_ACTIVE_TEXTURE, &active);
-                ::glActiveTexture(GL_TEXTURE0 + unit);
-                ::glGetIntegerv(GL_TEXTURE_BINDING_2D, &texture);
-                std::fprintf(stderr, "native sampler: unit=%d texture=%d\n", unit, texture);
-                ::glActiveTexture(active);
-            }
-        }
-        ::glDrawArrays(mode, first, count);
-        if (inspect) {
-            GLint format = 0, type = 0, pack = 0, length = 0, skipRows = 0, skipPixels = 0;
-            ::glGetIntegerv(GL_IMPLEMENTATION_COLOR_READ_FORMAT, &format);
-            ::glGetIntegerv(GL_IMPLEMENTATION_COLOR_READ_TYPE, &type);
-            ::glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &pack);
-            ::glGetIntegerv(GL_PACK_ROW_LENGTH, &length);
-            ::glGetIntegerv(GL_PACK_SKIP_ROWS, &skipRows);
-            ::glGetIntegerv(GL_PACK_SKIP_PIXELS, &skipPixels);
-            ::glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
-            ::glPixelStorei(GL_PACK_ROW_LENGTH, 0);
-            ::glPixelStorei(GL_PACK_SKIP_ROWS, 0);
-            ::glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
-            unsigned char quarter[16] {}, threeQuarter[16] {};
-            ::glReadPixels(viewport[2] / 2, viewport[3] / 4, 1, 1, format, type, quarter);
-            ::glReadPixels(viewport[2] / 2, 3 * viewport[3] / 4, 1, 1, format, type, threeQuarter);
-            std::fprintf(stderr,
-                "native pass pixels: size=%dx%d fbo=%d program=%d format=%d type=%d error=%u y25=%02x%02x%02x%02x%02x%02x%02x%02x y75=%02x%02x%02x%02x%02x%02x%02x%02x\n",
-                viewport[2], viewport[3], fbo, program, format, type, unsigned(::glGetError()),
-                unsigned(quarter[0]), unsigned(quarter[1]), unsigned(quarter[2]), unsigned(quarter[3]),
-                unsigned(quarter[4]), unsigned(quarter[5]), unsigned(quarter[6]), unsigned(quarter[7]),
-                unsigned(threeQuarter[0]), unsigned(threeQuarter[1]), unsigned(threeQuarter[2]), unsigned(threeQuarter[3]),
-                unsigned(threeQuarter[4]), unsigned(threeQuarter[5]), unsigned(threeQuarter[6]), unsigned(threeQuarter[7]));
-            ::glBindBuffer(GL_PIXEL_PACK_BUFFER, pack);
-            ::glPixelStorei(GL_PACK_ROW_LENGTH, length);
-            ::glPixelStorei(GL_PACK_SKIP_ROWS, skipRows);
-            ::glPixelStorei(GL_PACK_SKIP_PIXELS, skipPixels);
-        }
-    }
-#endif
 
     void *getProcAddressGl(void *, const char *name)
     {
         QOpenGLContext *gl = QOpenGLContext::currentContext();
         if (!gl)
             return nullptr;
-        void *address = reinterpret_cast<void *>(gl->getProcAddress(QByteArray(name)));
-#ifdef Q_OS_TVOS
-        if (!qgetenv("SPOOL_TEST_MPV_LOG").isEmpty()
-            && (std::strcmp(name, "glViewport") == 0 || std::strcmp(name, "glVertexAttribPointer") == 0
-                || std::strcmp(name, "glBindFramebuffer") == 0 || std::strcmp(name, "glUniformMatrix3fv") == 0)) {
-            Dl_info provider {}, linked {};
-            dladdr(address, &provider);
-            dladdr(reinterpret_cast<void *>(&::glViewport), &linked);
-            std::fprintf(stderr, "native GL provider: function=%s resolved=%s directGLES=%s\n", name,
-                provider.dli_fname ? provider.dli_fname : "(unknown)", linked.dli_fname ? linked.dli_fname : "(unknown)");
-        }
-        if (!qgetenv("SPOOL_TEST_MPV_LOG").isEmpty()) {
-            if (std::strcmp(name, "glDrawArrays") == 0)
-                return reinterpret_cast<void *>(&diagnosticDrawArrays);
-            if (std::strcmp(name, "glBufferData") == 0)
-                return reinterpret_cast<void *>(&diagnosticBufferData);
-            if (std::strcmp(name, "glTexImage2D") == 0)
-                return reinterpret_cast<void *>(&diagnosticTexImage2D);
-        }
-#endif
-        return address;
+        return reinterpret_cast<void *>(gl->getProcAddress(QByteArray(name)));
     }
 
     // Render-thread ownership shared by both Qt item backends. GPU work stays
@@ -470,17 +304,7 @@ namespace {
                 { MPV_RENDER_PARAM_INVALID, nullptr },
             };
 
-#ifdef Q_OS_TVOS
-            static thread_local bool nativeReported = false;
-            const int result = mpv_render_context_render(ctx, params);
-            if (!nativeReported && !qgetenv("SPOOL_TEST_MPV_LOG").isEmpty()) {
-                nativeReported = true;
-                std::fprintf(stderr, "native renderer result: target=%dx%d status=%d error=%u\n",
-                    mpfbo.w, mpfbo.h, result, unsigned(::glGetError()));
-            }
-#else
             mpv_render_context_render(ctx, params);
-#endif
             QQuickOpenGLUtils::resetOpenGLState();
             m_lifecycle.frameRendered(updateFlags);
         }
@@ -488,9 +312,6 @@ namespace {
     private:
         void createRenderContext(mpv_handle *next)
         {
-#ifdef Q_OS_TVOS
-            nativeDrawDiagnostics = 0;
-#endif
             if (auto *gl = QOpenGLContext::currentContext()) {
                 auto *functions = gl->functions();
                 qInfo() << "player: OpenGL context" << gl->format()

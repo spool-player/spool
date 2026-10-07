@@ -99,16 +99,9 @@ for bundle, arguments, expected in checks:
             for line in lines[native_error:]:
                 print(re.sub(r"https?://\S+", "[redacted-url]", line))
         for line in lines:
-            if arguments == ["mpv-video-item"] and any(
-                    marker in line for marker in ["[vd]", "[vo/libmpv]", "[libmpv_render", "[ffmpeg/video]",
-                                                 "player: render backend", "first video frame",
-                                                 "render context handoff did not complete", "native target:", "native GL provider:",
-                                                 "native presentation diagnostic:", "native draw:", "native renderer result:",
-                                                 "native uniform:", "native sampler:", "native texture allocation:",
-                                                 "native pass pixels:", "native LUT input:", "native LUT pixels:"]):
-                print(re.sub(r"https?://\S+", "[redacted-url]", line))
             if any(marker in line for marker in ["launch test:", "video result:", "orientation:", "viewport:", "decoder:",
                                                 "render context was not ready", "failed to initialize mpv",
+                                                "first video frame", "render context handoff did not complete",
                                                 "tvOS audio smoke:", "tvOS credentials smoke:",
                                                 "startup:", "[qml]", "font registration failed:",
                                                 "database initialization failed:", "dyld["]):
