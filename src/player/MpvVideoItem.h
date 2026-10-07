@@ -2,7 +2,6 @@
 
 #include <QByteArray>
 #include <QMutex>
-#include <QPointer>
 #include <QtQmlIntegration/qqmlintegration.h>
 
 #include <atomic>
@@ -85,7 +84,6 @@ public:
     struct HandleSnapshot {
         mpv_handle *handle;
         bool dirty;
-        QPointer<QObject> releaseWaiter;
         std::shared_ptr<std::atomic_bool> releaseCompleted;
         std::shared_ptr<std::atomic_bool> attachCompleted;
         QByteArray renderBackend;
@@ -110,7 +108,6 @@ private:
     QByteArray m_renderBackend;
     QByteArray m_pendingRenderBackend;
     bool m_handleDirty = false;
-    QPointer<QObject> m_releaseWaiter;
     std::shared_ptr<std::atomic_bool> m_releaseCompleted;
     std::shared_ptr<std::atomic_bool> m_attachCompleted;
 };
