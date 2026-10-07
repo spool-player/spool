@@ -260,6 +260,20 @@ SPOOL_TEST_MAIN("mpv-video-item")
             rendered = isRightWayUp(captureItem());
             QThread::msleep(10);
         }
+        if (!rendered) {
+            int64_t decodedWidth = 0;
+            int64_t decodedHeight = 0;
+            double position = -1;
+            int eof = -1;
+            const int widthStatus = mpv_get_property(handle, "video-params/w", MPV_FORMAT_INT64, &decodedWidth);
+            const int heightStatus = mpv_get_property(handle, "video-params/h", MPV_FORMAT_INT64, &decodedHeight);
+            const int positionStatus = mpv_get_property(handle, "time-pos", MPV_FORMAT_DOUBLE, &position);
+            const int eofStatus = mpv_get_property(handle, "eof-reached", MPV_FORMAT_FLAG, &eof);
+            std::fprintf(stderr, "decoder: width=%lld(%d) height=%lld(%d) position=%.3f(%d) eof=%d(%d)\n",
+                static_cast<long long>(decodedWidth), widthStatus, static_cast<long long>(decodedHeight), heightStatus,
+                position, positionStatus, eof, eofStatus);
+            captureItem().save(QDir::tempPath() + QStringLiteral("/mpv-video-item-failure.png"));
+        }
 
         // Diagnostic, not an assertion: what the swapchain can present depends on
         // the driver, the compositor and whether the display is in HDR mode, none
@@ -309,7 +323,6 @@ SPOOL_TEST_MAIN("mpv-video-item")
                 window.width(), window.height(), window.contentItem()->width(), window.contentItem()->height(),
                 videoItem.width(), videoItem.height(), failedFrame.width(), failedFrame.height(),
                 qPrintable(upper.name()), qPrintable(lower.name()));
-            failedFrame.save(QDir::tempPath() + QStringLiteral("/mpv-video-item-failure.png"));
             return 1;
         }
     }

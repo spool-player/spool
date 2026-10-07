@@ -16,7 +16,7 @@ xcrun simctl install "$device" "$app"
 # simctl's console mode returns after process exit. Parse only the exact
 # credential-free consumer-test result, never dump full app/provider logs.
 python3 - "$device" "$app" "$result" <<'PY'
-import json, re, subprocess, sys
+import json, os, re, subprocess, sys
 from pathlib import Path
 
 device, app, output = sys.argv[1:]
@@ -34,8 +34,12 @@ smoke = Path(app).parent / "smoke" / "spool-tvos-playback-smoke.app"
 subprocess.run(["xcrun", "simctl", "install", device, str(smoke)], check=True)
 results = {}
 for bundle, arguments, expected in checks:
+    environment = os.environ.copy()
+    if arguments == ["mpv-video-item"]:
+        environment["SIMCTL_CHILD_SPOOL_TEST_MPV_LOG"] = "1"
     process = subprocess.run(["xcrun", "simctl", "launch", "--console", device, bundle, *arguments],
-                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=90)
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=90,
+                             env=environment)
     passed = process.returncode == 0 and expected in process.stdout
     results[arguments[0]] = passed
     print(f"{arguments[0]}: {'passed' if passed else 'FAILED'}")
@@ -43,7 +47,10 @@ for bundle, arguments, expected in checks:
         # Report only controlled native smoke diagnostics; URLs/auth are absent
         # from these test result lines and provider logs are deliberately omitted.
         for line in process.stdout.splitlines():
-            if any(marker in line for marker in ["launch test:", "video result:", "orientation:", "viewport:",
+            if arguments == ["mpv-video-item"] and any(
+                    marker in line for marker in ["[vd]", "[vo/libmpv]", "[ffmpeg/video]", "player: render backend"]):
+                print(re.sub(r"https?://\S+", "[redacted-url]", line))
+            if any(marker in line for marker in ["launch test:", "video result:", "orientation:", "viewport:", "decoder:",
                                                 "render context was not ready", "failed to initialize mpv",
                                                 "tvOS audio smoke:", "tvOS credentials smoke:",
                                                 "startup:", "[qml]", "font registration failed:",

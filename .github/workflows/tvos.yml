@@ -52,5 +52,6 @@ jobs:
           name: internal-tvos-${{ matrix.sdk }}-arm64
           path: |
             build/tvos/${{ matrix.sdk }}-arm64/install/Spool.app
+            build/tvos/${{ matrix.sdk }}-arm64/install/smoke/spool-tvos-playback-smoke.app
             build/tvos/smoke/*.png
             build/tvos/smoke/result.json
