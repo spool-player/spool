@@ -396,33 +396,32 @@ SPOOL_TEST_MAIN("provider-registry")
     require(!registry.module(QStringLiteral("fixture.test")) && registry.accountList().empty()
             && !QDir(installs).exists(QStringLiteral("fixture.test")),
         "removing a provider removes its files and accounts");
-    // Negotiation is account-local, exact-versioned, and complete before publication.
-    auto extensionsPackage = ProviderFixture::package(QStringLiteral("fixture.test"), QStringLiteral("2.0.0"));
-    auto manifest = QJsonDocument::fromJson(extensionsPackage.files.value("manifest.json")).object();
-    manifest.insert("extensions",
-        QJsonObject { { "spool.speed-test", 1 }, { "spool.suggestions", 1 }, { "future.feature", 7 },
-            { "spool.item-actions", 2 }, { "spool.origin-grants", 1 }, { "spool.lan-probe", 1 },
-            { "spool.playback-preferences", 1 }, { "spool.settings-storage", 1 } });
-    extensionsPackage.files["manifest.json"] = QJsonDocument(manifest).toJson();
-    extensionsPackage.manifest = *ProviderManifest::parse(extensionsPackage.files.value("manifest.json"));
-    extensionsPackage.files["logic/provider.mjs"] = R"JS(
+    // Account availability is established before publication and requires a declaration.
+    auto capabilitiesPackage = ProviderFixture::package(QStringLiteral("fixture.test"), QStringLiteral("2.0.0"));
+    auto manifest = QJsonDocument::fromJson(capabilitiesPackage.files.value("manifest.json")).object();
+    manifest.insert("capabilities",
+        QJsonArray { "speedTest", "suggestions", "originGrants", "lanProbe", "playbackPreferences", "settingsStorage",
+            "search", "reporting" });
+    capabilitiesPackage.files["manifest.json"] = QJsonDocument(manifest).toJson();
+    capabilitiesPackage.manifest = *ProviderManifest::parse(capabilitiesPackage.files.value("manifest.json"));
+    capabilitiesPackage.files["logic/provider.mjs"] = R"JS(
 export function createSource(config, sourceHost) {
     let calls = 0;
     let infoCalls = 0, writes = 0, preferenceWrites = 0;
     let maximum = 64, conditional = false, document = {found:false};
     let preferences = {audioLanguage:'en', subtitleMode:'None'};
-    const offers = config.label === 'Alice' ? {'spool.speed-test': 1, 'spool.suggestions': 1, 'spool.origin-grants': 1,
-        'spool.playback-preferences':1, 'spool.settings-storage':1}
-        : {'spool.speed-test': 2, 'spool.suggestions': 1};
+    const offers = config.label === 'Alice' ? {speedTest: true, suggestions: true, originGrants: true,
+        playbackPreferences:true, settingsStorage:true, search:true, reporting:true}
+        : {speedTest: false, suggestions: true, search:true, reporting:true};
     return {
         describe() { return sourceHost.delay(30).then(function() {
-            return {extensions: config.label === 'Invalid' ? {'spool.speed-test': '1'} : offers};
+            return {capabilities: config.label === 'Invalid' ? {speedTest: 'true'} : offers};
         }); },
-        state() { return {calls, extensions: sourceHost.extensions}; },
-        offers(args) { sourceHost.emit('extensionsChanged', {extensions: args.extensions}); return {}; },
+        state() { return {calls, capabilities: sourceHost.capabilities}; },
+        offers(args) { sourceHost.emit('capabilitiesChanged', {capabilities: args.capabilities}); return {}; },
         fetch(args, host) { return host.http(args.url); },
         discoverMore(args, host) {
-            if (args.inspect) return {ready: sourceHost.extensions['spool.lan-probe'] === 1};
+            if (args.inspect) return {ready: sourceHost.capabilities.lanProbe === true};
             return host.probeLocalHttp(args);
         },
         dataFixture(args) {
@@ -447,6 +446,7 @@ export function createSource(config, sourceHost) {
         preferencesRead() { return {values:preferences,writable:['audioLanguage']}; },
         preferencesWrite(args) { ++preferenceWrites; preferences.audioLanguage = args.values.audioLanguage; return {}; },
         speedTest() { ++calls; return {bitrate: 2000000, parallelRequests: 1}; },
+        itemActions() { ++calls; return {actions:[]}; },
         suggestions(args, host) {
             ++calls;
             host.emit('suggestionsStarted', {});
@@ -459,49 +459,46 @@ export function createSource(config, sourceHost) {
     };
 }
 )JS";
-    QCoro::waitFor(registry.install(std::move(extensionsPackage)));
+    QCoro::waitFor(registry.install(std::move(capabilitiesPackage)));
     SourceHub hub(&registry);
     hub.setPlaybackActive(true);
     QHash<QString, QPointer<Provider>> extendedProviders;
     QObject::connect(&registry, &ProviderRegistry::sourceStarted, &app, [&](Provider *provider) {
         extendedProviders.insert(provider->id(), provider);
-        require(registry.extensionVersion(provider->id(), "spool.suggestions") == 1,
+        require(registry.hasCapability(provider->id(), "suggestions"),
             "effective offers exist before a source is published");
     });
     auto *draft = qobject_cast<ProviderUiContext *>(registry.beginSetup("fixture.test"));
-    require(draft->extensions().value("spool.speed-test").toInt() == 1
-            && !draft->extensions().contains("future.feature")
-            && draft->missingHostExtensions() == QStringList { "future.feature", "spool.item-actions" },
-        "login receives only host-supported declared versions and separate missing-host metadata");
-    require(failure(registry.callExtension(draft->sourceId(), "spool.suggestions", "suggestions"))
-            == "unsupported_extension",
-        "drafts cannot call account extensions");
+    require(draft->capabilities().value("speedTest").toBool()
+            && !draft->capabilities().contains("itemActions"),
+        "login receives package declarations without granting live account availability");
+    require(failure(registry.callSource(draft->sourceId(), "suggestions")) == "unsupported_capability",
+        "drafts cannot call optional account operations");
     draft->close();
-    const QString extendedAlice = signIn(registry, "alice", "extension-a");
-    const QString extendedCarol = signIn(registry, "carol", "extension-c");
-    require(registry.extensionVersion(extendedAlice, "spool.speed-test") == 1
-            && registry.extensionVersion(extendedCarol, "spool.speed-test") == 0,
-        "accounts of one module negotiate independently at the exact wire major");
+    const QString extendedAlice = signIn(registry, "alice", "capability-a");
+    const QString extendedCarol = signIn(registry, "carol", "capability-c");
+    require(registry.hasCapability(extendedAlice, "speedTest")
+            && !registry.hasCapability(extendedCarol, "speedTest"),
+        "accounts of one module independently offer or disable capabilities");
     require(extendedProviders[extendedAlice]->capabilities().testFlag(Provider::SpeedTest)
             && !extendedProviders[extendedCarol]->capabilities().testFlag(Provider::SpeedTest)
             && hub.capabilities().testFlag(Provider::SpeedTest),
-        "negotiated speed testing augments account and aggregate capabilities");
+        "effective speed testing updates account and aggregate capabilities");
     auto *accountContext = qobject_cast<ProviderUiContext *>(registry.openPicker(extendedCarol, {}));
-    require(accountContext && !accountContext->extensions().contains("spool.speed-test")
-            && accountContext->extensions().value("spool.suggestions").toInt() == 1,
-        "account UI receives effective offers rather than the module host map");
-    require(failure(registry.callSource(extendedCarol, "speedTest")) == "unsupported_extension"
-            && failure(registry.callExtension(extendedAlice, "spool.suggestions", "speedTest"))
-                == "unsupported_extension"
+    require(accountContext && !accountContext->capabilities().value("speedTest").toBool()
+            && accountContext->capabilities().value("suggestions").toBool(),
+        "account UI receives effective offers rather than package declarations");
+    require(failure(registry.callSource(extendedCarol, "speedTest")) == "unsupported_capability"
+            && failure(registry.callSource(extendedAlice, "itemActions")) == "unsupported_capability"
             && failure(registry.callSource(extendedAlice, "activate")) == "action_unavailable",
-        "unsupported, mismatched and private operations fail before provider execution");
+        "unoffered, undeclared and private operations fail before provider execution");
     require(QCoro::waitFor(registry.callSource(extendedCarol, "state")).value("calls").toInt() == 0
             && QCoro::waitFor(registry.callSource(extendedAlice, "state")).value("calls").toInt() == 0,
         "rejected calls execute no provider work");
     const auto page
-        = QCoro::waitFor(registry.callExtensionMediaPage(extendedAlice, "spool.suggestions", "suggestions", {}, 10));
+        = QCoro::waitFor(registry.callSourceMediaPage(extendedAlice, "suggestions", {}, 10));
     require(page.items.size() == 1 && page.items.front().id == "suggestion" && page.exhausted,
-        "negotiated media operations use the typed worker decoder");
+        "available media operations use the typed worker decoder");
 
     const QString documentKey = QStringLiteral("278fca80-aaf9-4d32-8458-388836790234");
     require(QCoro::waitFor(registry.callSource(extendedAlice, "dataFixture")).value("infoCalls").toInt() == 0,
@@ -532,16 +529,16 @@ export function createSource(config, sourceHost) {
     require(failure(registry.callSource(extendedAlice, "dataRead", { { "key", documentKey } }))
             == "invalid_extension_result",
         "malformed storage reads cannot masquerade as absent values");
-    auto enabledOffers = registry.extensions(extendedAlice);
+    auto enabledOffers = registry.capabilities(extendedAlice);
     auto withoutStorage = enabledOffers;
-    withoutStorage.remove("spool.settings-storage");
-    QCoro::waitFor(registry.callSource(extendedAlice, "offers", { { "extensions", withoutStorage } }));
+    withoutStorage.remove("settingsStorage");
+    QCoro::waitFor(registry.callSource(extendedAlice, "offers", { { "capabilities", withoutStorage } }));
     QCoro::waitFor(registry.callSource(extendedAlice, "dataFixture",
         { { "maximum", 32 }, { "conditional", true }, { "document", QVariantMap { { "found", false } } } }));
-    QCoro::waitFor(registry.callSource(extendedAlice, "offers", { { "extensions", enabledOffers } }));
+    QCoro::waitFor(registry.callSource(extendedAlice, "offers", { { "capabilities", enabledOffers } }));
     require(QCoro::waitFor(registry.callSource(extendedAlice, "dataInfo")).value("maxBytes").toInt() == 32
             && QCoro::waitFor(registry.callSource(extendedAlice, "dataFixture")).value("infoCalls").toInt() == 2,
-        "extension loss invalidates the generation-owned storage metadata cache");
+        "capability loss invalidates the generation-owned storage metadata cache");
     QCoro::waitFor(registry.callSource(
         extendedAlice, "dataWrite", { { "key", documentKey }, { "value", 1 }, { "expectedRevision", jsonNull } }));
     require(failure(registry.callSource(extendedAlice, "dataWrite",
@@ -571,10 +568,10 @@ export function createSource(config, sourceHost) {
                 .value("audioLanguage")
             == QLocale::languageToCode(QLocale::French, QLocale::ISO639Part2),
         "a supported writable preference survives a worker read/write/read cycle");
-    QCoro::waitFor(registry.callSource(extendedAlice, "offers", { { "extensions", withoutStorage } }));
+    QCoro::waitFor(registry.callSource(extendedAlice, "offers", { { "capabilities", withoutStorage } }));
     QCoro::waitFor(
         registry.callSource(extendedAlice, "dataFixture", { { "maximum", 65536 }, { "conditional", false } }));
-    QCoro::waitFor(registry.callSource(extendedAlice, "offers", { { "extensions", enabledOffers } }));
+    QCoro::waitFor(registry.callSource(extendedAlice, "offers", { { "capabilities", enabledOffers } }));
     QVariantList wideDocument;
     wideDocument.reserve(20000);
     for (int index = 0; index < 20000; ++index)
@@ -614,8 +611,8 @@ export function createSource(config, sourceHost) {
     require(!failure(registry.callSource(extendedAlice, "fetch", { { "url", peer.toString() } })).isEmpty()
             && requests == 0,
         "unapproved account origins perform no network work");
-    require(failure(registry.requestAccountOrigin(extendedCarol, peer)) == "unsupported_extension",
-        "origin permission is gated on this account's negotiated offer");
+    require(failure(registry.requestAccountOrigin(extendedCarol, peer)) == "unsupported_capability",
+        "origin permission is gated on this account's effective offer");
     for (const QString& bad : { QStringLiteral("https://user:secret@example.invalid"),
              QStringLiteral("https://*.example.invalid"), QStringLiteral("file:///tmp/server"),
              QStringLiteral("https://example.invalid:999999"), QStringLiteral("server.invalid") }) {
@@ -698,9 +695,9 @@ export function createSource(config, sourceHost) {
         QCoro::waitFor(registry.callSource(lanSource, "discoverMore", { { "inspect", true } })).value("ready").toBool(),
         "login drafts can dispatch their declared discovery operation");
     require(
-        failure(registry.callSource(extendedAlice, "discoverMore", { { "inspect", true } })) == "unsupported_extension",
-        "draft discovery does not enable undeclared account operations");
-    require(failure(registry.allowLanDiscovery(extendedAlice, "lan")) == "unsupported_extension",
+        failure(registry.callSource(extendedAlice, "discoverMore", { { "inspect", true } })) == "unsupported_capability",
+        "draft discovery does not enable unoffered account operations");
+    require(failure(registry.allowLanDiscovery(extendedAlice, "lan")) == "unsupported_capability",
         "signed-in accounts cannot request subnet discovery");
     lanDraft->close();
     bool pendingStarted = false;
@@ -708,32 +705,43 @@ export function createSource(config, sourceHost) {
     bool pendingSucceeded = false;
     QObject::connect(extendedProviders[extendedAlice], &Provider::sourceEvent, &app,
         [&](const QString& type, const QVariantMap&) { pendingStarted |= type == "suggestionsStarted"; });
-    registry.callExtension(extendedAlice, "spool.suggestions", "suggestions", { { "delay", 10000 } })
+    registry.callSource(extendedAlice, "suggestions", { { "delay", 10000 } })
         .then([&](QVariantMap) { pendingSettled = pendingSucceeded = true; },
             [&](const std::exception&) { pendingSettled = true; });
     waitUntil([&] { return pendingStarted; }, "optional operation begins");
-    QCoro::waitFor(registry.callSource(extendedAlice, "offers", { { "extensions", QVariantMap {} } }));
-    waitUntil([&] { return pendingSettled && registry.extensionVersion(extendedAlice, "spool.speed-test") == 0; },
+    QCoro::waitFor(registry.callSource(extendedAlice, "offers", { { "capabilities", QVariantMap {} } }));
+    waitUntil([&] { return pendingSettled && !registry.hasCapability(extendedAlice, "speedTest"); },
         "support loss cancels in-flight optional operations");
     require(!pendingSucceeded && !hub.capabilities().testFlag(Provider::SpeedTest)
-            && registry.extensionVersion(extendedCarol, "spool.suggestions") == 1,
+            && !extendedProviders[extendedAlice]->capabilities().testFlag(Provider::Search)
+            && !extendedProviders[extendedAlice]->capabilities().testFlag(Provider::PlaybackReporting)
+            && hub.capabilities().testFlag(Provider::Search)
+            && registry.hasCapability(extendedCarol, "suggestions"),
         "support loss hides aggregate controls without changing another account");
-    const auto immutable = QCoro::waitFor(registry.callSource(extendedAlice, "state")).value("extensions").toMap();
-    require(immutable.value("spool.speed-test").toInt() == 1,
-        "account offers never mutate the source host's compiled declarations");
+    const auto immutable = QCoro::waitFor(registry.callSource(extendedAlice, "state")).value("capabilities").toMap();
+    require(immutable.value("speedTest").toBool(),
+        "account offers never mutate the source host's package declarations");
     QCoro::waitFor(registry.callSource(extendedCarol, "offers",
-        { { "extensions",
-            QVariantMap { { "spool.suggestions", 1 }, { "spool.speed-test", 1 }, { "future.feature", 7 },
-                { "spool.item-actions", 1 } } } }));
-    waitUntil([&] { return registry.extensionVersion(extendedCarol, "spool.speed-test") == 1; },
+        { { "capabilities", QVariantMap { { "suggestions", true }, { "speedTest", true }, { "itemActions", true } } } }));
+    waitUntil([&] { return registry.hasCapability(extendedCarol, "speedTest"); },
         "new account offers refresh the existing provider");
     require(hub.capabilities().testFlag(Provider::SpeedTest)
-            && registry.extensionVersion(extendedCarol, "future.feature") == 0
-            && registry.extensionVersion(extendedCarol, "spool.item-actions") == 0,
-        "events cannot grant unknown or undeclared wire majors");
+            && !registry.hasCapability(extendedCarol, "itemActions"),
+        "account offers cannot grant undeclared capabilities");
+    for (const QVariant& invalidOffer : { QVariant(QVariantMap { { "suggestions", true }, { "unknown", true } }),
+             QVariant(QVariantMap { { "suggestions", true }, { "speedTest", 1 } }),
+             QVariant(QVariantList {}), QVariant(QStringLiteral("suggestions")), QVariant::fromValue(nullptr) }) {
+        QCoro::waitFor(registry.callSource(extendedCarol, "offers", { { "capabilities", invalidOffer } }));
+        waitUntil([&] { return !registry.hasCapability(extendedCarol, "suggestions"); },
+            "unknown or malformed offers withdraw the whole account offer");
+        QCoro::waitFor(registry.callSource(extendedCarol, "offers",
+            { { "capabilities", QVariantMap { { "suggestions", true }, { "speedTest", true } } } }));
+        waitUntil([&] { return registry.hasCapability(extendedCarol, "suggestions"); },
+            "a valid replacement offer restores account availability");
+    }
     registry.setAccountEnabled(extendedCarol, false);
-    require(accountContext->closed() && accountContext->extensions().isEmpty()
-            && registry.extensionVersion(extendedCarol, "spool.suggestions") == 0,
+    require(accountContext->closed() && accountContext->capabilities().isEmpty()
+            && !registry.hasCapability(extendedCarol, "suggestions"),
         "stopping a source clears account support and closes its UI");
     for (const QVariant& value : registry.accounts()) {
         const auto row = value.toMap();
@@ -756,23 +764,34 @@ export function createSource(config, sourceHost) {
             && failure(registry.callSource(invalid, "state")) == "source_unavailable",
         "unpublished accounts stay starting and cannot perform account calls");
     waitUntil([&] { return stateOf(invalid) == "failed"; }, "malformed offers fail the account startup");
-    require(!extendedProviders.contains(invalid) && registry.extensions(invalid).isEmpty(),
-        "invalid offers never expose a partially negotiated source");
+    require(!extendedProviders.contains(invalid) && registry.capabilities(invalid).isEmpty(),
+        "invalid offers never expose a partially authorized source");
     QCoro::waitFor(
-        registry.callSource(extendedAlice, "offers", { { "extensions", QVariantMap { { "spool.suggestions", 1 } } } }));
-    waitUntil([&] { return registry.extensionVersion(extendedAlice, "spool.suggestions") == 1; },
+        registry.callSource(extendedAlice, "offers", { { "capabilities", QVariantMap { { "suggestions", true } } } }));
+    waitUntil([&] { return registry.hasCapability(extendedAlice, "suggestions"); },
         "the existing source can re-offer a feature");
     pendingStarted = pendingSettled = pendingSucceeded = false;
-    registry.callExtension(extendedAlice, "spool.suggestions", "suggestions", { { "delay", 10000 } })
+    registry.callSource(extendedAlice, "suggestions", { { "delay", 10000 } })
+        .then([&](QVariantMap) { pendingSettled = pendingSucceeded = true; },
+            [&](const std::exception&) { pendingSettled = true; });
+    waitUntil([&] { return pendingStarted; }, "operation begins before capability replacement");
+    QCoro::waitFor(registry.callSource(extendedAlice, "offers", { { "capabilities", QVariantMap {} } }));
+    QCoro::waitFor(
+        registry.callSource(extendedAlice, "offers", { { "capabilities", QVariantMap { { "suggestions", true } } } }));
+    waitUntil([&] { return pendingSettled && registry.hasCapability(extendedAlice, "suggestions"); },
+        "withdrawal and immediate regrant settle the original operation");
+    require(!pendingSucceeded, "regrant cannot authorize a result from before capability withdrawal");
+    pendingStarted = pendingSettled = pendingSucceeded = false;
+    registry.callSource(extendedAlice, "suggestions", { { "delay", 10000 } })
         .then([&](QVariantMap) { pendingSettled = pendingSucceeded = true; },
             [&](const std::exception&) { pendingSettled = true; });
     waitUntil([&] { return pendingStarted; }, "generation-owned optional operation begins");
     registry.restartAccount(extendedAlice);
-    require(registry.extensionVersion(extendedAlice, "spool.suggestions") == 1,
+    require(registry.hasCapability(extendedAlice, "suggestions"),
         "preparing a replacement keeps the current account available until commit");
     waitUntil([&] { return pendingSettled && registry.sourceRunning(extendedAlice); },
-        "restart cancels old operations and negotiates the new generation");
-    require(!pendingSucceeded && registry.extensionVersion(extendedAlice, "spool.suggestions") == 1,
+        "restart cancels old operations and establishes the new generation's offers");
+    require(!pendingSucceeded && registry.hasCapability(extendedAlice, "suggestions"),
         "an old result cannot succeed against the restarted account");
     {
         const QString upgradeDirectory = directory.filePath(QStringLiteral("bundle-upgrades"));

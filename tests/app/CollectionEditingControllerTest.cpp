@@ -53,8 +53,8 @@ SPOOL_TEST_MAIN("collection-editing")
     require(database.initialize(directory.filePath(QStringLiteral("cache.sqlite"))), "database opens");
     auto package = ProviderFixture::package(QStringLiteral("fixture.collections"));
     auto manifest = QJsonDocument::fromJson(package.files.value(QStringLiteral("manifest.json"))).object();
-    manifest.insert(QStringLiteral("extensions"),
-        QJsonObject { { QStringLiteral("spool.collection-editing"), 1 }, { QStringLiteral("spool.item-actions"), 1 } });
+    manifest.insert(QStringLiteral("capabilities"),
+        QJsonArray { QStringLiteral("collectionEditing"), QStringLiteral("itemActions") });
     package.files[QStringLiteral("manifest.json")] = QJsonDocument(manifest).toJson();
     package.manifest = *ProviderManifest::parse(package.files.value(QStringLiteral("manifest.json")));
     QFile script(QStringLiteral(TEST_SOURCE_DIR "/tests/providers/fixtures/collections.mjs"));
@@ -225,8 +225,8 @@ SPOOL_TEST_MAIN("collection-editing")
     waitUntil([&] { return hub.source(account) != nullptr; }, "collection source restarts");
     setup();
     open();
-    QCoro::waitFor(hub.call(account, QStringLiteral("dropExtensions")));
-    waitUntil([&] { return !hub.collectionEditingAvailable(container); }, "extension support is revoked");
+    QCoro::waitFor(hub.call(account, QStringLiteral("dropCapabilities")));
+    waitUntil([&] { return !hub.collectionEditingAvailable(container); }, "capability support is revoked");
     require(editor.entries().isEmpty() && !editor.removable() && !editor.movable(),
         "support loss clears visible entries and mutation controls");
     const int lost = hub.requestItemActions(item, QStringLiteral("Movie"));

@@ -1,7 +1,6 @@
 #include "provider/ProviderPackage.h"
 #include "ProviderFixture.h"
 #include "TestMain.h"
-#include "provider/ProviderExtensions.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -14,8 +13,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
-#include <limits>
-#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -35,7 +32,7 @@ using ProviderFixture::makeZstd;
 
 QByteArray manifest(const char *id = "spool.test", const char *version = "1.0.0")
 {
-    return QStringLiteral(R"({"format": 2, "api": "0.2", "id": "%1", "name": "Test", "version": "%2",
+    return QStringLiteral(R"({"format": 3, "capabilities": [], "id": "%1", "name": "Test", "version": "%2",
         "entry": "logic/provider.mjs", "icon": "assets/icon.svg", "ui": {"login": "ui/Login.qml"},
         "actions": [{"id": "rename", "label": "Rename"}, {"id": "", "label": "dropped"}]})")
         .arg(QLatin1String(id), QLatin1String(version))
@@ -79,55 +76,30 @@ SPOOL_TEST_MAIN("provider-package-unpack")
     require(package->manifest.actions.size() == 1, "actions without an id are dropped");
     require(package->files.size() == 4 && !package->files.contains(QStringLiteral("logic/")),
         "files are read and directories are not files");
-    const auto withExtensions = [](const QVariant& extensions) {
+    const auto withCapabilities = [](const QVariant& capabilities) {
         QJsonObject root = QJsonDocument::fromJson(manifest()).object();
-        root.insert(QStringLiteral("extensions"), QJsonValue::fromVariant(extensions));
+        root.insert(QStringLiteral("capabilities"), QJsonValue::fromVariant(capabilities));
         return QJsonDocument(root).toJson();
     };
-    const QVariantMap declarations { { "spool.speed-test", 1 }, { "spool.suggestions", 2 }, { "future.feature", 1 } };
-    const auto extended = ProviderManifest::parse(withExtensions(declarations), &error);
-    require(extended && extended->extensions == declarations,
-        "unknown extension names and unsupported wire majors retain baseline package compatibility");
-    require(ProviderExtensions::supported(declarations) == QVariantMap { { "spool.speed-test", 1 } },
-        "host support never downgrades or grants unknown declarations");
-    require(ProviderExtensions::intersect(
-                declarations, { { "spool.speed-test", 1 }, { "spool.suggestions", 1 }, { "spool.item-actions", 1 } })
-            == QVariantMap { { "spool.speed-test", 1 } },
-        "account offers cannot grant undeclared or mismatched versions");
-    require(ProviderExtensions::intersect(declarations, { { "spool.speed-test", 2 } }).isEmpty()
-            && ProviderExtensions::intersect(declarations, {}).isEmpty(),
-        "different-major and withdrawn account offers lose support");
-    require(ProviderExtensions::operationExtension("preferencesWrite") == "spool.playback-preferences"
-            && ProviderExtensions::operationExtension("activate") == "spool.account-activation"
-            && ProviderExtensions::operationExtension("report").isEmpty()
-            && ProviderExtensions::operationExtension("runItemAction").isEmpty()
-            && ProviderExtensions::operationExtension("extensionStatus").isEmpty(),
-        "optional operations are guarded without capturing baseline reporting or compatibility discovery");
-    QList<QVariant> malformed { QVariant(), QVariantList {}, true, QStringLiteral("spool.speed-test"),
-        QVariantMap { { "feature", 1 } }, QVariantMap { { "Bad.feature", 1 } },
-        QVariantMap { { "spool.feature\n", 1 } }, QVariantMap { { QStringLiteral("spool.") + QString(123, 'x'), 1 } } };
-    for (const QVariant& major :
-        QList<QVariant> { 0, -1, true, false, QStringLiteral("1"), QVariant(), QVariantList {}, QVariantMap {}, 1.5,
-            qint64(2147483648), std::numeric_limits<double>::infinity(), std::numeric_limits<double>::quiet_NaN() })
-        malformed.append(QVariantMap { { "spool.speed-test", major } });
-    QVariantMap boundary;
-    for (int index = 0; index < 31; ++index)
-        boundary.insert(QStringLiteral("future.feature%1").arg(index), std::numeric_limits<int>::max());
-    boundary.insert(QStringLiteral("x.") + QString(126, 'a'), 1.0);
-    require(ProviderManifest::parse(withExtensions(boundary)).has_value(),
-        "32 declarations, 128-character ids and positive integer boundaries are accepted");
-    boundary.insert(QStringLiteral("future.overflow"), 1);
-    malformed.append(boundary);
-    for (const QVariant& extensions : malformed) {
-        require(!ProviderManifest::parse(withExtensions(extensions)), "malformed extension declarations reject");
-        bool rejected = false;
-        try {
-            ProviderExtensions::decode(extensions);
-        } catch (const std::runtime_error& failure) {
-            rejected = QByteArray(failure.what()) == "invalid_extensions";
-        }
-        require(rejected, "malformed dynamic account offers fail with invalid_extensions");
+    const QStringList declarations { QStringLiteral("search"), QStringLiteral("speedTest"),
+        QStringLiteral("suggestions"), QStringLiteral("settingsStorage") };
+    const auto declared = ProviderManifest::parse(withCapabilities(declarations), &error);
+    require(declared && declared->capabilities == declarations,
+        "known optional and baseline capabilities are package declarations");
+    const QList<QVariant> malformed { QVariant(), QVariantMap {}, true, QStringLiteral("speedTest"),
+        QVariantList { "unknown" }, QVariantList { "search", "search" }, QVariantList { "search", 1 },
+        QVariantList { true }, QVariantList { QVariantMap {} }, QVariantList { QString(129, 'x') } };
+    for (const QVariant& capabilities : malformed)
+        require(!ProviderManifest::parse(withCapabilities(capabilities)), "malformed capability declarations reject");
+    for (const QString& obsolete : { QStringLiteral("api"), QStringLiteral("extensions") }) {
+        QJsonObject root = QJsonDocument::fromJson(manifest()).object();
+        root.insert(obsolete, obsolete == QStringLiteral("api") ? QJsonValue("0.2") : QJsonValue(QJsonObject {}));
+        require(!ProviderManifest::parse(QJsonDocument(root).toJson()),
+            "obsolete negotiation fields cannot enter current packages");
     }
+    QJsonObject missing = QJsonDocument::fromJson(manifest()).object();
+    missing.remove(QStringLiteral("capabilities"));
+    require(!ProviderManifest::parse(QJsonDocument(missing).toJson()), "capability declarations are explicit");
 
     // Several raw blocks, as a zstd encoder emits for incompressible input.
     Entries large = validEntries();
@@ -189,7 +161,7 @@ SPOOL_TEST_MAIN("provider-package-unpack")
     require(rejects(makeZstd(makeTar({ { "logic/provider.mjs", "x" } })), "not a JSON object"),
         "a package without a manifest is refused");
     Entries oldFormat = validEntries();
-    oldFormat.front().second.replace("\"format\": 2", "\"format\": 1");
+    oldFormat.front().second.replace("\"format\": 3", "\"format\": 2");
     require(rejects(makeZstd(makeTar(oldFormat)), "different version of Spool"), "old manifest formats are refused");
     Entries badId = validEntries();
     badId.front().second = manifest("Not An Id");

@@ -64,7 +64,7 @@ protected:
 QVariantMap entryFor(const QByteArray& archive, const QString& id, const QString& version, const QString& url)
 {
     return { { QStringLiteral("id"), id }, { QStringLiteral("name"), QStringLiteral("Fixture ") + id },
-        { QStringLiteral("version"), version }, { QStringLiteral("api"), QStringLiteral("0.2") },
+        { QStringLiteral("version"), version }, { QStringLiteral("format"), 3 },
         { QStringLiteral("url"), url },
         { QStringLiteral("sha256"),
             QString::fromLatin1(QCryptographicHash::hash(archive, QCryptographicHash::Sha256).toHex()) } };

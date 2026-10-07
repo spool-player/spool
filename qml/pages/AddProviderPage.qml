@@ -286,24 +286,9 @@ FocusScope {
             }
         }
 
-        AppText {
-            id: compatibilityNotice
-            readonly property var selectedModule: Providers.modules.find(module => module.id === root.currentId)
-            anchors.top: header.bottom
-            anchors.topMargin: visible ? Metrics.scaled(12) : 0
-            width: parent.width
-            visible: Boolean(selectedModule && selectedModule.missingHostExtensions
-                             && selectedModule.missingHostExtensions.length > 0)
-            height: visible ? implicitHeight + Metrics.scaled(12) : 0
-            text: "Update Spool to use all features of this provider."
-            wrapMode: Text.WordWrap
-            font.pixelSize: Metrics.bodySizePx
-            color: Theme.textSecondary
-        }
-
         ListView {
             id: list
-            anchors.top: compatibilityNotice.bottom
+            anchors.top: header.bottom
             anchors.topMargin: Metrics.scaled(32)
             anchors.left: parent.left
             anchors.right: parent.right

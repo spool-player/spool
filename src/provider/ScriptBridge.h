@@ -80,7 +80,7 @@ struct ScriptAccess {
     QNetworkAccessManager *network = nullptr;
     QList<QUrl> origins;
     std::function<void(QWebSocket *, QUrl)> socketHook;
-    QVariantMap extensions;
+    QVariantMap capabilities;
     bool loginDraft = false;
     bool lanConsent = false;
     std::shared_ptr<LanProbeSession> lanSession;

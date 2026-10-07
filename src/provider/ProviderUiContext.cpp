@@ -120,11 +120,11 @@ ProviderUiContext::ProviderUiContext(
     , m_rows(this)
 {
     QQmlEngine::setObjectOwnership(this, QQmlEngine::CppOwnership);
-    connect(registry, &ProviderRegistry::extensionsChanged, this, [this](const QString& sourceId) {
+    connect(registry, &ProviderRegistry::capabilitiesChanged, this, [this](const QString& sourceId) {
         if (sourceId == m_sourceId)
-            emit extensionsChanged();
+            emit capabilitiesChanged();
     });
-    connect(registry, &ProviderRegistry::modulesChanged, this, &ProviderUiContext::extensionsChanged);
+    connect(registry, &ProviderRegistry::modulesChanged, this, &ProviderUiContext::capabilitiesChanged);
     connect(registry, &ProviderRegistry::activationConfigurationChanged, this, [this](const QString& accountId) {
         if (accountId == m_sourceId)
             emit activationConfigurationChanged();
@@ -142,19 +142,14 @@ ProviderUiContext::~ProviderUiContext()
         finish({}, true);
 }
 
-QVariantMap ProviderUiContext::extensions() const
+QVariantMap ProviderUiContext::capabilities() const
 {
-    return !m_closed && m_registry ? m_registry->extensions(m_sourceId) : QVariantMap {};
+    return !m_closed && m_registry ? m_registry->capabilities(m_sourceId) : QVariantMap {};
 }
 
 QVariantMap ProviderUiContext::activationConfiguration() const
 {
     return !m_closed && m_registry ? m_registry->activationConfiguration(m_sourceId) : QVariantMap {};
-}
-
-QStringList ProviderUiContext::missingHostExtensions() const
-{
-    return m_registry ? m_registry->missingHostExtensions(m_moduleId) : QStringList {};
 }
 
 QJSValue ProviderUiContext::promise(Pending *pending)
@@ -301,7 +296,7 @@ void ProviderUiContext::finish(const QVariantMap& result, bool cancelled)
 {
     cancelLanDiscovery();
     m_closed = true;
-    emit extensionsChanged();
+    emit capabilitiesChanged();
     if (m_registry)
         m_registry->cancelSourceScope(m_sourceId, m_scope);
     m_rows.cancelPending();

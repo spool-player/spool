@@ -222,6 +222,11 @@ FILE *openAppLogFile(const QString& appRootPath)
 // Graphics startup reads the settings store, so this runs before it.
 void setIdentity()
 {
+    if (qEnvironmentVariableIsSet("SPOOL_DATA_HOME")) {
+        QCoreApplication::setOrganizationName(QStringLiteral("spool"));
+        QCoreApplication::setApplicationName(QStringLiteral("Spool"));
+        return;
+    }
 #ifdef Q_OS_ANDROID
     QCoreApplication::setOrganizationName(QStringLiteral("spool"));
     QCoreApplication::setApplicationName(QStringLiteral("Spool"));
@@ -472,6 +477,7 @@ int main(int argc, char **argv)
 #ifndef SPOOL_WEBOS
     int automationPort = -1;
 #endif
+    QString dataDirectory;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-v") == 0) {
             printf("Spool %s\n", kAppVersion);
@@ -506,6 +512,37 @@ int main(int argc, char **argv)
             automationPort = int(port);
 #endif
         }
+        if (strcmp(argv[i], "--data-dir") == 0) {
+#if defined(SPOOL_WEBOS) || defined(SPOOL_ANDROID) || defined(SPOOL_APPLE_MOBILE)
+            std::fprintf(stderr, "--data-dir is supported only on desktop platforms\n");
+            return 1;
+#else
+            if (!dataDirectory.isEmpty() || i + 1 >= argc || argv[i + 1][0] == '\0') {
+                std::fprintf(stderr, "supply exactly one directory after --data-dir\n");
+                return 1;
+            }
+            dataDirectory = QDir::cleanPath(QFileInfo(QString::fromLocal8Bit(argv[++i])).absoluteFilePath());
+#endif
+        }
+    }
+    if (!dataDirectory.isEmpty()) {
+        if (!QDir().mkpath(dataDirectory)) {
+            std::fprintf(stderr, "could not create the requested data directory\n");
+            return 1;
+        }
+        dataDirectory = QFileInfo(dataDirectory).canonicalFilePath();
+        if (dataDirectory.isEmpty()) {
+            std::fprintf(stderr, "could not resolve the requested data directory\n");
+            return 1;
+        }
+        const QDir root(dataDirectory);
+        qputenv("SPOOL_DATA_HOME", dataDirectory.toUtf8());
+        qputenv("SPOOL_CACHE_HOME", root.filePath(QStringLiteral("cache")).toUtf8());
+        qputenv("SPOOL_DIAGNOSTICS_DIR", root.filePath(QStringLiteral("diagnostics")).toUtf8());
+        QSettings::setDefaultFormat(QSettings::IniFormat);
+        const QString settingsDirectory = root.filePath(QStringLiteral("settings"));
+        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settingsDirectory);
+        QSettings::setPath(QSettings::IniFormat, QSettings::SystemScope, settingsDirectory);
     }
 
     const QString appRootPath = Spool::resolveAppRoot(argv[0]);

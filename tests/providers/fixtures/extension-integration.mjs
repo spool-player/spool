@@ -1,8 +1,8 @@
 // Stateful loopback protocol used by the offscreen integration test. All
 // operations cross ScriptRuntime's real HTTP boundary and account scopes.
 export function createSource(config, host) {
-    const extensions = {'spool.settings-storage': 1, 'spool.playback-preferences': 1,
-        'spool.remote-targets': 1, 'spool.account-activation': 1};
+    const capabilities = {settingsStorage: true, playbackPreferences: true,
+        remoteTargets: true, accountActivation: true};
     let active = !config.protected;
     function call(operation, args, operationHost) {
         if (!active) throw new Error('account_locked');
@@ -14,7 +14,7 @@ export function createSource(config, host) {
         });
     }
     return {
-        describe: () => ({extensions: extensions, activation: config.protected
+        describe: () => ({capabilities, activation: config.protected
             ? {familyId: 'integration-family', identityId: config.identity} : undefined}),
         activate: args => {
             if (!config.protected) return {};

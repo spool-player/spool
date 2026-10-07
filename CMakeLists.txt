@@ -306,8 +306,8 @@ set(SPOOL_SHELL_SOURCES
     src/provider/PortableProvider.h
     src/provider/Provider.h
     src/provider/ProviderCapabilities.h
-    src/provider/ProviderExtensions.cpp
-    src/provider/ProviderExtensions.h
+    src/provider/ProviderCapabilityContract.cpp
+    src/provider/ProviderCapabilityContract.h
     src/provider/ProviderExtensionData.cpp
     src/provider/ProviderExtensionData.h
     src/provider/ProviderLogging.h
@@ -654,7 +654,6 @@ qt_add_qml_module(spool
         qml/shell/ServerIdentityRow.qml
         qml/shell/ProviderCodePanel.qml
         qml/shell/ProviderLinkScreen.qml
-        qml/shell/ProviderCompatibilityNotice.qml
         qml/shell/ProviderActionPicker.qml
         qml/shell/ProviderRemoteControls.qml
         qml/shell/RemoteNowPlaying.qml

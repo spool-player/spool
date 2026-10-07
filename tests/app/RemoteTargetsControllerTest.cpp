@@ -70,7 +70,7 @@ SPOOL_TEST_MAIN("remote-targets")
     require(database.initialize(directory.filePath("cache.sqlite")), "database opens");
     auto package = ProviderFixture::package("fixture.remote");
     auto manifest = QJsonDocument::fromJson(package.files.value("manifest.json")).object();
-    manifest.insert("extensions", QJsonObject { { "spool.remote-targets", 1 }, { "spool.origin-grants", 1 } });
+    manifest.insert("capabilities", QJsonArray { "remoteTargets", "originGrants" });
     package.files["manifest.json"] = QJsonDocument(manifest).toJson();
     package.manifest = *ProviderManifest::parse(package.files.value("manifest.json"));
     QFile script(QStringLiteral(TEST_SOURCE_DIR "/tests/providers/fixtures/remote-targets.mjs"));
@@ -415,10 +415,10 @@ SPOOL_TEST_MAIN("remote-targets")
         "a disappeared target clears its models and offers explicit local selection without fallback playback");
     setup();
     select();
-    QCoro::waitFor(hub.call(account, "dropExtensions"));
-    waitUntil([&] { return remote.selectedTargetId().isEmpty(); }, "extension support loss detaches");
+    QCoro::waitFor(hub.call(account, "dropCapabilities"));
+    waitUntil([&] { return remote.selectedTargetId().isEmpty(); }, "capability support loss detaches");
     require(!remote.isCurrent(selected) && remote.state().isEmpty(),
-        "source/extension generations invalidate captured play selections");
+        "source/capability generations invalidate captured play selections");
     for (const auto& other : accounts)
         registry.setAccountEnabled(other, false);
     remote.disconnectTarget();
