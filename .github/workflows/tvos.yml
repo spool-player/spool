@@ -61,6 +61,7 @@ jobs:
             build/tvos/${{ matrix.sdk }}-arm64/install/smoke/spool-tvos-playback-smoke.app
             build/tvos/smoke/*.png
             build/tvos/smoke/result.json
+            build/tvos/smoke/credentials-result.json
 
   diagnose:
     if: ${{ inputs.native-artifact-run != '' }}
