@@ -20,10 +20,10 @@
     "mpv-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1790456672,
-        "narHash": "sha256-7oygQkhR4izM14nWNonSrhnCxTbAl1vq6yu40me1QqQ=",
-        "rev": "e8b73132528ce9de414a4e276892dc456ba82730",
-        "revCount": 55611,
+        "lastModified": 1791400971,
+        "narHash": "sha256-+B8gcOlvKEPAxnPgGwg6EpCwBAcPMq9DzRYkLLTMIrI=",
+        "rev": "4d4217d80139c977b2d555e59e4d56ee40456e8f",
+        "revCount": 55612,
         "type": "git",
         "url": "file:./mpv"
       },
