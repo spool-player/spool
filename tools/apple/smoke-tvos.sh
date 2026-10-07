@@ -102,7 +102,7 @@ for bundle, arguments, expected in checks:
             if arguments == ["mpv-video-item"] and any(
                     marker in line for marker in ["[vd]", "[vo/libmpv]", "[libmpv_render", "[ffmpeg/video]",
                                                  "player: render backend", "first video frame",
-                                                 "render context handoff did not complete", "native target:",
+                                                 "render context handoff did not complete", "native target:", "native GL provider:",
                                                  "native presentation diagnostic:"]):
                 print(re.sub(r"https?://\S+", "[redacted-url]", line))
             if any(marker in line for marker in ["launch test:", "video result:", "orientation:", "viewport:", "decoder:",

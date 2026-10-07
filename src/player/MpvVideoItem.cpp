@@ -16,6 +16,12 @@
 #include <QQuickWindow>
 #include <QTimer>
 #include <QtDebug>
+#ifdef Q_OS_TVOS
+#include <OpenGLES/ES3/gl.h>
+#include <cstring>
+#include <cstdio>
+#include <dlfcn.h>
+#endif
 
 #if SPOOL_MPV_ITEM_RHI
 #include <QSGRendererInterface>
@@ -63,7 +69,19 @@ namespace {
         QOpenGLContext *gl = QOpenGLContext::currentContext();
         if (!gl)
             return nullptr;
-        return reinterpret_cast<void *>(gl->getProcAddress(QByteArray(name)));
+        void *address = reinterpret_cast<void *>(gl->getProcAddress(QByteArray(name)));
+#ifdef Q_OS_TVOS
+        if (!qgetenv("SPOOL_TEST_MPV_LOG").isEmpty()
+            && (std::strcmp(name, "glViewport") == 0 || std::strcmp(name, "glVertexAttribPointer") == 0
+                || std::strcmp(name, "glBindFramebuffer") == 0 || std::strcmp(name, "glUniformMatrix3fv") == 0)) {
+            Dl_info provider {}, linked {};
+            dladdr(address, &provider);
+            dladdr(reinterpret_cast<void *>(&::glViewport), &linked);
+            std::fprintf(stderr, "native GL provider: function=%s resolved=%s directGLES=%s\n", name,
+                provider.dli_fname ? provider.dli_fname : "(unknown)", linked.dli_fname ? linked.dli_fname : "(unknown)");
+        }
+#endif
+        return address;
     }
 
     // Render-thread ownership shared by both Qt item backends. GPU work stays
