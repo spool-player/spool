@@ -946,9 +946,15 @@ owner-private screenshots, logs and isolated data under `test-artifacts`
 (`SPOOL_E2E_ARTIFACT_DIR` can select its parent); raw logs and credentials are
 never printed. Successful journeys remove their temporary data.
 Option-picker component checks load the shipped Spool module, resources and
-native singletons. Journey OCR reads only captured framebuffer pixels; scaled
-and neutral-text fallback passes restore recognized bounds to physical input
+native singletons. Journey OCR reads only captured framebuffer pixels; scaled,
+neutral-text and binary-contrast fallback passes restore recognized bounds to physical input
 coordinates and retain exact visible-label assertions.
+The download journey selects the rendered **Original** choice explicitly and
+checks the resulting quality before exact byte/offline assertions; pointer hover
+can otherwise change chooser selection before remote activation.
+The control client checks actual drained write/read buffers after synchronous
+waits, including a fast peer's reply-and-close transition, within the original
+absolute command deadline.
 Screenshot requests use the public Qt Quick repaint API, await a real swapped
 frame, then perform GUI-thread framebuffer readback. This remains an actual
 graphics capture, not a software scenegraph substitute or screenshot-only test.
@@ -1003,13 +1009,13 @@ files, control descriptors, credentials, raw product logs and isolated data root
 remain private. Standalone fault checks use `tools/run-device-tests.py --phase
 e2e --cleanup-regression timeout|crash` with the actual isolated device and host
 controller/CLI paths supplied by the platform driver.
+
 Failed simulator selectors may additionally export `native-crash-diagnostic.json`:
 numeric exception/signal data, binary UUIDs/offsets and controlled private-stage
 breadcrumbs from an exact PID/bundle/device/time-matched OS report. Collection
 is bounded to five seconds, 128 candidates, 1 MiB per report and 64 frames per
 stack. Raw reports, arbitrary symbols and paths are never exported; unavailable
 evidence does not change the failed/crashed outcome.
-
 
 Device phases run serially because one installed activity/application cannot
 host parallel native processes safely. Native traditional coverage includes

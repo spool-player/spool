@@ -362,7 +362,8 @@ SPOOL_TEST_MAIN("mpv-video-item")
         // that asked for logging.
         if (handle && verbose
             && (mpv_set_option_string(handle, "terminal", "yes") < 0
-                || mpv_set_option_string(handle, "msg-level", "all=debug") < 0)) {
+                || mpv_set_option_string(handle, "msg-level", "all=debug") < 0
+                || mpv_set_option_string(handle, "gpu-debug", "yes") < 0)) {
             std::fprintf(stderr, "failed to enable mpv logging\n");
             return 1;
         }
@@ -427,12 +428,33 @@ SPOOL_TEST_MAIN("mpv-video-item")
 #endif
         const QImage beforeOsd = captureItem();
         const char *osdCommand[] = { "show-text", "SDR white", "10000", nullptr };
+        double beforeOsdPosition = -1;
+        const int beforeOsdPositionStatus = mpv_get_property(handle, "time-pos", MPV_FORMAT_DOUBLE, &beforeOsdPosition);
+        const int osdCommandStatus = mpv_command(handle, osdCommand);
         bool neutralOsd = false;
-        if (mpv_command(handle, osdCommand) >= 0) {
+        if (osdCommandStatus >= 0) {
             neutralOsd
                 = waitForPresentedFrame([&](const QImage& image) { return containsNeutralOsd(image, beforeOsd); });
         }
         if (!rendered || !upright || !neutralOsd) {
+            int64_t osdLevel = -1;
+            int videoOsd = -1;
+            int paused = -1;
+            int coreIdle = -1;
+            double afterOsdPosition = -1;
+            const int osdLevelStatus = mpv_get_property(handle, "osd-level", MPV_FORMAT_INT64, &osdLevel);
+            const int videoOsdStatus = mpv_get_property(handle, "video-osd", MPV_FORMAT_FLAG, &videoOsd);
+            const int pausedStatus = mpv_get_property(handle, "pause", MPV_FORMAT_FLAG, &paused);
+            const int coreIdleStatus = mpv_get_property(handle, "core-idle", MPV_FORMAT_FLAG, &coreIdle);
+            const int afterOsdPositionStatus
+                = mpv_get_property(handle, "time-pos", MPV_FORMAT_DOUBLE, &afterOsdPosition);
+            std::fprintf(stderr,
+                "native OSD: command=%d level=%lld levelStatus=%d video=%d videoStatus=%d"
+                " pause=%d pauseStatus=%d coreIdle=%d coreIdleStatus=%d"
+                " beforePosition=%.3f beforePositionStatus=%d afterPosition=%.3f afterPositionStatus=%d\n",
+                osdCommandStatus, static_cast<long long>(osdLevel), osdLevelStatus, videoOsd, videoOsdStatus, paused,
+                pausedStatus, coreIdle, coreIdleStatus, beforeOsdPosition, beforeOsdPositionStatus, afterOsdPosition,
+                afterOsdPositionStatus);
             mpv_node dimensions {};
             if (mpv_get_property(handle, "osd-dimensions", MPV_FORMAT_NODE, &dimensions) >= 0) {
                 if (dimensions.format == MPV_FORMAT_NODE_MAP) {

@@ -19,6 +19,7 @@
 #include <QRect>
 #include <QRegularExpression>
 #include <QSaveFile>
+#include <QScopeGuard>
 #include <QStandardPaths>
 #include <QTcpSocket>
 #include <QTemporaryDir>
@@ -687,7 +688,8 @@ public:
         }
         return image;
     }
-    QList<Words> words(const QString& imagePath, int mode, const QPoint& origin = {}, bool neutralText = false)
+    QList<Words> words(const QString& imagePath, int mode, const QPoint& origin = {}, bool neutralText = false,
+        bool highContrast = false)
     {
         QString inputPath = imagePath;
         const int scale = mode == 6 ? 2 : 1;
@@ -712,7 +714,19 @@ public:
                     }
                 }
             }
-            inputPath += neutralText ? QStringLiteral(".ocr-neutral.png") : QStringLiteral(".ocr.png");
+            if (highContrast) {
+                // Focused rows can defeat page segmentation even after scaling.
+                // Preserve their actual light glyphs against a binary background.
+                image = image.convertToFormat(QImage::Format_Grayscale8);
+                for (int y = 0; y < image.height(); ++y) {
+                    auto *pixels = image.scanLine(y);
+                    for (int x = 0; x < image.width(); ++x)
+                        pixels[x] = pixels[x] > 96 ? 0 : 255;
+                }
+            }
+            inputPath += highContrast ? QStringLiteral(".ocr-contrast.png")
+                : neutralText         ? QStringLiteral(".ocr-neutral.png")
+                                      : QStringLiteral(".ocr.png");
             QSaveFile file(inputPath);
             require(file.open(QIODevice::WriteOnly)
                     && file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)
@@ -794,6 +808,8 @@ public:
                     candidate = locate(words(imagePath, 6));
                 if (candidate.isEmpty())
                     candidate = locate(words(imagePath, 6, region.topLeft(), true));
+                if (candidate.isEmpty())
+                    candidate = locate(words(imagePath, 6, region.topLeft(), false, true));
                 if (!candidate.isEmpty()) {
                     if (surface == TextSurface::Window
                         || (!previous.isEmpty() && (candidate.center() - previous.center()).manhattanLength() <= 2
@@ -1049,6 +1065,19 @@ SPOOL_TEST_MAIN("app-journey")
         const QString app = deviceKind.isEmpty() ? executable("SPOOL_E2E_APP", appDefault) : QString();
         const QString control = executable("SPOOL_E2E_SPOOLET", controlDefault);
         AppJourney::JellyfinFixture fixture(media(root.path(), environment));
+        const auto retainFixtureRejections = qScopeGuard([&] {
+            if (fixture.unexpected.isEmpty())
+                return;
+            // Retain rejection categories/paths even on an earlier exception,
+            // never request headers, bodies, credentials, or query parameters.
+            QSaveFile diagnostics(root.filePath("fixture-rejections.json"));
+            const auto bytes = QJsonDocument(QJsonArray::fromStringList(fixture.unexpected)).toJson();
+            const bool saved = diagnostics.open(QIODevice::WriteOnly)
+                && diagnostics.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)
+                && diagnostics.write(bytes) == bytes.size() && diagnostics.commit();
+            if (!saved)
+                std::cerr << "app-journey: private fixture rejection receipt could not be retained\n";
+        });
         require(fixture.listening(), "isolated loopback fixture could not listen");
         Journey journey(control, environment, root.path());
         journey.launch(app, fixture.origin(), deviceKind);
@@ -1094,9 +1123,9 @@ SPOOL_TEST_MAIN("app-journey")
         // Open and operate the real item-menu/download dialog; list is only an observer.
         journey.click("Journey Film", false, true);
         journey.click("Download");
-        // The actual chooser initially focuses Original. Confirm through the
-        // same keyboard/D-pad activation a remote viewer uses, not an API start.
-        journey.command({ "key", "ok" });
+        // Pointer hover can move the chooser's selection as it opens. Activate
+        // the actual rendered Original row, never an assumed initial focus.
+        journey.click("Original");
         QString jobId;
         journey.await(
             [&] {
@@ -1104,7 +1133,28 @@ SPOOL_TEST_MAIN("app-journey")
                 if (jobs.size() != 1)
                     return false;
                 const auto job = jobs[0].toObject();
-                require(!job["failed"].toBool(), "real provider download failed");
+                require(job["quality"] == "Original", "actual download chooser did not start the Original file");
+                if (job["failed"].toBool()) {
+                    bool captured = false;
+                    try {
+                        const QImage frame = journey.capture();
+                        QSaveFile file(root.filePath("download-failure.png"));
+                        captured = file.open(QIODevice::WriteOnly)
+                            && file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)
+                            && frame.save(&file, "PNG") && file.commit();
+                    } catch (const std::exception&) {
+                        // A missing diagnostic must not replace the observed failed job.
+                    }
+                    throw std::runtime_error(
+                        QStringLiteral("real provider download failed (received=%1, total=%2, fixture_size=%3, "
+                                       "server_media_bytes=%4, failure_frame=%5)")
+                            .arg(job["received"].toInteger())
+                            .arg(job["total"].toInteger())
+                            .arg(fixture.mediaSize())
+                            .arg(fixture.mediaBytes)
+                            .arg(captured)
+                            .toStdString());
+                }
                 jobId = job["id"].toString();
                 return job["state"] == "complete" && job["received"].toInteger() == fixture.mediaSize();
             },
@@ -1224,15 +1274,6 @@ SPOOL_TEST_MAIN("app-journey")
                     });
             },
             "provider stop receipt did not independently observe the played media position");
-        if (!fixture.unexpected.isEmpty()) {
-            // Retain only rejection categories/paths, never headers or bodies.
-            QSaveFile diagnostics(root.path() + "/fixture-rejections.json");
-            const auto bytes = QJsonDocument(QJsonArray::fromStringList(fixture.unexpected)).toJson();
-            require(diagnostics.open(QIODevice::WriteOnly)
-                    && diagnostics.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)
-                    && diagnostics.write(bytes) == bytes.size() && diagnostics.commit(),
-                "private fixture rejection receipt could not be retained");
-        }
         require(fixture.unexpected.isEmpty(), "fixture observed unexpected or unauthorized production traffic");
         std::cout << "app-journey: real login/browse/settings/download/offline/online GPU journey completed\n";
         return 0;
