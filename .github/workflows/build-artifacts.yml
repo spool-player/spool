@@ -516,6 +516,9 @@ jobs:
       # argument-encoder selector in Apple's hosted paravirtualized Metal GPU.
       # This still executes real Vulkan/Metal and retains every Vulkan selector.
       MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS: "0"
+      # Select the documented public Metal buffer allocator without placement
+      # heaps; real Vulkan initialization, rendering and readback checks remain.
+      MVK_CONFIG_USE_MTLHEAP: "0"
     strategy:
       # Apple Silicon and Intel Macs each get a native build; one failing
       # architecture should still let the other produce its DMG.

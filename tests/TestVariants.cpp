@@ -11,7 +11,7 @@ int mediaInterpreter(int argc, char **argv)
 int bundledContract(int argc, char **argv)
 {
     Q_UNUSED(argc);
-    QByteArray fixture = QByteArrayLiteral(TEST_SOURCE_DIR "/tests/providers/fixtures/bundled-jellyfin.mjs");
+    QByteArray fixture = SpoolTests::fixturePath("tests/providers/fixtures/bundled-jellyfin.mjs").toUtf8();
     char *arguments[] = { argv[0], fixture.data(), nullptr };
     return SpoolTests::invoke("bundled-jellyfin", 2, arguments);
 }

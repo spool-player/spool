@@ -111,7 +111,7 @@ SPOOL_TEST_MAIN("provider-ui-context")
             require(end - begin + 1 <= 32, "large provider lists commit bounded native batches");
         });
     QQmlComponent component(
-        &engine, QUrl::fromLocalFile(QStringLiteral(TEST_SOURCE_DIR "/tests/providers/fixtures/Selection.qml")));
+        &engine, QUrl::fromLocalFile(SpoolTests::fixturePath("tests/providers/fixtures/Selection.qml")));
     if (!component.isReady())
         std::cerr << component.errorString().toStdString();
     require(component.isReady(), "provider-owned selection component loads");

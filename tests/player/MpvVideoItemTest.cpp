@@ -193,9 +193,9 @@ bool containsNeutralOsd(const QImage& image, const QImage& baseline)
     return neutral >= 8;
 }
 
-// The video is red over blue, so the frame is the right way up when the top of
-// the window is red and the bottom is blue. Counting rather than sampling one
-// pixel keeps letterboxing and the window's own background out of the answer.
+// The independent fixture is 64x64, red over blue. Require the same ordering
+// counts and strict band colors inside its expected aspect-fit square, not the
+// portrait window's letterbox (whose lower quarter is outside that picture).
 bool isRightWayUp(const QImage& image)
 {
     if (image.isNull())
@@ -216,9 +216,11 @@ bool isRightWayUp(const QImage& image)
     }
     std::fprintf(stderr, "orientation: redAbove=%d blueAbove=%d redBelow=%d blueBelow=%d\n", redAbove, blueAbove,
         redBelow, blueBelow);
+    const int pictureSide = std::min(image.width(), image.height());
+    const int pictureTop = (image.height() - pictureSide) / 2;
     return redAbove > blueAbove && blueBelow > redBelow
-        && isRed(image.pixelColor(image.width() / 2, image.height() / 4))
-        && isBlue(image.pixelColor(image.width() / 2, 3 * image.height() / 4));
+        && isRed(image.pixelColor(image.width() / 2, pictureTop + pictureSide / 4))
+        && isBlue(image.pixelColor(image.width() / 2, pictureTop + 3 * pictureSide / 4));
 }
 
 } // namespace
@@ -250,7 +252,7 @@ SPOOL_TEST_MAIN("mpv-video-item")
     QSurfaceFormat::setDefaultFormat(format);
 #endif
     QGuiApplication app(argc, argv);
-    const QDir fonts(QStringLiteral(TEST_SOURCE_DIR "/qml/fonts"));
+    const QDir fonts(SpoolTests::fixturePath("qml/fonts"));
     if (!fonts.exists()) {
         std::fprintf(stderr, "shipped OSD font directory is missing\n");
         return 1;
@@ -430,6 +432,28 @@ SPOOL_TEST_MAIN("mpv-video-item")
             neutralOsd
                 = waitForPresentedFrame([&](const QImage& image) { return containsNeutralOsd(image, beforeOsd); });
         }
+        if (!rendered || !upright || !neutralOsd) {
+            mpv_node dimensions {};
+            if (mpv_get_property(handle, "osd-dimensions", MPV_FORMAT_NODE, &dimensions) >= 0) {
+                if (dimensions.format == MPV_FORMAT_NODE_MAP) {
+                    std::fprintf(stderr, "native presentation:");
+                    for (int index = 0; index < dimensions.u.list->num; ++index) {
+                        const auto& value = dimensions.u.list->values[index];
+                        if (value.format == MPV_FORMAT_INT64)
+                            std::fprintf(stderr, " %s=%lld", dimensions.u.list->keys[index],
+                                static_cast<long long>(value.u.int64));
+                        else if (value.format == MPV_FORMAT_DOUBLE)
+                            std::fprintf(stderr, " %s=%.3f", dimensions.u.list->keys[index], value.u.double_);
+                    }
+                    std::fprintf(stderr, "\n");
+                }
+                mpv_free_node_contents(&dimensions);
+            }
+            const QString capturePath = QDir::tempPath() + QStringLiteral("/mpv-video-item-failure.png");
+            const QImage frame = !rendered || !upright ? beforeOsd : captureItem();
+            if (frame.save(capturePath))
+                std::fprintf(stderr, "native failure frame: %s\n", qPrintable(capturePath));
+        }
         const bool released = videoItem.releaseMpvHandle();
         mpv_terminate_destroy(handle);
         if (!rendered || !upright || !released || !neutralOsd
@@ -447,7 +471,6 @@ SPOOL_TEST_MAIN("mpv-video-item")
                 window.width(), window.height(), window.contentItem()->width(), window.contentItem()->height(),
                 videoItem.width(), videoItem.height(), failedFrame.width(), failedFrame.height(),
                 qPrintable(upper.name()), qPrintable(lower.name()));
-            failedFrame.save(QDir::tempPath() + QStringLiteral("/mpv-video-item-failure.png"));
             return 1;
         }
     }

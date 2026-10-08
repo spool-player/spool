@@ -116,7 +116,7 @@ SPOOL_TEST_MAIN("provider-media-page")
     invalid(QStringLiteral("({items: [], exhausted:true})"), 0);
     invalid(QStringLiteral("({items: [{id:'x', title:'x'.repeat(65537)}], exhausted:true})"));
 
-    const QString entry = QStringLiteral(TEST_SOURCE_DIR "/tests/providers/fixtures/provider.mjs");
+    const QString entry = SpoolTests::fixturePath("tests/providers/fixtures/provider.mjs");
     ScriptRuntime runtime(entry, QVariantMap {});
     QCoro::waitFor(runtime.addSource("a", { { "label", "A" } }, {}));
     QCoro::waitFor(runtime.addSource("b", { { "label", "B" } }, {}));

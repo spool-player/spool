@@ -687,10 +687,44 @@ public:
         }
         return image;
     }
-    QList<Words> words(const QString& imagePath, int mode, const QPoint& origin = {})
+    QList<Words> words(const QString& imagePath, int mode, const QPoint& origin = {}, bool neutralText = false)
     {
+        QString inputPath = imagePath;
+        const int scale = mode == 6 ? 2 : 1;
+        if (scale > 1) {
+            // Small captions beside a focus outline can be omitted even by
+            // text-block segmentation. Resample only the actual framebuffer;
+            // recognized bounds below return to its physical pixel space.
+            QImage image(imagePath);
+            require(!image.isNull(), "captured OCR image could not be read");
+            if (neutralText) {
+                // Chromatic artwork and focus outlines can merge with neutral
+                // glyphs. Remove only that noise; never synthesize label pixels.
+                image = image.convertToFormat(QImage::Format_RGB32);
+                for (int y = 0; y < image.height(); ++y) {
+                    auto *pixels = reinterpret_cast<QRgb *>(image.scanLine(y));
+                    for (int x = 0; x < image.width(); ++x) {
+                        const QRgb pixel = pixels[x];
+                        if (std::max({ qRed(pixel), qGreen(pixel), qBlue(pixel) })
+                                - std::min({ qRed(pixel), qGreen(pixel), qBlue(pixel) })
+                            > 32)
+                            pixels[x] = qRgb(0, 0, 0);
+                    }
+                }
+            }
+            inputPath += neutralText ? QStringLiteral(".ocr-neutral.png") : QStringLiteral(".ocr.png");
+            QSaveFile file(inputPath);
+            require(file.open(QIODevice::WriteOnly)
+                    && file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)
+                    && image
+                        .scaled(image.width() * scale, image.height() * scale, Qt::IgnoreAspectRatio,
+                            Qt::SmoothTransformation)
+                        .save(&file, "PNG")
+                    && file.commit(),
+                "captured OCR image could not be normalized");
+        }
         const QByteArray tsv
-            = run(ocr, { imagePath, "stdout", "-l", "eng", "--psm", QString::number(mode), "tsv" }, environment);
+            = run(ocr, { inputPath, "stdout", "-l", "eng", "--psm", QString::number(mode), "tsv" }, environment);
         QList<Words> lines;
         QString previous;
         for (const QByteArray& row : tsv.split('\n')) {
@@ -698,8 +732,9 @@ public:
             if (fields.size() < 12 || fields[0] != "5" || fields[11].trimmed().isEmpty())
                 continue;
             const QString key = QString::fromLatin1(fields[1] + ':' + fields[2] + ':' + fields[3] + ':' + fields[4]);
-            const QRect bounds(
-                fields[6].toInt() + origin.x(), fields[7].toInt() + origin.y(), fields[8].toInt(), fields[9].toInt());
+            const QRect bounds = QRectF(fields[6].toDouble() / scale + origin.x(),
+                fields[7].toDouble() / scale + origin.y(), fields[8].toDouble() / scale, fields[9].toDouble() / scale)
+                                     .toAlignedRect();
             if (key != previous) {
                 lines.append(Words {});
                 previous = key;
@@ -757,6 +792,8 @@ public:
                 // larger heading's unrelated hit region or manufacturing a label.
                 if (candidate.isEmpty() && surface == TextSurface::Window)
                     candidate = locate(words(imagePath, 6));
+                if (candidate.isEmpty())
+                    candidate = locate(words(imagePath, 6, region.topLeft(), true));
                 if (!candidate.isEmpty()) {
                     if (surface == TextSurface::Window
                         || (!previous.isEmpty() && (candidate.center() - previous.center()).manhattanLength() <= 2

@@ -42,8 +42,7 @@ SPOOL_TEST_MAIN("script-runtime")
     QCoreApplication app(argc, argv);
     using Spool::ScriptRuntime;
     {
-        ScriptRuntime runtime(
-            QStringLiteral(TEST_SOURCE_DIR "/tests/providers/fixtures/capabilities.mjs"), QVariantMap {});
+        ScriptRuntime runtime(SpoolTests::fixturePath("tests/providers/fixtures/capabilities.mjs"), QVariantMap {});
         const QVariantMap declared { { "speedTest", true } };
         QCoro::waitFor(runtime.addSource("enabled", {}, {}, declared));
         QCoro::waitFor(runtime.addSource("baseline", {}, {}));
@@ -217,12 +216,11 @@ SPOOL_TEST_MAIN("script-runtime")
             });
         }
     });
-    const QString entry = QStringLiteral(TEST_SOURCE_DIR "/tests/providers/fixtures/provider.mjs");
+    const QString entry = SpoolTests::fixturePath("tests/providers/fixtures/provider.mjs");
     auto runtime = std::make_unique<ScriptRuntime>(entry, QVariantMap {});
     const auto add = [&](const QString& id) {
-        return runtime->addSource(id,
-            { { "origin", origin }, { "label", id }, { "token", id + "-token" } }, { QUrl(origin) },
-            { { "speedTest", true } });
+        return runtime->addSource(id, { { "origin", origin }, { "label", id }, { "token", id + "-token" } },
+            { QUrl(origin) }, { { "speedTest", true } });
     };
     QCoro::waitFor(add("a"));
     QCoro::waitFor(add("b"));

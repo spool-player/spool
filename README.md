@@ -293,6 +293,11 @@ or hide its contents; it also supports mouse/touch, Tab, and **OK/Enter**. On a
 TV, **Right** from the input row focuses the eye and **Left** returns to the row.
 Submitting or leaving the form hides the input again.
 
+Shared server sign-in forms place a wrapped authentication error before **Sign in**,
+with an error icon and an assertive accessibility announcement. Rejection keeps
+the entered username and password-correction focus. The form reveals the error
+and focused editor in the keyboard-available viewport without focusing the error.
+
 Device-link and Quick Connect codes have their instructions below the code box.
 On desktop and mobile, **Copy** copies the code; TVs show it for entry on another
 device without a clipboard control.
@@ -705,6 +710,11 @@ The Android toolchain is pinned to SDK 36, Build Tools 36.0.0 and NDK
 `tools/manifests/toolchain.json`, which every platform reads. `nixpkgs` tracks `nixos-unstable`; the
 headless emulator and its Google APIs x86_64 system image come from that
 channel rather than nixpkgs master.
+Phone and actual Android TV lanes select the SDK's current `-gpu swiftshader`
+CPU GLES driver, not the deprecated `swiftshader_indirect` route or Qt Quick's
+software scenegraph. Resolution, density and the real OS form factor are not
+changed to mask rendering or input failures. See the [official GPU-mode contract](https://developer.android.com/studio/run/emulator-acceleration#configure-graphics-acceleration-from-the-command-line).
+
 
 Build the emulator ABI locally, in one command:
 
@@ -714,6 +724,10 @@ nix develop .#android -c bash tools/android/build.sh
 
 That runs the three cached stages -- `build-dependencies.sh`, `build-qt6.sh`,
 `build-apks.sh` -- which can also be invoked on their own.
+Signing uses the JDK selected by `JAVA_HOME` for both Gradle and the SDK's
+`apksigner`. Incremental packaging must source `tools/android/signing.sh` and
+call `prepare_keystore`; native/Gradle compilation without the final signed APK
+copy is not an installable checkpoint.
 Android's libmpv cache includes the actual source revision, tracked/untracked
 source changes, NDK/API/ABI, build recipe and feature manifests as well as its
 static dependency stamps. `MPV_SRC` can select another verified source checkout;
@@ -906,6 +920,11 @@ scenegraph. Hosted Apple paravirtualized GPUs use MoltenVK's documented
 an unsupported Metal argument-encoder probe while retaining every real Vulkan
 selector. This is the [upstream-recommended VM configuration](https://github.com/KhronosGroup/MoltenVK/issues/2373),
 not a Metal implementation fork or a change to users' default graphics backend.
+CI also selects documented `MVK_CONFIG_USE_MTLHEAP=0` direct Metal buffers;
+placement-heap-dependent image-view aliases are unavailable in that mode.
+The bounded Qt Cocoa patch retains explicit window-state requests during
+AppKit fullscreen entry and replays only the latest request after did-enter.
+Native titlebar entry is unchanged when no explicit request is pending.
 QtTest QML/plugin paths come from the configured matching-version Qt package
 prefixes, including split Nix modules and macOS frameworks.
 Windows deliberately tests the supported OpenGL embedding path with
@@ -926,6 +945,10 @@ native launcher and stages the product's shipped fonts. Failed journeys retain
 owner-private screenshots, logs and isolated data under `test-artifacts`
 (`SPOOL_E2E_ARTIFACT_DIR` can select its parent); raw logs and credentials are
 never printed. Successful journeys remove their temporary data.
+Option-picker component checks load the shipped Spool module, resources and
+native singletons. Journey OCR reads only captured framebuffer pixels; scaled
+and neutral-text fallback passes restore recognized bounds to physical input
+coordinates and retain exact visible-label assertions.
 Screenshot requests use the public Qt Quick repaint API, await a real swapped
 frame, then perform GUI-thread framebuffer readback. This remains an actual
 graphics capture, not a software scenegraph substitute or screenshot-only test.
@@ -946,6 +969,9 @@ host build directory supplies its generated target path without bundle guesses.
 regressions. Both native phase bundles include the same filesystem fixture
 loader and real shipped OSD fonts; host-only fork/process-supervisor code is not
 compiled into UIKit/Activity bundles.
+Fixture consumers use the extraction-owned absolute root rather than current
+working directory: UIKit changes cwd during GUI initialization. Independent
+font/media/provider bytes remain real files and retain their loader checks.
 Android receipt/file operations use shell-v2 without a PTY, preserving actual
 remote exit codes and binary bytes. Mobile screenshot checks match the real
 window's logical size times device-pixel ratio and the returned framebuffer
@@ -953,6 +979,10 @@ dimensions, rather than imposing a desktop-width threshold on small phones.
 Mobile consumer tests retain real persistence, audio-policy, decoded-media,
 download-byte and font-loader checks; extracted fixture paths are canonicalized
 and downloads use the platform's actual allowed destination choice.
+The independent native video fixture is square. Orientation retains strict
+red-over-blue ordering and band colors sampled inside its known aspect-fit
+rectangle, not a portrait window's legitimate letterbox.
+
 
 
 The host adapter owns each production mobile launch and its exact Android
@@ -973,6 +1003,13 @@ files, control descriptors, credentials, raw product logs and isolated data root
 remain private. Standalone fault checks use `tools/run-device-tests.py --phase
 e2e --cleanup-regression timeout|crash` with the actual isolated device and host
 controller/CLI paths supplied by the platform driver.
+Failed simulator selectors may additionally export `native-crash-diagnostic.json`:
+numeric exception/signal data, binary UUIDs/offsets and controlled private-stage
+breadcrumbs from an exact PID/bundle/device/time-matched OS report. Collection
+is bounded to five seconds, 128 candidates, 1 MiB per report and 64 frames per
+stack. Raw reports, arbitrary symbols and paths are never exported; unavailable
+evidence does not change the failed/crashed outcome.
+
 
 Device phases run serially because one installed activity/application cannot
 host parallel native processes safely. Native traditional coverage includes

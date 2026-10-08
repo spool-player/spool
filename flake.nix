@@ -54,7 +54,7 @@
             };
             sdkExtraArgs = androidSdkArgs;
             androidEmulatorFlags =
-              "-no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect";
+              "-no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader";
           };
           tvEmulator = pkgs.androidenv.emulateApp {
             name = "spool-android-tv-emulator";
@@ -76,7 +76,7 @@
             };
             sdkExtraArgs = androidSdkArgs;
             androidEmulatorFlags =
-              "-no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect -cores 2";
+              "-no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader -cores 2";
           };
         in {
           sdk = composition.androidsdk;
@@ -232,6 +232,8 @@
             systemdSupport = false;
             withGtk3 = false;
           }).overrideAttrs (old: {
+            patches = (old.patches or []) ++ final.lib.optional final.stdenv.hostPlatform.isDarwin
+              ./tools/patches/qt-cocoa-pending-fullscreen-state.patch;
             # Both desktop renderers share Qt's Vulkan device with libplacebo;
             # macOS supplies the Vulkan implementation through MoltenVK.
             propagatedBuildInputs = builtins.filter (input:

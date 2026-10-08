@@ -1132,6 +1132,9 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
     set(SPOOL_E2E_SOURCES tests/TestRunner.cpp tests/QmlTestRunner.cpp tests/ExtensionIntegration.h
         tests/ArtworkIntegration.h tests/player/MpvVideoItemTest.cpp tests/player/MpvFullscreenTest.cpp
         tests/e2e/AppJourneyTest.cpp tests/e2e/JellyfinFixture.cpp)
+    if(APPLE AND NOT SPOOL_APPLE_MOBILE)
+        set_source_files_properties(tests/player/MpvFullscreenTest.cpp PROPERTIES LANGUAGE OBJCXX)
+    endif()
     qt_add_executable(spool-e2e-tests ${SPOOL_E2E_SOURCES})
     file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/native-spool-e2e-path.txt"
         CONTENT "$<TARGET_FILE:spool-e2e-tests>\n")
@@ -1216,6 +1219,7 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
                 tests/qml/tst_ProviderForms.qml
                 tests/qml/tst_ArtworkIntegration.qml
                 tests/qml/tst_PlayerSeekBarHover.qml
+                tests/qml/tst_OptionPickerInput.qml
         )
 
         set(qml_registry "${CMAKE_CURRENT_BINARY_DIR}/generated/QmlTestSelectors.cpp")
@@ -1226,7 +1230,7 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
             math(EXPR qml_source_index "${qml_index} + 1")
             list(GET SPOOL_QML_TESTS ${qml_index} qml_test_name)
             list(GET SPOOL_QML_TESTS ${qml_source_index} qml_test_source)
-            if(qml_test_name MATCHES "^(subtitle-settings-panel|remote-control-page|provider-install-dialog|provider-shell|player-seek-bar-hover|media-row|extension-integration|provider-forms|artwork-integration)$")
+            if(qml_test_name MATCHES "^(subtitle-settings-panel|remote-control-page|provider-install-dialog|provider-shell|player-seek-bar-hover|media-row|extension-integration|provider-forms|artwork-integration|option-picker-input)$")
                 set(qml_input ":/qt/qml/Spool/${qml_test_source}")
             else()
                 set(qml_input "${CMAKE_CURRENT_SOURCE_DIR}/${qml_test_source}")
