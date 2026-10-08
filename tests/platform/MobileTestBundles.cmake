@@ -50,14 +50,44 @@ function(spool_add_mobile_test_bundles)
     list(APPEND fixture_files
         "${CMAKE_CURRENT_SOURCE_DIR}/providers/lock.json"
         "${CMAKE_CURRENT_SOURCE_DIR}/qml/shell/RouteStack.qml")
-    qt_add_resources(spool-tests spool_mobile_test_fixtures
-        PREFIX "/spool-mobile-fixtures" BASE "${CMAKE_CURRENT_SOURCE_DIR}"
-        FILES ${fixture_files})
+    add_library(spool-mobile-test-fixtures OBJECT)
+    target_link_libraries(spool-mobile-test-fixtures PRIVATE Qt6::Core)
+    # Explicit aliases are required: Qt's target resource helper mutates each
+    # font source's global QT_RESOURCE_ALIAS for the separate production /fonts
+    # resource, otherwise collapsing these independent fixture paths.
+    set(fixture_qrc "<RCC>\n  <qresource prefix=\"/spool-mobile-fixtures\">\n")
+    foreach(fixture_path IN LISTS fixture_files)
+        file(RELATIVE_PATH fixture_alias "${CMAKE_CURRENT_SOURCE_DIR}" "${fixture_path}")
+        foreach(xml_value IN ITEMS fixture_path fixture_alias)
+            string(REPLACE "&" "&amp;" ${xml_value} "${${xml_value}}")
+            string(REPLACE "<" "&lt;" ${xml_value} "${${xml_value}}")
+            string(REPLACE "\"" "&quot;" ${xml_value} "${${xml_value}}")
+        endforeach()
+        string(APPEND fixture_qrc "    <file alias=\"${fixture_alias}\">${fixture_path}</file>\n")
+    endforeach()
+    string(APPEND fixture_qrc "  </qresource>\n</RCC>\n")
+    file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/mobile-test-fixtures.qrc" CONTENT "${fixture_qrc}" @ONLY)
+    qt_add_resources(fixture_sources "${CMAKE_CURRENT_BINARY_DIR}/mobile-test-fixtures.qrc")
+    target_sources(spool-mobile-test-fixtures PRIVATE ${fixture_sources})
+    file(GLOB mobile_fonts CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/qml/fonts/*.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/qml/fonts/*.otf")
+    if(ANDROID)
+        # Use the same resource namespace consumed by AndroidPlatform's real
+        # filesystem font exporter, not only the independent fixture prefix.
+        qt_add_resources(spool-mobile-test-fixtures spool_mobile_native_fonts
+            PREFIX "/fonts" BASE "${CMAKE_CURRENT_SOURCE_DIR}/qml/fonts"
+            FILES ${mobile_fonts})
+    endif()
     target_link_libraries(spool-tests PRIVATE ${SPOOL_PROVIDER_BUNDLE_TARGET})
-    target_compile_definitions(spool-tests PRIVATE SPOOL_MOBILE_TEST_BUNDLE=1 SPOOL_TEST_RUNNER=1 TEST_SOURCE_DIR=".")
 
     get_target_property(scan_args spool QT_QML_IMPORT_SCANNER_EXTRA_ARGS)
     foreach(target IN ITEMS spool-tests spool-e2e-tests)
+        target_compile_definitions(${target} PRIVATE SPOOL_MOBILE_TEST_BUNDLE=1 SPOOL_TEST_RUNNER=1 TEST_SOURCE_DIR=".")
+        target_link_libraries(${target} PRIVATE spool-mobile-test-fixtures)
+        if(target STREQUAL "spool-e2e-tests")
+            target_sources(${target} PRIVATE tests/platform/MobileTestFixtures.cpp)
+        endif()
         target_include_directories(${target} PRIVATE src tests "${CMAKE_CURRENT_BINARY_DIR}/generated")
         target_link_libraries(${target} PRIVATE spool-core)
         set_target_properties(${target} PROPERTIES
@@ -93,6 +123,9 @@ function(spool_add_mobile_test_bundles)
             target_compile_definitions(${target} PRIVATE SPOOL_ANDROID=1)
             target_link_libraries(${target} PRIVATE log)
         else()
+            # AppleMobile.cmake already assigns these exact shipped files the
+            # production Resources/fonts bundle location.
+            target_sources(${target} PRIVATE ${mobile_fonts})
             if(target STREQUAL "spool-tests")
                 set(identifier "com.sachk.spool.tests")
             else()

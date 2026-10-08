@@ -10,6 +10,7 @@
 #include "provider/UserItemStateSink.h"
 
 #include "TestMain.h"
+#include "TestRequire.h"
 
 #include <QCoroTask>
 
@@ -25,19 +26,12 @@
 #include <QUrl>
 
 #include <clocale>
-#include <cstdlib>
 #include <iostream>
 #include <stdexcept>
 
 namespace {
 
-void require(bool condition, const char *message)
-{
-    if (!condition) {
-        std::cerr << message << '\n';
-        std::exit(1);
-    }
-}
+using SpoolTests::require;
 
 bool hasTitle(const std::vector<Spool::MovieItem>& items, const QString& title)
 {
@@ -156,8 +150,10 @@ SPOOL_TEST_MAIN("local-provider")
     const PlaybackSession session = QCoro::waitFor(playback->resolvePlayback(mkv, false));
     require(session.itemId == mkv.id && session.title == mkv.title, "the session names the item");
     const QUrl url(session.url);
-    require(url.isLocalFile() && url.toLocalFile() == QDir(fixtures).filePath(QStringLiteral("direct-mpeg2.mkv")),
-        "the session URL is the file itself");
+    const QString expectedPath
+        = QFileInfo(QDir(fixtures).filePath(QStringLiteral("direct-mpeg2.mkv"))).canonicalFilePath();
+    require(!expectedPath.isEmpty() && url.isLocalFile() && url.toLocalFile() == expectedPath,
+        "the session URL is the canonical file itself");
     require(session.container == QStringLiteral("mkv"), "the container is the file's suffix");
     require(QCoro::waitFor(playback->fetchMediaSegments(mkv.id)).empty(), "a folder has no segments");
 

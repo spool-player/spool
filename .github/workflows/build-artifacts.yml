@@ -511,6 +511,11 @@ jobs:
     # Public repositories receive unlimited standard GitHub-hosted runner
     # minutes, so pushes, pull requests, and releases exercise macOS too.
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_macos }}
+    env:
+      # MoltenVK's documented discrete-binding path avoids an unsupported
+      # argument-encoder selector in Apple's hosted paravirtualized Metal GPU.
+      # This still executes real Vulkan/Metal and retains every Vulkan selector.
+      MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS: "0"
     strategy:
       # Apple Silicon and Intel Macs each get a native build; one failing
       # architecture should still let the other produce its DMG.
@@ -847,6 +852,8 @@ jobs:
         run: nix develop .#native -c env DEPLOY_APP=0 bash tools/build-macos.sh
       - name: Run native traditional then GPU GUI tests in isolated Apple TV simulator
         if: ${{ matrix.sdk == 'appletvsimulator' }}
+        env:
+          SPOOL_TEST_DEVICE_CLEANUP_REGRESSIONS: "1"
         run: bash tools/apple/smoke-tvos.sh build/tvos/appletvsimulator-arm64/install/Spool.app
       - name: Package artifact-audited unsigned device IPA (no device runtime claim)
         if: ${{ matrix.sdk == 'appletvos' }}
@@ -871,8 +878,7 @@ jobs:
           name: internal-tvos-simulator-arm64
           path: |
             ${{ runner.temp }}/tvos-simulator-arm64.tar.gz
-            build/tvos/smoke/*.png
-            build/tvos/smoke/*.json
+            build/tvos/smoke/**/safe-export/**
           retention-days: ${{ inputs.release && 1 || 7 }}
       - name: Save coherent Apple dependency cache
         if: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release && steps.tvos-source-cache.outputs.cache-hit != 'true' }}
@@ -1226,6 +1232,8 @@ jobs:
 
       - name: Run native and real app GUI phases on phone and actual Android TV images
         if: ${{ matrix.abi == 'x86_64' }}
+        env:
+          SPOOL_TEST_DEVICE_CLEANUP_REGRESSIONS: "1"
         run: |
           status=0
           for form_factor in phone tv; do
@@ -1241,8 +1249,7 @@ jobs:
         with:
           name: internal-spool-android-tests
           path: |
-            build/android/launch-test
-            build/android/emulator-*.log
+            build/android/launch-test/**/safe-export/**
             dist/android/spool-tests-x86_64.apk
             dist/android/spool-e2e-tests-x86_64.apk
             dist/android/spool-e2e-app-x86_64.apk

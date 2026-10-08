@@ -9,7 +9,9 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#ifndef SPOOL_MOBILE_TEST_BUNDLE
 #include <QProcess>
+#endif
 #include <QSaveFile>
 #include <QThread>
 #include <algorithm>
@@ -77,6 +79,7 @@ void abortAsOsCrash(int)
 }
 #endif
 
+#ifndef SPOOL_MOBILE_TEST_BUNDLE
 #ifdef Q_OS_UNIX
 volatile std::sig_atomic_t interruptedSignal = 0;
 void interruptSupervisor(int signal)
@@ -255,6 +258,7 @@ int fixture(const QString& name, int argc, char **argv)
         return skipExitCode;
     return name == QStringLiteral("fixture-pass-a") || name == QStringLiteral("fixture-pass-b") ? 0 : 2;
 }
+#endif
 
 bool save(const QString& path, const QJsonObject& state)
 {
@@ -272,6 +276,29 @@ void finishReceipt()
 {
     if (!receiptPath.isEmpty() && !save(receiptPath, receipt))
         std::fprintf(stderr, "cannot write native test receipt\n");
+}
+
+bool initializeDiagnosticLog(int argc, char **argv)
+{
+    for (int index = 1; index + 1 < argc; ++index) {
+        if (std::string_view(argv[index]) != "--log")
+            continue;
+        const QString path = QString::fromUtf8(argv[index + 1]);
+        if (!QDir::isAbsolutePath(path))
+            return false;
+        QFile file(path);
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)
+            || !file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner))
+            return false;
+        file.close();
+        const QByteArray nativePath = QFile::encodeName(path);
+        if (!std::freopen(nativePath.constData(), "ab", stdout) || !std::freopen(nativePath.constData(), "ab", stderr))
+            return false;
+        std::setvbuf(stdout, nullptr, _IOLBF, 0);
+        std::setvbuf(stderr, nullptr, _IONBF, 0);
+        return true;
+    }
+    return true;
 }
 
 bool initializeReceipt(int argc, char **argv)
@@ -293,6 +320,7 @@ bool initializeReceipt(int argc, char **argv)
     return true;
 }
 
+#ifndef SPOOL_MOBILE_TEST_BUNDLE
 int supervise(QCoreApplication& app)
 {
     const QStringList arguments = app.arguments();
@@ -543,6 +571,7 @@ int supervise(QCoreApplication& app)
         std::cerr << "cannot retain supervisor journal; remaining selectors were not run\n";
     return failed ? 1 : 0;
 }
+#endif
 } // namespace
 
 int main(int argc, char **argv)
@@ -556,6 +585,8 @@ int main(int argc, char **argv)
 #endif
     std::signal(SIGABRT, abortAsOsCrash);
 #endif
+    if (!initializeDiagnosticLog(argc, argv))
+        return 2;
     if (!initializeReceipt(argc, argv))
         return 2;
 #ifdef SPOOL_MOBILE_TEST_BUNDLE
@@ -591,12 +622,23 @@ int main(int argc, char **argv)
             receipt.insert(QStringLiteral("exitCode"), 0);
             return 0;
         }
+#ifdef SPOOL_MOBILE_TEST_BUNDLE
+        std::cerr << "mobile phase selectors require the host APK/UIKit adapter; use --list or --child\n";
+        return 2;
+#else
         return supervise(app);
+#endif
     }
     if (selectorIndex >= argc)
         return 2;
-    if (fixtures)
+    if (fixtures) {
+#ifdef SPOOL_MOBILE_TEST_BUNDLE
+        std::cerr << "host subprocess fixtures are unavailable in a mobile phase bundle\n";
+        return 2;
+#else
         return fixture(QString::fromUtf8(argv[selectorIndex]), argc, argv);
+#endif
+    }
     const auto& tests = SpoolTests::registry();
     const auto selected = tests.find(argv[selectorIndex]);
     if (selected == tests.end()) {
@@ -614,7 +656,8 @@ int main(int argc, char **argv)
     childArguments.reserve(size_t(argc - selectorIndex + 2));
     childArguments.push_back(argv[0]);
     for (int index = selectorIndex + 1; index < argc; ++index) {
-        if (std::string_view(argv[index]) == "--receipt" || std::string_view(argv[index]) == "--nonce") {
+        if (std::string_view(argv[index]) == "--receipt" || std::string_view(argv[index]) == "--nonce"
+            || std::string_view(argv[index]) == "--log") {
             ++index;
             continue;
         }

@@ -3,15 +3,22 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 app="${1:?Pass the built tvOS Spool.app}"
 [[ "$(uname -s)" == Darwin ]] || { echo 'error: Apple TV simulator requires macOS/Xcode' >&2; exit 1; }
+host_build="${SPOOL_DEVICE_HOST_BUILD_DIR:-$ROOT/build/macos/app}"
 if [[ -z "${SPOOL_DEVICE_HOST_E2E:-}" ]]; then
-  host_build="${SPOOL_DEVICE_HOST_BUILD_DIR:-$ROOT/build/macos/app}"
   [[ -f "$host_build/native-spool-e2e-path.txt" ]] || {
     echo 'error: build the native host journey controller with tools/build-macos.sh first' >&2
     exit 1
   }
   read -r SPOOL_DEVICE_HOST_E2E <"$host_build/native-spool-e2e-path.txt"
 fi
-export SPOOL_DEVICE_HOST_E2E
+if [[ -z "${SPOOL_E2E_SPOOLET:-}" ]]; then
+  [[ -f "$host_build/native-spoolet-path.txt" ]] || {
+    echo 'error: build the matching native spoolet with tools/build-macos.sh first' >&2
+    exit 1
+  }
+  read -r SPOOL_E2E_SPOOLET <"$host_build/native-spoolet-path.txt"
+fi
+export SPOOL_DEVICE_HOST_E2E SPOOL_E2E_SPOOLET
 export SPOOL_E2E_ISOLATED_DEVICE=1
 result="$ROOT/build/tvos/smoke"
 mkdir -p "$result"

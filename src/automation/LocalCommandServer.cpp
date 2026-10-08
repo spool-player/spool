@@ -391,7 +391,9 @@ void LocalCommandServer::screenshot(QIODevice *socket, const QString& id, const 
                 { { QStringLiteral("id"), id }, { QStringLiteral("ok"), true }, { QStringLiteral("result"), result } });
         },
         Qt::ConnectionType(Qt::QueuedConnection | Qt::SingleShotConnection));
-    m_window->requestUpdate();
+    // Request a scene-graph repaint, not just a platform-window update event.
+    // QQuickWindow::update() schedules a frame even when the scene is unchanged.
+    m_window->update();
 }
 
 void LocalCommandServer::dispatch(QIODevice *socket, const QJsonObject& request)

@@ -714,6 +714,12 @@ nix develop .#android -c bash tools/android/build.sh
 
 That runs the three cached stages -- `build-dependencies.sh`, `build-qt6.sh`,
 `build-apks.sh` -- which can also be invoked on their own.
+Android's libmpv cache includes the actual source revision, tracked/untracked
+source changes, NDK/API/ABI, build recipe and feature manifests as well as its
+static dependency stamps. `MPV_SRC` can select another verified source checkout;
+the default remains the repository's `mpv` submodule. A matching revision alone
+never admits stale dirty source bytes.
+
 
 Entering the Android shell may build native Qt host tools before the Android
 cross-build starts. These must match the pinned Qt version: `moc`, QML generators,
@@ -839,6 +845,11 @@ Android's host import scanner uses the same pinned recursive-exclusion patch as
 tvOS/webOS. This keeps vendored Qt's intentionally malformed test QML outside the
 application/test targets' source-root scan while their exact resource QML and
 real plugin dependencies remain scanned and packaged.
+Windows QML selectors direct QtTest's ordinary text logger to their retained
+stdout/stderr pipe instead of the debugger-only OutputDebugString sink. Explicit
+CLI logging choices remain available. Retry checks compare the original native
+failure bytes before/after retry, independent of the host's text newline encoding.
+
 
 The additional `linux-sanitizers` CI job uses `SPOOL_SANITIZERS=ON` to instrument
 the actual production core, official upstream libzstd static decoder, and unified
@@ -856,6 +867,14 @@ The traditional binary is `spool-tests`; the GUI binary is `spool-e2e-tests`.
 Each contains a selector registry and supervises fresh executions of **itself**.
 The binary CLI exposes `--list`, `--child SELECTOR`, and
 `--run-all --workers N --results FILE`, with `--resume`/`--retry-failed`.
+Device adapters also pass `--log ABSOLUTE_PRIVATE_PATH` so Activity/UIKit native
+stdout/stderr conditions survive even when the OS does not expose a console.
+Those raw native diagnostics stay owner-private; safe exports remain allowlisted.
+Each device attempt has a fresh private directory nonce, so a new invocation
+cannot overwrite earlier fault evidence or collide with its private capability
+files. Kernel-wide CPU and memory availability are checked independently; denied
+CPU proc access does not discard readable Android memory counters.
+
 Separate selectors isolate QApplication ownership, mutable environments,
 explicit exits and crashes without creating an executable for every test.
 All traditional selectors finish before GUI e2e starts, and either phase's
@@ -882,7 +901,14 @@ See `tools/patches/mesa-wayland-fifo-presentation-clock.patch` for the exact
 upstream source, introducing commit and protocol references.
 
 macOS uses its real graphics device and bundled/Nix MoltenVK, not a software
-scenegraph. Windows deliberately tests the supported OpenGL embedding path with
+scenegraph. Hosted Apple paravirtualized GPUs use MoltenVK's documented
+`MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS=0` discrete-binding configuration, avoiding
+an unsupported Metal argument-encoder probe while retaining every real Vulkan
+selector. This is the [upstream-recommended VM configuration](https://github.com/KhronosGroup/MoltenVK/issues/2373),
+not a Metal implementation fork or a change to users' default graphics backend.
+QtTest QML/plugin paths come from the configured matching-version Qt package
+prefixes, including split Nix modules and macOS frameworks.
+Windows deliberately tests the supported OpenGL embedding path with
 SHA-256-pinned Mesa WGL llvmpipe: Qt and real libmpv share OpenGL, not D3D WARP or
 Qt's software scenegraph. This Windows configuration is not proof of Vulkan or
 D3D playback. The real host app journey additionally needs Tesseract English OCR
@@ -900,6 +926,9 @@ native launcher and stages the product's shipped fonts. Failed journeys retain
 owner-private screenshots, logs and isolated data under `test-artifacts`
 (`SPOOL_E2E_ARTIFACT_DIR` can select its parent); raw logs and credentials are
 never printed. Successful journeys remove their temporary data.
+Screenshot requests use the public Qt Quick repaint API, await a real swapped
+frame, then perform GUI-thread framebuffer readback. This remains an actual
+graphics capture, not a software scenegraph substitute or screenshot-only test.
 The loopback Jellyfin fixture supplies a quiet real event WebSocket. During the
 offline-download scenario it rejects every new authenticated HTTP request or
 WebSocket handshake, including playback negotiation and media requests; the
@@ -913,6 +942,38 @@ Android and tvOS simulator adapters launch each selector in the same installed
 phase APK/bundle and require a fresh native nonce receipt. Then the same host GUI
 binary drives the actual mobile application; `native-spool-e2e-path.txt` in the
 host build directory supplies its generated target path without bundle guesses.
+`native-spoolet-path.txt` supplies the matching public CLI consumer for cleanup
+regressions. Both native phase bundles include the same filesystem fixture
+loader and real shipped OSD fonts; host-only fork/process-supervisor code is not
+compiled into UIKit/Activity bundles.
+Android receipt/file operations use shell-v2 without a PTY, preserving actual
+remote exit codes and binary bytes. Mobile screenshot checks match the real
+window's logical size times device-pixel ratio and the returned framebuffer
+dimensions, rather than imposing a desktop-width threshold on small phones.
+Mobile consumer tests retain real persistence, audio-policy, decoded-media,
+download-byte and font-loader checks; extracted fixture paths are canonicalized
+and downloads use the platform's actual allowed destination choice.
+
+
+The host adapter owns each production mobile launch and its exact Android
+forward/reverse mappings. A private nonce-bound capability file lets the
+controller request those operations; adapter cleanup still runs if the controller
+crashes or times out, without relying on C++ destructors or removing unrelated
+device resources. Request framing has an absolute deadline, including before
+authentication. CI enables `SPOOL_TEST_DEVICE_CLEANUP_REGRESSIONS=1` to inject
+real controller timeout/crash after public `spoolet` readiness, test an
+unauthenticated slow client, verify process/mapping retirement, and exercise
+another actual consumer. The inner controller fault remains crashed/timed-out;
+only the independent cleanup assertion can pass.
+
+Mobile attempts receive their own `SPOOL_E2E_ARTIFACT_DIR`. CI uploads only the
+adapter's `safe-export` subtree: schema-generated native/controller results,
+sanitized journals and attempt diagnostics, and named screenshots. Capability
+files, control descriptors, credentials, raw product logs and isolated data roots
+remain private. Standalone fault checks use `tools/run-device-tests.py --phase
+e2e --cleanup-regression timeout|crash` with the actual isolated device and host
+controller/CLI paths supplied by the platform driver.
+
 Device phases run serially because one installed activity/application cannot
 host parallel native processes safely. Native traditional coverage includes
 the package consumer's compressed, corrupt, truncated and checksummed inputs

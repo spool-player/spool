@@ -9,6 +9,7 @@
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
+#include <QHostAddress>
 #include <QImage>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -19,6 +20,7 @@
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QStandardPaths>
+#include <QTcpSocket>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QUrl>
@@ -103,11 +105,8 @@ public:
             require(device.startsWith("emulator-"), "Android journey requires an explicit private emulator serial");
             tool = executable("SPOOL_E2E_ADB", QStandardPaths::findExecutable("adb"));
             bundle = "com.sachk.spool";
-            reversePort = QUrl(origin).port();
-            runTool({ "shell", "am", "force-stop", bundle });
-            require(runTool({ "shell", "pm", "clear", bundle }).contains("Success"),
-                "private emulator application sandbox could not be reset");
-            runTool({ "reverse", "tcp:" + QString::number(reversePort), "tcp:" + QString::number(reversePort) });
+            const int reversePort = QUrl(origin).port();
+            ownership("prepare", { { "reversePort", reversePort } });
             remoteScreenshot = "/data/user/0/" + bundle + "/cache/journey-frame.png";
         } else {
             require(this->kind == "tvos", "unknown mobile journey device");
@@ -119,6 +118,7 @@ public:
             require(QDir::isAbsolutePath(container) && QDir(container).exists(),
                 "installed actual tvOS app data container is unavailable");
             remoteScreenshot = container + "/Library/Caches/journey-frame.png";
+            ownership("prepare");
         }
         assertDefaultAutomationOff(origin, instance + "-default", ocr);
         launchProduct({ "--automation-port=0", "--instance=" + instance, "--provider-store=" + origin + '/' });
@@ -129,8 +129,8 @@ public:
             QByteArray bytes;
             if (this->kind == "android") {
                 try {
-                    bytes
-                        = runTool({ "exec-out", "run-as", bundle, "cat", "cache/spool-control/" + instance + ".json" });
+                    bytes = runTool(
+                        { "shell", "-T", "run-as", bundle, "cat", "cache/spool-control/" + instance + ".json" });
                 } catch (const std::runtime_error&) {
                     // The file is published only after the app initialized IPC.
                 }
@@ -154,10 +154,7 @@ public:
         require(descriptor["pid"].toInteger() == processPid,
             "actual mobile app capability did not match the launched OS process identity");
         if (this->kind == "android") {
-            const QString forwarded = QString::fromUtf8(
-                runTool({ "forward", "tcp:0", "tcp:" + QString::number(descriptor["port"].toInt()) }))
-                                          .trimmed();
-            forwardPort = forwarded.toInt();
+            const int forwardPort = ownership("forward", { { "port", descriptor["port"].toInt() } })["port"].toInt();
             require(forwardPort > 0 && forwardPort <= 65535, "private Android control port could not be forwarded");
             descriptor.insert("port", forwardPort);
         }
@@ -166,21 +163,14 @@ public:
         require(file.open(QIODevice::WriteOnly) && file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)
                 && file.write(bytes) == bytes.size() && file.commit(),
             "pulled descriptor could not be stored privately");
+        ownership("ready", { { "descriptor", hostDescriptor } });
     }
     ~DeviceSession()
     {
         try {
-            if (kind == "android") {
-                runTool({ "shell", "am", "force-stop", bundle });
-                if (forwardPort > 0)
-                    runTool({ "forward", "--remove", "tcp:" + QString::number(forwardPort) });
-                if (reversePort > 0)
-                    runTool({ "reverse", "--remove", "tcp:" + QString::number(reversePort) });
-            } else {
-                runTool({ "terminate", device, bundle });
-            }
+            ownership("cleanup", { { "artifacts", QFileInfo(hostDescriptor).absolutePath() } });
         } catch (const std::exception&) {
-            // The lifecycle driver still owns and destroys the private emulator.
+            // The adapter remains the authoritative owner after any host exit.
         }
     }
     void propagateObservedCrash()
@@ -221,7 +211,7 @@ public:
     void deleteScreenshot()
     {
         if (kind == "android") {
-            runTool({ "exec-out", "run-as", bundle, "rm", "-f", "cache/journey-frame.png" });
+            runTool({ "shell", "-T", "run-as", bundle, "rm", "-f", "cache/journey-frame.png" });
         } else {
             require(!QFileInfo::exists(remoteScreenshot) || QFile::remove(remoteScreenshot),
                 "previous actual simulator screenshot could not be removed");
@@ -231,7 +221,7 @@ public:
     {
         QByteArray bytes;
         if (kind == "android")
-            bytes = runTool({ "exec-out", "run-as", bundle, "cat", "cache/journey-frame.png" });
+            bytes = runTool({ "shell", "-T", "run-as", bundle, "cat", "cache/journey-frame.png" });
         else {
             QFile input(remoteScreenshot);
             require(input.open(QIODevice::ReadOnly), "actual simulator screenshot is unavailable");
@@ -330,31 +320,14 @@ private:
     void launchProduct(const QStringList& arguments)
     {
         launchTime = QDateTime::currentDateTimeUtc();
-        processPid = 0;
-        if (kind == "android") {
-            bool valid = false;
-            deviceLaunchEpoch = QString::fromUtf8(runTool({ "shell", "date", "+%s" })).trimmed().toLongLong(&valid);
-            require(valid && deviceLaunchEpoch > 0, "private emulator launch clock could not be observed");
-            // Qt's developer-product argument bridge is the actual app entry,
-            // not a test APK or an automation-only activity.
-            runTool({ "shell", "am", "start", "-W", "-n", bundle + "/com.sachk.spool.SpoolActivity", "--es",
-                "applicationArguments", "'" + arguments.join(' ') + "'" });
-            processPid = QString::fromUtf8(runTool({ "shell", "pidof", "-s", bundle })).trimmed().toLongLong();
-        } else {
-            const QString output = QString::fromUtf8(
-                runTool(QStringList { "launch", "--terminate-running-process", device, bundle } + arguments));
-            const auto match = QRegularExpression(QStringLiteral(":\\s*([0-9]+)\\s*$")).match(output);
-            if (match.hasMatch())
-                processPid = match.captured(1).toLongLong();
-        }
+        const auto launched = ownership("launch", { { "arguments", QJsonArray::fromStringList(arguments) } });
+        processPid = launched["pid"].toInteger();
+        deviceLaunchEpoch = launched["epoch"].toInteger();
         require(processPid > 0, "actual mobile product launch did not expose its OS process identity");
     }
     void stopProduct()
     {
-        if (kind == "android")
-            runTool({ "shell", "am", "force-stop", bundle });
-        else
-            runTool({ "terminate", device, bundle });
+        ownership("stop");
     }
     bool productRunning()
     {
@@ -410,7 +383,7 @@ private:
         }
         require(rendered && productRunning(), "actual mobile normal launch did not render its product UI");
         if (kind == "android") {
-            const QByteArray listing = runTool({ "exec-out", "run-as", bundle, "sh", "-c",
+            const QByteArray listing = runTool({ "shell", "-T", "run-as", bundle, "sh", "-c",
                 "'if [ -d cache/spool-control ]; then find cache/spool-control -maxdepth 1 -name \"*.json\" -type f; "
                 "fi'" });
             const auto files = QString::fromUtf8(listing).split('\n', Qt::SkipEmptyParts);
@@ -421,7 +394,7 @@ private:
                 require(name.startsWith("cache/spool-control/") && name.endsWith(".json"),
                     "normal-startup discovery file escaped the private app cache");
                 const auto entry
-                    = QJsonDocument::fromJson(runTool({ "exec-out", "run-as", bundle, "cat", name })).object();
+                    = QJsonDocument::fromJson(runTool({ "shell", "-T", "run-as", bundle, "cat", name })).object();
                 require(entry["instance"] != instance && entry["pid"].toInteger() != processPid,
                     "actual mobile normal startup advertised an unrequested automation listener");
             }
@@ -440,6 +413,39 @@ private:
             }
         }
         stopProduct();
+    }
+    QJsonObject ownership(const QString& operation, const QJsonObject& value = {})
+    {
+        QFile capability(environment.value("SPOOL_E2E_DEVICE_JOURNEY_OWNER"));
+        require(capability.open(QIODevice::ReadOnly) && capability.size() <= 4096,
+            "mobile journey requires its private adapter ownership capability");
+        const auto descriptor = QJsonDocument::fromJson(capability.readAll()).object();
+        require(descriptor["format"].toInt() == 1 && descriptor["platform"] == kind
+                && descriptor["token"].toString().size() == 64 && descriptor["nonce"].toString().size() == 32
+                && descriptor["port"].toInt() > 0 && descriptor["port"].toInt() <= 65535,
+            "private adapter ownership capability is invalid");
+        QTcpSocket socket;
+        socket.connectToHost(QHostAddress::LocalHost, descriptor["port"].toInt());
+        require(socket.waitForConnected(5000), "mobile journey adapter ownership service is unavailable");
+        const QJsonObject request { { "nonce", descriptor["nonce"] }, { "token", descriptor["token"] },
+            { "operation", operation }, { "value", value } };
+        const QByteArray bytes = QJsonDocument(request).toJson(QJsonDocument::Compact) + '\n';
+        require(socket.write(bytes) == bytes.size(), "adapter ownership request could not be written");
+        QElapsedTimer deadline;
+        deadline.start();
+        QByteArray response;
+        while (!response.contains('\n') && deadline.elapsed() < 90000) {
+            // Keep the production-provider fixture's event loop alive while
+            // OS launch and real-controller readiness requests are in flight.
+            turn(25);
+            response += socket.readAll();
+            require(response.size() <= 65536, "adapter ownership response exceeded its bound");
+            if (socket.state() == QAbstractSocket::UnconnectedState)
+                break;
+        }
+        const auto envelope = QJsonDocument::fromJson(response).object();
+        require(envelope["ok"].toBool(), "adapter rejected a mobile journey ownership operation");
+        return envelope["result"].toObject();
     }
     QByteArray runTool(QStringList arguments)
     {
@@ -460,8 +466,6 @@ private:
     qint64 processPid = 0;
     QDateTime launchTime;
     qint64 deviceLaunchEpoch = 0;
-    int forwardPort = 0;
-    int reversePort = 0;
 };
 enum class TextSurface { Window, LibraryRow };
 struct Words {
@@ -647,13 +651,16 @@ public:
                 if (device)
                     device->deleteScreenshot();
                 QJsonObject response;
-                result = command(
-                    { "screenshot", device ? device->screenshotPath() : screenshotPath }, {}, false, {}, &response);
-                if (!response["ok"].toBool()) {
+                try {
+                    result = command(
+                        { "screenshot", device ? device->screenshotPath() : screenshotPath }, {}, true, {}, &response);
+                } catch (const std::exception&) {
                     // Exposure can change between separate IPC requests while
                     // the real platform replaces a startup/fullscreen surface.
-                    require(response["error"].toObject()["code"] == "not_exposed",
-                        "actual framebuffer acquisition failed unexpectedly");
+                    // All other failures keep the command's safe deadline/code
+                    // diagnostics rather than losing the failing capture stage.
+                    if (response["error"].toObject()["code"] != "not_exposed")
+                        throw;
                     return false;
                 }
                 return true;
@@ -666,7 +673,18 @@ public:
         if (device)
             device->pullScreenshot(screenshotPath);
         QImage image(screenshotPath);
-        require(!image.isNull() && image.width() >= 640 && image.height() >= 360, "rendered screenshot is missing");
+        require(!image.isNull(), "rendered screenshot is missing");
+        if (device) {
+            const auto window = capturedState["window"].toObject();
+            const double ratio = window["devicePixelRatio"].toDouble();
+            require(ratio > 0.0 && window["width"].toInt() > 0 && window["height"].toInt() > 0
+                    && image.width() == qRound(window["width"].toInt() * ratio)
+                    && image.height() == qRound(window["height"].toInt() * ratio)
+                    && image.width() == result["width"].toInt() && image.height() == result["height"].toInt(),
+                "mobile capture must match the actual exposed window's physical framebuffer dimensions");
+        } else {
+            require(image.width() >= 640 && image.height() >= 360, "desktop rendered screenshot is too small");
+        }
         return image;
     }
     QList<Words> words(const QString& imagePath, int mode, const QPoint& origin = {})
