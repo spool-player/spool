@@ -1,6 +1,7 @@
 #include "player/MpvOptionProfile.h"
 
 #include "TestMain.h"
+#include "TestRequire.h"
 
 #include <QCoreApplication>
 #include <QFile>
@@ -48,13 +49,7 @@ std::vector<MpvOption> profileOptions(const MpvConfigPolicy& policy, MpvOptionPr
     return options;
 }
 
-void require(bool condition, const char *message)
-{
-    if (condition)
-        return;
-    std::cerr << message << '\n';
-    std::exit(1);
-}
+using SpoolTests::require;
 
 } // namespace
 

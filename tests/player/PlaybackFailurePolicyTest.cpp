@@ -1,6 +1,7 @@
 #include "player/PlaybackFailurePolicy.h"
 
 #include "TestMain.h"
+#include "TestRequire.h"
 
 #include <mpv/client.h>
 
@@ -9,13 +10,7 @@
 
 namespace {
 
-void require(bool condition, const char *message)
-{
-    if (condition)
-        return;
-    std::cerr << message << '\n';
-    std::exit(EXIT_FAILURE);
-}
+using SpoolTests::require;
 
 } // namespace
 

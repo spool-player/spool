@@ -182,6 +182,11 @@ The CLI exposes only the five settings shown above, not credentials or arbitrary
 configuration. `state` is a small allowlisted route/playback/visual snapshot,
 not unrestricted QObject inspection or script evaluation.
 
+`text TEXT` commits a real input-method event to the currently focused editable
+field; it rejects noneditable/read-only focus and bounds input to 4096 UTF-16
+characters. For secrets use `text --stdin` so the value is not exposed in shell
+history or process arguments. Text is never echoed in the command result.
+
 Download automation uses the same provider negotiation, quality options and
 native transfer manager as the UI:
 
@@ -215,15 +220,29 @@ launches get a unique discoverable ID. An explicitly named duplicate launch
 fails rather than silently controlling another instance. `SPOOL_INSTANCE`
 sets the launch identifier; `--no-local-control` disables the server.
 
-This is **same-user local IPC only**: Unix-domain sockets or Windows named pipes
-with Qt's user-access restriction, plus a private discovery capability. On Unix,
-the runtime directory is owner-only and discovery files are owner-only regular
-files; unsafe/symlink discovery is rejected. Discovery lives in the user's
-runtime directory (`spool-control`, user data directory on Windows), is removed
-on clean shutdown, and stale entries are ignored after probing. No TCP/WebSocket
-listener is opened. Endpoint capabilities and provider credentials are not
-returned by the CLI. Anyone already running code as your user can control the
-app; treat screenshots and media titles as private.
+Default desktop control remains **same-user local IPC**: Unix-domain sockets or
+Windows named pipes with Qt's user-access restriction and a private discovery
+capability. On Unix, the directory and regular discovery files are owner-only;
+unsafe/symlink discovery is rejected. Descriptors are removed on clean shutdown
+and stale entries are ignored after probing. Endpoint capabilities and provider
+credentials are not returned by the CLI. Anyone already running code as your
+user can control the app; treat screenshots and media titles as private.
+With `--data-dir`, the descriptor registry stays under that selected root, but
+Unix socket addresses remain in the private OS user runtime directory. A bounded
+hash of the canonical registry and instance isolates roots without letting a
+long data path exceed `sockaddr_un`. An oversized OS runtime path is rejected
+before listen with an actionable error; it never falls back to a public socket.
+
+For developer/emulator automation, an explicit `--automation-port=PORT` enables
+the same authenticated command server over IPv4 loopback **127.0.0.1 only**.
+Ports are bounded to 0–65535; zero requests an ephemeral port. Mobile builds do
+not listen without this option, webOS does not support it, and
+`--no-local-control` cannot be combined with it. The private descriptor contains
+the selected port and per-instance capability token. Use
+`spoolet --descriptor FILE COMMAND` with a private descriptor obtained from the
+isolated app sandbox; it is mutually exclusive with `--instance`. Tokens belong
+in neither command arguments nor URLs or logs. The original authentication,
+framing, size, deadline and concurrency limits apply to both transports.
 
 Screenshots wait for a newly swapped Qt frame, read the actual window framebuffer,
 and atomically save an owner-only PNG with path, pixel dimensions, file size and
@@ -231,8 +250,9 @@ state metadata. Scene-graph embedded video is included; video on a separate
 native plane/external window is excluded and explicitly reported with
 `videoIncluded: false`. PNG is not a calibrated HDR capture. The window must be
 exposed; screenshot completion does not mean a provider image has finished
-loading—check the reported playback/preview readiness first. The server and CLI
-are desktop facilities, not a public remote-control API or a TV deployment tool.
+loading—check the reported playback/preview readiness first.
+The CLI is a local developer/emulator facility, not a public remote-control API
+or a TV deployment tool.
 
 Without Nix, use `spoolet` beside `spool` in the native build directory or installed
 `bin/`. Local-provider Nix builds install it to
@@ -493,11 +513,10 @@ crops, the 50 MB boundary, directional prefetch, and stale-session/late-request
 cancellation:
 
 ```sh
-nix develop .#native -c cmake --build build/linux-dev/app --target app-tests providers-tests
+nix develop .#native -c cmake --build build/linux-dev/app --target spool-tests spool-e2e-tests
 nix develop .#native -c env SPOOL_TRICKPLAY_SMOKE_OUTPUT=/tmp/spool-preview-frame.png \
-  build/linux-dev/app/app-tests trickplay
-nix develop .#native -c ctest --test-dir build/linux-dev/app \
-  -R '^(trickplay|artwork-authentication|playback-timeline)$' --output-on-failure
+  build/linux-dev/app/spool-tests --child trickplay
+nix develop .#native -c python tools/run-tests.py --build-dir build/linux-dev/app --workers 4
 ```
 
 The smoke prints cold response time, 24 explicit warm image-provider response
@@ -625,14 +644,23 @@ and self-updating are not enabled.
 ### Simulator proof and CI artifacts
 
 ```sh
+nix develop .#native -c env DEPLOY_APP=0 bash tools/build-macos.sh
 APPLE_SDK=appletvsimulator APPLE_ARCH=arm64 bash tools/build-tvos.sh
 bash tools/apple/smoke-tvos.sh build/tvos/appletvsimulator-arm64/install/Spool.app
 ```
 
-The isolated simulator smoke checks the native app UI, video orientation and
-OSD rendering, AudioUnit playback-time advancement and exclusive-session
-behavior, plus a real Keychain roundtrip and sandbox file persistence. It writes
-`result.json` and `simulator.png` under `build/tvos/smoke/`. The multi-platform
+The isolated simulator runs every native traditional selector before the GUI
+selectors, retaining failures and crashes from both phases. GPU consumers check
+video orientation and OSD pixels, AudioUnit playback-time advancement and
+exclusive-session behavior. The real Keychain/sandbox consumer still requires
+its fresh, nonce-correlated receipt with four exact boolean results; console text
+is never credential acceptance. Phase receipts, `credentials-result.json`,
+`launch-result.json` and `simulator.png` are written under `build/tvos/smoke/`.
+After the native GUI selectors, the same host `spool-e2e-tests` binary controls
+the **actual simulator app** through its authenticated loopback automation
+transport, exercising the provider/account/download/playback journey and OCR/
+semantic screenshot checks. Host rendering is not a mobile substitute, and
+simulator success is not physical-device playback proof. The multi-platform
 workflow builds both device and simulator on normal branches and PRs under the
 existing duplicate-build policy; manual dispatch can select `build_tvos`. Reusable
 release builds always include both. Dependency caches are exact-keyed to source
@@ -741,15 +769,143 @@ is what makes a local build installable over an app already on a device:
 
 Keep it and the keystore outside the repository. Without it the build falls
 back to a debug key generated at `build/android/debug.keystore`, which
-installs on a clean device and nowhere else. Launch-test both variants in the pinned headless emulator with:
+installs on a clean device and nowhere else. Build the two native test APKs and
+run traditional selectors before the GUI phase in the pinned isolated emulator:
 
 ```sh
+nix develop .#native -c bash tools/build-linux-release.sh
+SPOOL_ANDROID_BUILD_TESTS=ON nix develop .#android -c bash tools/android/build.sh
 nix develop .#android -c bash tools/android/emulator-launch-test.sh
+SPOOL_ANDROID_FORM_FACTOR=tv nix develop .#android -c bash tools/android/emulator-launch-test.sh
 ```
+
+The internal `spool-e2e-app-x86_64.apk` is a standard developer build of the real
+app, using Qt's Debug deployment so `applicationArguments` and `adb run-as` can
+expose its private authenticated automation descriptor. The two native test APKs
+are also debuggable for selector arguments and fresh nonce receipts. None is a
+release download: the separately built `spool-x86_64.apk` stays nondebuggable.
+After native GUI selectors, the same host e2e binary drives the actual emulator
+app and checks device screenshots. The lifecycle then uninstalls the developer
+app, installs the exact signed release `spool-x86_64.apk`, and checks **both**
+launcher categories on that shipped artifact. CI runs separate phone and actual
+Android TV system images, serially, retaining both failures. TV mode is derived
+from the emulator OS's leanback feature, not fabricated through an app override.
+Phone/TV receipts and screenshots live in distinct `build/android/launch-test/`
+subdirectories. Private AVD storage is removed when its owned emulator exits.
 
 On Android, **Export diagnostics** packages the app log, mpv log, rotated
 logs, and system report into a ZIP and opens the system share menu. It does
 not require ADB or broad storage permissions.
+
+## Unified native tests
+
+Native developer shells configure the repository hooks. The push gate requires
+every pinned mpv commit to exist locally and be reachable from its configured
+public remote branch. Foreign-repository checks clear Git's hook-exported
+repository selectors in a scoped subshell, so linked worktrees validate the
+submodule rather than accidentally querying the superproject's object store;
+this does not bypass the lineage check.
+
+Build and run the same complete host suite as CI with `nix run .#tests`, or run
+already-built targets with:
+
+```sh
+nix develop .#native -c python tools/run-tests.py \
+  --build-dir build/linux-release/app --workers 4
+```
+
+Use `build/macos/app` on macOS. Windows builds with
+`tools\windows\build.ps1 -CMakeArguments '-DSPOOL_TEST_RENDER_BACKEND=opengl'`,
+then installs the pinned test dependencies with
+`tools\windows\install-test-runtime.ps1` and invokes
+`tools\windows\test.ps1 -Workers 4`. The common driver is
+`python tools/run-tests.py --build-dir <dir> --workers N` (`N` is 1–32).
+`--resume` retains finished results, including failures/crashes; `--retry-failed`
+requires resume and reruns ordinary failures without replaying a known crash.
+Every retry keeps its original result, receipt and attempt-specific diagnostic
+log. Crashed selectors remain failed/crashed when skipped on resume, never passed.
+A supervisor interruption is recorded as `interrupted`, not an observed product
+crash; ordinary resume runs it again while retaining the interrupted attempt.
+Explicit retry also permits failed, timed-out and start-failed cases, never
+known crashes.
+Use `--config Release` for Xcode or another multi-configuration CMake generator.
+The additional `linux-sanitizers` CI job uses `SPOOL_SANITIZERS=ON` to instrument
+the actual production core, official upstream libzstd static decoder, and unified
+native tests. It runs `bounded-zstd` and `provider-package-unpack` consumers under
+ASan/UBSan for compressed entropy/checksum corruption and package bounds,
+preserving supervisor results/logs. No educational decoder, private allocator
+probe or test-only decompression context remains.
+It does not replace or exclude the normal host GPU/OpenGL/Vulkan GUI phase.
+Linux CI also runs `spool-tests --child spoolet-admission --require-foreign-owner`
+under `sudo`, using only the selector's private temporary runtime directory to
+prove actual foreign-UID ownership rejection at the server boundary. That flag
+makes missing privileged coverage fail rather than silently skip.
+
+The traditional binary is `spool-tests`; the GUI binary is `spool-e2e-tests`.
+Each contains a selector registry and supervises fresh executions of **itself**.
+The binary CLI exposes `--list`, `--child SELECTOR`, and
+`--run-all --workers N --results FILE`, with `--resume`/`--retry-failed`.
+Separate selectors isolate QApplication ownership, mutable environments,
+explicit exits and crashes without creating an executable for every test.
+All traditional selectors finish before GUI e2e starts, and either phase's
+failure makes the aggregate invocation fail. For focused native diagnostics use
+`spool-tests --child <selector>`; GUI selectors on Linux must run through
+`bash tools/test-gpu-session.sh <command> [args...]`.
+
+Linux GUI tests use Weston inside a private Xvfb X11 server by default (or
+explicit `SPOOL_TEST_DISPLAY_BACKEND=xvfb`) with Nix-pinned Mesa llvmpipe OpenGL
+and lavapipe Vulkan drivers. The nested compositor provides a real input seat
+and native foreground activation while the product still uses Wayland; a
+seatless headless compositor cannot exercise foreground-only behavior.
+Neither harness connects to the user's display.
+
+The isolated Linux CPU driver package includes a bounded Mesa Wayland WSI
+clock-domain correction. Automatic FIFO targets remain in the swapchain's
+clock internally, but the existing upstream conversion helper translates
+them to the compositor's advertised presentation clock at protocol handover.
+Without this conversion, a compositor using `CLOCK_MONOTONIC_RAW` can receive
+erroneously future targets from a `CLOCK_MONOTONIC` swapchain and strand
+paused video or GUI updates. This does not disable FIFO, alter presentation
+pacing, change the compositor clock, or replace normal desktop drivers.
+See `tools/patches/mesa-wayland-fifo-presentation-clock.patch` for the exact
+upstream source, introducing commit and protocol references.
+
+macOS uses its real graphics device and bundled/Nix MoltenVK, not a software
+scenegraph. Windows deliberately tests the supported OpenGL embedding path with
+SHA-256-pinned Mesa WGL llvmpipe: Qt and real libmpv share OpenGL, not D3D WARP or
+Qt's software scenegraph. This Windows configuration is not proof of Vulkan or
+D3D playback. The real host app journey additionally needs Tesseract English OCR
+and the full pinned FFmpeg CLI to generate its finite FFV1 media fixture; the
+playback-only FFmpeg libraries intentionally do not contain that CLI.
+The journey resolves the same version-matched split Qt runtime paths as the
+native launcher and stages the product's shipped fonts. Failed journeys retain
+owner-private screenshots, logs and isolated data under `test-artifacts`
+(`SPOOL_E2E_ARTIFACT_DIR` can select its parent); raw logs and credentials are
+never printed. Successful journeys remove their temporary data.
+The loopback Jellyfin fixture supplies a quiet real event WebSocket. During the
+offline-download scenario it rejects every new authenticated HTTP request or
+WebSocket handshake, including playback negotiation and media requests; the
+already-established idle event channel remains open. Independent request counts
+must remain unchanged while the local file renders and plays. This proves
+playback with the server unavailable for new requests, not a fully closed TCP
+listener or absence of unrelated background reconnects.
+
+
+Android and tvOS simulator adapters launch each selector in the same installed
+phase APK/bundle and require a fresh native nonce receipt. Then the same host GUI
+binary drives the actual mobile application; `native-spool-e2e-path.txt` in the
+host build directory supplies its generated target path without bundle guesses.
+Device phases run serially because one installed activity/application cannot
+host parallel native processes safely. Native traditional coverage includes
+the package consumer's compressed, corrupt, truncated and checksummed inputs
+through the official upstream decoder. Configure `-DSPOOL_SANITIZERS=ON` to
+instrument that static library together with the core and test binaries.
+The supervisor and phase-order tests
+exercise real subprocess crashes, concurrency, resume and CTest barriers.
+Per-selector watchdogs bound hangs without an earlier outer phase deadline
+cancelling unprocessed selectors. webOS cross-builds and unsigned Apple device
+packages receive artifact audits only, with no runtime or physical-device claim.
+
 
 # Name
 

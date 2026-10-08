@@ -84,6 +84,8 @@ TestCase {
         }
     }
     function test_endToEnd() {
+        tryVerify(() => testCase.Window.window.active && Qt.application.state === Qt.ApplicationActive, 10000,
+                  "Provider integration requires a natively active application window")
         tryVerify(() => Integration.running(Integration.first) && Integration.running(Integration.second), 10000)
         tryVerify(() => Integration.cycles > 0 && !SettingsSync.busy, 10000)
         compare(SettingsSync.accountId, Integration.first)

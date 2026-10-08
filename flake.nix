@@ -56,9 +56,31 @@
             androidEmulatorFlags =
               "-no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect";
           };
+          tvEmulator = pkgs.androidenv.emulateApp {
+            name = "spool-android-tv-emulator";
+            deviceName = "spool-android-tv";
+            # The pinned SDK metadata contains this actual Android TV image,
+            # including its x86_64 ABI; do not merely toggle the app's TV flag.
+            platformVersion = "36";
+            abiVersion = "x86_64";
+            systemImageType = "android-tv";
+            configOptions = {
+              "hw.keyboard" = "yes";
+              "hw.dPad" = "yes";
+              "hw.touchScreen" = "no";
+              "hw.lcd.width" = "1920";
+              "hw.lcd.height" = "1080";
+              "hw.lcd.density" = "320";
+              "hw.ramSize" = "3072";
+              "vm.heapSize" = "512";
+            };
+            sdkExtraArgs = androidSdkArgs;
+            androidEmulatorFlags =
+              "-no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect -cores 2";
+          };
         in {
           sdk = composition.androidsdk;
-          inherit emulator;
+          inherit emulator tvEmulator;
         };
 
       # Only Intel macOS needs the older branch; every other system stays on
@@ -98,6 +120,16 @@
           version = "master-a7a18af";
           src = libplacebo-src;
           patches = [];
+        });
+      };
+
+      mesaTestOverlay = final: prev: {
+        # Keep Qt/Weston and normal desktop drivers unchanged. Only the
+        # explicitly selected isolated CPU test drivers use this WSI fix.
+        spoolTestMesa = prev.mesa.overrideAttrs (old: {
+          patches = (old.patches or []) ++ [
+            ./tools/patches/mesa-wayland-fifo-presentation-clock.patch
+          ];
         });
       };
 
@@ -264,7 +296,7 @@
               allowUnfree = true;
               android_sdk.accept_license = true;
             };
-            overlays = [ pinnedQtOverlay libplaceboOverlay ffmpegSlimOverlay tailoredQtOverlay qcoroOverlay ];
+            overlays = [ pinnedQtOverlay libplaceboOverlay mesaTestOverlay ffmpegSlimOverlay tailoredQtOverlay qcoroOverlay ];
           }));
       # Native artifacts use a tailored Qt without ICU, foreign SQL drivers
       # or GTK. Release jobs retain the full build closure in GitHub
@@ -274,7 +306,7 @@
         import (nixpkgsFor system) {
           inherit system;
           config.allowUnfree = true;
-          overlays = [ pinnedQtOverlay libplaceboOverlay tailoredQtOverlay qcoroOverlay cacheDependencyOverlay ];
+          overlays = [ pinnedQtOverlay libplaceboOverlay mesaTestOverlay tailoredQtOverlay qcoroOverlay cacheDependencyOverlay ];
         };
 
 
@@ -432,6 +464,10 @@
         perl
         pkg-config
         python3
+        # The slim playback closure deliberately has no ffmpeg CLI/encoders;
+        # app-journey creates its finite FFV1 fixture with the full pinned CLI.
+        (lib.getBin (spoolFfmpegFor pkgs))
+        tesseract
         rubberband
         unzip
         which
@@ -444,7 +480,11 @@
           (sourceLinuxPackages pkgs))
         # zstd compresses the portable Linux tarball; see
         # tools/package-linux-bundle.sh.
-        ++ [ pkgs.elfutils pkgs.vulkan-loader pkgs.zstd ];
+        ++ [
+          pkgs.elfutils pkgs.vulkan-loader pkgs.zstd
+          # Isolated test displays exercise the real Qt/libmpv GPU paths.
+          pkgs.weston pkgs.xorg-server pkgs.xdotool pkgs.dbus
+        ];
 
 
       qmlToolWrappers = pkgs: qt:
@@ -574,6 +614,15 @@
         # for webp. tools/lib/qt-deploy.sh and tools/package-appimage.sh take
         # qwebp from this prefix; both then assert it landed.
         export SPOOL_QT_EXTRA_PLUGIN_DIRS="${pkgs.spoolQt6.qtimageformats}/lib/qt-6/plugins"
+
+        ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
+          # The test driver opts into these CPU drivers only inside its isolated
+          # compositor. Do not replace the developer's normal desktop drivers.
+          export SPOOL_TEST_DRI_DIR="${pkgs.spoolTestMesa}/lib/dri"
+          export SPOOL_TEST_VULKAN_ICD="$(echo ${pkgs.spoolTestMesa}/share/vulkan/icd.d/lvp_icd.*.json)"
+          export SPOOL_TEST_DRIVER_LIB_DIR="${pkgs.lib.makeLibraryPath [ pkgs.spoolTestMesa pkgs.libGL pkgs.vulkan-loader ]}"
+          export SPOOL_TEST_EGL_VENDOR="${pkgs.spoolTestMesa}/share/glvnd/egl_vendor.d/50_mesa.json"
+        ''}
       '';
       cachedNativeQtPackage = pkgs:
         let
@@ -693,6 +742,7 @@
         native-qt-cache = cachedNativeQtPackage cachedPkgs;
       } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         android-emulator = (androidEnvironment pkgs).emulator;
+        android-tv-emulator = (androidEnvironment pkgs).tvEmulator;
       });
 
       devShells = forAllSystems (pkgs:
@@ -823,22 +873,19 @@
             if pkgs.stdenv.hostPlatform.isDarwin
             then "build/macos/app"
             else "build/linux-release/app";
-          # Mirrors the "Run native tests" CI steps. Both mpv-video-item tests
-          # need a GPU, so the pattern is a prefix rather than an exact name
-          # the Linux runner does not have, so CI skips it there and here.
-          ctestExcludeArgs =
-            if pkgs.stdenv.hostPlatform.isDarwin
-            then ""
-            else "-E '^mpv-video-item' ";
-          ctestJobs =
+          # One driver runs the complete traditional phase before real GUI e2e,
+          # retaining both failures rather than excluding GPU consumers on Linux.
+          testJobs =
             if pkgs.stdenv.hostPlatform.isDarwin
             then "$(sysctl -n hw.ncpu)"
             else "$(nproc)";
-          testScript = pkgs.writeShellScript "spool-ctest" ''
+          testScript = pkgs.writeShellScript "spool-tests" ''
             set -euo pipefail
             cd "$1"
             shift
-            exec ctest --test-dir ${appBuildDir} ${ctestExcludeArgs}--parallel "${ctestJobs}" --output-on-failure "$@"
+            workers="${testJobs}"
+            if (( workers > 32 )); then workers=32; fi
+            exec python3 tools/run-tests.py --build-dir ${appBuildDir} --workers "$workers" "$@"
           '';
           # Development apps resolve the checkout, optionally build the
           # selected native variant, then launch it inside the #native shell.
@@ -1069,7 +1116,7 @@
             ''}
           '';
 
-          # Same build and ctest invocation the release workflow runs.
+          # Same build and unified test driver the release workflow runs.
           tester = makeRunner {
             name = "spool-tests";
             buildBeforeRun = true;
@@ -1182,6 +1229,10 @@
           android-emulator = {
             type = "app";
             program = "${android.emulator}/bin/run-test-emulator";
+          };
+          android-tv-emulator = {
+            type = "app";
+            program = "${android.tvEmulator}/bin/run-test-emulator";
           };
 
           gammaray = {

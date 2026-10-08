@@ -2,9 +2,20 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-APK="${1:-$ROOT/dist/android/spool-x86_64.apk}"
-EMULATOR_LOG="${ANDROID_EMULATOR_LOG:-$ROOT/build/android/emulator.log}"
-ARTIFACT_DIR="${ANDROID_LAUNCH_TEST_DIR:-$ROOT/build/android/launch-test}"
+APK="${1:-$ROOT/dist/android/spool-e2e-app-x86_64.apk}"
+RELEASE_APK="${ANDROID_RELEASE_TEST_APK:-$ROOT/dist/android/spool-x86_64.apk}"
+SPOOL_ANDROID_FORM_FACTOR="${SPOOL_ANDROID_FORM_FACTOR:-phone}"
+case "$SPOOL_ANDROID_FORM_FACTOR" in
+  phone) emulator=android-emulator ;;
+  tv) emulator=android-tv-emulator ;;
+  *) echo 'error: SPOOL_ANDROID_FORM_FACTOR must be phone or tv' >&2; exit 2 ;;
+esac
+export SPOOL_ANDROID_FORM_FACTOR
+BUILD_DIR="${ANDROID_TEST_BUILD_DIR:-$ROOT/build/android/app-x86_64}"
+TEST_APK="${ANDROID_TRADITIONAL_TEST_APK:-$ROOT/dist/android/spool-tests-x86_64.apk}"
+E2E_APK="${ANDROID_E2E_TEST_APK:-$ROOT/dist/android/spool-e2e-tests-x86_64.apk}"
+EMULATOR_LOG="${ANDROID_EMULATOR_LOG:-$ROOT/build/android/emulator-$SPOOL_ANDROID_FORM_FACTOR.log}"
+ARTIFACT_DIR="${ANDROID_LAUNCH_TEST_DIR:-$ROOT/build/android/launch-test/$SPOOL_ANDROID_FORM_FACTOR}"
 # The app launches through its own QtActivity subclass, which owns the launch
 # screen's exit. Naming it here is what catches a manifest that fell back to
 # Qt's stock activity and dropped that handover.
@@ -21,21 +32,45 @@ ADB="$ANDROID_HOME/platform-tools/adb"
   echo "error: APK missing at $APK" >&2
   exit 1
 }
+for test_apk in "$TEST_APK" "$E2E_APK" "$RELEASE_APK"; do
+  [[ -f "$test_apk" ]] || { echo "error: required APK missing: $test_apk" >&2; exit 1; }
+done
+if [[ -z "${SPOOL_DEVICE_HOST_E2E:-}" ]]; then
+  host_build="${SPOOL_DEVICE_HOST_BUILD_DIR:-$ROOT/build/linux-release/app}"
+  [[ -f "$host_build/native-spool-e2e-path.txt" ]] || {
+    echo 'error: build the native host journey controller with tools/build-linux-release.sh first' >&2
+    exit 1
+  }
+  read -r SPOOL_DEVICE_HOST_E2E <"$host_build/native-spool-e2e-path.txt"
+fi
+export SPOOL_DEVICE_HOST_E2E
+export SPOOL_E2E_ISOLATED_DEVICE=1
 
 # Realize the emulator and system image before the adb registration deadline.
 # A cold CI runner may spend minutes downloading them.
-nix build --no-link "$ROOT#android-emulator"
+nix build --no-link "$ROOT#$emulator"
+emulator_work="$(mktemp -d -t "spool-android-$SPOOL_ANDROID_FORM_FACTOR.XXXXXXXX")"
 
 cleanup() {
-  "$ADB" emu kill >/dev/null 2>&1 || true
+  if [[ -n "${ANDROID_SERIAL:-}" ]]; then
+    "$ADB" emu kill >/dev/null 2>&1 || true
+  fi
+  if [[ -n "${launcher_pid:-}" ]]; then
+    kill "$launcher_pid" 2>/dev/null || true
+    wait "$launcher_pid" 2>/dev/null || true
+  fi
+  rm -rf "$emulator_work"
 }
 trap cleanup EXIT
 
 mkdir -p "$(dirname "$EMULATOR_LOG")" "$ARTIFACT_DIR"
 : >"$EMULATOR_LOG"
-nix run "$ROOT#android-emulator" >"$EMULATOR_LOG" 2>&1 &
+TMPDIR="$emulator_work" nix run "$ROOT#$emulator" >"$EMULATOR_LOG" 2>&1 &
+launcher_pid=$!
 for _ in $(seq 1 30); do
-  ANDROID_SERIAL="$("$ADB" devices | sed -n 's/^\(emulator-[0-9]*\)[[:space:]].*/\1/p' | sed -n '1p')"
+  # Nix logs the port it allocated. Never attach to somebody else's emulator.
+  port="$(sed -n 's/^We have a free TCP port: \([0-9]*\)$/\1/p' "$EMULATOR_LOG")"
+  ANDROID_SERIAL="${port:+emulator-$port}"
   [[ -n "$ANDROID_SERIAL" ]] && break
   sleep 1
 done
@@ -47,7 +82,7 @@ done
 export ANDROID_SERIAL
 
 for _ in $(seq 1 90); do
-  if "$ADB" wait-for-device >/dev/null 2>&1 &&
+  if [[ "$("$ADB" get-state 2>/dev/null)" == device ]] &&
     [[ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]]; then
     break
   fi
@@ -58,6 +93,20 @@ done
   echo "error: Android emulator did not boot" >&2
   exit 1
 }
+# Derive the journey's input mode from the actual OS feature, not an app flag.
+# A TV lane must really be a TV image; handset mode must not borrow TV proof.
+if "$ADB" shell pm has-feature android.software.leanback | tr -d '\r' | grep -qx true; then
+  SPOOL_E2E_ANDROID_TV=1
+else
+  SPOOL_E2E_ANDROID_TV=0
+fi
+expected_tv=0
+[[ "$SPOOL_ANDROID_FORM_FACTOR" == phone ]] || expected_tv=1
+[[ "$SPOOL_E2E_ANDROID_TV" == "$expected_tv" ]] || {
+  echo 'error: emulator OS form factor does not match its configured test lane' >&2
+  exit 1
+}
+export SPOOL_E2E_ANDROID_TV
 
 # Resolves through each launcher category in turn. One package now has to
 # answer to both, so a manifest that lost either entry point fails here rather
@@ -74,7 +123,7 @@ fail() {
   shift
   "$ADB" logcat -d >"$ARTIFACT_DIR/$package-logcat.txt" 2>/dev/null || true
   "$ADB" exec-out screencap -p >"$ARTIFACT_DIR/$package-screen.png" 2>/dev/null || true
-  sed -n '1,200p' "$ARTIFACT_DIR/$package-logcat.txt" >&2 || true
+  # Raw logcat can contain provider credentials; archive it, never print it.
   echo "error: $*" >&2
   echo "note: full logcat and screenshot under $ARTIFACT_DIR" >&2
   exit 1
@@ -119,8 +168,23 @@ launch_category() {
 }
 
 "$ADB" install -r "$APK"
-# One package, both entry points. A handset resolves the first and a television
-# the second, and the universal APK is only universal if it answers to both.
-launch_category "$SPOOL_PACKAGE" android.intent.category.LAUNCHER
-launch_category "$SPOOL_PACKAGE" android.intent.category.LEANBACK_LAUNCHER
-printf 'universal APK launch test passed for both launcher categories\n'
+"$ADB" install -r "$TEST_APK"
+"$ADB" install -r "$E2E_APK"
+status=0
+# The shared driver finishes every traditional native selector before starting
+# real GUI selectors and retains both phase failures.
+# The native shell supplies real host Qt, FFmpeg CLI and English OCR; the
+# controller renders nothing on the host and observes the private emulator.
+nix develop "$ROOT#native" -c python "$ROOT/tools/run-tests.py" \
+  --build-dir "$BUILD_DIR" --workers 1 || status=1
+# Replace the developer application with the exact signed release artifact.
+# Uninstall only from this owned emulator to avoid signature/version conflicts
+# and developer profile state making a cold shipped launch appear successful.
+if "$ADB" uninstall "$SPOOL_PACKAGE" && "$ADB" install "$RELEASE_APK"; then
+  (launch_category "$SPOOL_PACKAGE" android.intent.category.LAUNCHER) || status=1
+  (launch_category "$SPOOL_PACKAGE" android.intent.category.LEANBACK_LAUNCHER) || status=1
+else
+  echo 'error: installing the actual signed release APK for launcher proof failed' >&2
+  status=1
+fi
+exit "$status"

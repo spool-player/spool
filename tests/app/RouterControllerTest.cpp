@@ -1,6 +1,7 @@
 #include "app/RouterController.h"
 
 #include "TestMain.h"
+#include "TestRequire.h"
 
 #include <QCoreApplication>
 #include <QSettings>
@@ -12,13 +13,7 @@
 
 namespace {
 
-void require(bool condition, const char *message)
-{
-    if (!condition) {
-        std::cerr << message << '\n';
-        std::exit(1);
-    }
-}
+using SpoolTests::require;
 
 } // namespace
 

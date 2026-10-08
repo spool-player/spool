@@ -5,9 +5,10 @@
 #include <QLocalServer>
 #include <QObject>
 #include <QSet>
+#include <QTcpServer>
 #include <memory>
 
-class QLocalSocket;
+class QIODevice;
 class QLockFile;
 
 namespace Spool {
@@ -23,16 +24,21 @@ public:
         DownloadManager *downloads, SourceHub *sources);
     ~LocalCommandServer() override;
     bool start(const QString& instance, QString *error);
+    // Explicit opt-in only. Publishes the same private capability descriptor;
+    // binds IPv4 loopback, including when port zero requests an ephemeral port.
+    bool startTcp(const QString& instance, quint16 port, QString *error);
     void stop();
 
 private:
+    bool startInternal(const QString& instance, int tcpPort, QString *error);
+    void acceptSocket(QIODevice *socket);
     void acceptConnections();
-    void dispatch(QLocalSocket *socket, const QJsonObject& request);
-    void finish(QLocalSocket *socket, const QString& id, const QJsonObject& result);
-    void reject(QLocalSocket *socket, const QString& id, const QString& code, const QString& message);
+    void dispatch(QIODevice *socket, const QJsonObject& request);
+    void finish(QIODevice *socket, const QString& id, const QJsonObject& result);
+    void reject(QIODevice *socket, const QString& id, const QString& code, const QString& message);
     QJsonObject state() const;
     QJsonObject items(const QJsonObject& args) const;
-    void screenshot(QLocalSocket *socket, const QString& id, const QString& path);
+    void screenshot(QIODevice *socket, const QString& id, const QString& path);
 
     AppController *m_app;
     RouterController *m_router;
@@ -40,7 +46,8 @@ private:
     DownloadManager *m_downloads;
     SourceHub *m_sources;
     QLocalServer m_server;
-    QSet<QLocalSocket *> m_connections;
+    QTcpServer m_tcpServer;
+    QSet<QIODevice *> m_connections;
     std::unique_ptr<QLockFile> m_lock;
     QString m_descriptorPath;
     QString m_instance;

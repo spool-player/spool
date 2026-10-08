@@ -1,6 +1,7 @@
 #include "app/SettingsSyncDocument.h"
 
 #include "TestMain.h"
+#include "TestRequire.h"
 
 #include <QJsonDocument>
 #include <QSet>
@@ -14,13 +15,7 @@ using namespace Spool::SettingsSyncDocument;
 
 namespace {
 
-void require(bool condition, const char *message)
-{
-    if (condition)
-        return;
-    std::cerr << message << '\n';
-    std::exit(EXIT_FAILURE);
-}
+using SpoolTests::require;
 
 const QString LowNonce = QStringLiteral("00000000000000000000000000000000");
 const QString HighNonce = QStringLiteral("ffffffffffffffffffffffffffffffff");

@@ -166,6 +166,7 @@ SPOOL_TEST_MAIN("mpv-video-item-fullscreen")
     return EXIT_SUCCESS;
 }
 
+#ifndef SPOOL_TEST_OPENGL_ONLY
 namespace {
 
 int vulkanEntry(int argc, char **argv)
@@ -178,3 +179,4 @@ int vulkanEntry(int argc, char **argv)
     = ::SpoolTests::registerTest("mpv-video-item-fullscreen-vulkan", &vulkanEntry);
 
 } // namespace
+#endif

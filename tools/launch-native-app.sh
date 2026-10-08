@@ -32,6 +32,13 @@ if [[ ! -x "$candidate" ]]; then
   exit 1
 fi
 
+# Linux must have a private compositor with real GL/Vulkan CPU drivers. The
+# explicit benchmark host-session opt-in below remains a manual-only path.
+if [[ "$(uname -s)" == Linux && "${SPOOL_E2E_ISOLATED_DISPLAY:-0}" != 1 &&
+      "${SPOOL_BENCH_HOST_SESSION:-0}" != 1 ]]; then
+  exec bash "$APP_ROOT/tools/test-gpu-session.sh" bash "${BASH_SOURCE[0]}" "$@"
+fi
+
 work="$(mktemp -d)"
 cleanup() {
   rm -rf "$work"
@@ -141,19 +148,17 @@ else
   export XDG_CACHE_HOME="$work/cache"
   export XDG_CONFIG_HOME="$work/config"
   export XDG_DATA_HOME="$work/data"
-  export XDG_RUNTIME_DIR="$work/runtime"
+  if [[ "${SPOOL_E2E_ISOLATED_DISPLAY:-0}" != 1 ]]; then
+    export XDG_RUNTIME_DIR="$work/runtime"
+  fi
 fi
 export SPOOL_DIAGNOSTICS_DIR="$work/diagnostics"
-export QT_QPA_PLATFORM="${SPOOL_LAUNCH_TEST_QPA_PLATFORM:-offscreen}"
-# Software rasterisation is the default because it is the only thing a headless
-# CI runner can do, and the launch test only needs a frame to exist. Measuring
-# what a page costs to paint needs a real GPU, so an explicitly set value wins
-# here -- including an empty one, which is how Qt is asked for its default RHI
-# backend. Hence +x rather than :-, which cannot tell empty from unset.
-if [[ -z "${QT_QUICK_BACKEND+x}" ]]; then
-  QT_QUICK_BACKEND=software
+export QT_QPA_PLATFORM="${SPOOL_LAUNCH_TEST_QPA_PLATFORM:-${QT_QPA_PLATFORM:-cocoa}}"
+if [[ "${QT_QUICK_BACKEND:-}" == software || "$QT_QPA_PLATFORM" == offscreen ]]; then
+  echo 'error: native GUI launch requires a real graphics surface, not a software/offscreen bypass' >&2
+  exit 1
 fi
-export QT_QUICK_BACKEND
+export QT_QUICK_BACKEND="${QT_QUICK_BACKEND:-}"
 export QSG_RHI_BACKEND="${QSG_RHI_BACKEND:-opengl}"
 if [[ "$bundled_app" == "1" ]]; then
   unset QT_PLUGIN_PATH QML_IMPORT_PATH QML2_IMPORT_PATH NIXPKGS_QT6_QML_IMPORT_PATH QMAKEPATH
@@ -163,9 +168,7 @@ else
 fi
 export LC_NUMERIC=C
 
-# Benchmark mode reuses this script's isolation wholesale -- same offscreen
-# platform, same throwaway home -- because a measurement taken in a different
-# environment from the launch test is not comparable to it.
+# Benchmark mode reuses the launch test's isolated real graphics display.
 app_args=(--launch-test)
 if [[ -n "${SPOOL_BENCH:-}" ]]; then
   app_args=()

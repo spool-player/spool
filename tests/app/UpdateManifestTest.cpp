@@ -1,6 +1,7 @@
 #include "app/UpdateManifest.h"
 
 #include "TestMain.h"
+#include "TestRequire.h"
 
 #include <QCoreApplication>
 #include <QJsonArray>
@@ -14,13 +15,7 @@ using namespace Spool;
 
 namespace {
 
-void require(bool condition, const char *message)
-{
-    if (condition)
-        return;
-    std::cerr << message << '\n';
-    std::exit(EXIT_FAILURE);
-}
+using SpoolTests::require;
 
 QJsonObject release(const QString& channel, int versionCode, const QString& version, const QString& assetKey)
 {

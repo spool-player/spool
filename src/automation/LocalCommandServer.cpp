@@ -13,17 +13,26 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QInputMethodEvent>
+#include <QInputMethodQueryEvent>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QKeyEvent>
 #include <QLocalSocket>
 #include <QLockFile>
 #include <QMouseEvent>
+#include <QNetworkProxy>
 #include <QPointer>
 #include <QSaveFile>
+#include <QTcpSocket>
 #include <QTimer>
 #include <QUuid>
 #include <cmath>
+#ifdef Q_OS_UNIX
+#include <cerrno>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 
 namespace Spool {
 namespace {
@@ -35,6 +44,20 @@ namespace {
         return { { QStringLiteral("index"), index }, { QStringLiteral("id"), item.id },
             { QStringLiteral("title"), item.title }, { QStringLiteral("type"), item.itemType },
             { QStringLiteral("playable"), item.isPlayable() } };
+    }
+    void closeSocket(QIODevice *socket, bool abort)
+    {
+        if (auto *local = qobject_cast<QLocalSocket *>(socket)) {
+            if (abort)
+                local->abort();
+            else
+                local->disconnectFromServer();
+        } else if (auto *tcp = qobject_cast<QTcpSocket *>(socket)) {
+            if (abort)
+                tcp->abort();
+            else
+                tcp->disconnectFromHost();
+        }
     }
 }
 
@@ -50,6 +73,9 @@ LocalCommandServer::LocalCommandServer(AppController *app, RouterController *rou
     m_server.setSocketOptions(QLocalServer::UserAccessOption);
     m_server.setMaxPendingConnections(8);
     connect(&m_server, &QLocalServer::newConnection, this, &LocalCommandServer::acceptConnections);
+    m_tcpServer.setProxy(QNetworkProxy::NoProxy);
+    m_tcpServer.setMaxPendingConnections(8);
+    connect(&m_tcpServer, &QTcpServer::newConnection, this, &LocalCommandServer::acceptConnections);
 }
 LocalCommandServer::~LocalCommandServer()
 {
@@ -57,6 +83,16 @@ LocalCommandServer::~LocalCommandServer()
 }
 
 bool LocalCommandServer::start(const QString& requestedInstance, QString *error)
+{
+    return startInternal(requestedInstance, -1, error);
+}
+
+bool LocalCommandServer::startTcp(const QString& requestedInstance, quint16 port, QString *error)
+{
+    return startInternal(requestedInstance, port, error);
+}
+
+bool LocalCommandServer::startInternal(const QString& requestedInstance, int tcpPort, QString *error)
 {
     const QString directory = LocalControl::directory(error);
     if (directory.isEmpty())
@@ -74,13 +110,54 @@ bool LocalCommandServer::start(const QString& requestedInstance, QString *error)
         *error = QStringLiteral("Instance identifier is already in use");
         return false;
     }
-    const QString nonce = QUuid::createUuid().toString(QUuid::Id128);
-#ifdef Q_OS_UNIX
-    const QString endpoint = QDir(directory).filePath(QStringLiteral("s-") + nonce);
-#else
-    const QString endpoint = QStringLiteral("spool-control-") + nonce;
+    QString endpoint
+        = tcpPort < 0 ? LocalControl::localEndpoint(directory, m_instance, error) : QStringLiteral("127.0.0.1");
+    if (endpoint.isEmpty()) {
+        m_lock.reset();
+        return false;
+    }
+#ifndef Q_OS_UNIX
+    if (tcpPort < 0)
+        endpoint += QLatin1Char('-') + QUuid::createUuid().toString(QUuid::Id128);
 #endif
-    if (!m_server.listen(endpoint)) {
+#ifdef Q_OS_UNIX
+    if (tcpPort < 0) {
+        struct stat address {};
+        if (lstat(QFile::encodeName(endpoint).constData(), &address) == 0) {
+            if (!S_ISSOCK(address.st_mode) || address.st_uid != geteuid()) {
+                *error = QStringLiteral("The reserved control address is not an owned socket");
+                m_lock.reset();
+                return false;
+            }
+            QLocalSocket live;
+            live.connectToServer(endpoint);
+            if (live.waitForConnected(100)) {
+                *error = QStringLiteral("The reserved control address is already listening");
+                m_lock.reset();
+                return false;
+            }
+            if (live.error() != QLocalSocket::ConnectionRefusedError) {
+                *error = QStringLiteral("Cannot establish that the reserved control socket is stale");
+                m_lock.reset();
+                return false;
+            }
+            // The selected registry/instance lock is held. Remove only its
+            // unreachable, owned socket left by an interrupted process.
+            if (!QLocalServer::removeServer(endpoint)) {
+                *error = QStringLiteral("Cannot remove the stale owned control socket");
+                m_lock.reset();
+                return false;
+            }
+        } else if (errno != ENOENT) {
+            *error = QStringLiteral("Cannot inspect the reserved control address");
+            m_lock.reset();
+            return false;
+        }
+    }
+#endif
+    const bool listening
+        = tcpPort < 0 ? m_server.listen(endpoint) : m_tcpServer.listen(QHostAddress::LocalHost, quint16(tcpPort));
+    if (!listening) {
         *error = QStringLiteral("Cannot listen on the private local socket");
         m_lock.reset();
         return false;
@@ -94,8 +171,13 @@ bool LocalCommandServer::start(const QString& requestedInstance, QString *error)
         stop();
         return false;
     }
-    const QJsonObject data { { QStringLiteral("instance"), m_instance }, { QStringLiteral("endpoint"), endpoint },
+    QJsonObject data { { QStringLiteral("instance"), m_instance }, { QStringLiteral("endpoint"), endpoint },
         { QStringLiteral("token"), m_token }, { QStringLiteral("pid"), QCoreApplication::applicationPid() } };
+    if (tcpPort >= 0) {
+        data.insert(QStringLiteral("transport"), QStringLiteral("tcp"));
+        data.insert(QStringLiteral("endpoint"), QStringLiteral("127.0.0.1"));
+        data.insert(QStringLiteral("port"), m_tcpServer.serverPort());
+    }
     const QByteArray bytes = QJsonDocument(data).toJson(QJsonDocument::Compact);
     if (descriptor.write(bytes) != bytes.size() || !descriptor.commit()) {
         *error = QStringLiteral("Cannot publish instance discovery");
@@ -108,9 +190,10 @@ bool LocalCommandServer::start(const QString& requestedInstance, QString *error)
 void LocalCommandServer::stop()
 {
     m_server.close();
+    m_tcpServer.close();
     const auto connections = m_connections;
-    for (QLocalSocket *socket : connections)
-        socket->abort();
+    for (QIODevice *socket : connections)
+        closeSocket(socket, true);
     if (!m_descriptorPath.isEmpty()) {
         QFile::remove(m_descriptorPath);
         m_descriptorPath.clear();
@@ -120,67 +203,78 @@ void LocalCommandServer::stop()
 
 void LocalCommandServer::acceptConnections()
 {
-    while (m_server.hasPendingConnections()) {
-        QLocalSocket *socket = m_server.nextPendingConnection();
-        socket->setParent(this);
-        if (m_connections.size() >= 8) {
-            socket->abort();
-            socket->deleteLater();
-            continue;
-        }
-        m_connections.insert(socket);
-        socket->setReadBufferSize(LocalControl::MaxRequestBytes + 1);
-        connect(socket, &QLocalSocket::disconnected, this, [this, socket] {
-            m_connections.remove(socket);
-            socket->deleteLater();
-        });
-        QTimer::singleShot(LocalControl::RequestTimeoutMs, socket, [this, socket] {
-            reject(socket, socket->property("requestId").toString(), QStringLiteral("timeout"),
-                QStringLiteral("Request did not complete before the server deadline"));
-            socket->abort();
-        });
-        auto buffer = std::make_shared<QByteArray>();
-        connect(socket, &QLocalSocket::readyRead, socket, [this, socket, buffer] {
-            if (socket->property("dispatched").toBool()) {
-                if (socket->bytesAvailable() > 0)
-                    socket->abort();
-                return;
-            }
-            *buffer += socket->readAll();
-            if (buffer->size() > LocalControl::MaxRequestBytes) {
-                reject(socket, {}, QStringLiteral("request_too_large"), QStringLiteral("Request exceeds 64 KiB"));
-                return;
-            }
-            const qsizetype newline = buffer->indexOf('\n');
-            if (newline < 0)
-                return;
-            socket->setProperty("dispatched", true);
-            QJsonParseError error;
-            const QJsonDocument document = QJsonDocument::fromJson(buffer->left(newline), &error);
-            if (newline != buffer->size() - 1 || error.error != QJsonParseError::NoError || !document.isObject()) {
-                reject(socket, {}, QStringLiteral("invalid_request"),
-                    QStringLiteral("Expected one newline-framed JSON object"));
-                return;
-            }
-            const QJsonObject request = document.object();
-            const QString id = request.value(QStringLiteral("id")).toString();
-            socket->setProperty("requestId", id);
-            if (id.isEmpty() || id.size() > 128 || !request.value(QStringLiteral("args")).isObject()
-                || !request.value(QStringLiteral("command")).isString()) {
-                reject(socket, id, QStringLiteral("invalid_request"),
-                    QStringLiteral("Missing or invalid id, command or args"));
-                return;
-            }
-            if (request.value(QStringLiteral("token")).toString() != m_token) {
-                reject(socket, id, QStringLiteral("unauthorized"), QStringLiteral("Invalid local capability"));
-                return;
-            }
-            dispatch(socket, request);
-        });
-    }
+    while (m_server.hasPendingConnections())
+        acceptSocket(m_server.nextPendingConnection());
+    while (m_tcpServer.hasPendingConnections())
+        acceptSocket(m_tcpServer.nextPendingConnection());
 }
 
-void LocalCommandServer::finish(QLocalSocket *socket, const QString& id, const QJsonObject& result)
+void LocalCommandServer::acceptSocket(QIODevice *socket)
+{
+    socket->setParent(this);
+    if (m_connections.size() >= 8) {
+        closeSocket(socket, true);
+        socket->deleteLater();
+        return;
+    }
+    m_connections.insert(socket);
+    const auto disconnected = [this, socket] {
+        m_connections.remove(socket);
+        socket->deleteLater();
+    };
+    if (auto *local = qobject_cast<QLocalSocket *>(socket)) {
+        local->setReadBufferSize(LocalControl::MaxRequestBytes + 1);
+        connect(local, &QLocalSocket::disconnected, this, disconnected);
+    } else if (auto *tcp = qobject_cast<QTcpSocket *>(socket)) {
+        tcp->setReadBufferSize(LocalControl::MaxRequestBytes + 1);
+        connect(tcp, &QTcpSocket::disconnected, this, disconnected);
+    }
+    QTimer::singleShot(LocalControl::RequestTimeoutMs, socket, [this, socket] {
+        reject(socket, socket->property("requestId").toString(), QStringLiteral("timeout"),
+            QStringLiteral("Request did not complete before the server deadline"));
+        closeSocket(socket, true);
+    });
+    auto buffer = std::make_shared<QByteArray>();
+    connect(socket, &QIODevice::readyRead, socket, [this, socket, buffer] {
+        if (socket->property("dispatched").toBool()) {
+            if (socket->bytesAvailable() > 0)
+                closeSocket(socket, true);
+            return;
+        }
+        *buffer += socket->readAll();
+        if (buffer->size() > LocalControl::MaxRequestBytes) {
+            reject(socket, {}, QStringLiteral("request_too_large"), QStringLiteral("Request exceeds 64 KiB"));
+            return;
+        }
+        const qsizetype newline = buffer->indexOf('\n');
+        if (newline < 0)
+            return;
+        socket->setProperty("dispatched", true);
+        QJsonParseError error;
+        const QJsonDocument document = QJsonDocument::fromJson(buffer->left(newline), &error);
+        if (newline != buffer->size() - 1 || error.error != QJsonParseError::NoError || !document.isObject()) {
+            reject(socket, {}, QStringLiteral("invalid_request"),
+                QStringLiteral("Expected one newline-framed JSON object"));
+            return;
+        }
+        const QJsonObject request = document.object();
+        const QString id = request.value(QStringLiteral("id")).toString();
+        socket->setProperty("requestId", id);
+        if (id.isEmpty() || id.size() > 128 || !request.value(QStringLiteral("args")).isObject()
+            || !request.value(QStringLiteral("command")).isString()) {
+            reject(socket, id, QStringLiteral("invalid_request"),
+                QStringLiteral("Missing or invalid id, command or args"));
+            return;
+        }
+        if (request.value(QStringLiteral("token")).toString() != m_token) {
+            reject(socket, id, QStringLiteral("unauthorized"), QStringLiteral("Invalid local capability"));
+            return;
+        }
+        dispatch(socket, request);
+    });
+}
+
+void LocalCommandServer::finish(QIODevice *socket, const QString& id, const QJsonObject& result)
 {
     if (socket->property("finished").toBool())
         return;
@@ -192,9 +286,9 @@ void LocalCommandServer::finish(QLocalSocket *socket, const QString& id, const Q
                     .toJson(QJsonDocument::Compact)
             + '\n';
     socket->write(bytes);
-    socket->disconnectFromServer();
+    closeSocket(socket, false);
 }
-void LocalCommandServer::reject(QLocalSocket *socket, const QString& id, const QString& code, const QString& message)
+void LocalCommandServer::reject(QIODevice *socket, const QString& id, const QString& code, const QString& message)
 {
     finish(socket, id, LocalControl::failure(id, code, message));
 }
@@ -253,7 +347,7 @@ QJsonObject LocalCommandServer::items(const QJsonObject& args) const
         { QStringLiteral("hasMore"), kind == QStringLiteral("browse") && m_app->browse()->hasMore() } };
 }
 
-void LocalCommandServer::screenshot(QLocalSocket *socket, const QString& id, const QString& path)
+void LocalCommandServer::screenshot(QIODevice *socket, const QString& id, const QString& path)
 {
     if (!m_window->isExposed() || m_window->width() <= 0 || m_window->height() <= 0) {
         reject(socket, id, QStringLiteral("not_exposed"),
@@ -264,7 +358,7 @@ void LocalCommandServer::screenshot(QLocalSocket *socket, const QString& id, con
     connect(
         m_window, &QQuickWindow::frameSwapped, socket,
         [this, socket, id, path] {
-            if (socket->property("finished").toBool() || socket->state() != QLocalSocket::ConnectedState)
+            if (socket->property("finished").toBool() || !socket->isOpen())
                 return;
             const QImage image = m_window->grabWindow();
             if (image.isNull()) {
@@ -300,7 +394,7 @@ void LocalCommandServer::screenshot(QLocalSocket *socket, const QString& id, con
     m_window->requestUpdate();
 }
 
-void LocalCommandServer::dispatch(QLocalSocket *socket, const QJsonObject& request)
+void LocalCommandServer::dispatch(QIODevice *socket, const QJsonObject& request)
 {
     const QString id = request.value(QStringLiteral("id")).toString();
     const QString command = request.value(QStringLiteral("command")).toString();
@@ -438,6 +532,27 @@ void LocalCommandServer::dispatch(QLocalSocket *socket, const QJsonObject& reque
             return;
         }
         screenshot(socket, id, path);
+    } else if (command == QStringLiteral("text")) {
+        const QJsonValue value = args.value(QStringLiteral("text"));
+        if (!value.isString() || value.toString().size() > 4096) {
+            invalid(QStringLiteral("Text must be a string of at most 4096 characters"));
+            return;
+        }
+        QObject *focus = m_window->focusObject();
+        if (!focus) {
+            reject(socket, id, QStringLiteral("no_text_focus"), QStringLiteral("Focus an editable text field first"));
+            return;
+        }
+        QInputMethodQueryEvent query(Qt::ImEnabled | Qt::ImReadOnly);
+        QCoreApplication::sendEvent(focus, &query);
+        if (!query.value(Qt::ImEnabled).toBool() || query.value(Qt::ImReadOnly).toBool()) {
+            reject(socket, id, QStringLiteral("no_text_focus"), QStringLiteral("Focus an editable text field first"));
+            return;
+        }
+        QInputMethodEvent commit;
+        commit.setCommitString(value.toString());
+        QCoreApplication::sendEvent(focus, &commit);
+        done({ { QStringLiteral("accepted"), commit.isAccepted() } });
     } else if (command == QStringLiteral("preview")) {
         const double seconds = args.value(QStringLiteral("seconds")).toDouble(-1);
         const double duration = m_app->player()->durationSeconds();

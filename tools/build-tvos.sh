@@ -16,6 +16,11 @@ case "$APPLE_SDK:$APPLE_ARCH" in
   appletvos:arm64|appletvsimulator:arm64|appletvsimulator:x86_64) ;;
   *) echo "error: unsupported tvOS SDK/architecture: $APPLE_SDK/$APPLE_ARCH" >&2; exit 1 ;;
 esac
+# Runtime tests are native simulator bundles, never unsigned device IPA payloads.
+build_testing=OFF
+if [[ "$APPLE_SDK" == appletvsimulator ]]; then
+  build_testing=ON
+fi
 xcrun --sdk "$APPLE_SDK" --show-sdk-path >/dev/null
 if [[ "$APPLE_SDK" == appletvsimulator ]]; then
   xcrun --find derq >/dev/null
@@ -39,7 +44,7 @@ python3 "$ROOT/tools/apple/tvos-assets.py" "$assets"
   -DSPOOL_APPLE_BUNDLE_IDENTIFIER="${APPLE_BUNDLE_IDENTIFIER:-com.sachk.spool}" \
   -DSPOOL_APPLE_CREDENTIAL_SERVICE="${APPLE_BUNDLE_IDENTIFIER:-com.sachk.spool}" \
   -DQT_HOST_PATH="$QT_HOST_PATH" -DSPOOL_WEBOS=OFF -DTOUCHSCREEN=OFF \
-  -DSPOOL_APPLE_APP_STORE=ON -DBUILD_TESTING=OFF \
+  -DSPOOL_APPLE_APP_STORE=ON -DBUILD_TESTING="$build_testing" \
   -DSPOOL_TVOS_ASSETS="$assets" \
   -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED="${CODE_SIGNING_ALLOWED:-NO}" \
   -DCMAKE_XCODE_ATTRIBUTE_DEVELOPMENT_TEAM="${APPLE_DEVELOPMENT_TEAM:-}"

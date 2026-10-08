@@ -3,6 +3,7 @@
 #include "player/MpvOptionProfile.h"
 
 #include "TestMain.h"
+#include "TestRequire.h"
 
 #include <QCoreApplication>
 #include <QStandardPaths>
@@ -24,13 +25,7 @@ QByteArray valueFor(const std::vector<MpvOption>& options, const QByteArray& nam
     return {};
 }
 
-void require(bool condition, const char *message)
-{
-    if (condition)
-        return;
-    std::cerr << message << '\n';
-    std::exit(1);
-}
+using SpoolTests::require;
 
 DisplayOutputCapabilities hdrDisplay(
     RenderTargetProfile::Format format = RenderTargetProfile::Format::ExtendedSrgbLinear)

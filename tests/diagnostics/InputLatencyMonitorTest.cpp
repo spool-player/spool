@@ -1,6 +1,7 @@
 #include "diagnostics/InputLatencyMonitor.h"
 
 #include "TestMain.h"
+#include "TestRequire.h"
 
 #include <QDebug>
 #include <QEvent>
@@ -41,13 +42,7 @@ constexpr Nanoseconds ms(qint64 value)
     return Nanoseconds(value * 1'000'000);
 }
 
-void require(bool condition, const char *message)
-{
-    if (condition)
-        return;
-    std::cerr << message << '\n';
-    std::exit(1);
-}
+using SpoolTests::require;
 
 InputLatencyEventMetadata keyEvent(int key = Qt::Key_Right, quint32 scanCode = 106)
 {

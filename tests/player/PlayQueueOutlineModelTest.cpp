@@ -2,6 +2,7 @@
 #include "player/PlayQueueController.h"
 
 #include "TestMain.h"
+#include "TestRequire.h"
 
 #include <QCoreApplication>
 
@@ -13,13 +14,7 @@ using namespace Spool;
 
 namespace {
 
-void require(bool condition, const char *message)
-{
-    if (condition)
-        return;
-    std::cerr << message << '\n';
-    std::exit(EXIT_FAILURE);
-}
+using SpoolTests::require;
 
 MovieItem episode(const QString& seriesId, int season, int number)
 {

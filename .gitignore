@@ -1,5 +1,6 @@
 /build/
 /build-linux-dev/
+/test-artifacts/
 /build-arm/
 /app/bin/
 /app/lib/

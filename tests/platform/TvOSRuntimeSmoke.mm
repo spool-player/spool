@@ -22,6 +22,7 @@ extern "C" {
 #include <mpv/client.h>
 }
 
+#ifndef SPOOL_TRADITIONAL_TEST_BUNDLE
 SPOOL_TEST_MAIN("tvos-audio")
 {
     QGuiApplication app(argc, argv);
@@ -90,6 +91,7 @@ SPOOL_TEST_MAIN("tvos-audio")
     std::fprintf(stderr, "tvOS audio smoke: AudioUnit output advanced with exclusive playback session\n");
     return finish(0);
 }
+#else
 
 namespace {
 int secureStoreSmoke(int argc, char **argv)
@@ -141,3 +143,4 @@ int secureStoreSmoke(int argc, char **argv)
 }
 [[maybe_unused]] const bool secureRegistered = SpoolTests::registerTest("tvos-credentials", &secureStoreSmoke);
 }
+#endif
