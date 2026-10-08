@@ -112,11 +112,17 @@ function(spool_bundle_providers target)
     string(APPEND qrc "</RCC>\n")
     file(CONFIGURE OUTPUT "${out}/providers.qrc" CONTENT "${qrc}" @ONLY)
     qt_add_resources(resources "${out}/providers.qrc")
-    target_sources(${target} PRIVATE ${resources})
+    # One generated-source owner is required by Xcode's new build system.
+    # Object-library consumers receive the same registered resource without a
+    # second rcc invocation or relying on static-library initializer extraction.
+    set(resource_target "${target}-provider-resources")
+    add_library(${resource_target} OBJECT ${resources})
+    target_link_libraries(${resource_target} PRIVATE Qt6::Core)
+    target_link_libraries(${target} PRIVATE ${resource_target})
     # Reproducible builds give every resource the same timestamp, so the QML
     # disk cache cannot tell one bundle from the next; this names the bundle.
     string(SHA256 digest "${digest}")
     string(SUBSTRING "${digest}" 0 12 digest)
     target_compile_definitions(${target} PRIVATE SPOOL_PROVIDER_BUNDLE_DIGEST="${digest}")
-    set(SPOOL_PROVIDER_BUNDLE_SOURCES ${resources} PARENT_SCOPE)
+    set(SPOOL_PROVIDER_BUNDLE_TARGET ${resource_target} PARENT_SCOPE)
 endfunction()

@@ -95,13 +95,19 @@
       # Our own FFmpeg, not the channel's: every system builds the same
       # upstream release regardless of which nixpkgs it came in on.
       spoolFfmpegFor = pkgs:
-        let pinned = base: base.override {
+        let pinned = base: (base.override {
               inherit (ffmpegPin) version;
               # The release tarball the webOS and Android cross builds fetch,
               # rather than the channel's git checkout, so every platform is
               # building the same bytes.
               source = pkgs.fetchurl { inherit (ffmpegPin) url; hash = ffmpegPin.sri; };
-            };
+            }).overrideAttrs (old: {
+              # Keep the genuine HLS seek fixture/reference unchanged across
+              # CPU counts; the direct generator otherwise auto-slices video.
+              patches = (old.patches or []) ++ [
+                ./tools/patches/ffmpeg-fate-hls-fixed-slice-count.patch
+              ];
+            });
         in
         if pkgs ? ffmpeg_9-full
         then pinned pkgs.ffmpeg_9-full
@@ -640,6 +646,12 @@
         let
           qt = pkgs.spoolQt6.overrideScope (_qtFinal: qtPrev: {
             qtdeclarative = qtPrev.qtdeclarative.overrideAttrs (old: {
+              # The mobile phase targets share the real app's recursive
+              # scanner exclusions. Upstream -exclude alone skips only the
+              # named directory's direct files, not its vendored descendants.
+              patches = (old.patches or []) ++ [
+                ./tools/webos-native/patches/qtdeclarative-6.11-qmlimportscanner-exclude-subtrees.patch
+              ];
               # Match the webOS host-tools profile: without an imported qsb,
               # qtdeclarative skips Quick, Controls and styles, not QML tools.
               cmakeFlags = builtins.filter (flag:

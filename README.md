@@ -829,6 +829,17 @@ crash; ordinary resume runs it again while retaining the interrupted attempt.
 Explicit retry also permits failed, timed-out and start-failed cases, never
 known crashes.
 Use `--config Release` for Xcode or another multi-configuration CMake generator.
+Host CI always retains the phase journals, selector-attempt logs and journey
+screenshots in one-day `internal-*-unified-tests` artifacts, even after test
+failure. It does not export the journey's credential files, control descriptors,
+isolated settings or raw product logs. The provider resource has one shared
+object-library owner, so Xcode can link the real bundle into both app and
+traditional tests without assigning one generated file to two unrelated targets.
+Android's host import scanner uses the same pinned recursive-exclusion patch as
+tvOS/webOS. This keeps vendored Qt's intentionally malformed test QML outside the
+application/test targets' source-root scan while their exact resource QML and
+real plugin dependencies remain scanned and packaged.
+
 The additional `linux-sanitizers` CI job uses `SPOOL_SANITIZERS=ON` to instrument
 the actual production core, official upstream libzstd static decoder, and unified
 native tests. It runs `bounded-zstd` and `provider-package-unpack` consumers under
@@ -877,6 +888,13 @@ Qt's software scenegraph. This Windows configuration is not proof of Vulkan or
 D3D playback. The real host app journey additionally needs Tesseract English OCR
 and the full pinned FFmpeg CLI to generate its finite FFV1 media fixture; the
 playback-only FFmpeg libraries intentionally do not contain that CLI.
+The pinned FFmpeg dependency's genuine HLS seek self-test also generates its
+input locally. Its direct generator now explicitly uses the original reference
+fixture's five MPEG-2 slice contexts: automatic threading otherwise changes the
+fixture on three-core hosts despite bitexact encoding. This bounded test-input
+patch preserves every existing seek reference assertion; it changes neither
+codec code nor test selection and does not replace the upstream package checks.
+
 The journey resolves the same version-matched split Qt runtime paths as the
 native launcher and stages the product's shipped fonts. Failed journeys retain
 owner-private screenshots, logs and isolated data under `test-artifacts`

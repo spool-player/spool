@@ -543,12 +543,15 @@ public:
             ? QStringList { "--descriptor", descriptorOverride }
             : device ? QStringList { "--descriptor", device->descriptorPath() }
                      : QStringList { "--instance", instance };
+        QElapsedTimer requestClock;
+        requestClock.start();
         process.start(control, destination + QStringList { "--timeout", "5000" } + args);
         require(process.waitForStarted(5000), "built spoolet could not start");
         if (!input.isEmpty())
             process.write(input);
         process.closeWriteChannel();
         require(finish(process, 10000), "spoolet exceeded its deadline");
+        const qint64 requestElapsedMs = requestClock.elapsed();
         ensureRunning();
         const auto response = QJsonDocument::fromJson(process.readAllStandardOutput()).object();
         const QString transportCode = response["error"].toObject()["code"].toString();
@@ -563,6 +566,18 @@ public:
             const bool safeCode = code.size() <= 64 && std::all_of(code.cbegin(), code.cend(), [](QChar character) {
                 return character == '_' || (character >= 'a' && character <= 'z');
             });
+            // Client and server deadlines share the "timeout" code. Classify
+            // only known protocol messages; never print an arbitrary payload.
+            QString timeoutOrigin = QStringLiteral("unknown");
+            if (code == "timeout") {
+                const QString message = response["error"].toObject()["message"].toString();
+                if (message == "Request did not complete before the server deadline")
+                    timeoutOrigin = QStringLiteral("server");
+                else if (message == "Command write timed out")
+                    timeoutOrigin = QStringLiteral("client_write");
+                else if (message == "Instance did not complete command in time")
+                    timeoutOrigin = QStringLiteral("client_response");
+            }
             QString geometry;
             if (args.value(0) == "screenshot" && code == "not_exposed") {
                 const auto window = command({ "status" }, {}, false)["window"].toObject();
@@ -571,10 +586,13 @@ public:
                                .arg(window["width"].toInt())
                                .arg(window["height"].toInt());
             }
-            throw std::runtime_error(QString("production spoolet rejected %1 (exit=%2, code=%3)%4")
+            throw std::runtime_error(
+                QString("production spoolet rejected %1 (exit=%2, code=%3, elapsed_ms=%4, timeout_origin=%5)%6")
                     .arg(args.value(0))
                     .arg(process.exitCode())
                     .arg(safeCode ? code : QStringLiteral("invalid_response"))
+                    .arg(requestElapsedMs)
+                    .arg(timeoutOrigin)
                     .arg(geometry)
                     .toStdString());
         }
@@ -760,8 +778,12 @@ public:
         clock.start();
         do {
             ensureRunning();
-            if (predicate())
-                return;
+            try {
+                if (predicate())
+                    return;
+            } catch (const std::exception& error) {
+                throw std::runtime_error(std::string(message) + ": " + error.what());
+            }
             turn();
         } while (clock.elapsed() < timeout);
         throw std::runtime_error(message);

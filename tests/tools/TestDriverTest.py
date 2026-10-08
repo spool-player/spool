@@ -34,8 +34,8 @@ assert (root / "failure-finished").is_file(), "e2e started before failed traditi
 (root / "e2e-finished").write_text("ran despite traditional failure")
 sys.exit(2)
 ''', encoding="utf-8")
-            # Use CMake's own quoting and real CTest scheduling, not a replacement
-            # ctest implementation or a copy of the driver's phase decision.
+            # Use CMake's own quoting and real multi-config CTest scheduling,
+            # not a replacement ctest or a copy of the driver's phase decision.
             cmake = ["cmake_minimum_required(VERSION 3.22)", "project(PhaseContract NONE)", "enable_testing()"]
             for name, phase in (("slow", "traditional"), ("fail", "traditional"), ("gui", "e2e")):
                 cmake.extend([
@@ -43,14 +43,17 @@ sys.exit(2)
                     f'set_tests_properties({name} PROPERTIES LABELS {phase})',
                 ])
             (source / "CMakeLists.txt").write_text("\n".join(cmake) + "\n", encoding="utf-8")
-            configured = subprocess.run(["cmake", "-S", str(source), "-B", str(build)],
+            # Force configuration selection on every host, including Linux:
+            # an omitted --config must not pass via a single-config generator.
+            configured = subprocess.run(["cmake", "-G", "Ninja Multi-Config",
+                                         "-S", str(source), "-B", str(build)],
                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             self.assertEqual(configured.returncode, 0, configured.stdout)
             # This is a scheduler fixture, not a graphical workload; device
             # suites likewise own their graphics instead of a host Weston session.
             (build / "spool-device-tests.json").write_text('{"format":1}\n', encoding="utf-8")
             result = subprocess.run([sys.executable, str(ROOT / "tools/run-tests.py"),
-                                     "--build-dir", str(build), "--workers", "2"],
+                                     "--build-dir", str(build), "--workers", "2", "--config", "Release"],
                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=30)
             self.assertEqual(result.returncode, 1, result.stdout)
             self.assertTrue((root / "e2e-finished").is_file(), result.stdout)
@@ -58,8 +61,8 @@ sys.exit(2)
             self.assertEqual([row["phase"] for row in journal["phases"]], ["traditional", "e2e"])
             self.assertTrue(all(row["exitCode"] != 0 for row in journal["phases"]))
             self.assertLessEqual(journal["phases"][0]["finished"], journal["phases"][1]["started"])
-            self.assertTrue((root / "slow-finished").is_file())
-            self.assertTrue((root / "failure-finished").is_file())
+            self.assertTrue((root / "slow-finished").is_file(), result.stdout)
+            self.assertTrue((root / "failure-finished").is_file(), result.stdout)
 
 
 if __name__ == "__main__":

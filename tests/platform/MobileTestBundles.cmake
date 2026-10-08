@@ -53,7 +53,7 @@ function(spool_add_mobile_test_bundles)
     qt_add_resources(spool-tests spool_mobile_test_fixtures
         PREFIX "/spool-mobile-fixtures" BASE "${CMAKE_CURRENT_SOURCE_DIR}"
         FILES ${fixture_files})
-    target_sources(spool-tests PRIVATE ${SPOOL_PROVIDER_BUNDLE_SOURCES})
+    target_link_libraries(spool-tests PRIVATE ${SPOOL_PROVIDER_BUNDLE_TARGET})
     target_compile_definitions(spool-tests PRIVATE SPOOL_MOBILE_TEST_BUNDLE=1 SPOOL_TEST_RUNNER=1 TEST_SOURCE_DIR=".")
 
     get_target_property(scan_args spool QT_QML_IMPORT_SCANNER_EXTRA_ARGS)
