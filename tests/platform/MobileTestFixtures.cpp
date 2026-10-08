@@ -9,6 +9,16 @@
 #include <cstdio>
 
 namespace SpoolTests {
+namespace {
+    QString extractedRoot;
+}
+
+const QString& mobileFixtureRoot()
+{
+    if (extractedRoot.isEmpty())
+        qFatal("mobile test fixtures have not been prepared");
+    return extractedRoot;
+}
 
 bool prepareMobileFixtures()
 {
@@ -28,10 +38,7 @@ bool prepareMobileFixtures()
         }
     }
     qputenv("QML_DISABLE_DISK_CACHE", "1");
-    if (!QDir::setCurrent(directory.path())) {
-        std::fprintf(stderr, "mobile tests: cannot enter isolated fixture directory\n");
-        return false;
-    }
+    extractedRoot = directory.path();
     return true;
 }
 

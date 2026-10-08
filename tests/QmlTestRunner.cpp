@@ -1,3 +1,4 @@
+#include "TestMain.h"
 #include "app/ArtworkService.h"
 #include "app/TrickplayPreviewItem.h"
 #include "diagnostics/InputLatencyMonitor.h"
@@ -32,7 +33,7 @@ public slots:
 
     void applicationAvailable()
     {
-        const QDir fonts(QStringLiteral(TEST_SOURCE_DIR "/qml/fonts"));
+        const QDir fonts(SpoolTests::fixturePath("qml/fonts"));
         for (const auto& file : fonts.entryList({ "*.ttf", "*.otf" }, QDir::Files))
             if (QFontDatabase::addApplicationFont(fonts.filePath(file)) < 0)
                 qFatal("test font registration failed");
@@ -96,7 +97,8 @@ int spoolRunQml(int argc, char **argv, const char *input)
     const int count = int(arguments.size());
     arguments.push_back(nullptr);
     QmlTestSetup setup;
-    return quick_test_main_with_setup(count, arguments.data(), "spool", TEST_SOURCE_DIR, &setup);
+    const QByteArray sourceRoot = SpoolTests::fixturePath("").toUtf8();
+    return quick_test_main_with_setup(count, arguments.data(), "spool", sourceRoot.constData(), &setup);
 }
 
 #include "QmlTestRunner.moc"

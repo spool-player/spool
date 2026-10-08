@@ -54,7 +54,7 @@ SPOOL_TEST_MAIN("platform-paths")
     for (const QString& fontFile : fontFiles) {
         const QString path = QDir(fontsPath).filePath(fontFile);
         require(QFileInfo(path).isFile(), "a shipped mobile font is missing from the filesystem");
-        QFile source(QDir(QStringLiteral(TEST_SOURCE_DIR "/qml/fonts")).filePath(fontFile));
+        QFile source(QDir(SpoolTests::fixturePath("qml/fonts")).filePath(fontFile));
         QFile font(path);
         require(source.open(QIODevice::ReadOnly) && font.open(QIODevice::ReadOnly),
             "a shipped mobile font or independent font fixture could not be opened");

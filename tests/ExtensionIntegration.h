@@ -1,5 +1,7 @@
 #pragma once
 
+#include "TestMain.h"
+
 #include "app/DownloadManager.h"
 #include "app/LocalizationManager.h"
 #include "app/RemoteTargetsController.h"
@@ -80,12 +82,12 @@ public:
         auto package = ProviderFixture::package("fixture.integration");
         auto manifest = QJsonDocument::fromJson(package.files["manifest.json"]).object();
         manifest["origins"] = QJsonArray { QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort()) };
-        manifest["capabilities"] = QJsonArray { "settingsStorage", "playbackPreferences", "remoteTargets",
-            "accountActivation" };
+        manifest["capabilities"]
+            = QJsonArray { "settingsStorage", "playbackPreferences", "remoteTargets", "accountActivation" };
         package.files["manifest.json"] = QJsonDocument(manifest).toJson();
         package.manifest = *Spool::ProviderManifest::parse(package.files["manifest.json"]);
         for (const auto& file : { QString("extension-integration.mjs"), QString("IntegrationPin.qml") }) {
-            QFile input(QStringLiteral(TEST_SOURCE_DIR "/tests/providers/fixtures/") + file);
+            QFile input(SpoolTests::fixturePath("tests/providers/fixtures/") + file);
             if (!input.open(QIODevice::ReadOnly))
                 qFatal("integration fixture missing");
             package.files[file.endsWith("mjs") ? "logic/provider.mjs" : "ui/Selection.qml"] = input.readAll();

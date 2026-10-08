@@ -49,8 +49,8 @@ SPOOL_TEST_MAIN("provider-logging")
     const auto previous = qInstallMessageHandler(capture);
     QLoggingCategory::setFilterRules(QStringLiteral("spool.provider=false\nspool.provider.trace=false"));
     {
-        Spool::ScriptRuntime runtime(QStringLiteral(TEST_SOURCE_DIR "/tests/providers/fixtures/logging.mjs"), {}, {},
-            nullptr, QStringLiteral("fixture.logging"));
+        Spool::ScriptRuntime runtime(SpoolTests::fixturePath("tests/providers/fixtures/logging.mjs"), {}, {}, nullptr,
+            QStringLiteral("fixture.logging"));
         const QVariantMap configuration { { "token", "source-credential" }, { "refreshToken", "refresh-credential" } };
         QCoro::waitFor(runtime.addSource("private-account-name", configuration, {}));
         const auto disabled = QCoro::waitFor(runtime.call("private-account-name", "exercise"));

@@ -27,7 +27,7 @@ using SpoolTests::require;
 
 QByteArray fixture(const char *name)
 {
-    QFile file(QStringLiteral(TEST_SOURCE_DIR "/tests/fixtures/") + QString::fromLatin1(name));
+    QFile file(SpoolTests::fixturePath("tests/fixtures/") + QString::fromLatin1(name));
     require(file.open(QIODevice::ReadOnly), "TLS fixture could not be opened");
     return file.readAll();
 }

@@ -16,6 +16,10 @@
 #include <cstdio>
 #include <cstdlib>
 
+#ifdef Q_OS_MACOS
+#import <AppKit/AppKit.h>
+#endif
+
 namespace {
 
 void require(bool condition, const char *message)
@@ -43,6 +47,57 @@ void processFor(int milliseconds)
     timer.start();
     waitUntil([&] { return timer.elapsed() >= milliseconds; }, milliseconds + 1000);
 }
+
+#ifdef Q_OS_MACOS
+// Retain native notification ordering beside the existing strict frame check.
+// A configured fullscreen frame can precede AppKit's didEnter notification.
+class NativeFullscreenReceipt {
+public:
+    explicit NativeFullscreenReceipt(Spool::NativeAppWindow& window)
+        : m_window(window)
+        , m_native(reinterpret_cast<NSView *>(window.winId()).window)
+    {
+        m_clock.start();
+        NativeFullscreenReceipt *receipt = this;
+        const NSNotificationName names[]
+            = { NSWindowWillEnterFullScreenNotification, NSWindowDidEnterFullScreenNotification,
+                  NSWindowWillExitFullScreenNotification, NSWindowDidExitFullScreenNotification };
+        for (int index = 0; index < 4; ++index) {
+            m_observers[index] =
+                [NSNotificationCenter.defaultCenter addObserverForName:names[index]
+                                                                object:m_native
+                                                                 queue:nil
+                                                            usingBlock:^(NSNotification *notification) {
+                                                                ++receipt->m_notifications[index];
+                                                                receipt->log(notification.name.UTF8String, index);
+                                                            }];
+        }
+    }
+
+    ~NativeFullscreenReceipt()
+    {
+        for (id observer : m_observers)
+            [NSNotificationCenter.defaultCenter removeObserver:observer];
+    }
+
+    void log(const char *event, int direction) const
+    {
+        std::fprintf(stderr,
+            "native fullscreen: event=%s direction=%d elapsed_ms=%lld qt_full=%d native_style_full=%d "
+            "will_enter=%d did_enter=%d will_exit=%d did_exit=%d width=%d visibility=%d\n",
+            event, direction, static_cast<long long>(m_clock.elapsed()), m_window.fullScreen(),
+            bool(m_native.styleMask & NSWindowStyleMaskFullScreen), m_notifications[0], m_notifications[1],
+            m_notifications[2], m_notifications[3], m_window.width(), int(m_window.visibility()));
+    }
+
+private:
+    Spool::NativeAppWindow& m_window;
+    NSWindow *m_native;
+    id m_observers[4] {};
+    int m_notifications[4] {};
+    QElapsedTimer m_clock;
+};
+#endif
 
 } // namespace
 
@@ -94,6 +149,9 @@ SPOOL_TEST_MAIN("mpv-video-item-fullscreen")
         Qt::DirectConnection);
     window.show();
     require(waitUntil([&] { return swaps.load() > 0; }), "native window presents its first frame");
+#ifdef Q_OS_MACOS
+    NativeFullscreenReceipt nativeReceipt(window);
+#endif
 
     bool responsive = true;
     const auto transitions = [&](const char *state) {
@@ -102,9 +160,15 @@ SPOOL_TEST_MAIN("mpv-video-item-fullscreen")
             const int fullscreenWidth = window.screen()->size().width();
             const int previousSwaps = swaps.load();
             QElapsedTimer timer;
+#ifdef Q_OS_MACOS
+            nativeReceipt.log("request", entering);
+#endif
             timer.start();
             window.toggleFullScreen();
             const double callMs = timer.nsecsElapsed() / 1e6;
+#ifdef Q_OS_MACOS
+            nativeReceipt.log("requested", entering);
+#endif
             // The VO's 200 ms timeout must never become the GUI's fullscreen
             // latency. Swap timing is evidence, not a compositor speed promise.
             responsive &= callMs < 150.0;
@@ -134,7 +198,7 @@ SPOOL_TEST_MAIN("mpv-video-item-fullscreen")
     session.itemId = QStringLiteral("fullscreen-fixture");
     session.title = session.itemId;
     session.itemType = QStringLiteral("Movie");
-    session.url = QUrl::fromLocalFile(QStringLiteral(TEST_SOURCE_DIR "/tests/fixtures/local-thumbnail.mkv")).toString();
+    session.url = QUrl::fromLocalFile(SpoolTests::fixturePath("tests/fixtures/local-thumbnail.mkv")).toString();
     session.playMethod = QStringLiteral("DirectPlay");
     player.play(session);
     require(waitUntil([&] { return player.fileLoaded(); }), "embedded video loads");
@@ -150,16 +214,25 @@ SPOOL_TEST_MAIN("mpv-video-item-fullscreen")
         window.toggleFullScreen();
         window.toggleFullScreen();
     }
+#ifdef Q_OS_MACOS
+    nativeReceipt.log("rapid-requested", original);
+#endif
     processFor(500);
     require(window.fullScreen() == original, "rapid native requests preserve their final fullscreen state");
     const auto press = [&](int key) {
         require(player.forwardMpvKey(key, Qt::NoModifier, {}, true, false), "custom mpv key press is dispatched");
         require(player.forwardMpvKey(key, Qt::NoModifier, {}, false, false), "custom mpv key release is dispatched");
     };
+#ifdef Q_OS_MACOS
+    nativeReceipt.log("binding-request", 1);
+#endif
     press(Qt::Key_F9);
     require(waitUntil([&] { return window.fullScreen(); }), "custom mpv binding enters native fullscreen");
     processFor(100);
     require(window.fullScreen(), "fullscreen echo does not reverse a custom mpv binding");
+#ifdef Q_OS_MACOS
+    nativeReceipt.log("binding-request", 0);
+#endif
     press(Qt::Key_F10);
     require(waitUntil([&] { return !window.fullScreen(); }), "custom mpv binding leaves native fullscreen");
     processFor(100);

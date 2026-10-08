@@ -73,7 +73,7 @@ SPOOL_TEST_MAIN("remote-targets")
     manifest.insert("capabilities", QJsonArray { "remoteTargets", "originGrants" });
     package.files["manifest.json"] = QJsonDocument(manifest).toJson();
     package.manifest = *ProviderManifest::parse(package.files.value("manifest.json"));
-    QFile script(QStringLiteral(TEST_SOURCE_DIR "/tests/providers/fixtures/remote-targets.mjs"));
+    QFile script(SpoolTests::fixturePath("tests/providers/fixtures/remote-targets.mjs"));
     require(script.open(QIODevice::ReadOnly), "remote fixture opens");
     package.files["logic/provider.mjs"] = script.readAll();
     const auto installs = directory.filePath("providers");

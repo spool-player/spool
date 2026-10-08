@@ -6,10 +6,12 @@ bundle/APK; mobile OSes do not permit the desktop QProcess supervisor model.
 A fresh, nonce-correlated native receipt is mandatory, never a console fallback.
 """
 import argparse
+from datetime import datetime
 import hmac
 import json
 import os
 from pathlib import Path
+import plistlib
 import re
 import shlex
 import subprocess
@@ -50,13 +52,19 @@ def command(arguments, *, check=True, timeout=30, input=None, env=None):
 
 def diagnostic(text):
     # Only controlled native test diagnostics. Never print provider/app payloads.
-    markers = ("video result:", "orientation:", "viewport:", "first video frame",
+    markers = ("video result:", "orientation:", "viewport:", "first video frame", "native presentation:",
                "render context handoff did not complete", "render context was not ready",
                "failed to initialize mpv", "tvOS audio smoke:", "tvOS credentials smoke:",
                "An error was encountered processing the command", "dyld[")
     for line in text.splitlines():
         if any(marker in line for marker in markers):
             print(re.sub(r"https?://\S+", "[redacted-url]", line))
+
+
+def mpv_log_requested(arguments):
+    return (os.environ.get("SPOOL_TEST_MPV_LOG") == "1" and len(arguments) >= 2 and
+            arguments[0] == "--child" and
+            re.fullmatch(r"mpv-video-item(?:-[a-zA-Z0-9_-]+)?", arguments[1]) is not None)
 
 
 class Android:
@@ -89,9 +97,13 @@ class Android:
         # adb joins its shell argv; quote the complete extra so the remote shell
         # does not consume selector options as am options. Qt splits on spaces.
         extra = shlex.quote(" ".join(arguments))
+        # Qt's debuggable-Activity-only extra, for this native renderer fixture
+        # alone. No generic host environment forwarding or production flag.
+        debug_extra = (["--es", "extraenvvars_SPOOL_TEST_MPV_LOG", "1"]
+                       if mpv_log_requested(arguments) else [])
         result = self.call("shell", "am", "start", "-W", "-n",
                            f"{self.bundle}/org.qtproject.qt.android.bindings.QtActivity",
-                           "--es", "applicationArguments", extra, check=False)
+                           "--es", "applicationArguments", extra, *debug_extra, check=False)
         if result.returncode or "Error:" in result.stdout:
             raise SelectorStartFailure("Android rejected the native test activity launch")
         deadline = time.monotonic() + timeout
@@ -130,11 +142,220 @@ class Android:
             self.call("shell", "am", "force-stop", self.bundle, check=False)
 
     def capture(self, output, selector):
+        # Retain the actual native render buffer, not only the OS home screen
+        # reached after the failed phase Activity has stopped.
+        native_log = output / "native-output-private.log"
+        if selector.startswith("mpv-video-item") and native_log.exists():
+            for line in native_log.read_text().splitlines():
+                if not line.startswith("native failure frame: "):
+                    continue
+                path = line.removeprefix("native failure frame: ")
+                prefixes = (f"/data/user/0/{self.bundle}/", f"/data/data/{self.bundle}/")
+                if (not path.startswith(prefixes) or "/../" in path or
+                        not path.endswith("/mpv-video-item-failure.png")):
+                    continue
+                frame = subprocess.run(
+                    [self.adb, "-s", os.environ["ANDROID_SERIAL"], "shell", "-T",
+                     "run-as", self.bundle, "cat", path],
+                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=15)
+                if frame.returncode == 0 and frame.stdout.startswith(b"\x89PNG\r\n\x1a\n"):
+                    (output / f"{selector}-native-failure.png").write_bytes(frame.stdout)
+                break
         # Screenshots contain only the isolated emulator test applications.
-        shot = subprocess.run([self.adb, "exec-out", "screencap", "-p"],
+        shot = subprocess.run([self.adb, "-s", os.environ["ANDROID_SERIAL"], "exec-out", "screencap", "-p"],
                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=15)
         if shot.returncode == 0:
             (output / f"{selector}-failure.png").write_bytes(shot.stdout)
+
+
+NATIVE_DIAGNOSTIC_NAME = "native-crash-diagnostic.json"
+NATIVE_REPORT_LIMIT = 1024 * 1024
+NATIVE_FRAME_LIMIT = 64
+
+
+def simulator_launch_pid(text, bundle):
+    # simctl's launch line is separate from the consumer's redirected file
+    # descriptors. Never search the app log or infer a PID from receipt data.
+    matches = set(re.findall(r"^" + re.escape(bundle) + r":\s*([1-9][0-9]*)\s*$",
+                             text, re.MULTILINE))
+    return int(matches.pop()) if len(matches) == 1 else None
+
+
+def ips_timestamp(value):
+    if not isinstance(value, str):
+        return None
+    try:
+        stamp = datetime.fromisoformat(value)
+        return stamp.timestamp() if stamp.tzinfo is not None else None
+    except ValueError:
+        return None
+
+
+def matching_simulator_report(path, launch):
+    # Apple's .ips is metadata JSON followed by payload JSON, not one JSON
+    # document. Raw strings are used only for private identity checks.
+    if path.is_symlink() or path.stat().st_size > NATIVE_REPORT_LIMIT:
+        return None
+    if path.stat().st_mtime < launch["started"]:
+        return None
+    with path.open("rb") as stream:
+        raw = stream.read(NATIVE_REPORT_LIMIT + 1)
+    if len(raw) > NATIVE_REPORT_LIMIT:
+        return None
+    text = raw.decode("utf-8")
+    decoder = json.JSONDecoder()
+    metadata, boundary = decoder.raw_decode(text.lstrip())
+    payload = json.loads(text.lstrip()[boundary:])
+    if not isinstance(metadata, dict) or not isinstance(payload, dict):
+        return None
+    if type(payload.get("pid")) is not int or payload["pid"] != launch["pid"]:
+        return None
+    bundle_info = payload.get("bundleInfo")
+    if not isinstance(bundle_info, dict) or bundle_info.get("CFBundleIdentifier") != launch["bundle"]:
+        return None
+    if metadata.get("bundleID", launch["bundle"]) != launch["bundle"]:
+        return None
+    proc_path = payload.get("procPath")
+    if not isinstance(proc_path, str):
+        return None
+    parts = proc_path.lower().split("/")
+    if launch["device"].lower() not in parts:
+        return None
+    if not proc_path.startswith(launch["appPath"] + "/"):
+        return None
+    captured = ips_timestamp(payload.get("captureTime"))
+    if captured is None or not launch["started"] <= captured <= launch["finished"]:
+        return None
+    return payload
+
+
+def safe_native_diagnostic(value):
+    # Explicit export schema: no arbitrary symbol names, paths, report labels,
+    # termination descriptions, registers, raw stacks or application data.
+    result = {"format": 1}
+    if not isinstance(value, dict):
+        raise ValueError("native crash diagnostic schema is not an object")
+    for key in ("pid", "faultingThread"):
+        if type(value.get(key)) is int and value[key] >= 0:
+            result[key] = value[key]
+    for key in ("launchStarted", "launchFinished"):
+        if type(value.get(key)) in (int, float):
+            result[key] = value[key]
+    if value.get("collection") in ("matched", "unavailable", "launch-unidentified"):
+        result["collection"] = value["collection"]
+    stages = []
+    source_stages = value.get("stages")
+    for stage in (source_stages if isinstance(source_stages, list) else [])[:16]:
+        if not isinstance(stage, dict):
+            continue
+        if stage.get("stage") not in ("selector-entry", "selector-return", "status-assigned",
+                                      "receipt-handler-entry", "receipt-handler-return"):
+            continue
+        clean = {"stage": stage["stage"]}
+        if stage["stage"] == "selector-return" and type(stage.get("exitCode")) is int:
+            clean["exitCode"] = stage["exitCode"]
+        if (stage["stage"] == "receipt-handler-return" and type(stage.get("saved")) is int
+                and stage["saved"] in (0, 1)):
+            clean["saved"] = int(stage["saved"])
+        stages.append(clean)
+    result["stages"] = stages
+    for field, keys in (("exception", ("type", "signal", "codes")),
+                        ("termination", ("code", "flags"))):
+        source = value.get(field)
+        if not isinstance(source, dict):
+            continue
+        clean = {key: source[key] for key in keys if key != "codes" and type(source.get(key)) is int}
+        if field == "exception" and isinstance(source.get("codes"), list):
+            clean["codes"] = [code for code in source["codes"][:8] if type(code) is int]
+        result[field] = clean
+    for field in ("frames", "lastExceptionFrames"):
+        frames = []
+        source_frames = value.get(field)
+        for frame in (source_frames if isinstance(source_frames, list) else [])[:NATIVE_FRAME_LIMIT]:
+            if (isinstance(frame, dict) and type(frame.get("imageIndex")) is int and
+                    type(frame.get("imageOffset")) is int and
+                    frame["imageIndex"] >= 0 and frame["imageOffset"] >= 0):
+                frames.append({"imageIndex": frame["imageIndex"], "imageOffset": frame["imageOffset"]})
+        result[field] = frames
+    images = []
+    source_images = value.get("images")
+    for image in (source_images if isinstance(source_images, list) else [])[:NATIVE_FRAME_LIMIT * 2]:
+        if (not isinstance(image, dict) or type(image.get("imageIndex")) is not int
+                or image["imageIndex"] < 0):
+            continue
+        clean = {"imageIndex": image["imageIndex"]}
+        identifier = image.get("uuid")
+        if isinstance(identifier, str) and re.fullmatch(
+                r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", identifier):
+            clean["uuid"] = str(uuid.UUID(identifier))
+        if image.get("arch") in ("arm64", "arm64e", "arm64_32", "x86_64", "x86_64h", "arm", "i386"):
+            clean["arch"] = image["arch"]
+        images.append(clean)
+    result["images"] = images
+    return result
+
+
+def native_report_fields(payload):
+    # Darwin exception numbers and POSIX signal numbers, not free-form Apple
+    # descriptions. Image offsets can be symbolicated against UUID-matched
+    # build binaries privately; unreviewed function/symbol strings stay private.
+    exception = payload.get("exception", {})
+    exception = exception if isinstance(exception, dict) else {}
+    types = {"EXC_BAD_ACCESS": 1, "EXC_BAD_INSTRUCTION": 2, "EXC_ARITHMETIC": 3,
+             "EXC_EMULATION": 4, "EXC_SOFTWARE": 5, "EXC_BREAKPOINT": 6,
+             "EXC_SYSCALL": 7, "EXC_MACH_SYSCALL": 8, "EXC_RPC_ALERT": 9,
+             "EXC_CRASH": 10, "EXC_RESOURCE": 11, "EXC_GUARD": 12, "EXC_CORPSE_NOTIFY": 13}
+    codes = exception.get("rawCodes", [])
+    signal_name = exception.get("signal")
+    number = getattr(signal, signal_name, None) if isinstance(signal_name, str) else None
+    result = {"exception": {"codes": codes if isinstance(codes, list) else []},
+              "termination": payload.get("termination", {})}
+    if isinstance(exception.get("type"), str) and exception["type"] in types:
+        result["exception"]["type"] = types[exception["type"]]
+    if isinstance(number, signal.Signals):
+        result["exception"]["signal"] = int(number)
+    threads = payload.get("threads", [])
+    faulting = payload.get("faultingThread")
+    if isinstance(threads, list) and type(faulting) is int and 0 <= faulting < len(threads):
+        result["faultingThread"] = faulting
+        thread = threads[faulting]
+        if isinstance(thread, dict) and isinstance(thread.get("frames"), list):
+            result["frames"] = thread["frames"][:NATIVE_FRAME_LIMIT]
+    backtrace = payload.get("lastExceptionBacktrace")
+    if isinstance(backtrace, list):
+        result["lastExceptionFrames"] = backtrace[:NATIVE_FRAME_LIMIT]
+    indexes = {frame.get("imageIndex") for field in ("frames", "lastExceptionFrames")
+               for frame in result.get(field, []) if isinstance(frame, dict)
+               and type(frame.get("imageIndex")) is int}
+    images = payload.get("usedImages", [])
+    result["images"] = [dict(images[index], imageIndex=index) for index in sorted(indexes)
+                        if isinstance(images, list) and 0 <= index < len(images)
+                        and isinstance(images[index], dict)]
+    return safe_native_diagnostic(result)
+
+
+def native_stages(path):
+    stages = []
+    if not path.is_file() or path.is_symlink():
+        return stages
+    pattern = re.compile(r"^native stage: (selector-entry|selector-return|status-assigned|"
+                         r"receipt-handler-entry|receipt-handler-return)"
+                         r"(?: (exitCode=-?[0-9]+|saved=[01]))?\s*$")
+    # Only the final bounded private log window is needed for return/atexit
+    # breadcrumbs; renderer debug output must not make collection unbounded.
+    with path.open("rb") as stream:
+        stream.seek(max(0, path.stat().st_size - NATIVE_REPORT_LIMIT))
+        text = stream.read(NATIVE_REPORT_LIMIT).decode("utf-8", errors="replace")
+        for line in text.splitlines():
+            match = pattern.fullmatch(line)
+            if match:
+                stage = {"stage": match[1]}
+                if match[2]:
+                    key, number = match[2].split("=")
+                    stage[key] = int(number)
+                stages.append(stage)
+                stages = stages[-16:]
+    return stages
 
 
 class TvOS:
@@ -145,6 +366,17 @@ class TvOS:
                                        self.bundle, "data"]).stdout.strip())
         self.receipt = str(self.container / "tmp" / "spool-test-receipt.json")
         self.credentials = self.container / "tmp" / "tvos-credentials-result.json"
+        self.app_path = command(["xcrun", "simctl", "get_app_container", self.device,
+                                 self.bundle, "app"]).stdout.strip()
+        with (Path(self.app_path) / "Info.plist").open("rb") as stream:
+            metadata = plistlib.load(stream)
+        self.executable = metadata["CFBundleExecutable"]
+        if (metadata.get("CFBundleIdentifier") != self.bundle or
+                not isinstance(self.executable, str) or
+                not re.fullmatch(r"[a-zA-Z0-9_-]+", self.executable)):
+            raise RuntimeError("installed simulator selector bundle identity is invalid")
+        self.launch = None
+        self.console = ""
 
     def unlink(self, path):
         Path(path).unlink(missing_ok=True)
@@ -153,8 +385,26 @@ class TvOS:
         return Path(path).read_text()
 
     def execute(self, arguments, timeout):
-        process = command(["xcrun", "simctl", "launch", "--console", "--terminate-running-process",
-                           self.device, self.bundle, *arguments], check=False, timeout=timeout)
+        self.launch = {"bundle": self.bundle, "device": self.device, "appPath": self.app_path,
+                       "started": time.time(), "pid": None,
+                       "selector": arguments[1] if len(arguments) >= 2 and arguments[0] == "--child" else None,
+                       "nonce": arguments[-1]}
+        self.console = ""
+        launch_env = dict(os.environ)
+        launch_env.pop("SIMCTL_CHILD_SPOOL_TEST_MPV_LOG", None)
+        if mpv_log_requested(arguments):
+            launch_env["SIMCTL_CHILD_SPOOL_TEST_MPV_LOG"] = "1"
+        try:
+            process = command(["xcrun", "simctl", "launch", "--console", "--terminate-running-process",
+                               self.device, self.bundle, *arguments], check=False, timeout=timeout, env=launch_env)
+            self.console = process.stdout
+        except subprocess.TimeoutExpired as error:
+            captured = error.stdout or ""
+            self.console = captured.decode("utf-8", errors="replace") if isinstance(captured, bytes) else captured
+            raise
+        finally:
+            self.launch["finished"] = time.time()
+            self.launch["pid"] = simulator_launch_pid(self.console, self.bundle)
         if (process.returncode and
                 "An error was encountered processing the command" in process.stdout and
                 not Path(self.receipt).exists()):
@@ -169,9 +419,58 @@ class TvOS:
         if selector.startswith("mpv-video-item") and frame.exists():
             (output / f"{selector}-failure.png").write_bytes(frame.read_bytes())
 
+    def collect_native_diagnostic(self, output, selector):
+        if self.launch is None or self.launch["selector"] != selector:
+            return
+        write_journal(output / "native-launch-private.json", self.launch)
+        descriptor = os.open(output / "simctl-console-private.log",
+                             os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(self.console)
+        value = {"launchStarted": self.launch["started"], "launchFinished": self.launch["finished"],
+                 "stages": native_stages(Path(self.receipt + ".log")),
+                 "collection": "unavailable"}
+        if self.launch["pid"] is None:
+            value["collection"] = "launch-unidentified"
+        else:
+            value["pid"] = self.launch["pid"]
+            # Delayed OS report publication is bounded independently of the
+            # selector timeout. No retries/relaunches, and no cleanup-generated
+            # crash can match the pre-cleanup captureTime window.
+            reports = Path.home() / "Library/Logs/DiagnosticReports"
+            deadline = time.monotonic() + 5
+            examined = set()
+            parsed = 0
+            while time.monotonic() < deadline and parsed < 128:
+                for path in reports.glob(self.executable + "*.ips"):
+                    if time.monotonic() >= deadline or parsed >= 128:
+                        break
+                    try:
+                        stat = path.stat()
+                        identity = (path.name, stat.st_mtime_ns, stat.st_size)
+                        if identity in examined or stat.st_mtime < self.launch["started"]:
+                            continue
+                        examined.add(identity)
+                        parsed += 1
+                        payload = matching_simulator_report(path, self.launch)
+                    except (OSError, ValueError, UnicodeError):
+                        continue
+                    if payload is not None:
+                        value.update(native_report_fields(payload))
+                        value.update(collection="matched",
+                                     stages=native_stages(Path(self.receipt + ".log")))
+                        write_journal(output / NATIVE_DIAGNOSTIC_NAME, safe_native_diagnostic(value))
+                        return
+                time.sleep(min(0.25, max(0, deadline - time.monotonic())))
+        write_journal(output / NATIVE_DIAGNOSTIC_NAME, safe_native_diagnostic(value))
+
 
 def receipt(device, arguments, timeout, selector=None, output=None):
     nonce = uuid.uuid4().hex
+    if isinstance(device, TvOS):
+        # Failures before execute must never reuse the previous selector/list PID.
+        device.launch = None
+        device.console = ""
     device.unlink(device.receipt)
     log_path = device.receipt + ".log"
     device.unlink(log_path)
@@ -877,6 +1176,10 @@ def export_attempt(private, destination, result):
     controller = private / "controller-result.json"
     if controller.is_file() and not controller.is_symlink():
         write_journal(destination / "controller-result.json", safe_result(json.loads(controller.read_text())))
+    diagnostic_receipt = private / NATIVE_DIAGNOSTIC_NAME
+    if diagnostic_receipt.is_file() and not diagnostic_receipt.is_symlink():
+        write_journal(destination / NATIVE_DIAGNOSTIC_NAME,
+                      safe_native_diagnostic(json.loads(diagnostic_receipt.read_text())))
     # Only named screenshots at the journey's top level. Never traverse app
     # data roots, registry descriptors, OCR text or raw product/controller logs.
     images = list(private.glob("*-failure.png"))
@@ -914,7 +1217,7 @@ def export_attempt(private, destination, result):
                     print("app-journey: " + controlled, flush=True)
     (destination / "attempt.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
     allowed = {"native-result.json", "controller-result.json", "attempt.log", "frame.png", "library-text.png",
-               "mobile-default-startup.png"}
+               "mobile-default-startup.png", NATIVE_DIAGNOSTIC_NAME}
     files = [path for path in destination.rglob("*") if path.is_file()]
     if any(path.is_symlink() or (path.name not in allowed and not path.name.endswith("-failure.png"))
            for path in files):
@@ -952,7 +1255,8 @@ def main():
         parser.error("--cleanup-regression requires --phase e2e")
     output = args.artifact_dir.resolve()
     if args.platform == "android":
-        output /= os.environ.get("SPOOL_ANDROID_FORM_FACTOR", "phone")
+        override = os.environ.get("ANDROID_LAUNCH_TEST_DIR")
+        output = Path(override).resolve() if override else output / os.environ.get("SPOOL_ANDROID_FORM_FACTOR", "phone")
     output.mkdir(parents=True, exist_ok=True)
     suffix = f"-cleanup-{args.cleanup_regression}" if args.cleanup_regression else ""
     state_path = output / f"{args.phase}{suffix}-result.json"
@@ -1045,6 +1349,11 @@ def main():
         persist()
         print(f"{args.phase}/{name}: {result['status']}", flush=True)
         if result["status"] not in ("passed", "skipped"):
+            if isinstance(device, TvOS) and not name.startswith("app-journey"):
+                try:
+                    device.collect_native_diagnostic(attempt_directory, name)
+                except (OSError, ValueError, RuntimeError):
+                    print(f"{name}: native crash diagnostic unavailable", flush=True)
             try:
                 device.capture(attempt_directory, name)
             except (OSError, subprocess.SubprocessError):

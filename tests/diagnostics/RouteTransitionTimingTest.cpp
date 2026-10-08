@@ -22,7 +22,7 @@ QString read(const QString& path)
 SPOOL_TEST_MAIN("route-transition-timing")
 {
     QCoreApplication app(argc, argv);
-    const QString route = read(QStringLiteral(TEST_SOURCE_DIR "/qml/shell/RouteStack.qml"));
+    const QString route = read(SpoolTests::fixturePath("qml/shell/RouteStack.qml"));
     const qsizetype begin = route.indexOf(QStringLiteral("    function showRoute() {"));
     const qsizetype end = route.indexOf(QStringLiteral("    function activatePending() {"), begin);
     if (begin < 0 || end <= begin) {
@@ -30,8 +30,7 @@ SPOOL_TEST_MAIN("route-transition-timing")
         return 1;
     }
     QJSEngine engine;
-    const QString fixture
-        = read(QStringLiteral(TEST_SOURCE_DIR "/tests/diagnostics/fixtures/route-transition-timing.js"));
+    const QString fixture = read(SpoolTests::fixturePath("tests/diagnostics/fixtures/route-transition-timing.js"));
     const QJSValue result = engine.evaluate(
         fixture + '\n' + route.mid(begin, end - begin) + QStringLiteral("\nrunRouteTransitionTests();"));
     if (result.isError() || result.toInt() != 5) {

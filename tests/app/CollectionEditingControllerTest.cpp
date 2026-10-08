@@ -57,7 +57,7 @@ SPOOL_TEST_MAIN("collection-editing")
         QJsonArray { QStringLiteral("collectionEditing"), QStringLiteral("itemActions") });
     package.files[QStringLiteral("manifest.json")] = QJsonDocument(manifest).toJson();
     package.manifest = *ProviderManifest::parse(package.files.value(QStringLiteral("manifest.json")));
-    QFile script(QStringLiteral(TEST_SOURCE_DIR "/tests/providers/fixtures/collections.mjs"));
+    QFile script(SpoolTests::fixturePath("tests/providers/fixtures/collections.mjs"));
     require(script.open(QIODevice::ReadOnly), "collection fixture opens");
     package.files[QStringLiteral("logic/provider.mjs")] = script.readAll();
     const auto installs = directory.filePath(QStringLiteral("providers"));

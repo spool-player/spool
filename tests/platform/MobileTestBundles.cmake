@@ -83,7 +83,7 @@ function(spool_add_mobile_test_bundles)
 
     get_target_property(scan_args spool QT_QML_IMPORT_SCANNER_EXTRA_ARGS)
     foreach(target IN ITEMS spool-tests spool-e2e-tests)
-        target_compile_definitions(${target} PRIVATE SPOOL_MOBILE_TEST_BUNDLE=1 SPOOL_TEST_RUNNER=1 TEST_SOURCE_DIR=".")
+        target_compile_definitions(${target} PRIVATE SPOOL_MOBILE_TEST_BUNDLE=1 SPOOL_TEST_RUNNER=1)
         target_link_libraries(${target} PRIVATE spool-mobile-test-fixtures)
         if(target STREQUAL "spool-e2e-tests")
             target_sources(${target} PRIVATE tests/platform/MobileTestFixtures.cpp)

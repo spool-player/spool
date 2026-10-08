@@ -54,6 +54,15 @@ int invoke(const char *name, int argc, char **argv)
     const auto selected = registry().find(name);
     return selected == registry().end() ? 2 : selected->second(argc, argv);
 }
+QString fixturePath(const char *relativePath)
+{
+#ifdef SPOOL_MOBILE_TEST_BUNDLE
+    static const QDir root(mobileFixtureRoot());
+#else
+    static const QDir root(QStringLiteral(TEST_SOURCE_DIR));
+#endif
+    return root.filePath(QString::fromUtf8(relativePath));
+}
 [[noreturn]] void propagateCrash(int exitCode)
 {
 #ifdef Q_OS_WIN
@@ -272,9 +281,31 @@ bool save(const QString& path, const QJsonObject& state)
 
 QString receiptPath;
 QJsonObject receipt;
+#ifdef SPOOL_MOBILE_TEST_BUNDLE
+bool diagnosticLogReady = false;
+void nativeStage(const char *stage)
+{
+    if (!diagnosticLogReady)
+        return;
+    std::fprintf(stderr, "native stage: %s\n", stage);
+    std::fflush(stderr);
+}
+#endif
 void finishReceipt()
 {
-    if (!receiptPath.isEmpty() && !save(receiptPath, receipt))
+    if (receiptPath.isEmpty())
+        return;
+#ifdef SPOOL_MOBILE_TEST_BUNDLE
+    nativeStage("receipt-handler-entry");
+#endif
+    const bool saved = save(receiptPath, receipt);
+#ifdef SPOOL_MOBILE_TEST_BUNDLE
+    if (diagnosticLogReady) {
+        std::fprintf(stderr, "native stage: receipt-handler-return saved=%d\n", int(saved));
+        std::fflush(stderr);
+    }
+#endif
+    if (!saved)
         std::fprintf(stderr, "cannot write native test receipt\n");
 }
 
@@ -296,6 +327,9 @@ bool initializeDiagnosticLog(int argc, char **argv)
             return false;
         std::setvbuf(stdout, nullptr, _IOLBF, 0);
         std::setvbuf(stderr, nullptr, _IONBF, 0);
+#ifdef SPOOL_MOBILE_TEST_BUNDLE
+        diagnosticLogReady = true;
+#endif
         return true;
     }
     return true;
@@ -670,13 +704,25 @@ int main(int argc, char **argv)
     }
     const int childCount = int(childArguments.size());
     childArguments.push_back(nullptr);
+#ifdef SPOOL_MOBILE_TEST_BUNDLE
+    nativeStage("selector-entry");
+#endif
     const int result = selected->second(childCount, childArguments.data());
+#ifdef SPOOL_MOBILE_TEST_BUNDLE
+    if (diagnosticLogReady) {
+        std::fprintf(stderr, "native stage: selector-return exitCode=%d\n", result);
+        std::fflush(stderr);
+    }
+#endif
     if (!receiptPath.isEmpty()) {
         receipt.insert(QStringLiteral("exitCode"), result);
         receipt.insert(QStringLiteral("status"),
             result == 0                  ? QStringLiteral("passed")
                 : result == skipExitCode ? QStringLiteral("skipped")
                                          : QStringLiteral("failed"));
+#ifdef SPOOL_MOBILE_TEST_BUNDLE
+        nativeStage("status-assigned");
+#endif
     }
     return result;
 }

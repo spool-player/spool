@@ -54,7 +54,7 @@ SPOOL_TEST_MAIN("local-provider")
     std::setlocale(LC_NUMERIC, "C");
     using namespace Spool;
 
-    const QString fixtures = QDir(QStringLiteral(TEST_SOURCE_DIR)).filePath(QStringLiteral("tests/media/fixtures"));
+    const QString fixtures = SpoolTests::fixturePath("tests/media/fixtures");
     LocalProvider provider(QStringLiteral("local-account"), { fixtures });
     bool scanned = false;
     QObject::connect(&provider, &Provider::contentChanged, &app, [&scanned] { scanned = true; });
@@ -186,7 +186,7 @@ SPOOL_TEST_MAIN("local-provider")
     require(emptyRejected, "no media directory is chosen implicitly");
 
     QTemporaryDir thumbnails;
-    LocalProvider colored("colored", { QStringLiteral(TEST_SOURCE_DIR "/tests/fixtures") });
+    LocalProvider colored("colored", { SpoolTests::fixturePath("tests/fixtures") });
     colored.scan();
     const auto coloredItems = QCoro::waitFor(colored.searchItems(QStringLiteral("local-thumbnail")));
     require(coloredItems.size() == 1, "the colored video fixture is indexed");

@@ -64,7 +64,7 @@ SPOOL_TEST_MAIN("source-hub")
     local.id = QStringLiteral("spool.local");
     local.name = QStringLiteral("Local files");
     local.version = QStringLiteral("1.0.0");
-    const QString fixtures = QStringLiteral(TEST_SOURCE_DIR "/tests/media/fixtures");
+    const QString fixtures = SpoolTests::fixturePath("tests/media/fixtures");
     registry.addNativeModule(local, [fixtures](const QString& id, const QVariantMap&, QObject *parent) {
         return new LocalProvider(id, { fixtures }, parent);
     });
@@ -497,7 +497,8 @@ SPOOL_TEST_MAIN("source-hub")
     require(QCoro::waitFor(portable->fetchSearchSuggestions()).empty(),
         "an account without suggestions never substitutes its populated resume results");
     const QString reporting = add("fixture.test", "reporting",
-        { { QStringLiteral("catalogueCapabilities"), true }, { QStringLiteral("label"), QStringLiteral("Reporting") } });
+        { { QStringLiteral("catalogueCapabilities"), true },
+            { QStringLiteral("label"), QStringLiteral("Reporting") } });
     waitUntil([&] { return hub.source(reporting) != nullptr; }, "reporting account starts");
     const auto suggestions = QCoro::waitFor(hub.source(reporting)->search()->fetchSearchSuggestions());
     require(suggestions.size() == 1 && suggestions.front().id == QStringLiteral("suggestion"),

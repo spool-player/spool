@@ -90,7 +90,7 @@ SPOOL_TEST_MAIN("download-manager")
     // directory. Use the real default under our isolated application data root.
     const QString destination = root.filePath("downloads");
     qputenv("SPOOL_CREDENTIAL_STORE_DIR", root.filePath("credentials").toUtf8());
-    const QByteArray media = readFile(QStringLiteral(TEST_SOURCE_DIR "/tests/media/fixtures/remux-h264.mp4"));
+    const QByteArray media = readFile(SpoolTests::fixturePath("tests/media/fixtures/remux-h264.mp4"));
     require(media.size() > 1024, "real finite media fixture exists");
     QTcpServer server;
     QTcpServer foreign;

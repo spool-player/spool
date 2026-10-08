@@ -114,7 +114,7 @@ SPOOL_TEST_MAIN("provider-package-unpack")
     // The pinned package: compressed blocks from the zstd CLI, which the raw
     // blocks makeZstd writes never reach. Found through the lock so a new pin
     // cannot leave this reading a file that is no longer there.
-    QFile lock(QStringLiteral(TEST_SOURCE_DIR "/providers/lock.json"));
+    QFile lock(SpoolTests::fixturePath("providers/lock.json"));
     require(lock.open(QIODevice::ReadOnly), "providers/lock.json is readable");
     const QString archive = QJsonDocument::fromJson(lock.readAll())
                                 .object()
@@ -124,7 +124,7 @@ SPOOL_TEST_MAIN("provider-package-unpack")
                                 .toObject()
                                 .value(QStringLiteral("archive"))
                                 .toString();
-    QFile bundled(QStringLiteral(TEST_SOURCE_DIR "/providers/") + archive);
+    QFile bundled(SpoolTests::fixturePath("providers/") + archive);
     require(!archive.isEmpty() && bundled.open(QIODevice::ReadOnly), "the pinned provider archive is present");
     const auto pinned = ProviderPackage::read(bundled.readAll(), &error);
     require(pinned && pinned->manifest.id == QStringLiteral("spool.jellyfin"),
