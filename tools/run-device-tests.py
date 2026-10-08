@@ -776,10 +776,21 @@ class JourneyOwner:
                     raise RuntimeError("journey image source escaped its private attempt")
                 retained = self.directory / "journey-images" / source.name
                 retained.mkdir(parents=True, exist_ok=True, mode=0o700)
-                for name in ("frame.png", "library-text.png", "mobile-default-startup.png"):
+                for name in ("frame.png", "library-text.png", "mobile-default-startup.png", "download-failure.png"):
                     image = source / name
                     if image.is_file() and not image.is_symlink():
                         (retained / name).write_bytes(image.read_bytes())
+                if (self.platform == "android" and (source / "download-failure.png").is_file()
+                        and self.process is not None
+                        and self.identity(self.process["pid"]) == self.process["birth"]):
+                    ledger = self.call("shell", "-T", "run-as", self.bundle, "sh", "-c",
+                                       "'test $(wc -c < files/downloads.json) -le 16777216 && cat files/downloads.json'",
+                                       check=False)
+                    if ledger.returncode == 0:
+                        descriptor = os.open(self.directory / "downloads-private.json",
+                                             os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                            stream.write(ledger.stdout)
             except (KeyError, OSError, RuntimeError):
                 self.artifact_failure = True
             result = self.cleanup()
@@ -1187,7 +1198,7 @@ def export_attempt(private, destination, result):
     for journey in journeys:
         if journey.is_dir() and not journey.is_symlink():
             images.extend(journey / name for name in
-                          ("frame.png", "library-text.png", "mobile-default-startup.png"))
+                          ("frame.png", "library-text.png", "mobile-default-startup.png", "download-failure.png"))
     for image in images:
         if image.is_file() and not image.is_symlink():
             data = image.read_bytes()

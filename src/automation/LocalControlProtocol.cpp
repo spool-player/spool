@@ -199,7 +199,12 @@ QJsonObject request(const QJsonObject& descriptor, const QString& command, const
         if (socket.write(bytes) != bytes.size())
             return failure(id, QStringLiteral("write_failed"), QStringLiteral("Could not send command"));
         while (socket.bytesToWrite() > 0) {
-            if (remaining() <= 0 || !socket.waitForBytesWritten(remaining()))
+            if (remaining() <= 0)
+                return failure(id, QStringLiteral("timeout"), QStringLiteral("Command write timed out"));
+            // A peer can finish its reply and close while the wait processes
+            // completion. The drained write buffer, not another notification,
+            // determines whether the complete request has been sent.
+            if (!socket.waitForBytesWritten(remaining()) && socket.bytesToWrite() > 0)
                 return failure(id, QStringLiteral("timeout"), QStringLiteral("Command write timed out"));
         }
         QByteArray reply;
@@ -209,7 +214,10 @@ QJsonObject request(const QJsonObject& descriptor, const QString& command, const
                 return failure(id, QStringLiteral("response_too_large"), QStringLiteral("Response exceeds 1 MiB"));
             if (reply.contains('\n'))
                 break;
-            if (remaining() <= 0 || !socket.waitForReadyRead(remaining()))
+            if (remaining() <= 0)
+                return failure(
+                    id, QStringLiteral("timeout"), QStringLiteral("Instance did not complete command in time"));
+            if (!socket.waitForReadyRead(remaining()) && socket.bytesAvailable() == 0)
                 return failure(
                     id, QStringLiteral("timeout"), QStringLiteral("Instance did not complete command in time"));
         }
