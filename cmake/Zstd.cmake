@@ -30,3 +30,6 @@ FetchContent_Declare(spool_zstd
 FetchContent_MakeAvailable(spool_zstd)
 set_property(DIRECTORY "${spool_zstd_SOURCE_DIR}/build/cmake" PROPERTY EXCLUDE_FROM_ALL TRUE)
 set_target_properties(libzstd_static PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+if(SPOOL_SANITIZERS AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(libzstd_static PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+endif()
