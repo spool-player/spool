@@ -2,8 +2,8 @@
 
 #include <QCoreApplication>
 #include <QDateTime>
-#include <QElapsedTimer>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -35,11 +35,11 @@
 
 namespace SpoolTests {
 namespace {
-std::map<std::string, Entry>& registry()
-{
-    static std::map<std::string, Entry> tests;
-    return tests;
-}
+    std::map<std::string, Entry>& registry()
+    {
+        static std::map<std::string, Entry> tests;
+        return tests;
+    }
 } // namespace
 bool registerTest(const char *name, Entry entry)
 {
@@ -109,8 +109,8 @@ public:
             startup.lpAttributeList = nullptr;
             return;
         }
-        if (!UpdateProcThreadAttribute(startup.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST,
-                &job.value, sizeof(job.value), nullptr, nullptr))
+        if (!UpdateProcThreadAttribute(startup.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST, &job.value,
+                sizeof(job.value), nullptr, nullptr))
             return;
         setCreateProcessArgumentsModifier([this](CreateProcessArguments *arguments) {
             startup.StartupInfo = *arguments->startupInfo;
@@ -161,6 +161,7 @@ public:
         treePid = 0;
         return true;
     }
+
 private:
     qint64 treePid = 0;
 #ifdef Q_OS_WIN
@@ -169,7 +170,11 @@ private:
         JobHandle() = default;
         JobHandle(const JobHandle&) = delete;
         JobHandle& operator=(const JobHandle&) = delete;
-        ~JobHandle() { if (value) CloseHandle(value); }
+        ~JobHandle()
+        {
+            if (value)
+                CloseHandle(value);
+        }
     } job;
     STARTUPINFOEXW startup {};
     std::unique_ptr<unsigned char[]> attributes;
@@ -202,7 +207,8 @@ int fixture(const QString& name, int argc, char **argv)
         QCoreApplication app(argc, argv);
         QProcess child;
         child.start(app.applicationFilePath(),
-            { QStringLiteral("--fixture-suite"), QStringLiteral("--child"), QStringLiteral("fixture-access-violation") });
+            { QStringLiteral("--fixture-suite"), QStringLiteral("--child"),
+                QStringLiteral("fixture-access-violation") });
         if (!child.waitForStarted(10000) || !child.waitForFinished(10000))
             return 2;
         if (child.exitStatus() == QProcess::CrashExit)
@@ -222,7 +228,8 @@ int fixture(const QString& name, int argc, char **argv)
         QProcess child;
         if (name != QStringLiteral("fixture-hang-leaf")) {
             const QString descendant = name == QStringLiteral("fixture-hang-tree")
-                ? QStringLiteral("fixture-hang-branch") : QStringLiteral("fixture-hang-leaf");
+                ? QStringLiteral("fixture-hang-branch")
+                : QStringLiteral("fixture-hang-leaf");
             child.start(app.applicationFilePath(),
                 { QStringLiteral("--fixture-suite"), QStringLiteral("--child"), descendant });
             if (!child.waitForStarted(10000))
@@ -294,20 +301,21 @@ int supervise(QCoreApplication& app)
         return index >= 0 && index + 1 < arguments.size() ? arguments[index + 1] : fallback;
     };
     bool validWorkers = false;
-    const int workers = option(QStringLiteral("--workers"), qEnvironmentVariable("SPOOL_TEST_WORKERS", "4"))
-                            .toInt(&validWorkers);
+    const int workers
+        = option(QStringLiteral("--workers"), qEnvironmentVariable("SPOOL_TEST_WORKERS", "4")).toInt(&validWorkers);
     bool validTimeout = false;
     const int timeout = option(QStringLiteral("--timeout-ms"), QStringLiteral("180000")).toInt(&validTimeout);
     if (!validWorkers || workers < 1 || workers > 32 || !validTimeout || timeout < 1) {
         std::cerr << "workers must be 1..32 and timeout-ms must be positive\n";
         return 2;
     }
-    const QString path = QFileInfo(option(QStringLiteral("--results"),
-        QDir::current().filePath(QStringLiteral("test-results.json")))).absoluteFilePath();
+    const QString path
+        = QFileInfo(option(QStringLiteral("--results"), QDir::current().filePath(QStringLiteral("test-results.json"))))
+              .absoluteFilePath();
     if (!QDir().mkpath(QFileInfo(path).absolutePath()))
         return 2;
-    const bool resume = arguments.contains(QStringLiteral("--resume"))
-        || qEnvironmentVariableIntValue("SPOOL_TEST_RESUME") != 0;
+    const bool resume
+        = arguments.contains(QStringLiteral("--resume")) || qEnvironmentVariableIntValue("SPOOL_TEST_RESUME") != 0;
     const bool retry = arguments.contains(QStringLiteral("--retry-failed"))
         || qEnvironmentVariableIntValue("SPOOL_TEST_RETRY_FAILED") != 0;
     if (retry && !resume) {
@@ -318,8 +326,9 @@ int supervise(QCoreApplication& app)
     QStringList names;
     if (fixtures) {
         names = { QStringLiteral("fixture-pass-a"), QStringLiteral("fixture-fail"), QStringLiteral("fixture-crash"),
-            QStringLiteral("fixture-access-violation"), QStringLiteral("fixture-forward-crash"), QStringLiteral("fixture-exit-three"),
-            QStringLiteral("fixture-pass-b"), QStringLiteral("fixture-skip"), QStringLiteral("fixture-hang-tree") };
+            QStringLiteral("fixture-access-violation"), QStringLiteral("fixture-forward-crash"),
+            QStringLiteral("fixture-exit-three"), QStringLiteral("fixture-pass-b"), QStringLiteral("fixture-skip"),
+            QStringLiteral("fixture-hang-tree") };
     } else {
         for (const auto& [name, entry] : SpoolTests::registry())
             names.append(QString::fromStdString(name));
@@ -367,8 +376,8 @@ int supervise(QCoreApplication& app)
             const QString reason = QStringLiteral("supervisor interrupted while selector was running");
             row.insert(QStringLiteral("reason"), reason);
             QJsonArray attempts = row.value(QStringLiteral("attempts")).toArray();
-            attempts.append(QJsonObject { { QStringLiteral("status"), status },
-                { QStringLiteral("reason"), reason }, { QStringLiteral("startedMs"), row.value(QStringLiteral("startedMs")) },
+            attempts.append(QJsonObject { { QStringLiteral("status"), status }, { QStringLiteral("reason"), reason },
+                { QStringLiteral("startedMs"), row.value(QStringLiteral("startedMs")) },
                 { QStringLiteral("log"), row.value(QStringLiteral("log")) } });
             row.insert(QStringLiteral("attempts"), attempts);
         }
@@ -376,8 +385,9 @@ int supervise(QCoreApplication& app)
             row.insert(QStringLiteral("resumeSkipped"), true);
         } else if (!resume || status.isEmpty() || status == QStringLiteral("pending")
             || status == QStringLiteral("interrupted")
-            || (retry && (status == QStringLiteral("failed") || status == QStringLiteral("timed-out")
-                || status == QStringLiteral("start-failed")))) {
+            || (retry
+                && (status == QStringLiteral("failed") || status == QStringLiteral("timed-out")
+                    || status == QStringLiteral("start-failed")))) {
             row.insert(QStringLiteral("status"), QStringLiteral("pending"));
             row.remove(QStringLiteral("reason"));
             row.remove(QStringLiteral("resumeSkipped"));
@@ -426,8 +436,8 @@ int supervise(QCoreApplication& app)
             const QString name = pending[next++];
             auto process = std::make_unique<SelectorProcess>();
             const int attempt = results.value(name).toObject().value(QStringLiteral("attempts")).toArray().size() + 1;
-            const QString logPath = path + QLatin1Char('.') + name + QLatin1Char('.')
-                + QString::number(attempt) + QStringLiteral(".log");
+            const QString logPath
+                = path + QLatin1Char('.') + name + QLatin1Char('.') + QString::number(attempt) + QStringLiteral(".log");
             QFile logFile(logPath);
             if (!logFile.open(QIODevice::WriteOnly | QIODevice::Truncate)
                 || !logFile.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)) {
@@ -455,12 +465,14 @@ int supervise(QCoreApplication& app)
                 process->start(app.applicationFilePath(), childArguments);
             if (!process->ownershipReady() || !process->waitForStarted(10000)) {
                 row.insert(QStringLiteral("status"), QStringLiteral("start-failed"));
-                row.insert(QStringLiteral("reason"), process->ownershipReady() ? process->errorString()
-                    : QStringLiteral("cannot establish isolated selector process tree"));
+                row.insert(QStringLiteral("reason"),
+                    process->ownershipReady() ? process->errorString()
+                                              : QStringLiteral("cannot establish isolated selector process tree"));
                 row.insert(QStringLiteral("finishedMs"), QDateTime::currentMSecsSinceEpoch());
                 QJsonArray attempts = row.value(QStringLiteral("attempts")).toArray();
                 attempts.append(QJsonObject { { QStringLiteral("status"), QStringLiteral("start-failed") },
-                    { QStringLiteral("startedMs"), started }, { QStringLiteral("finishedMs"), row.value(QStringLiteral("finishedMs")) },
+                    { QStringLiteral("startedMs"), started },
+                    { QStringLiteral("finishedMs"), row.value(QStringLiteral("finishedMs")) },
                     { QStringLiteral("log"), logPath }, { QStringLiteral("exitCode"), -1 },
                     { QStringLiteral("reason"), row.value(QStringLiteral("reason")) } });
                 row.insert(QStringLiteral("attempts"), attempts);
@@ -489,11 +501,12 @@ int supervise(QCoreApplication& app)
             }
             const bool cleanupFailed = !it->process->stopTree();
             treeFailed |= cleanupFailed;
-            const QString status = timedOut ? QStringLiteral("timed-out")
+            const QString status = timedOut                   ? QStringLiteral("timed-out")
                 : process.exitStatus() == QProcess::CrashExit ? QStringLiteral("crashed")
-                : !cleanupFailed && process.exitCode() == 0 ? QStringLiteral("passed")
-                : cleanupFailed ? QStringLiteral("failed")
-                : process.exitCode() == skipExitCode ? QStringLiteral("skipped") : QStringLiteral("failed");
+                : !cleanupFailed && process.exitCode() == 0   ? QStringLiteral("passed")
+                : cleanupFailed                               ? QStringLiteral("failed")
+                : process.exitCode() == skipExitCode          ? QStringLiteral("skipped")
+                                                              : QStringLiteral("failed");
             QJsonObject row = results.value(it->name).toObject();
             row.insert(QStringLiteral("status"), status);
             if (cleanupFailed)
@@ -501,10 +514,11 @@ int supervise(QCoreApplication& app)
             row.insert(QStringLiteral("exitCode"), process.exitCode());
             row.insert(QStringLiteral("finishedMs"), QDateTime::currentMSecsSinceEpoch());
             QJsonArray attempts = row.value(QStringLiteral("attempts")).toArray();
-            attempts.append(QJsonObject { { QStringLiteral("status"), status },
-                { QStringLiteral("startedMs"), it->started },
-                { QStringLiteral("finishedMs"), row.value(QStringLiteral("finishedMs")) },
-                { QStringLiteral("exitCode"), process.exitCode() }, { QStringLiteral("log"), row.value(QStringLiteral("log")) } });
+            attempts.append(
+                QJsonObject { { QStringLiteral("status"), status }, { QStringLiteral("startedMs"), it->started },
+                    { QStringLiteral("finishedMs"), row.value(QStringLiteral("finishedMs")) },
+                    { QStringLiteral("exitCode"), process.exitCode() },
+                    { QStringLiteral("log"), row.value(QStringLiteral("log")) } });
             row.insert(QStringLiteral("attempts"), attempts);
             results.insert(it->name, row);
             std::cout << it->name.toStdString() << ": " << status.toStdString() << '\n';
@@ -616,8 +630,10 @@ int main(int argc, char **argv)
     const int result = selected->second(childCount, childArguments.data());
     if (!receiptPath.isEmpty()) {
         receipt.insert(QStringLiteral("exitCode"), result);
-        receipt.insert(QStringLiteral("status"), result == 0 ? QStringLiteral("passed")
-            : result == skipExitCode ? QStringLiteral("skipped") : QStringLiteral("failed"));
+        receipt.insert(QStringLiteral("status"),
+            result == 0                  ? QStringLiteral("passed")
+                : result == skipExitCode ? QStringLiteral("skipped")
+                                         : QStringLiteral("failed"));
     }
     return result;
 }

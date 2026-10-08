@@ -112,4 +112,20 @@ case "${SPOOL_TEST_DISPLAY_BACKEND:-weston}" in
 esac
 # The selectors choose OpenGL/Vulkan explicitly and validate actual video pixels.
 # A compositor starting is not itself proof that the application rendered.
-"$@"
+# A separate bus with no service activation directories prevents portal daemons
+# from borrowing the user's session or mounting document FUSE trees in our
+# temporary runtime. Optional desktop services are genuinely absent on this bus.
+cat >"$work/session-bus.conf" <<'BUS'
+<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+  "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <type>session</type>
+  <listen>unix:tmpdir=/tmp</listen>
+  <policy context="default">
+    <allow send_destination="*"/>
+    <allow receive_sender="*"/>
+    <allow own="*"/>
+  </policy>
+</busconfig>
+BUS
+dbus-run-session --config-file="$work/session-bus.conf" -- "$@"

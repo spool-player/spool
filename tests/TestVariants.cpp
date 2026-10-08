@@ -20,6 +20,8 @@ int bundledInterpreter(int argc, char **argv)
     qputenv("QV4_FORCE_INTERPRETER", "1");
     return bundledContract(argc, argv);
 }
-[[maybe_unused]] const bool mediaRegistered = SpoolTests::registerTest("provider-media-page-interpreter", mediaInterpreter);
-[[maybe_unused]] const bool interpreterRegistered = SpoolTests::registerTest("bundled-jellyfin-interpreter", bundledInterpreter);
+[[maybe_unused]] const bool mediaRegistered
+    = SpoolTests::registerTest("provider-media-page-interpreter", mediaInterpreter);
+[[maybe_unused]] const bool interpreterRegistered
+    = SpoolTests::registerTest("bundled-jellyfin-interpreter", bundledInterpreter);
 }

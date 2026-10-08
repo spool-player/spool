@@ -851,6 +851,18 @@ and lavapipe Vulkan drivers. The nested compositor provides a real input seat
 and native foreground activation while the product still uses Wayland; a
 seatless headless compositor cannot exercise foreground-only behavior.
 Neither harness connects to the user's display.
+
+The isolated Linux CPU driver package includes a bounded Mesa Wayland WSI
+clock-domain correction. Automatic FIFO targets remain in the swapchain's
+clock internally, but the existing upstream conversion helper translates
+them to the compositor's advertised presentation clock at protocol handover.
+Without this conversion, a compositor using `CLOCK_MONOTONIC_RAW` can receive
+erroneously future targets from a `CLOCK_MONOTONIC` swapchain and strand
+paused video or GUI updates. This does not disable FIFO, alter presentation
+pacing, change the compositor clock, or replace normal desktop drivers.
+See `tools/patches/mesa-wayland-fifo-presentation-clock.patch` for the exact
+upstream source, introducing commit and protocol references.
+
 macOS uses its real graphics device and bundled/Nix MoltenVK, not a software
 scenegraph. Windows deliberately tests the supported OpenGL embedding path with
 SHA-256-pinned Mesa WGL llvmpipe: Qt and real libmpv share OpenGL, not D3D WARP or
@@ -863,6 +875,14 @@ native launcher and stages the product's shipped fonts. Failed journeys retain
 owner-private screenshots, logs and isolated data under `test-artifacts`
 (`SPOOL_E2E_ARTIFACT_DIR` can select its parent); raw logs and credentials are
 never printed. Successful journeys remove their temporary data.
+The loopback Jellyfin fixture supplies a quiet real event WebSocket. During the
+offline-download scenario it rejects every new authenticated HTTP request or
+WebSocket handshake, including playback negotiation and media requests; the
+already-established idle event channel remains open. Independent request counts
+must remain unchanged while the local file renders and plays. This proves
+playback with the server unavailable for new requests, not a fully closed TCP
+listener or absence of unrelated background reconnects.
+
 
 Android and tvOS simulator adapters launch each selector in the same installed
 phase APK/bundle and require a fresh native nonce receipt. Then the same host GUI

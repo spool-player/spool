@@ -110,8 +110,8 @@ bool LocalCommandServer::startInternal(const QString& requestedInstance, int tcp
         *error = QStringLiteral("Instance identifier is already in use");
         return false;
     }
-    QString endpoint = tcpPort < 0 ? LocalControl::localEndpoint(directory, m_instance, error)
-                                  : QStringLiteral("127.0.0.1");
+    QString endpoint
+        = tcpPort < 0 ? LocalControl::localEndpoint(directory, m_instance, error) : QStringLiteral("127.0.0.1");
     if (endpoint.isEmpty()) {
         m_lock.reset();
         return false;
@@ -155,8 +155,8 @@ bool LocalCommandServer::startInternal(const QString& requestedInstance, int tcp
         }
     }
 #endif
-    const bool listening = tcpPort < 0 ? m_server.listen(endpoint)
-                                      : m_tcpServer.listen(QHostAddress::LocalHost, quint16(tcpPort));
+    const bool listening
+        = tcpPort < 0 ? m_server.listen(endpoint) : m_tcpServer.listen(QHostAddress::LocalHost, quint16(tcpPort));
     if (!listening) {
         *error = QStringLiteral("Cannot listen on the private local socket");
         m_lock.reset();
@@ -253,7 +253,8 @@ void LocalCommandServer::acceptSocket(QIODevice *socket)
         QJsonParseError error;
         const QJsonDocument document = QJsonDocument::fromJson(buffer->left(newline), &error);
         if (newline != buffer->size() - 1 || error.error != QJsonParseError::NoError || !document.isObject()) {
-            reject(socket, {}, QStringLiteral("invalid_request"), QStringLiteral("Expected one newline-framed JSON object"));
+            reject(socket, {}, QStringLiteral("invalid_request"),
+                QStringLiteral("Expected one newline-framed JSON object"));
             return;
         }
         const QJsonObject request = document.object();
@@ -261,7 +262,8 @@ void LocalCommandServer::acceptSocket(QIODevice *socket)
         socket->setProperty("requestId", id);
         if (id.isEmpty() || id.size() > 128 || !request.value(QStringLiteral("args")).isObject()
             || !request.value(QStringLiteral("command")).isString()) {
-            reject(socket, id, QStringLiteral("invalid_request"), QStringLiteral("Missing or invalid id, command or args"));
+            reject(socket, id, QStringLiteral("invalid_request"),
+                QStringLiteral("Missing or invalid id, command or args"));
             return;
         }
         if (request.value(QStringLiteral("token")).toString() != m_token) {

@@ -6,6 +6,7 @@
 #include "ArtworkIntegration.h"
 #include "ExtensionIntegration.h"
 
+#include <QByteArray>
 #include <QDir>
 #include <QFontDatabase>
 #include <QQmlEngine>
@@ -13,7 +14,6 @@
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QtQuickTest/quicktest.h>
-#include <QByteArray>
 #include <vector>
 
 class QmlTestSetup final : public QObject {

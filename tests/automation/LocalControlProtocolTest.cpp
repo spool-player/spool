@@ -1,19 +1,19 @@
+#include "automation/LocalControlProtocol.h"
 #include "TestMain.h"
 #include "TestRequire.h"
-#include "automation/LocalControlProtocol.h"
 
 #include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileInfo>
+#include <QHostAddress>
 #include <QJsonDocument>
 #include <QLocalServer>
 #include <QLocalSocket>
-#include <QTemporaryDir>
-#include <QFileInfo>
 #include <QTcpServer>
 #include <QTcpSocket>
-#include <QHostAddress>
+#include <QTemporaryDir>
 #include <chrono>
 #include <cstdlib>
 #include <future>
@@ -99,7 +99,8 @@ SPOOL_TEST_MAIN("spoolet-protocol")
         "the same instance in another registry has an independent address");
     descriptor.insert(QStringLiteral("endpoint"), foreignEndpoint);
     save();
-    require(Spool::LocalControl::readDescriptor(path).isEmpty(), "descriptor cannot redirect to another registry's socket");
+    require(
+        Spool::LocalControl::readDescriptor(path).isEmpty(), "descriptor cannot redirect to another registry's socket");
     descriptor.insert(QStringLiteral("endpoint"), endpoint);
     descriptor.insert(QStringLiteral("transport"), QStringLiteral("tcp"));
     descriptor.insert(QStringLiteral("endpoint"), QStringLiteral("127.0.0.1"));
@@ -108,7 +109,8 @@ SPOOL_TEST_MAIN("spoolet-protocol")
     require(!Spool::LocalControl::readDescriptor(path).isEmpty(), "private loopback TCP descriptor is discoverable");
     descriptor.insert(QStringLiteral("endpoint"), QStringLiteral("192.0.2.1"));
     save();
-    require(Spool::LocalControl::readDescriptor(path).isEmpty(), "TCP discovery cannot exfiltrate its capability to a remote host");
+    require(Spool::LocalControl::readDescriptor(path).isEmpty(),
+        "TCP discovery cannot exfiltrate its capability to a remote host");
     descriptor.insert(QStringLiteral("endpoint"), QStringLiteral("127.0.0.1"));
     for (const int port : { -1, 0, 65536 }) {
         descriptor.insert(QStringLiteral("port"), port);
@@ -142,8 +144,8 @@ SPOOL_TEST_MAIN("spoolet-protocol")
                 if (!started || !(tcpTransport ? tcp.waitForNewConnection(1500) : local.waitForNewConnection(1500)))
                     return;
                 std::unique_ptr<QIODevice> socket(tcpTransport
-                    ? static_cast<QIODevice *>(tcp.nextPendingConnection())
-                    : static_cast<QIODevice *>(local.nextPendingConnection()));
+                        ? static_cast<QIODevice *>(tcp.nextPendingConnection())
+                        : static_cast<QIODevice *>(local.nextPendingConnection()));
                 QByteArray bytes;
                 while (!bytes.contains('\n')) {
                     if (socket->bytesAvailable() == 0 && !socket->waitForReadyRead(1000))
@@ -156,7 +158,8 @@ SPOOL_TEST_MAIN("spoolet-protocol")
                     return;
                 }
                 const QJsonObject response { { QStringLiteral("id"),
-                    mode == 1 ? QStringLiteral("wrong-request") : request.value(QStringLiteral("id")).toString() },
+                                                 mode == 1 ? QStringLiteral("wrong-request")
+                                                           : request.value(QStringLiteral("id")).toString() },
                     { QStringLiteral("ok"), true },
                     { QStringLiteral("result"), QJsonObject { { QStringLiteral("framed"), true } } } };
                 const QByteArray frame = QJsonDocument(response).toJson(QJsonDocument::Compact) + '\n';
@@ -177,13 +180,13 @@ SPOOL_TEST_MAIN("spoolet-protocol")
             }
             QElapsedTimer elapsed;
             elapsed.start();
-            const QJsonObject reply = Spool::LocalControl::request(
-                peerDescriptor, QStringLiteral("status"), {}, mode == 2 ? 80 : 1000);
+            const QJsonObject reply
+                = Spool::LocalControl::request(peerDescriptor, QStringLiteral("status"), {}, mode == 2 ? 80 : 1000);
             const qint64 duration = elapsed.elapsed();
             peer.join();
             if (mode == 0)
                 require(reply.value(QStringLiteral("ok")).toBool()
-                    && reply.value(QStringLiteral("result")).toObject().value(QStringLiteral("framed")).toBool(),
+                        && reply.value(QStringLiteral("result")).toObject().value(QStringLiteral("framed")).toBool(),
                     "fragmented newline frame is reassembled over each transport");
             else if (mode == 1)
                 require(code(reply) == QStringLiteral("invalid_response"), "mismatched request ID is rejected");

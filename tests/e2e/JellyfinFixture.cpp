@@ -1,6 +1,7 @@
 #include "JellyfinFixture.h"
 
 #include <QBuffer>
+#include <QByteArrayView>
 #include <QColor>
 #include <QImage>
 #include <QJsonArray>
@@ -9,28 +10,33 @@
 #include <QTimer>
 #include <QUrl>
 #include <QUrlQuery>
+#include <QWebSocket>
 #include <memory>
 #include <utility>
 
 namespace AppJourney {
 namespace {
-const QString userId = QStringLiteral("journey-user");
-const QString movieId = QStringLiteral("journey-movie");
-const QByteArray token = "journey-loopback-token";
-void respond(QTcpSocket *socket, int status, QByteArray bytes, const QByteArray& type = "application/json",
-    QByteArray extra = {}, bool head = false)
-{
-    QByteArray header = "HTTP/1.1 " + QByteArray::number(status) + " Fixture\r\nConnection: close\r\n"
-        "Cache-Control: no-store\r\nContent-Type: " + type + "\r\nContent-Length: " + QByteArray::number(bytes.size())
-        + "\r\n" + extra + "\r\n";
-    socket->write(header);
-    if (!head)
-        socket->write(bytes);
-    socket->disconnectFromHost();
-}
+    const QString userId = QStringLiteral("journey-user");
+    const QString movieId = QStringLiteral("journey-movie");
+    const QByteArray token = "journey-loopback-token";
+    const QByteArray authorizationToken = "Token=\"" + token + '"';
+    void respond(QTcpSocket *socket, int status, QByteArray bytes, const QByteArray& type = "application/json",
+        QByteArray extra = {}, bool head = false)
+    {
+        QByteArray header = "HTTP/1.1 " + QByteArray::number(status)
+            + " Fixture\r\nConnection: close\r\n"
+              "Cache-Control: no-store\r\nContent-Type: "
+            + type + "\r\nContent-Length: " + QByteArray::number(bytes.size()) + "\r\n" + extra + "\r\n";
+        socket->write(header);
+        if (!head)
+            socket->write(bytes);
+        socket->disconnectFromHost();
+    }
 }
 
-JellyfinFixture::JellyfinFixture(QByteArray bytes) : media(std::move(bytes))
+JellyfinFixture::JellyfinFixture(QByteArray bytes)
+    : webSockets(QStringLiteral("Journey Server"), QWebSocketServer::NonSecureMode)
+    , media(std::move(bytes))
 {
     QImage poster(240, 360, QImage::Format_RGB32);
     poster.fill(QColor(245, 150, 20));
@@ -42,6 +48,15 @@ JellyfinFixture::JellyfinFixture(QByteArray bytes) : media(std::move(bytes))
     poster.save(&buffer, "PNG");
     server.setProxy(QNetworkProxy::NoProxy);
     QObject::connect(&server, &QTcpServer::newConnection, &server, [this] { accept(); });
+    webSockets.setMaxPendingConnections(8);
+    QObject::connect(&webSockets, &QWebSocketServer::newConnection, &webSockets, [this] {
+        while (auto *socket = webSockets.nextPendingConnection()) {
+            socket->setParent(&webSockets);
+            QObject::connect(socket, &QWebSocket::disconnected, socket, &QObject::deleteLater);
+            // The real event channel stays quiet: no library/group/remote data
+            // is fabricated and no message is echoed into the app.
+        }
+    });
     server.listen(QHostAddress::LocalHost, 0);
 }
 QString JellyfinFixture::origin() const
@@ -50,17 +65,17 @@ QString JellyfinFixture::origin() const
 }
 QJsonObject JellyfinFixture::source() const
 {
-    return { { "Id", "journey-source" }, { "Name", "Original" }, { "Container", "mkv" },
-        { "Protocol", "File" }, { "VideoType", "VideoFile" }, { "RunTimeTicks", 300000000 },
-        { "Size", media.size() }, { "Bitrate", 128000 }, { "SupportsDirectPlay", true },
-        { "SupportsDirectStream", true }, { "SupportsTranscoding", false },
-        { "MediaStreams", QJsonArray { QJsonObject { { "Index", 0 }, { "Type", "Video" }, { "Codec", "ffv1" },
-            { "Width", 640 }, { "Height", 360 }, { "RealFrameRate", 10 }, { "BitRate", 128000 } } } } };
+    return { { "Id", "journey-source" }, { "Name", "Original" }, { "Container", "mkv" }, { "Protocol", "File" },
+        { "VideoType", "VideoFile" }, { "RunTimeTicks", 300000000 }, { "Size", media.size() }, { "Bitrate", 128000 },
+        { "SupportsDirectPlay", true }, { "SupportsDirectStream", true }, { "SupportsTranscoding", false },
+        { "MediaStreams",
+            QJsonArray { QJsonObject { { "Index", 0 }, { "Type", "Video" }, { "Codec", "ffv1" }, { "Width", 640 },
+                { "Height", 360 }, { "RealFrameRate", 10 }, { "BitRate", 128000 } } } } };
 }
 QJsonObject JellyfinFixture::movie() const
 {
-    return { { "Id", movieId }, { "Name", "Journey Film" }, { "SortName", "Journey Film" },
-        { "Type", "Movie" }, { "MediaType", "Video" }, { "IsFolder", false }, { "LocationType", "FileSystem" },
+    return { { "Id", movieId }, { "Name", "Journey Film" }, { "SortName", "Journey Film" }, { "Type", "Movie" },
+        { "MediaType", "Video" }, { "IsFolder", false }, { "LocationType", "FileSystem" },
         { "RunTimeTicks", 300000000 }, { "ProductionYear", 2026 },
         { "Overview", "A finite red then green picture above a blue lower half." },
         { "ImageTags", QJsonObject { { "Primary", "journey-poster" } } },
@@ -72,8 +87,15 @@ void JellyfinFixture::accept()
     while (auto *socket = server.nextPendingConnection()) {
         auto pending = std::make_shared<QByteArray>();
         QObject::connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
-        QTimer::singleShot(10000, socket, [socket] { socket->abort(); });
+        QTimer::singleShot(10000, socket, [socket] {
+            if (!socket->property("websocket").toBool())
+                socket->abort();
+        });
         QObject::connect(socket, &QTcpSocket::readyRead, socket, [this, socket, pending] {
+            if (socket->property("handled").toBool())
+                return;
+            if (pending->isEmpty() && upgradeWebSocket(socket))
+                return;
             *pending += socket->readAll();
             if (pending->size() > 1024 * 1024) {
                 unexpected.append("oversized fixture request");
@@ -100,6 +122,48 @@ void JellyfinFixture::accept()
         });
     }
 }
+bool JellyfinFixture::upgradeWebSocket(QTcpSocket *socket)
+{
+    const QByteArray prefix = socket->peek(11);
+    if (prefix.size() < 11 && QByteArrayView("GET /socket").startsWith(prefix))
+        return true; // Preserve fragmented upgrade bytes for Qt's parser.
+    if (!prefix.startsWith("GET /socket"))
+        return false;
+    const QByteArray bytes = socket->peek(64 * 1024 + 1);
+    const qsizetype end = bytes.indexOf("\r\n\r\n");
+    if (end < 0) {
+        if (bytes.size() > 64 * 1024) {
+            unexpected.append("oversized websocket handshake");
+            socket->setProperty("handled", true);
+            respond(socket, 400, "{}");
+        }
+        return true;
+    }
+    const auto request = bytes.left(bytes.indexOf("\r\n")).split(' ');
+    if (request.size() != 3 || QUrl::fromEncoded(request[1]).path() != "/socket")
+        return false;
+    socket->setProperty("handled", true);
+    bool authenticated
+        = QUrlQuery(QUrl::fromEncoded(request[1])).queryItemValue("api_key") == QString::fromLatin1(token);
+    for (const auto& line : bytes.left(end).split('\n'))
+        if (line.toLower().startsWith("authorization:"))
+            authenticated = authenticated || line.contains(authorizationToken);
+    if (!authenticated) {
+        unexpected.append("missing authenticated websocket handshake");
+        respond(socket, 401, "{}");
+        return true;
+    }
+    ++authenticatedRequests;
+    if (!newRequestsAvailable) {
+        respond(socket, 503, "{}");
+        return true;
+    }
+    socket->setProperty("websocket", true);
+    // Hand off unread bytes, not a reconstructed or echoed handshake.
+    QObject::disconnect(socket, nullptr, socket, nullptr);
+    webSockets.handleConnection(socket);
+    return true;
+}
 void JellyfinFixture::handle(QTcpSocket *socket, const QByteArray& header, const QByteArray& body)
 {
     const auto request = header.left(header.indexOf("\r\n")).split(' ');
@@ -114,8 +178,9 @@ void JellyfinFixture::handle(QTcpSocket *socket, const QByteArray& header, const
     const QUrlQuery query(url);
     const auto json = [&](const QJsonValue& value, int status = 200) {
         const QByteArray encoded = value.isObject() ? QJsonDocument(value.toObject()).toJson(QJsonDocument::Compact)
-            : value.isArray() ? QJsonDocument(value.toArray()).toJson(QJsonDocument::Compact)
-            : value.isBool() ? (value.toBool() ? QByteArray("true") : QByteArray("false")) : QByteArray("{}");
+            : value.isArray()                       ? QJsonDocument(value.toArray()).toJson(QJsonDocument::Compact)
+            : value.isBool()                        ? (value.toBool() ? QByteArray("true") : QByteArray("false"))
+                                                    : QByteArray("{}");
         respond(socket, status, encoded);
     };
     if (method == "GET" && (path == "/official.json" || path == "/index.json")) {
@@ -153,15 +218,11 @@ void JellyfinFixture::handle(QTcpSocket *socket, const QByteArray& header, const
         respond(socket, 200, artwork, "image/png");
         return;
     }
-    if (path == "/socket") {
-        respond(socket, 404, "{}"); // No live events are required by this finite fixture.
-        return;
-    }
     bool authenticated = false;
     QByteArray range;
     for (const auto& line : header.split('\n')) {
         if (line.toLower().startsWith("authorization:"))
-            authenticated = line.contains("Token=\"" + token + "\"");
+            authenticated = line.contains(authorizationToken);
         if (line.toLower().startsWith("range:"))
             range = line.mid(line.indexOf(':') + 1).trimmed();
     }
@@ -170,10 +231,45 @@ void JellyfinFixture::handle(QTcpSocket *socket, const QByteArray& header, const
         json(QJsonObject {}, 401);
         return;
     }
+    ++authenticatedRequests;
+    if (method == "POST" && path == "/Items/" + movieId + "/PlaybackInfo")
+        ++playbackNegotiations;
+    if ((method == "GET" || method == "HEAD") && path == "/Videos/" + movieId + "/stream")
+        ++mediaRequests;
+    if (!newRequestsAvailable) {
+        json(QJsonObject {}, 503);
+        return;
+    }
+    if (path == "/socket") {
+        respond(socket, 400, "{}"); // A socket request must be a real RFC6455 upgrade.
+        return;
+    }
+    if (method == "GET" && path == "/Playback/BitrateTest") {
+        // Jellyfin MediaInfoController.GetBitrateTestBytes: authenticated
+        // octet-stream response, size defaults to 102400 and is 1..100000000.
+        qint64 size = 102400;
+        for (const auto& item : query.queryItems()) {
+            if (item.first.compare("size", Qt::CaseInsensitive) != 0)
+                continue;
+            bool valid = false;
+            size = item.second.toLongLong(&valid);
+            if (!valid)
+                size = 0;
+            break;
+        }
+        if (size < 1 || size > 100000000) {
+            json(QJsonObject {}, 400);
+            return;
+        }
+        respond(socket, 200, QByteArray(size, '\0'), "application/octet-stream");
+        return;
+    }
     if (method == "GET" && path == "/Users/" + userId + "/Views") {
         ++authenticatedViews;
-        json(QJsonObject { { "Items", QJsonArray { QJsonObject { { "Id", "journey-library" },
-            { "Name", "Journey Library" }, { "CollectionType", "movies" } } } }, { "TotalRecordCount", 1 } });
+        json(QJsonObject { { "Items",
+                               QJsonArray { QJsonObject { { "Id", "journey-library" }, { "Name", "Journey Library" },
+                                   { "CollectionType", "movies" } } } },
+            { "TotalRecordCount", 1 } });
     } else if (method == "GET" && (path == "/Items" || path == "/Users/" + userId + "/Items")) {
         if (query.queryItemValue("ParentId") == "journey-library")
             ++authenticatedBrowse;
@@ -182,9 +278,10 @@ void JellyfinFixture::handle(QTcpSocket *socket, const QByteArray& header, const
         json(movie());
     } else if (method == "GET" && path == "/Users/" + userId + "/Items/Latest") {
         json(QJsonArray { movie() });
-    } else if (method == "GET" && (path == "/Users/" + userId + "/Items/Resume" || path == "/Shows/NextUp"
-        || path == "/MediaSegments/" + movieId || path == "/Videos/journey-source/AdditionalParts"
-        || path == "/Items/" + movieId + "/Similar")) {
+    } else if (method == "GET"
+        && (path == "/Users/" + userId + "/Items/Resume" || path == "/Shows/NextUp"
+            || path == "/MediaSegments/" + movieId || path == "/Videos/journey-source/AdditionalParts"
+            || path == "/Items/" + movieId + "/Similar")) {
         json(QJsonObject { { "Items", QJsonArray {} }, { "TotalRecordCount", 0 } });
     } else if (method == "GET" && path == "/Items/Filters") {
         json(QJsonObject { { "Genres", QJsonArray {} }, { "Years", QJsonArray {} } });
@@ -192,24 +289,20 @@ void JellyfinFixture::handle(QTcpSocket *socket, const QByteArray& header, const
         json(QJsonObject { { "IsLocal", true }, { "IsInNetwork", true } });
     } else if (method == "GET" && path == "/Users/" + userId) {
         json(QJsonObject { { "Id", userId }, { "Name", "Journey Viewer" },
-            { "Policy", QJsonObject { { "EnableContentDownloading", true }, { "EnableMediaPlayback", true },
-                { "EnableUserPreferenceAccess", true }, { "EnableVideoPlaybackTranscoding", false },
-                { "EnableAudioPlaybackTranscoding", false }, { "EnableCollectionManagement", false },
-                { "EnableContentDeletion", false }, { "EnablePlaylistAccess", false } } },
-            { "Configuration", QJsonObject { { "AudioLanguagePreference", "" }, { "SubtitleLanguagePreference", "" },
-                { "PlayDefaultAudioTrack", true }, { "SubtitleMode", "Default" } } } });
+            { "Policy",
+                QJsonObject { { "EnableContentDownloading", true }, { "EnableMediaPlayback", true },
+                    { "EnableUserPreferenceAccess", true }, { "EnableVideoPlaybackTranscoding", false },
+                    { "EnableAudioPlaybackTranscoding", false }, { "EnableCollectionManagement", false },
+                    { "EnableContentDeletion", false }, { "EnablePlaylistAccess", false } } },
+            { "Configuration",
+                QJsonObject { { "AudioLanguagePreference", "" }, { "SubtitleLanguagePreference", "" },
+                    { "PlayDefaultAudioTrack", true }, { "SubtitleMode", "Default" } } } });
     } else if (method == "POST" && path == "/Items/" + movieId + "/PlaybackInfo") {
         const auto negotiation = QJsonDocument::fromJson(body).object();
         if (negotiation["UserId"] != userId || !negotiation["EnableDirectPlay"].toBool())
             unexpected.append("invalid playback negotiation");
-        ++playbackNegotiations;
         json(QJsonObject { { "PlaySessionId", "journey-session" }, { "MediaSources", QJsonArray { source() } } });
     } else if ((method == "GET" || method == "HEAD") && path == "/Videos/" + movieId + "/stream") {
-        ++mediaRequests;
-        if (!mediaAvailable) {
-            json(QJsonObject {}, 503);
-            return;
-        }
         qint64 first = 0;
         qint64 last = media.size() - 1;
         if (!range.isEmpty()) {
@@ -247,8 +340,8 @@ void JellyfinFixture::handle(QTcpSocket *socket, const QByteArray& header, const
         respond(socket, range.isEmpty() ? 200 : 206, bytes, "video/x-matroska", extra, method == "HEAD");
     } else if (path.startsWith("/DisplayPreferences/")) {
         if (method == "GET")
-            json(documents.value(path, QJsonObject { { "Id", path.mid(path.lastIndexOf('/') + 1) },
-                { "CustomPrefs", QJsonObject {} } }));
+            json(documents.value(path,
+                QJsonObject { { "Id", path.mid(path.lastIndexOf('/') + 1) }, { "CustomPrefs", QJsonObject {} } }));
         else if (method == "POST") {
             documents.insert(path, QJsonDocument::fromJson(body).object());
             json(QJsonObject {});
@@ -256,8 +349,9 @@ void JellyfinFixture::handle(QTcpSocket *socket, const QByteArray& header, const
             unexpected.append("unsupported display preference method");
             json(QJsonObject {}, 405);
         }
-    } else if (method == "POST" && (path == "/Sessions/Playing" || path == "/Sessions/Playing/Progress"
-        || path == "/Sessions/Playing/Stopped")) {
+    } else if (method == "POST"
+        && (path == "/Sessions/Playing" || path == "/Sessions/Playing/Progress"
+            || path == "/Sessions/Playing/Stopped")) {
         auto report = QJsonDocument::fromJson(body).object();
         if (report["ItemId"] != movieId || report["PlaySessionId"] != "journey-session")
             unexpected.append("invalid playback report identity");

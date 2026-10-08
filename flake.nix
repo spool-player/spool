@@ -123,6 +123,16 @@
         });
       };
 
+      mesaTestOverlay = final: prev: {
+        # Keep Qt/Weston and normal desktop drivers unchanged. Only the
+        # explicitly selected isolated CPU test drivers use this WSI fix.
+        spoolTestMesa = prev.mesa.overrideAttrs (old: {
+          patches = (old.patches or []) ++ [
+            ./tools/patches/mesa-wayland-fifo-presentation-clock.patch
+          ];
+        });
+      };
+
       ffmpegCapabilities =
         builtins.fromJSON (builtins.readFile ./tools/manifests/ffmpeg-capabilities.json);
       ffmpegConfigureFlags = platform:
@@ -286,7 +296,7 @@
               allowUnfree = true;
               android_sdk.accept_license = true;
             };
-            overlays = [ pinnedQtOverlay libplaceboOverlay ffmpegSlimOverlay tailoredQtOverlay qcoroOverlay ];
+            overlays = [ pinnedQtOverlay libplaceboOverlay mesaTestOverlay ffmpegSlimOverlay tailoredQtOverlay qcoroOverlay ];
           }));
       # Native artifacts use a tailored Qt without ICU, foreign SQL drivers
       # or GTK. Release jobs retain the full build closure in GitHub
@@ -296,7 +306,7 @@
         import (nixpkgsFor system) {
           inherit system;
           config.allowUnfree = true;
-          overlays = [ pinnedQtOverlay libplaceboOverlay tailoredQtOverlay qcoroOverlay cacheDependencyOverlay ];
+          overlays = [ pinnedQtOverlay libplaceboOverlay mesaTestOverlay tailoredQtOverlay qcoroOverlay cacheDependencyOverlay ];
         };
 
 
@@ -473,7 +483,7 @@
         ++ [
           pkgs.elfutils pkgs.vulkan-loader pkgs.zstd
           # Isolated test displays exercise the real Qt/libmpv GPU paths.
-          pkgs.weston pkgs.xorg-server pkgs.xdotool
+          pkgs.weston pkgs.xorg-server pkgs.xdotool pkgs.dbus
         ];
 
 
@@ -608,10 +618,10 @@
         ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
           # The test driver opts into these CPU drivers only inside its isolated
           # compositor. Do not replace the developer's normal desktop drivers.
-          export SPOOL_TEST_DRI_DIR="${pkgs.mesa}/lib/dri"
-          export SPOOL_TEST_VULKAN_ICD="$(echo ${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.*.json)"
-          export SPOOL_TEST_DRIVER_LIB_DIR="${pkgs.lib.makeLibraryPath [ pkgs.mesa pkgs.libGL pkgs.vulkan-loader ]}"
-          export SPOOL_TEST_EGL_VENDOR="${pkgs.mesa}/share/glvnd/egl_vendor.d/50_mesa.json"
+          export SPOOL_TEST_DRI_DIR="${pkgs.spoolTestMesa}/lib/dri"
+          export SPOOL_TEST_VULKAN_ICD="$(echo ${pkgs.spoolTestMesa}/share/vulkan/icd.d/lvp_icd.*.json)"
+          export SPOOL_TEST_DRIVER_LIB_DIR="${pkgs.lib.makeLibraryPath [ pkgs.spoolTestMesa pkgs.libGL pkgs.vulkan-loader ]}"
+          export SPOOL_TEST_EGL_VENDOR="${pkgs.spoolTestMesa}/share/glvnd/egl_vendor.d/50_mesa.json"
         ''}
       '';
       cachedNativeQtPackage = pkgs:

@@ -4,8 +4,8 @@
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QFile>
-#include <QJsonDocument>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QProcess>
 #include <QProcessEnvironment>
@@ -31,16 +31,15 @@ QJsonObject journal(const QString& path)
     require(document.isObject(), "supervisor journal is valid JSON");
     return document.object();
 }
-void startSupervisor(QProcess& process, const QString& path, const QStringList& extra = {},
-    const QString& tree = {})
+void startSupervisor(QProcess& process, const QString& path, const QStringList& extra = {}, const QString& tree = {})
 {
     auto environment = QProcessEnvironment::systemEnvironment();
     environment.insert(QStringLiteral("SPOOL_TEST_RESUME"), QStringLiteral("0"));
     environment.insert(QStringLiteral("SPOOL_TEST_RETRY_FAILED"), QStringLiteral("0"));
     environment.insert(QStringLiteral("SPOOL_TEST_FIXTURE_TREE"), tree);
     process.setProcessEnvironment(environment);
-    QStringList arguments { QStringLiteral("--run-all"), QStringLiteral("--fixture-suite"),
-        QStringLiteral("--results"), path };
+    QStringList arguments { QStringLiteral("--run-all"), QStringLiteral("--fixture-suite"), QStringLiteral("--results"),
+        path };
     if (!extra.contains(QStringLiteral("--workers")))
         arguments.append({ QStringLiteral("--workers"), QStringLiteral("2") });
     arguments.append(extra);
@@ -75,7 +74,11 @@ bool alive(qint64 pid)
 #ifdef Q_OS_WIN
     struct ProcessHandle {
         HANDLE value;
-        ~ProcessHandle() { if (value) CloseHandle(value); }
+        ~ProcessHandle()
+        {
+            if (value)
+                CloseHandle(value);
+        }
     } handle { OpenProcess(SYNCHRONIZE, FALSE, static_cast<DWORD>(pid)) };
     if (!handle.value) {
         require(GetLastError() == ERROR_INVALID_PARAMETER, "inspect descendant OS lifetime");
@@ -121,9 +124,8 @@ std::vector<qint64> treePids(const QString& root)
 }
 void requireTreeStopped(const std::vector<qint64>& pids)
 {
-    require(waitUntil([&] {
-        return std::none_of(pids.begin(), pids.end(), [](qint64 pid) { return alive(pid); });
-    }), "selector, child and grandchild all terminate, not just the direct QProcess");
+    require(waitUntil([&] { return std::none_of(pids.begin(), pids.end(), [](qint64 pid) { return alive(pid); }); }),
+        "selector, child and grandchild all terminate, not just the direct QProcess");
 }
 }
 
@@ -133,11 +135,13 @@ SPOOL_TEST_MAIN("test-supervisor")
     QTemporaryDir temporary;
     require(temporary.isValid(), "private supervisor regression directory");
     const QString path = temporary.filePath(QStringLiteral("results.json"));
-    for (const auto& selector : { "fixture-crash", "fixture-access-violation", "fixture-forward-crash", "fixture-exit-three" }) {
+    for (const auto& selector :
+        { "fixture-crash", "fixture-access-violation", "fixture-forward-crash", "fixture-exit-three" }) {
         QProcess process;
         process.start(app.applicationFilePath(),
             { QStringLiteral("--fixture-suite"), QStringLiteral("--child"), QString::fromLatin1(selector) });
-        require(process.waitForStarted(10000) && process.waitForFinished(10000), "real OS fixture exits promptly without dialogs");
+        require(process.waitForStarted(10000) && process.waitForFinished(10000),
+            "real OS fixture exits promptly without dialogs");
         const bool normalThree = QString::fromLatin1(selector) == QStringLiteral("fixture-exit-three");
         require(process.exitStatus() == (normalThree ? QProcess::NormalExit : QProcess::CrashExit),
             "abort and access violation are actual OS crashes; ordinary exit 3 is never inferred as crash");
@@ -150,7 +154,8 @@ SPOOL_TEST_MAIN("test-supervisor")
                 "Windows retains actual failing NTSTATUS for abort and memory access violation");
 #elif defined(Q_OS_UNIX)
         else
-            require(process.exitCode() == (QString::fromLatin1(selector) == QStringLiteral("fixture-crash") ? SIGABRT : SIGSEGV),
+            require(process.exitCode()
+                    == (QString::fromLatin1(selector) == QStringLiteral("fixture-crash") ? SIGABRT : SIGSEGV),
                 "selector retains its actual terminating signal, including a forwarded grandchild crash");
 #endif
     }
@@ -162,25 +167,29 @@ SPOOL_TEST_MAIN("test-supervisor")
     require(rows.size() == 8, "all selectors retain terminal results despite earlier failures");
     require(status(rows, QStringLiteral("fixture-fail")) == QStringLiteral("failed"), "normal failure retained");
     require(status(rows, QStringLiteral("fixture-crash")) == QStringLiteral("crashed"), "OS crash retained");
-    require(status(rows, QStringLiteral("fixture-access-violation")) == QStringLiteral("crashed"), "real memory fault retained");
+    require(status(rows, QStringLiteral("fixture-access-violation")) == QStringLiteral("crashed"),
+        "real memory fault retained");
     require(status(rows, QStringLiteral("fixture-forward-crash")) == QStringLiteral("crashed"),
         "fast nested subprocess crash propagates as an actual selector crash, not ordinary failure");
-    require(status(rows, QStringLiteral("fixture-exit-three")) == QStringLiteral("failed"), "normal exit 3 is a failure, not crash heuristic");
+    require(status(rows, QStringLiteral("fixture-exit-three")) == QStringLiteral("failed"),
+        "normal exit 3 is a failure, not crash heuristic");
     require(status(rows, QStringLiteral("fixture-skip")) == QStringLiteral("skipped"), "skip is not a pass");
     require(status(rows, QStringLiteral("fixture-pass-a")) == QStringLiteral("passed")
             && status(rows, QStringLiteral("fixture-pass-b")) == QStringLiteral("passed"),
         "noncrashing selectors continue and pass");
     require(first.value(QStringLiteral("peakWorkers")).toInt() == 2, "two workers actually execute concurrently");
-    struct Event { qint64 time; int delta; };
+    struct Event {
+        qint64 time;
+        int delta;
+    };
     std::vector<Event> events;
     for (const auto& value : rows) {
         const auto row = value.toObject();
         events.push_back({ row.value(QStringLiteral("startedMs")).toVariant().toLongLong(), 1 });
         events.push_back({ row.value(QStringLiteral("finishedMs")).toVariant().toLongLong(), -1 });
     }
-    std::sort(events.begin(), events.end(), [](const Event& a, const Event& b) {
-        return a.time < b.time || (a.time == b.time && a.delta < b.delta);
-    });
+    std::sort(events.begin(), events.end(),
+        [](const Event& a, const Event& b) { return a.time < b.time || (a.time == b.time && a.delta < b.delta); });
     int concurrent = 0;
     for (const auto& event : events) {
         concurrent += event.delta;
@@ -199,9 +208,11 @@ SPOOL_TEST_MAIN("test-supervisor")
     require(run(path, { QStringLiteral("--resume"), QStringLiteral("--retry-failed") }) == 1,
         "retry failure still reports aggregate failure");
     const auto retried = journal(path).value(QStringLiteral("results")).toObject();
-    require(retried.value(QStringLiteral("fixture-fail")).toObject().value(QStringLiteral("attempts")).toArray().size() == 2,
+    require(retried.value(QStringLiteral("fixture-fail")).toObject().value(QStringLiteral("attempts")).toArray().size()
+            == 2,
         "explicit retry reruns normal failure");
-    const auto failures = retried.value(QStringLiteral("fixture-fail")).toObject().value(QStringLiteral("attempts")).toArray();
+    const auto failures
+        = retried.value(QStringLiteral("fixture-fail")).toObject().value(QStringLiteral("attempts")).toArray();
     const QString originalLog = failures[0].toObject().value(QStringLiteral("log")).toString();
     require(!originalLog.isEmpty() && originalLog != failures[1].toObject().value(QStringLiteral("log")).toString(),
         "each retry has its own diagnostic log");
@@ -210,9 +221,13 @@ SPOOL_TEST_MAIN("test-supervisor")
             && originalFailure.readAll() == QByteArray("fixture-fail: deliberate failure\n"),
         "retry preserves original failure output as well as its result");
     for (const auto& selector : { "fixture-crash", "fixture-access-violation", "fixture-forward-crash" })
-        require(retried.value(QString::fromLatin1(selector)).toObject().value(QStringLiteral("attempts")).toArray().size() == 1,
+        require(
+            retried.value(QString::fromLatin1(selector)).toObject().value(QStringLiteral("attempts")).toArray().size()
+                == 1,
             "retry never repeats a known abort, access violation or forwarded crash");
-    require(retried.value(QStringLiteral("fixture-pass-a")).toObject().value(QStringLiteral("attempts")).toArray().size() == 1,
+    require(
+        retried.value(QStringLiteral("fixture-pass-a")).toObject().value(QStringLiteral("attempts")).toArray().size()
+            == 1,
         "resume retains successful selectors without repeating side effects");
 
     const QString timeoutPath = temporary.filePath(QStringLiteral("timeout.json"));
@@ -220,23 +235,29 @@ SPOOL_TEST_MAIN("test-supervisor")
     const QStringList hang { QStringLiteral("--filter"), QStringLiteral("fixture-hang-tree"),
         QStringLiteral("--workers"), QStringLiteral("1"), QStringLiteral("--timeout-ms"), QStringLiteral("3000") };
     require(run(timeoutPath, hang, timeoutTree) == 1, "actual hung process tree times out as failure");
-    require(status(journal(timeoutPath).value(QStringLiteral("results")).toObject(), QStringLiteral("fixture-hang-tree"))
-            == QStringLiteral("timed-out"), "timeout is not a fabricated crash or pass");
+    require(
+        status(journal(timeoutPath).value(QStringLiteral("results")).toObject(), QStringLiteral("fixture-hang-tree"))
+            == QStringLiteral("timed-out"),
+        "timeout is not a fabricated crash or pass");
     requireTreeStopped(treePids(timeoutTree));
 
     for (const bool retryInterrupted : { false, true }) {
-        const QString interruptedPath = temporary.filePath(retryInterrupted ? QStringLiteral("retry-interrupted.json")
-                                                                           : QStringLiteral("resume-interrupted.json"));
+        const QString interruptedPath = temporary.filePath(
+            retryInterrupted ? QStringLiteral("retry-interrupted.json") : QStringLiteral("resume-interrupted.json"));
         const QString interruptedTree = interruptedPath + QStringLiteral("-tree");
         QProcess supervisor;
         startSupervisor(supervisor, interruptedPath,
-            { QStringLiteral("--filter"), QStringLiteral("fixture-hang-tree"), QStringLiteral("--workers"), QStringLiteral("1") },
+            { QStringLiteral("--filter"), QStringLiteral("fixture-hang-tree"), QStringLiteral("--workers"),
+                QStringLiteral("1") },
             interruptedTree);
         const auto pids = treePids(interruptedTree);
         require(std::all_of(pids.begin(), pids.end(), [](qint64 pid) { return alive(pid); }),
             "all three descendant levels are genuinely running before teardown");
-        const auto runningRow = journal(interruptedPath).value(QStringLiteral("results")).toObject()
-                                    .value(QStringLiteral("fixture-hang-tree")).toObject();
+        const auto runningRow = journal(interruptedPath)
+                                    .value(QStringLiteral("results"))
+                                    .toObject()
+                                    .value(QStringLiteral("fixture-hang-tree"))
+                                    .toObject();
         require(runningRow.value(QStringLiteral("status")).toString() == QStringLiteral("running"),
             "interrupt at a real committed running-journal boundary");
 #ifdef Q_OS_WIN
@@ -246,8 +267,10 @@ SPOOL_TEST_MAIN("test-supervisor")
 #endif
         require(supervisor.waitForFinished(10000), "interrupted supervisor has bounded teardown");
         requireTreeStopped(pids);
-        require(status(journal(interruptedPath).value(QStringLiteral("results")).toObject(), QStringLiteral("fixture-hang-tree"))
-                == QStringLiteral("running"), "interruption never invents an observed selector crash");
+        require(status(journal(interruptedPath).value(QStringLiteral("results")).toObject(),
+                    QStringLiteral("fixture-hang-tree"))
+                == QStringLiteral("running"),
+            "interruption never invents an observed selector crash");
         QFile interruptedEvidence(runningRow.value(QStringLiteral("log")).toString());
         require(interruptedEvidence.open(QIODevice::ReadOnly), "read original interrupted selector evidence");
         const QByteArray originalEvidence = interruptedEvidence.readAll();
@@ -257,17 +280,23 @@ SPOOL_TEST_MAIN("test-supervisor")
         if (retryInterrupted)
             resumeArguments.append(QStringLiteral("--retry-failed"));
         const QString resumedTree = interruptedTree + QStringLiteral("-resumed");
-        require(run(interruptedPath, resumeArguments, resumedTree) == 1, "interrupted selector really runs again and cannot fake a pass");
+        require(run(interruptedPath, resumeArguments, resumedTree) == 1,
+            "interrupted selector really runs again and cannot fake a pass");
         requireTreeStopped(treePids(resumedTree));
-        const auto row = journal(interruptedPath).value(QStringLiteral("results")).toObject()
-                             .value(QStringLiteral("fixture-hang-tree")).toObject();
+        const auto row = journal(interruptedPath)
+                             .value(QStringLiteral("results"))
+                             .toObject()
+                             .value(QStringLiteral("fixture-hang-tree"))
+                             .toObject();
         const auto attempts = row.value(QStringLiteral("attempts")).toArray();
-        require(attempts.size() == 2 && attempts[0].toObject().value(QStringLiteral("status")).toString() == QStringLiteral("interrupted")
+        require(attempts.size() == 2
+                && attempts[0].toObject().value(QStringLiteral("status")).toString() == QStringLiteral("interrupted")
                 && attempts[1].toObject().value(QStringLiteral("status")).toString() == QStringLiteral("timed-out")
                 && !row.value(QStringLiteral("resumeSkipped")).toBool(),
             "interrupted is distinct from known crash and resumable with or without retry");
         require(attempts[0].toObject().value(QStringLiteral("log")) == runningRow.value(QStringLiteral("log"))
-                && attempts[0].toObject().value(QStringLiteral("log")) != attempts[1].toObject().value(QStringLiteral("log"))
+                && attempts[0].toObject().value(QStringLiteral("log"))
+                    != attempts[1].toObject().value(QStringLiteral("log"))
                 && QFile::exists(attempts[0].toObject().value(QStringLiteral("log")).toString())
                 && !attempts[0].toObject().contains(QStringLiteral("exitCode")),
             "interrupted attempt preserves original evidence without inventing an exit code");

@@ -2,8 +2,8 @@
 
 #include <QCoreApplication>
 #include <QDir>
-#include <QFileInfo>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -26,7 +26,8 @@ QJsonObject help()
     return { { QStringLiteral("ok"), true },
         { QStringLiteral("result"),
             QJsonObject {
-                { QStringLiteral("usage"), QStringLiteral("spoolet [--instance ID | --descriptor FILE] [--timeout MS] COMMAND [ARGS]") },
+                { QStringLiteral("usage"),
+                    QStringLiteral("spoolet [--instance ID | --descriptor FILE] [--timeout MS] COMMAND [ARGS]") },
                 { QStringLiteral("commands"),
                     QJsonArray { QStringLiteral("help | instances | status | state"),
                         QStringLiteral(
@@ -63,7 +64,8 @@ int main(int argc, char **argv)
         if (option == QStringLiteral("--help"))
             return print(help());
         if ((option != QStringLiteral("--instance") && option != QStringLiteral("--timeout")
-                && option != QStringLiteral("--descriptor")) || arguments.isEmpty())
+                && option != QStringLiteral("--descriptor"))
+            || arguments.isEmpty())
             return error(QStringLiteral("Expected --instance ID, --descriptor FILE or --timeout MS; see help"));
         const QString value = arguments.takeFirst();
         if (option == QStringLiteral("--instance")) {
@@ -96,7 +98,8 @@ int main(int argc, char **argv)
                                                                   : QStringLiteral("path");
         args.insert(key,
             command == QStringLiteral("screenshot") && descriptorPath.isEmpty()
-                ? QFileInfo(arguments.first()).absoluteFilePath() : arguments.first());
+                ? QFileInfo(arguments.first()).absoluteFilePath()
+                : arguments.first());
     } else if (command == QStringLiteral("text")) {
         if (!count(1, 1))
             return error(QStringLiteral("Usage: text TEXT | text --stdin"));

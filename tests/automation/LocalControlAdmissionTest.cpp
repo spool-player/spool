@@ -76,7 +76,8 @@ SPOOL_TEST_MAIN("spoolet-admission")
     {
         auto local = server();
         require(local.start(QStringLiteral("nonce"), &error), "recreate same namespace named pipe");
-        const auto next = Spool::LocalControl::readDescriptor(QDir(registry).filePath("nonce.json"))["endpoint"].toString();
+        const auto next
+            = Spool::LocalControl::readDescriptor(QDir(registry).filePath("nonce.json"))["endpoint"].toString();
         require(!next.isEmpty() && next != firstPipe, "same instance retains a fresh unpredictable pipe nonce");
         local.stop();
     }
@@ -117,7 +118,8 @@ SPOOL_TEST_MAIN("spoolet-admission")
         QLocalServer live;
         live.setSocketOptions(QLocalServer::UserAccessOption);
         require(live.listen(endpoint), "real permission-denied live endpoint");
-        require(::chmod(QFile::encodeName(endpoint).constData(), 0000) == 0, "deny connections without closing listener");
+        require(
+            ::chmod(QFile::encodeName(endpoint).constData(), 0000) == 0, "deny connections without closing listener");
         auto control = server();
         require(!control.start(QStringLiteral("admission"), &error),
             "an inconclusive access-denied probe cannot authorize socket removal");
@@ -140,26 +142,30 @@ SPOOL_TEST_MAIN("spoolet-admission")
         require(!control.start(QStringLiteral("admission"), &error), "foreign-owned socket is not removed");
         struct stat preserved {};
         require(::lstat(QFile::encodeName(endpoint).constData(), &preserved) == 0 && preserved.st_uid == 65534
-                && S_ISSOCK(preserved.st_mode), "foreign-owned socket is preserved");
+                && S_ISSOCK(preserved.st_mode),
+            "foreign-owned socket is preserved");
         require(::unlink(QFile::encodeName(endpoint).constData()) == 0, "remove test-created foreign-owned socket");
     } else {
         require(!requireForeign, "foreign-owner CI contract requires a privileged test process");
         std::cout << "SKIP subcase: foreign-owner admission requires uid0; privileged CI exercises it\n";
     }
     const QString longRuntime = data.filePath(QString(80, QLatin1Char('x')) + '/' + QString(80, QLatin1Char('y')));
-    require(QDir().mkpath(longRuntime) && QFile::setPermissions(longRuntime,
-        QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner), "private oversized runtime");
+    require(QDir().mkpath(longRuntime)
+            && QFile::setPermissions(
+                longRuntime, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner),
+        "private oversized runtime");
     qputenv("XDG_RUNTIME_DIR", longRuntime.toUtf8());
-    require(Spool::LocalControl::localEndpoint(registry, QStringLiteral("admission"), &error).isEmpty()
-            && !error.isEmpty(), "native socket limit is rejected before listen");
+    require(
+        Spool::LocalControl::localEndpoint(registry, QStringLiteral("admission"), &error).isEmpty() && !error.isEmpty(),
+        "native socket limit is rejected before listen");
     qputenv("XDG_RUNTIME_DIR", runtime.path().toUtf8());
 #endif
     // Exercise the actual authenticated TCP server, not an echo implementation.
     auto tcp = server();
     require(tcp.startTcp(QStringLiteral("tcp-admission"), 0, &error), "explicit loopback TCP admission");
     auto descriptor = Spool::LocalControl::readDescriptor(QDir(registry).filePath("tcp-admission.json"));
-    require(descriptor["transport"] == "tcp" && descriptor["endpoint"] == "127.0.0.1"
-            && descriptor["port"].toInt() > 0, "private descriptor reflects actual loopback ephemeral listener");
+    require(descriptor["transport"] == "tcp" && descriptor["endpoint"] == "127.0.0.1" && descriptor["port"].toInt() > 0,
+        "private descriptor reflects actual loopback ephemeral listener");
     descriptor.insert("token", QString(64, QLatin1Char('0')));
     auto denied = std::async(std::launch::async, [descriptor] {
         return Spool::LocalControl::request(descriptor, QStringLiteral("text"), { { "text", "never-dispatch" } }, 1000);
@@ -171,8 +177,10 @@ SPOOL_TEST_MAIN("spoolet-admission")
         QThread::msleep(1);
     }
     require(denied.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready, "TCP denial is bounded");
-    require(denied.get()["error"].toObject()["code"] == "unauthorized", "actual TCP authenticates before text dispatch");
+    require(
+        denied.get()["error"].toObject()["code"] == "unauthorized", "actual TCP authenticates before text dispatch");
     tcp.stop();
-    require(!QFileInfo::exists(QDir(registry).filePath("tcp-admission.json")), "TCP descriptor is removed on clean shutdown");
+    require(!QFileInfo::exists(QDir(registry).filePath("tcp-admission.json")),
+        "TCP descriptor is removed on clean shutdown");
     return 0;
 }

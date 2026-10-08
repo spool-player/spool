@@ -1308,9 +1308,8 @@ int main(int argc, char **argv)
     if (startLocalControl) {
         QString error;
         const QString instance = optionValue(app.arguments(), QStringLiteral("--instance"), "SPOOL_INSTANCE");
-        const bool started = automationPort >= 0
-            ? localCommands.startTcp(instance, quint16(automationPort), &error)
-            : localCommands.start(instance, &error);
+        const bool started = automationPort >= 0 ? localCommands.startTcp(instance, quint16(automationPort), &error)
+                                                 : localCommands.start(instance, &error);
         if (!started) {
             logLine("local control unavailable: %s", qPrintable(error));
             // An explicitly named launch must not silently target a different instance.
