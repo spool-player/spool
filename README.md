@@ -799,6 +799,13 @@ not require ADB or broad storage permissions.
 
 ## Unified native tests
 
+Native developer shells configure the repository hooks. The push gate requires
+every pinned mpv commit to exist locally and be reachable from its configured
+public remote branch. Foreign-repository checks clear Git's hook-exported
+repository selectors in a scoped subshell, so linked worktrees validate the
+submodule rather than accidentally querying the superproject's object store;
+this does not bypass the lineage check.
+
 Build and run the same complete host suite as CI with `nix run .#tests`, or run
 already-built targets with:
 
