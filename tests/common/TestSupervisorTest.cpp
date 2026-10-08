@@ -46,11 +46,61 @@ void startSupervisor(QProcess& process, const QString& path, const QStringList& 
     process.start(QCoreApplication::applicationFilePath(), arguments);
     require(process.waitForStarted(10000), "start same-binary supervisor");
 }
+// Only fixed fixture metadata is emitted: never forward arbitrary child output
+// or dump the journal's binary/path fields into the enclosing selector log.
+void diagnoseWait(const QProcess& process, const QString& path, const QStringList& extra)
+{
+    std::cerr << "supervisor wait failed: pid=" << process.processId() << " state=" << int(process.state())
+              << " processError=" << int(process.error()) << " resume=" << extra.contains(QStringLiteral("--resume"))
+              << " retry=" << extra.contains(QStringLiteral("--retry-failed")) << '\n';
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        std::cerr << "fixture journal unavailable\n";
+        return;
+    }
+    constexpr qint64 maximumJournalBytes = 64 * 1024;
+    const QByteArray bytes = file.read(maximumJournalBytes + 1);
+    if (bytes.size() > maximumJournalBytes) {
+        std::cerr << "fixture journal exceeds diagnostic bound\n";
+        return;
+    }
+    const auto document = QJsonDocument::fromJson(bytes);
+    if (!document.isObject()) {
+        std::cerr << "fixture journal is not a JSON object\n";
+        return;
+    }
+    const auto rows = document.object().value(QStringLiteral("results")).toObject();
+    for (const auto *selector : { "fixture-pass-a", "fixture-fail", "fixture-crash", "fixture-access-violation",
+             "fixture-forward-crash", "fixture-exit-three", "fixture-pass-b", "fixture-skip", "fixture-hang-tree" }) {
+        const auto row = rows.value(QString::fromLatin1(selector)).toObject();
+        if (row.isEmpty())
+            continue;
+        const QString state = row.value(QStringLiteral("status")).toString();
+        const char *knownStatus = "unknown";
+        for (const auto *candidate : { "pending", "running", "passed", "failed", "crashed", "skipped", "timed-out",
+                 "start-failed", "interrupted" }) {
+            if (state == QLatin1StringView(candidate)) {
+                knownStatus = candidate;
+                break;
+            }
+        }
+        std::cerr << selector << ": " << knownStatus
+                  << " startedMs=" << row.value(QStringLiteral("startedMs")).toVariant().toLongLong()
+                  << " finishedMs=" << row.value(QStringLiteral("finishedMs")).toVariant().toLongLong()
+                  << " attempts=" << row.value(QStringLiteral("attempts")).toArray().size();
+        if (row.contains(QStringLiteral("exitCode")))
+            std::cerr << " exitCode=" << row.value(QStringLiteral("exitCode")).toInt();
+        std::cerr << '\n';
+    }
+}
 int run(const QString& path, const QStringList& extra = {}, const QString& tree = {})
 {
     QProcess process;
     startSupervisor(process, path, extra, tree);
-    require(process.waitForFinished(30000), "supervisor terminates after failed and crashed selectors");
+    const bool finished = process.waitForFinished(30000);
+    if (!finished)
+        diagnoseWait(process, path, extra);
+    require(finished, "supervisor terminates after failed and crashed selectors");
     require(process.exitStatus() == QProcess::NormalExit, "selector crash must not crash supervisor");
     return process.exitCode();
 }

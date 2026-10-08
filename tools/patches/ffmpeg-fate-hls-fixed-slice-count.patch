@@ -1,0 +1,24 @@
+Keep the seek-hls input fixture independent of the build host's CPU count.
+
+The direct generator introduced by FFmpeg f699b3a8f52c151f61318b757abf04cab0811724
+bypasses fate-run.sh's encoder thread setting. The CLI selects automatic slice
+threads even with bitexact/int DCT; a three-core host uses four slice contexts,
+whereas hosts with at least five cores use all five macroblock rows at 72px.
+MPEG-2 motion predictors differ across slice boundaries.
+
+Use the original reference fixture's five contexts explicitly. This preserves
+all existing seek return, stream, timestamp, position and size expectations;
+no codec source, reference output or check selection is changed. Actual pinned
+9.0.2 ffmpeg/ffprobe measurements: CPUcount3 auto produces size3904 at DTS4.8 /
+PTS5.1; explicit5 produces3860 and the full60-packet table is identical to the
+original large-core auto fixture. Explicit1 would not preserve that fixture.
+
+Sources: FFmpeg n9.0.2 tests/fate/seek.mak, fftools/ffmpeg_mux_init.c,
+libavcodec/pthread_slice.c, mpegvideo.c and motion_est.c. This bounded test-input
+patch is local; no matching official upstream fix was found.
+
+--- a/tests/fate/seek.mak
++++ b/tests/fate/seek.mak
+@@ -207,1 +207,1 @@
+-        -map 0:v -map 1:a -c:v mpeg2video -bf 2 -g 15 -dct int -idct int -flags +bitexact -c:a mp2fixed \
++        -map 0:v -map 1:a -c:v mpeg2video -threads:v 5 -bf 2 -g 15 -dct int -idct int -flags +bitexact -c:a mp2fixed \

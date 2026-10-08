@@ -998,8 +998,8 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
     target_include_directories(spool-tests PRIVATE tests src "${CMAKE_CURRENT_BINARY_DIR}/generated")
     target_compile_definitions(spool-tests PRIVATE TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
         SPOOL_TEST_RUNNER=1)
-    target_link_libraries(spool-tests PRIVATE spool-core Threads::Threads)
-    target_sources(spool-tests PRIVATE ${SPOOL_PROVIDER_BUNDLE_SOURCES} sdk/provider-contract-runner.cpp)
+    target_link_libraries(spool-tests PRIVATE spool-core Threads::Threads ${SPOOL_PROVIDER_BUNDLE_TARGET})
+    target_sources(spool-tests PRIVATE sdk/provider-contract-runner.cpp)
     if(TARGET spoolet)
         target_sources(spool-tests PRIVATE tests/automation/LocalControlProtocolTest.cpp
             tests/automation/LocalControlAdmissionTest.cpp src/automation/LocalControlProtocol.cpp

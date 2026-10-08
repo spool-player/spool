@@ -362,6 +362,18 @@ jobs:
           nix develop .#native -c python tools/run-tests.py \
             --build-dir build/linux-release/app --workers "$(nproc)"
 
+      - name: Retain internal native phase results after failures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: internal-linux-unified-tests
+          path: |
+            build/linux-release/app/*-results.json*
+            build/linux-release/app/test-phases.json
+            build/linux-release/app/test-artifacts/app-journey-*/*.png
+          if-no-files-found: ignore
+          retention-days: 1
+
 
       - name: Lint compiled QML
         run: nix develop .#native -c cmake --build build/linux-release/app --target spool_qmllint_strict
@@ -632,6 +644,18 @@ jobs:
         run: |
           nix develop .#native --no-write-lock-file -c python tools/run-tests.py \
             --build-dir build/macos/app --workers "$(sysctl -n hw.ncpu)"
+      - name: Retain internal native phase results after failures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: internal-macos-${{ matrix.arch }}-unified-tests
+          path: |
+            build/macos/app/*-results.json*
+            build/macos/app/test-phases.json
+            build/macos/app/test-artifacts/app-journey-*/*.png
+          if-no-files-found: ignore
+          retention-days: 1
+
 
       - name: Lint compiled QML
         run: nix develop .#native --no-write-lock-file -c cmake --build build/macos/app --target spool_qmllint_strict
@@ -1446,6 +1470,18 @@ jobs:
       - name: Run traditional and real OpenGL GUI e2e tests
         shell: pwsh
         run: tools\windows\test.ps1
+      - name: Retain internal native phase results after failures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: internal-windows-unified-tests
+          path: |
+            build/windows-release/app/*-results.json*
+            build/windows-release/app/test-phases.json
+            build/windows-release/app/test-artifacts/app-journey-*/*.png
+          if-no-files-found: ignore
+          retention-days: 1
+
 
       - name: Stage and launch-test release payload
         shell: pwsh
