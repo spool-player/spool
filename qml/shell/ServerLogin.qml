@@ -35,6 +35,71 @@ FocusScope {
     property int discoveryGeneration: 0
     property int codeGeneration: 0
     readonly property bool closed: !provider || provider.closed
+    readonly property real keyboardInset: {
+        if (!Qt.inputMethod.visible)
+            return 0
+        const keyboard = Qt.inputMethod.keyboardRectangle
+        if (keyboard.height <= 0)
+            return 0
+        const pageBottom = root.mapToItem(null, 0, root.height).y
+        return Math.max(0, Math.min(root.height, pageBottom - keyboard.y))
+    }
+
+    function revealAccountError() {
+        if (!accountError.visible || viewport.height <= 0)
+            return
+        const margin = Metrics.scaled(12)
+        const hiddenTop = Math.max(0, -viewport.mapToItem(null, 0, 0).y)
+        const errorBounds = accountError.mapToItem(viewport.contentItem, 0, 0, accountError.width, accountError.height)
+        let top = errorBounds.y
+        let bottom = errorBounds.y + errorBounds.height
+        const window = root.Window.window
+        const focused = window ? window.activeFocusItem : null
+        let ancestor = focused
+        while (ancestor && ancestor !== root)
+            ancestor = ancestor.parent
+        if (focused && focused !== root && ancestor === root) {
+            const focusBounds = focused.mapToItem(viewport.contentItem, 0, 0, focused.width, focused.height)
+            top = Math.min(top, focusBounds.y)
+            bottom = Math.max(bottom, focusBounds.y + focusBounds.height)
+        }
+        let offset = viewport.contentY
+        if (bottom > offset + viewport.height - margin)
+            offset = bottom - viewport.height + margin
+        if (top < offset + hiddenTop + margin)
+            offset = top - hiddenTop - margin
+        viewport.contentY = Math.max(0, Math.min(viewport.contentHeight - viewport.height, offset))
+    }
+
+    onErrorChanged: {
+        if (root.step !== "account" || !root.error.length)
+            return
+        Qt.callLater(() => {
+            if (accountError.visible) {
+                accountError.Accessible.announce(root.error, Accessible.Assertive)
+                root.revealAccountError()
+            }
+        })
+    }
+
+    Connections {
+        target: Qt.inputMethod
+        function onVisibleChanged() {
+            Qt.callLater(root.revealAccountError)
+        }
+        function onKeyboardRectangleChanged() {
+            Qt.callLater(root.revealAccountError)
+        }
+        function onAnchorRectangleChanged() {
+            Qt.callLater(root.revealAccountError)
+        }
+    }
+    Connections {
+        target: root.Window.window
+        function onActiveFocusItemChanged() {
+            Qt.callLater(root.revealAccountError)
+        }
+    }
 
     function validateAddress(input) {
         const stamp = ++validationGeneration
@@ -306,11 +371,14 @@ FocusScope {
     }
 
     Flickable {
+        id: viewport
         anchors.fill: parent
+        anchors.bottomMargin: accountError.visible ? root.keyboardInset : 0
         visible: !root.alternateActive
         contentHeight: Math.max(height, column.implicitHeight + Metrics.pageMarginPx * 2)
         boundsBehavior: Flickable.StopAtBounds
         clip: true
+        onHeightChanged: Qt.callLater(root.revealAccountError)
         ColumnLayout {
             id: column
             width: Math.min(parent.width - Metrics.pageMarginPx * 2, Metrics.scaled(680))
@@ -465,6 +533,35 @@ FocusScope {
                 enterKeyType: Qt.EnterKeyGo
                 onAccepted: root.signIn(usernameField.text, text)
             }
+            RowLayout {
+                id: accountError
+                Layout.fillWidth: true
+                visible: root.step === "account" && root.error.length > 0
+                spacing: Metrics.scaled(8)
+                Accessible.role: Accessible.StaticText
+                Accessible.name: root.error
+                Accessible.ignored: !visible
+                Accessible.focusable: false
+                onHeightChanged: Qt.callLater(root.revealAccountError)
+                onYChanged: Qt.callLater(root.revealAccountError)
+                MaterialIcon {
+                    Layout.alignment: Qt.AlignTop
+                    Layout.preferredWidth: iconSize
+                    Layout.preferredHeight: iconSize
+                    name: "error_outline"
+                    iconSize: Metrics.scaled(24)
+                    iconColor: Theme.errorText
+                    Accessible.ignored: true
+                }
+                SecondaryText {
+                    Layout.fillWidth: true
+                    font.pixelSize: Metrics.bodySizePx
+                    text: root.error
+                    color: Theme.errorText
+                    wrapMode: Text.WordWrap
+                    Accessible.ignored: true
+                }
+            }
             ActionButton {
                 Layout.fillWidth: true
                 Layout.preferredHeight: Metrics.scaled(56)
@@ -474,14 +571,6 @@ FocusScope {
                 kind: "primary"
                 enabled: !root.busy && !!usernameField.text.trim()
                 onClicked: root.signIn(usernameField.text, password.text)
-            }
-            SecondaryText {
-                Layout.fillWidth: true
-                font.pixelSize: Metrics.bodySizePx
-                visible: root.step === "account" && root.error.length > 0
-                text: root.error
-                color: Theme.errorText
-                wrapMode: Text.WordWrap
             }
             ActionButton {
                 kind: "secondary"
