@@ -72,7 +72,23 @@ private:
 
 int spoolRunQml(int argc, char **argv, const char *input)
 {
-    std::vector<char *> arguments(argv, argv + argc);
+#ifdef Q_OS_WIN
+    // Qt's plain stdout logger otherwise uses OutputDebugString when the
+    // selector has no console. The supervisor retains stdout/stderr in its
+    // private per-attempt log, so explicitly keep test results on that stream.
+    qputenv("QT_FORCE_STDERR_LOGGING", "1");
+#endif
+    std::vector<char *> arguments;
+    arguments.reserve(size_t(argc) + 5);
+    arguments.insert(arguments.end(), argv, argv + argc);
+    char logOption[] = "-o";
+    char logOutput[] = "-,txt";
+    // Normal supervised selectors have no QtTest arguments. Leave explicit
+    // command-line logging/format choices intact for targeted invocations.
+    if (argc == 1) {
+        arguments.push_back(logOption);
+        arguments.push_back(logOutput);
+    }
     QByteArray option("-input");
     QByteArray path(input);
     arguments.push_back(option.data());

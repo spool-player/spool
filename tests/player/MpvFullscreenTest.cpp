@@ -108,15 +108,21 @@ SPOOL_TEST_MAIN("mpv-video-item-fullscreen")
             // The VO's 200 ms timeout must never become the GUI's fullscreen
             // latency. Swap timing is evidence, not a compositor speed promise.
             responsive &= callMs < 150.0;
-            require(waitUntil([&] {
+            const bool presented = waitUntil([&] {
                 // Wayland client decorations can alter the restored content
                 // size. Require its configured frame, not a guessed border size.
                 const bool configured = entering ? window.width() == fullscreenWidth
                                                  : window.width() > 0 && window.width() < fullscreenWidth;
                 return configured && window.fullScreen() == entering && swaps.load() > previousSwaps
                     && swappedWidth.load() == window.width();
-            }),
-                "fullscreen transition presents a frame at the configured size");
+            });
+            if (!presented)
+                std::fprintf(stderr,
+                    "fullscreen predicate: entering=%d actual_full=%d width=%d full_width=%d swaps=%d previous=%d "
+                    "swapped_width=%d exposed=%d visibility=%d\n",
+                    entering, window.fullScreen(), window.width(), fullscreenWidth, swaps.load(), previousSwaps,
+                    swappedWidth.load(), window.isExposed(), int(window.visibility()));
+            require(presented, "fullscreen transition presents a frame at the configured size");
             std::fprintf(stderr, "fullscreen: api=%s state=%s direction=%s call_ms=%.3f swap_ms=%.3f\n",
                 vulkan ? "Vulkan" : "OpenGL", state, entering ? "enter" : "exit", callMs, timer.nsecsElapsed() / 1e6);
             processFor(100);

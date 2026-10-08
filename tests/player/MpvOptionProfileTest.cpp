@@ -318,7 +318,17 @@ SPOOL_TEST_MAIN("mpv-option-profile")
     const auto desktopAuto = profileOptions(MpvConfigPolicy {}, MpvOptionProfile::Platform::Desktop,
         QStringLiteral("auto"), QByteArrayLiteral("/tmp/mpv.log"));
     require(valueFor(desktopAuto, "ao").isEmpty(), "automatic desktop audio should leave output probing to mpv");
-#if defined(Q_OS_LINUX)
+#if defined(Q_OS_ANDROID)
+    // Android is also Q_OS_LINUX, but its settings policy permits only auto.
+    // Exercise the actual Android output profile instead of desktop devices.
+    for (const QString& mode :
+        { QStringLiteral("auto"), QStringLiteral("pipewire"), QStringLiteral("pulse"), QStringLiteral("alsa") }) {
+        const auto androidAudio = profileOptions(
+            MpvConfigPolicy {}, MpvOptionProfile::Platform::Android, mode, QByteArrayLiteral("/tmp/mpv.log"));
+        require(valueFor(androidAudio, "ao") == "audiotrack,opensles,null",
+            "Android audio stays automatic even when given an unsupported desktop output");
+    }
+#elif defined(Q_OS_LINUX)
     const auto desktopPipeWire = profileOptions(MpvConfigPolicy {}, MpvOptionProfile::Platform::Desktop,
         QStringLiteral("pipewire"), QByteArrayLiteral("/tmp/mpv.log"));
     require(valueFor(desktopPipeWire, "ao") == "pipewire", "Linux PipeWire selection was not applied");

@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$ROOT/tools/lib/build-common.sh"
 source "$ROOT/tools/lib/manifest-sources.sh"
+MPV_SRC="${MPV_SRC:-$ROOT/mpv}"
 
 PHASE="${1:-all}"
 ABI="${ANDROID_ABI:-x86_64}"
@@ -338,14 +339,29 @@ build_mpv() {
   # and nothing meson tracks moves when they are rebuilt. A cached libmpv then
   # keeps the feature set it was linked against -- which is how an FFmpeg
   # without the https protocol survives a rebuild that was meant to add it.
-  # Key the library on the stamps those two builds leave behind.
+  # Include actual source changes and the compiler/recipe, not only the static
+  # dependencies. A matching git revision alone cannot bless stale dirty bytes.
   local stamp="$PREFIX/lib/.spool-mpv-dependencies"
-  local pin
-  pin="$(cat "$PREFIX/lib/pkgconfig/.spool-ffmpeg-source" "$PREFIX/lib/.spool-curl-configuration" 2>/dev/null || true)"
+  local source_pin pin
+  source_pin="$(
+    cd "$MPV_SRC" || exit
+    while IFS= read -r git_environment; do
+      unset "$git_environment"
+    done < <(git rev-parse --local-env-vars)
+    git rev-parse HEAD || exit
+    git diff --binary HEAD -- | sha256sum || exit
+    git ls-files --others --exclude-standard -z | xargs -0 -r sha256sum -- | sha256sum
+  )"
+  pin="$(
+    printf '%s\n' "$source_pin" "$ABI" "$API" "$ANDROID_NDK_ROOT"
+    sha256sum "${BASH_SOURCE[0]}" "$ROOT/tools/manifests/toolchain.json" \
+      "$ROOT/tools/manifests/mpv-native.json" "$ANDROID_NDK_ROOT/source.properties" || exit
+    cat "$PREFIX/lib/pkgconfig/.spool-ffmpeg-source" "$PREFIX/lib/.spool-curl-configuration"
+  )"
   [[ -f "$PREFIX/lib/libmpv.so" && -f "$stamp" && "$(<"$stamp")" == "$pin" ]] && return
   local build="$BUILD_ROOT/mpv"
   rm -rf "$build"
-  meson setup "$build" "$ROOT/mpv" \
+  meson setup "$build" "$MPV_SRC" \
     --cross-file "$CROSS_FILE" --prefix "$PREFIX" --default-library shared \
     -Dcplayer=false -Dlibmpv=true -Dbuild-date=false -Dtests=false \
     -Dlua=lua -Djavascript=disabled -Dmanpage-build=disabled \

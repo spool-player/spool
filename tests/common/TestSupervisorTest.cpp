@@ -185,6 +185,9 @@ SPOOL_TEST_MAIN("test-supervisor")
     QTemporaryDir temporary;
     require(temporary.isValid(), "private supervisor regression directory");
     const QString path = temporary.filePath(QStringLiteral("results.json"));
+#ifdef Q_OS_UNIX
+    int memoryFaultSignal = 0;
+#endif
     for (const auto& selector :
         { "fixture-crash", "fixture-access-violation", "fixture-forward-crash", "fixture-exit-three" }) {
         QProcess process;
@@ -203,10 +206,17 @@ SPOOL_TEST_MAIN("test-supervisor")
                     == (QString::fromLatin1(selector) == QStringLiteral("fixture-crash") ? 0xC0000025u : 0xC0000005u),
                 "Windows retains actual failing NTSTATUS for abort and memory access violation");
 #elif defined(Q_OS_UNIX)
-        else
-            require(process.exitCode()
-                    == (QString::fromLatin1(selector) == QStringLiteral("fixture-crash") ? SIGABRT : SIGSEGV),
-                "selector retains its actual terminating signal, including a forwarded grandchild crash");
+        else if (QString::fromLatin1(selector) == QStringLiteral("fixture-crash")) {
+            require(process.exitCode() == SIGABRT, "abort retains its actual terminating signal");
+        } else if (QString::fromLatin1(selector) == QStringLiteral("fixture-access-violation")) {
+            memoryFaultSignal = process.exitCode();
+            // Darwin maps a protected mapped page to SIGBUS; Linux uses SIGSEGV.
+            require(memoryFaultSignal == SIGSEGV || memoryFaultSignal == SIGBUS,
+                "protected memory access is an actual native memory-fault signal");
+        } else {
+            require(memoryFaultSignal > 0 && process.exitCode() == memoryFaultSignal,
+                "forwarded grandchild crash retains the actual observed memory-fault signal");
+        }
 #endif
     }
     require(run(path) == 1, "normal failure and crash aggregate to failure");
@@ -216,6 +226,14 @@ SPOOL_TEST_MAIN("test-supervisor")
     const auto rows = first.value(QStringLiteral("results")).toObject();
     require(rows.size() == 8, "all selectors retain terminal results despite earlier failures");
     require(status(rows, QStringLiteral("fixture-fail")) == QStringLiteral("failed"), "normal failure retained");
+    const QString firstFailureLog
+        = rows.value(QStringLiteral("fixture-fail")).toObject().value(QStringLiteral("log")).toString();
+    QFile firstFailure(firstFailureLog);
+    require(firstFailure.open(QIODevice::ReadOnly), "original failing selector retains its diagnostic output");
+    const QByteArray firstFailureOutput = firstFailure.readAll();
+    firstFailure.close();
+    require(firstFailureOutput.trimmed() == QByteArray("fixture-fail: deliberate failure"),
+        "original selector diagnostic identifies its deliberate failure");
     require(status(rows, QStringLiteral("fixture-crash")) == QStringLiteral("crashed"), "OS crash retained");
     require(status(rows, QStringLiteral("fixture-access-violation")) == QStringLiteral("crashed"),
         "real memory fault retained");
@@ -264,12 +282,12 @@ SPOOL_TEST_MAIN("test-supervisor")
     const auto failures
         = retried.value(QStringLiteral("fixture-fail")).toObject().value(QStringLiteral("attempts")).toArray();
     const QString originalLog = failures[0].toObject().value(QStringLiteral("log")).toString();
-    require(!originalLog.isEmpty() && originalLog != failures[1].toObject().value(QStringLiteral("log")).toString(),
+    require(
+        originalLog == firstFailureLog && originalLog != failures[1].toObject().value(QStringLiteral("log")).toString(),
         "each retry has its own diagnostic log");
     QFile originalFailure(originalLog);
-    require(originalFailure.open(QIODevice::ReadOnly)
-            && originalFailure.readAll() == QByteArray("fixture-fail: deliberate failure\n"),
-        "retry preserves original failure output as well as its result");
+    require(originalFailure.open(QIODevice::ReadOnly) && originalFailure.readAll() == firstFailureOutput,
+        "retry preserves original failure output byte-for-byte as well as its result");
     for (const auto& selector : { "fixture-crash", "fixture-access-violation", "fixture-forward-crash" })
         require(
             retried.value(QString::fromLatin1(selector)).toObject().value(QStringLiteral("attempts")).toArray().size()

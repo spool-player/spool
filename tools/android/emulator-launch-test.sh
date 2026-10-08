@@ -35,15 +35,22 @@ ADB="$ANDROID_HOME/platform-tools/adb"
 for test_apk in "$TEST_APK" "$E2E_APK" "$RELEASE_APK"; do
   [[ -f "$test_apk" ]] || { echo "error: required APK missing: $test_apk" >&2; exit 1; }
 done
+host_build="${SPOOL_DEVICE_HOST_BUILD_DIR:-$ROOT/build/linux-release/app}"
 if [[ -z "${SPOOL_DEVICE_HOST_E2E:-}" ]]; then
-  host_build="${SPOOL_DEVICE_HOST_BUILD_DIR:-$ROOT/build/linux-release/app}"
   [[ -f "$host_build/native-spool-e2e-path.txt" ]] || {
     echo 'error: build the native host journey controller with tools/build-linux-release.sh first' >&2
     exit 1
   }
   read -r SPOOL_DEVICE_HOST_E2E <"$host_build/native-spool-e2e-path.txt"
 fi
-export SPOOL_DEVICE_HOST_E2E
+if [[ -z "${SPOOL_E2E_SPOOLET:-}" ]]; then
+  [[ -f "$host_build/native-spoolet-path.txt" ]] || {
+    echo 'error: build the matching native spoolet with tools/build-linux-release.sh first' >&2
+    exit 1
+  }
+  read -r SPOOL_E2E_SPOOLET <"$host_build/native-spoolet-path.txt"
+fi
+export SPOOL_DEVICE_HOST_E2E SPOOL_E2E_SPOOLET
 export SPOOL_E2E_ISOLATED_DEVICE=1
 
 # Realize the emulator and system image before the adb registration deadline.

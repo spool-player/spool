@@ -250,6 +250,12 @@ SPOOL_TEST_MAIN("mpv-video-item")
     QSurfaceFormat::setDefaultFormat(format);
 #endif
     QGuiApplication app(argc, argv);
+    const QDir fonts(QStringLiteral(TEST_SOURCE_DIR "/qml/fonts"));
+    if (!fonts.exists()) {
+        std::fprintf(stderr, "shipped OSD font directory is missing\n");
+        return 1;
+    }
+    const QByteArray osdFonts = fonts.absolutePath().toUtf8();
 
     QTemporaryFile video(QDir::tempPath() + QStringLiteral("/mpv-video-item-XXXXXX.mkv"));
     if (!writeVideo(video)) {
@@ -273,13 +279,16 @@ SPOOL_TEST_MAIN("mpv-video-item")
     fitSurface();
 #ifdef Q_OS_WIN
     std::atomic_bool cpuOpenGLProven { false };
-    QObject::connect(&window, &QQuickWindow::afterRendering, &videoItem, [&] {
-        if (auto *context = QOpenGLContext::currentContext()) {
-            const auto *renderer = context->functions()->glGetString(GL_RENDERER);
-            if (renderer && QByteArray(reinterpret_cast<const char *>(renderer)).toLower().contains("llvmpipe"))
-                cpuOpenGLProven.store(true);
-        }
-    }, Qt::DirectConnection);
+    QObject::connect(
+        &window, &QQuickWindow::afterRendering, &videoItem,
+        [&] {
+            if (auto *context = QOpenGLContext::currentContext()) {
+                const auto *renderer = context->functions()->glGetString(GL_RENDERER);
+                if (renderer && QByteArray(reinterpret_cast<const char *>(renderer)).toLower().contains("llvmpipe"))
+                    cpuOpenGLProven.store(true);
+            }
+        },
+        Qt::DirectConnection);
 #endif
 #if SPOOL_MPV_ITEM_RHI
     QObject::connect(
@@ -358,7 +367,9 @@ SPOOL_TEST_MAIN("mpv-video-item")
         if (!handle || mpv_set_option_string(handle, "terminal", verbose ? "yes" : "no") < 0
             || mpv_set_option_string(handle, "vo", "libmpv") < 0 || mpv_set_option_string(handle, "hwdec", "no") < 0
             || mpv_set_option_string(handle, "osd-color", "#FFFFFFFF") < 0
-            || mpv_set_option_string(handle, "osd-font-size", "48") < 0 || mpv_initialize(handle) < 0) {
+            || mpv_set_option_string(handle, "osd-font-size", "48") < 0
+            || mpv_set_option_string(handle, "osd-fonts-dir", osdFonts.constData()) < 0
+            || mpv_set_option_string(handle, "osd-font", "IBM Plex Sans Var") < 0 || mpv_initialize(handle) < 0) {
             std::fprintf(stderr, "failed to initialize mpv\n");
             if (handle)
                 mpv_terminate_destroy(handle);
