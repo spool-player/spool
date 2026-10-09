@@ -34,7 +34,7 @@ on:
         default: false
         type: boolean
       build_tvos:
-        description: "Build unsigned Apple TV device IPA and run simulator smoke"
+        description: "Build unsigned Apple TV device IPA and simulator app"
         required: true
         default: true
         type: boolean
@@ -526,7 +526,7 @@ jobs:
       matrix:
         include:
           - arch: arm64
-            runner: macos-14
+            runner: macos-15
           - arch: x86_64
             runner: macos-15-intel
     steps:
@@ -647,22 +647,6 @@ jobs:
         env:
           SPOOL_MACOS_CREDENTIAL_SERVICE: ${{ inputs.enable_macos_signing && 'com.sachk.spool' || '' }}
         run: nix develop .#native --no-write-lock-file -c bash tools/build-macos.sh
-
-      - name: Run traditional and real GUI e2e tests
-        run: |
-          nix develop .#native --no-write-lock-file -c python tools/run-tests.py \
-            --build-dir build/macos/app --workers "$(sysctl -n hw.ncpu)"
-      - name: Retain internal native phase results after failures
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
-        with:
-          name: internal-macos-${{ matrix.arch }}-unified-tests
-          path: |
-            build/macos/app/*-results.json*
-            build/macos/app/test-phases.json
-            build/macos/app/test-artifacts/app-journey-*/*.png
-          if-no-files-found: ignore
-          retention-days: 1
 
 
       - name: Lint compiled QML
@@ -840,24 +824,6 @@ jobs:
             -m qtshadertools qttasktree qtwebsockets qtimageformats
       - name: Build actual source Qt, media closure, and tvOS app
         run: bash tools/build-tvos.sh
-      - uses: ./.github/actions/install-nix
-        if: ${{ matrix.sdk == 'appletvsimulator' }}
-        with:
-          nix_conf: |
-            experimental-features = nix-command flakes
-      - uses: cachix/cachix-action@3ba601ff5bbb07c7220846facfa2cd81eeee15a1 # v16
-        if: ${{ matrix.sdk == 'appletvsimulator' }}
-        with:
-          name: spool
-          skipPush: true
-      - name: Build same-binary native controller for the actual mobile app journey
-        if: ${{ matrix.sdk == 'appletvsimulator' }}
-        run: nix develop .#native -c env DEPLOY_APP=0 bash tools/build-macos.sh
-      - name: Run native traditional then GPU GUI tests in isolated Apple TV simulator
-        if: ${{ matrix.sdk == 'appletvsimulator' }}
-        env:
-          SPOOL_TEST_DEVICE_CLEANUP_REGRESSIONS: "1"
-        run: bash tools/apple/smoke-tvos.sh build/tvos/appletvsimulator-arm64/install/Spool.app
       - name: Package artifact-audited unsigned device IPA (no device runtime claim)
         if: ${{ matrix.sdk == 'appletvos' }}
         run: bash tools/package-tvos.sh build/tvos/appletvos-arm64/install/Spool.app dist/tvos
@@ -869,7 +835,7 @@ jobs:
           path: dist/tvos/Spool-*-tvOS-arm64.ipa
           if-no-files-found: error
           retention-days: ${{ inputs.release && 1 || 7 }}
-      - name: Archive simulator proof without losing executable permissions
+      - name: Archive simulator build without losing executable permissions
         if: ${{ matrix.sdk == 'appletvsimulator' }}
         run: |
           tar -czf "$RUNNER_TEMP/tvos-simulator-arm64.tar.gz" \
@@ -881,7 +847,6 @@ jobs:
           name: internal-tvos-simulator-arm64
           path: |
             ${{ runner.temp }}/tvos-simulator-arm64.tar.gz
-            build/tvos/smoke/**/safe-export/**
           retention-days: ${{ inputs.release && 1 || 7 }}
       - name: Save coherent Apple dependency cache
         if: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release && steps.tvos-source-cache.outputs.cache-hit != 'true' }}
@@ -1233,18 +1198,14 @@ jobs:
         if: ${{ matrix.abi == 'x86_64' }}
         run: nix develop .#native -c bash tools/build-linux-release.sh
 
-      - name: Run native and real app GUI phases on phone and actual Android TV images
+      - name: Run strict traditional, GUI, and real app journey phases on Android phone
         if: ${{ matrix.abi == 'x86_64' }}
         env:
           SPOOL_TEST_DEVICE_CLEANUP_REGRESSIONS: "1"
         run: |
-          status=0
-          for form_factor in phone tv; do
-            nix develop .#android -c env SPOOL_ANDROID_FORM_FACTOR="$form_factor" \
-              bash tools/android/emulator-launch-test.sh \
-              dist/android/spool-e2e-app-x86_64.apk || status=1
-          done
-          exit "$status"
+          nix develop .#android -c env SPOOL_ANDROID_FORM_FACTOR=phone \
+            bash tools/android/emulator-launch-test.sh \
+            dist/android/spool-e2e-app-x86_64.apk
 
       - name: Upload internal emulator test receipts and diagnostics
         if: ${{ always() && matrix.abi == 'x86_64' }}

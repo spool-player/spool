@@ -59,11 +59,29 @@ nix build --no-link "$ROOT#$emulator"
 emulator_work="$(mktemp -d -t "spool-android-$SPOOL_ANDROID_FORM_FACTOR.XXXXXXXX")"
 
 cleanup() {
+  if [[ "${angle_configured:-0}" == 1 ]]; then
+    for setting in pkgs values; do
+      local previous="$angle_packages_before"
+      [[ "$setting" == pkgs ]] || previous="$angle_values_before"
+      if [[ "$previous" == null ]]; then
+        "$ADB" -s "$ANDROID_SERIAL" shell settings delete global "angle_gl_driver_selection_$setting" >/dev/null 2>&1 || true
+      else
+        "$ADB" -s "$ANDROID_SERIAL" shell settings put global "angle_gl_driver_selection_$setting" "$previous" >/dev/null 2>&1 || true
+      fi
+    done
+  fi
   if [[ -n "${ANDROID_SERIAL:-}" ]]; then
-    "$ADB" emu kill >/dev/null 2>&1 || true
+    "$ADB" -s "$ANDROID_SERIAL" emu kill >/dev/null 2>&1 || true
   fi
   if [[ -n "${launcher_pid:-}" ]]; then
-    kill "$launcher_pid" 2>/dev/null || true
+    local deadline=$((SECONDS + 15))
+    while kill -0 -- "-$launcher_pid" 2>/dev/null && ((SECONDS < deadline)); do sleep 0.1; done
+    if kill -0 -- "-$launcher_pid" 2>/dev/null; then
+      kill -TERM -- "-$launcher_pid" 2>/dev/null || true
+      deadline=$((SECONDS + 5))
+      while kill -0 -- "-$launcher_pid" 2>/dev/null && ((SECONDS < deadline)); do sleep 0.1; done
+      kill -KILL -- "-$launcher_pid" 2>/dev/null || true
+    fi
     wait "$launcher_pid" 2>/dev/null || true
   fi
   rm -rf "$emulator_work"
@@ -72,7 +90,7 @@ trap cleanup EXIT
 
 mkdir -p "$(dirname "$EMULATOR_LOG")" "$ARTIFACT_DIR"
 : >"$EMULATOR_LOG"
-TMPDIR="$emulator_work" nix run "$ROOT#$emulator" >"$EMULATOR_LOG" 2>&1 &
+TMPDIR="$emulator_work" setsid nix run "$ROOT#$emulator" >"$EMULATOR_LOG" 2>&1 &
 launcher_pid=$!
 for _ in $(seq 1 30); do
   # Nix logs the port it allocated. Never attach to somebody else's emulator.
@@ -114,6 +132,20 @@ expected_tv=0
   exit 1
 }
 export SPOOL_E2E_ANDROID_TV
+
+# The guest emulator GL translator advertises GLES 3.1 but rejects valid SSBO
+# operations. Use the image's supported guest ANGLE, not a patched Qt/decoder or
+# a software Qt scenegraph. These settings belong only to this isolated device.
+"$ADB" -s "$ANDROID_SERIAL" shell 'test -f /system/lib64/libGLESv2_angle.so || test -f /system/lib/libGLESv2_angle.so' || {
+  echo 'error: the emulator image does not provide the required guest ANGLE driver' >&2
+  exit 1
+}
+angle_packages_before="$("$ADB" -s "$ANDROID_SERIAL" shell settings get global angle_gl_driver_selection_pkgs | tr -d '\r')"
+angle_values_before="$("$ADB" -s "$ANDROID_SERIAL" shell settings get global angle_gl_driver_selection_values | tr -d '\r')"
+angle_configured=1
+"$ADB" -s "$ANDROID_SERIAL" shell settings put global angle_gl_driver_selection_pkgs \
+  com.sachk.spool.tests,com.sachk.spool.e2e_tests,com.sachk.spool
+"$ADB" -s "$ANDROID_SERIAL" shell settings put global angle_gl_driver_selection_values angle,angle,angle
 
 # Resolves through each launcher category in turn. One package now has to
 # answer to both, so a manifest that lost either entry point fails here rather

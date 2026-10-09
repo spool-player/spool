@@ -721,7 +721,7 @@ public:
                 for (int y = 0; y < image.height(); ++y) {
                     auto *pixels = image.scanLine(y);
                     for (int x = 0; x < image.width(); ++x)
-                        pixels[x] = pixels[x] > 96 ? 0 : 255;
+                        pixels[x] = pixels[x] > 64 ? 0 : 255;
                 }
             }
             inputPath += highContrast ? QStringLiteral(".ocr-contrast.png")

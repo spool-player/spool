@@ -197,7 +197,7 @@ private:
             state = { { "native",
                           QVariantMap { { "audioLanguage", "eng" }, { "audioMode", "Default" },
                               { "subtitleLanguage", "eng" }, { "subtitleMode", "Default" } } },
-                { "writes", 0 },
+                { "writes", 0 }, { "remoteTargetRequests", 0 },
                 { "queue",
                     QVariantList { QVariantMap { { "id", "movie" }, { "title", "Film" }, { "type", "Movie" },
                                        { "entryId", "one" } },
@@ -218,11 +218,12 @@ private:
         else if (operation == "dataWrite") {
             state["document"] = args.value("value");
             state["writes"] = state["writes"].toInt() + 1;
-        } else if (operation == "remoteTargets")
+        } else if (operation == "remoteTargets") {
+            state["remoteTargetRequests"] = state["remoteTargetRequests"].toInt() + 1;
             return { { "targets",
                 QVariantList { QVariantMap { { "id", "tv" }, { "name", "Loopback TV" },
                     { "commands", QVariantList { "pause", "queueRemove" } }, { "queueEditing", "in-place" } } } } };
-        else if (operation == "remoteState")
+        } else if (operation == "remoteState")
             return { { "state", "playing" }, { "commands", QVariantList { "pause", "queueRemove" } },
                 { "positionTicks", "100000000" }, { "runtimeTicks", "1000000000" },
                 { "queueRevision", QString::number(commands) } };

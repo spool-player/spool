@@ -36,7 +36,7 @@ diff --git a/src/plugins/platforms/cocoa/qcocoawindow.mm b/src/plugins/platforms
      if (window()->isVisible())
          applyWindowState(state); // Window state set for hidden windows take effect when show() is called
  }
-@@ -955,6 +964,15 @@
+@@ -955,6 +964,18 @@
      setWindowFlags(window()->flags());
 
      handleWindowStateChanged();
@@ -47,6 +47,9 @@ diff --git a/src/plugins/platforms/cocoa/qcocoawindow.mm b/src/plugins/platforms
 +    if (m_pendingFullScreenState) {
 +        const auto requestedState = *m_pendingFullScreenState;
 +        m_pendingFullScreenState.reset();
++        // QWindow always delegates this setter to the platform window, even
++        // for the same logical state. Also retain the requested destination
++        // so windowDidExitFullScreen can finish a maximized/minimized request.
 +        window()->setWindowStates(requestedState);
 +    }
  }
