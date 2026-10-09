@@ -19,6 +19,12 @@ SPOOL_SIGNING_ROOT="${SPOOL_SIGNING_ROOT:-$ROOT}"
 SPOOL_ANDROID_SIGNING_CREDENTIALS="${SPOOL_ANDROID_SIGNING_CREDENTIALS:-${XDG_DATA_HOME:-$HOME/.local/share}/spool/signing/android-upload-credentials.json}"
 
 prepare_keystore() {
+  # androiddeployqt's Gradle launcher honors JAVA_HOME, but the SDK's
+  # apksigner executes `java` from PATH. Use the same selected JDK for both,
+  # including incremental packaging launched outside the full Android shell.
+  if [[ -n "${JAVA_HOME:-}" ]]; then
+    export PATH="$JAVA_HOME/bin:$PATH"
+  fi
   if [[ -z "${SPOOL_ANDROID_KEYSTORE_PATH:-}" && -f "$SPOOL_ANDROID_SIGNING_CREDENTIALS" ]]; then
     printf 'signing with the key named by %s\n' "$SPOOL_ANDROID_SIGNING_CREDENTIALS"
     local field

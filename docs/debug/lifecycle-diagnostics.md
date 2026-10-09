@@ -56,18 +56,18 @@ The `mpv-video-item-fullscreen` and `mpv-video-item-fullscreen-vulkan` consumer
 tests exercise native enter/exit while idle, playing, paused, and stopped, plus
 rapid requests and custom mpv bindings. Each transition prints the synchronous
 call time and time to a resized swapped frame. They require a real graphics
-surface and follow the existing `mpv-video-item*` GPU-test exclusion in headless
-CI; `offscreen` alone does not verify compositor configure/presentation behavior.
+surface and run in the unified GUI e2e phase on an isolated Weston/Xvfb display
+with Mesa CPU GL/Vulkan drivers; `offscreen` alone does not verify compositor
+configure/presentation behavior.
 
-To measure without opening a window on the user's desktop, start an isolated
-headless compositor (for example `nix-shell -p weston --run
-'weston --backend=headless --renderer=gl --width=1920 --height=1080
---socket=spool-fullscreen-test --no-config --idle-time=0'`), then run the built
-tests from another shell:
+To measure without opening a window on the user's desktop, use the same private
+compositor wrapper as CI:
 
 ```sh
-nix develop .#native -c env QT_QPA_PLATFORM=wayland WAYLAND_DISPLAY=spool-fullscreen-test \
-  ctest --test-dir build/linux-dev/app -R '^mpv-video-item-fullscreen' -V
+nix develop .#native -c bash tools/test-gpu-session.sh \
+  build/linux-dev/app/spool-e2e-tests --child mpv-video-item-fullscreen
+nix develop .#native -c bash tools/test-gpu-session.sh \
+  build/linux-dev/app/spool-e2e-tests --child mpv-video-item-fullscreen-vulkan
 ```
 
 A headless compositor exercises actual Wayland configuration, swapchain resize,

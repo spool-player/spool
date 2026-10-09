@@ -383,13 +383,15 @@ qt_add_executable(spool
     src/app/GraphicsStartup.h
 )
 
-if(NOT ANDROID AND NOT SPOOL_WEBOS AND NOT SPOOL_APPLE_MOBILE)
+if(NOT SPOOL_WEBOS)
     target_sources(spool PRIVATE
         src/automation/LocalCommandServer.cpp
         src/automation/LocalCommandServer.h
         src/automation/LocalControlProtocol.cpp
         src/automation/LocalControlProtocol.h
     )
+endif()
+if(NOT ANDROID AND NOT SPOOL_WEBOS AND NOT SPOOL_APPLE_MOBILE)
     add_executable(spoolet
         src/automation/SpooletMain.cpp
         src/automation/LocalControlProtocol.cpp
@@ -801,11 +803,6 @@ if(SPOOL_WEBOS)
             -exclude qml/pages/DesktopFolderDialog.qml
     )
 endif()
-if(TARGET spool-tvos-playback-smoke)
-    get_target_property(SPOOL_APPLE_SMOKE_SCAN_ARGS spool QT_QML_IMPORT_SCANNER_EXTRA_ARGS)
-    set_property(TARGET spool-tvos-playback-smoke PROPERTY
-        QT_QML_IMPORT_SCANNER_EXTRA_ARGS ${SPOOL_APPLE_SMOKE_SCAN_ARGS})
-endif()
 
 
 get_target_property(SPOOL_INCLUDE_DIRS spool INCLUDE_DIRECTORIES)
@@ -852,22 +849,9 @@ target_link_libraries(spool PRIVATE
 )
 
 
-if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
-    if(TARGET spoolet)
-        find_package(Threads REQUIRED)
-        add_executable(spoolet-protocol-tests
-            tests/automation/LocalControlProtocolTest.cpp
-            src/automation/LocalControlProtocol.cpp
-        )
-        target_include_directories(spoolet-protocol-tests PRIVATE src)
-        target_link_libraries(spoolet-protocol-tests PRIVATE Qt6::Core Qt6::Network Threads::Threads)
-        add_test(NAME spoolet-protocol COMMAND spoolet-protocol-tests)
-    endif()
-    # Tests are grouped into one executable per directory. Each test keeps its
-    # own ctest entry; tests/TestRunner.cpp dispatches on the selector passed
-    # by add_test(). One executable per test used to cost more to build on
-    # Windows than the application itself, because every one of them repeated a
-    # whole-program-optimized link against all of spool-core.
+if(BUILD_TESTING AND NOT SPOOL_WEBOS)
+    # Registry sources are shared by host binaries and real emulator bundles.
+    # Each phase links once; selectors run in isolated instances of that binary.
     set(SPOOL_TEST_GROUPS app cache common diagnostics platform player providers)
 
     set(SPOOL_TESTS_app
@@ -899,6 +883,8 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         tls-trust tests/common/TlsTrustTest.cpp
         browse-descriptor tests/common/BrowseDescriptorTest.cpp
         meta-json tests/common/MetaJsonTest.cpp
+        bounded-zstd tests/common/BoundedZstdTest.cpp
+        test-supervisor tests/common/TestSupervisorTest.cpp
     )
     set(SPOOL_TESTS_diagnostics
         input-latency-monitor tests/diagnostics/InputLatencyMonitorTest.cpp
@@ -948,28 +934,17 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         play-queue-outline-model tests/player/PlayQueueOutlineModelTest.cpp
         series-audio-selection tests/player/SeriesAudioSelectionTest.cpp
     )
-    # Both of these assert nothing away from Linux: the memory policy parses
-    # /proc and cgroup text, and the mpv item needs a real GL surface.
-    if(UNIX AND NOT APPLE)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         list(APPEND SPOOL_TESTS_platform
             linux-memory-policy tests/platform/LinuxMemoryPolicyTest.cpp
         )
-        list(APPEND SPOOL_TESTS_player
-            mpv-video-item tests/player/MpvVideoItemTest.cpp
-        )
-        # The same check over the Vulkan scene graph, which is the one an HDR
-        # swapchain can be asked for. Its own entry rather than a loop inside
-        # the test, so a machine with no Vulkan driver fails only this one.
-        list(APPEND SPOOL_TESTS_player
-            mpv-video-item-vulkan tests/player/MpvVideoItemTest.cpp
-            mpv-video-item-fullscreen tests/player/MpvFullscreenTest.cpp
-            mpv-video-item-fullscreen-vulkan tests/player/MpvFullscreenTest.cpp
-        )
+    endif()
+    set(SPOOL_TEST_RENDER_BACKEND "all" CACHE STRING "GPU tests: all or opengl")
+    set_property(CACHE SPOOL_TEST_RENDER_BACKEND PROPERTY STRINGS all opengl)
+    if(NOT SPOOL_TEST_RENDER_BACKEND MATCHES "^(all|opengl)$")
+        message(FATAL_ERROR "SPOOL_TEST_RENDER_BACKEND must be all or opengl")
     endif()
 
-    # WebOSAudioSyncPolicy is a webOS platform source, so desktop builds of
-    # spool-core do not carry it; the player group compiles it directly.
-    set(SPOOL_TEST_EXTRA_SOURCES_player src/platform/webos/WebOSAudioSyncPolicy.cpp)
 
     get_target_property(SPOOL_QT_CORE_LOCATION Qt6::Core IMPORTED_LOCATION_RELEASE)
     if(NOT SPOOL_QT_CORE_LOCATION)
@@ -979,67 +954,92 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     # mutable fixture packages. Keep every test process independent of the
     # persistent QML/JavaScript cache, not only the provider test group.
     set(SPOOL_TEST_ENV "QML_DISABLE_DISK_CACHE=1")
-    if(SPOOL_QT_CORE_LOCATION)
-        get_filename_component(SPOOL_QT_LIB_DIR "${SPOOL_QT_CORE_LOCATION}" DIRECTORY)
-        get_filename_component(SPOOL_QT_PREFIX "${SPOOL_QT_LIB_DIR}" DIRECTORY)
-        set(SPOOL_QT_PLUGIN_DIR "${SPOOL_QT_PREFIX}/lib/qt-6/plugins")
-        if(EXISTS "${SPOOL_QT_PLUGIN_DIR}")
-            list(APPEND SPOOL_TEST_ENV "QT_PLUGIN_PATH=${SPOOL_QT_PLUGIN_DIR}")
-        endif()
+    # Resolve the actual configured Qt packages, not a dylib's directory:
+    # macOS framework locations and Nix's split QML package differ from the
+    # ordinary Qt prefix layout. These are the same layouts the native launcher
+    # admits, pinned by the imported package configurations used in this build.
+    set(SPOOL_TEST_QML_DIRS "")
+    set(SPOOL_TEST_PLUGIN_DIRS "")
+    foreach(qt_package_dir IN ITEMS "${Qt6Core_DIR}" "${Qt6Qml_DIR}" "${Qt6Svg_DIR}")
+        get_filename_component(qt_package_prefix "${qt_package_dir}/../../.." ABSOLUTE)
+        foreach(qml_suffix IN ITEMS qml lib/qt-6/qml lib/qt6/qml)
+            if(IS_DIRECTORY "${qt_package_prefix}/${qml_suffix}")
+                list(APPEND SPOOL_TEST_QML_DIRS "${qt_package_prefix}/${qml_suffix}")
+            endif()
+        endforeach()
+        foreach(plugin_suffix IN ITEMS plugins lib/qt-6/plugins lib/qt6/plugins)
+            if(IS_DIRECTORY "${qt_package_prefix}/${plugin_suffix}")
+                list(APPEND SPOOL_TEST_PLUGIN_DIRS "${qt_package_prefix}/${plugin_suffix}")
+            endif()
+        endforeach()
+    endforeach()
+    list(REMOVE_DUPLICATES SPOOL_TEST_QML_DIRS)
+    list(REMOVE_DUPLICATES SPOOL_TEST_PLUGIN_DIRS)
+    if(WIN32)
+        set(qt_runtime_separator "\\;")
+    else()
+        set(qt_runtime_separator ":")
     endif()
+    if(SPOOL_TEST_QML_DIRS)
+        list(JOIN SPOOL_TEST_QML_DIRS "${qt_runtime_separator}" qt_test_qml_paths)
+        list(APPEND SPOOL_TEST_ENV "QML2_IMPORT_PATH=${qt_test_qml_paths}" "QML_IMPORT_PATH=${qt_test_qml_paths}")
+    endif()
+    if(SPOOL_TEST_PLUGIN_DIRS)
+        list(JOIN SPOOL_TEST_PLUGIN_DIRS "${qt_runtime_separator}" qt_test_plugin_paths)
+        list(APPEND SPOOL_TEST_ENV "QT_PLUGIN_PATH=${qt_test_plugin_paths}")
+    endif()
+    set(SPOOL_TRADITIONAL_TEST_SOURCES src/platform/webos/WebOSAudioSyncPolicy.cpp)
     foreach(test_group IN LISTS SPOOL_TEST_GROUPS)
-        set(group_target "${test_group}-tests")
-        set(group_sources tests/TestRunner.cpp ${SPOOL_TEST_EXTRA_SOURCES_${test_group}})
-        set(group_names)
         list(LENGTH SPOOL_TESTS_${test_group} group_entry_count)
         math(EXPR group_entry_last "${group_entry_count} - 1")
         foreach(test_index RANGE 0 ${group_entry_last} 2)
             math(EXPR source_index "${test_index} + 1")
-            list(GET SPOOL_TESTS_${test_group} ${test_index} test_name)
             list(GET SPOOL_TESTS_${test_group} ${source_index} test_source)
-            list(APPEND group_sources "${test_source}")
-            list(APPEND group_names "${test_name}")
-        endforeach()
-
-        add_executable(${group_target} ${group_sources})
-        target_include_directories(${group_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
-        target_compile_definitions(${group_target} PRIVATE TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
-        # No test declares Q_OBJECT, and none of them ships, so skip both the
-        # per-target autogen pass and whole-program optimization.
-        set_target_properties(${group_target} PROPERTIES
-            AUTOMOC OFF
-            AUTOUIC OFF
-            AUTORCC OFF
-            INTERPROCEDURAL_OPTIMIZATION OFF
-            INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF
-            INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL OFF)
-        target_link_libraries(${group_target} PRIVATE spool-core)
-
-        foreach(test_name IN LISTS group_names)
-            add_test(NAME ${test_name} COMMAND ${group_target} ${test_name})
-            if(SPOOL_TEST_ENV)
-                set_tests_properties(${test_name} PROPERTIES ENVIRONMENT "${SPOOL_TEST_ENV}")
-            endif()
+            list(APPEND SPOOL_TRADITIONAL_TEST_SOURCES "${test_source}")
         endforeach()
     endforeach()
 
-
-    add_test(NAME provider-media-page-interpreter COMMAND providers-tests provider-media-page)
-    set_tests_properties(provider-media-page-interpreter PROPERTIES ENVIRONMENT "QV4_FORCE_INTERPRETER=1;${SPOOL_TEST_ENV}")
-    target_sources(providers-tests PRIVATE ${SPOOL_PROVIDER_BUNDLE_SOURCES})
+    if(ANDROID OR SPOOL_APPLE_MOBILE)
+        include(tests/platform/MobileTestBundles.cmake)
+        spool_add_mobile_test_bundles()
+        file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/spool-device-tests.json" "{\"format\":1}\n")
+        if(ANDROID)
+            set(SPOOL_TEST_DEVICE_PLATFORM android)
+            set(SPOOL_TEST_DEVICE_ARTIFACTS "${CMAKE_CURRENT_SOURCE_DIR}/build/android/launch-test")
+        else()
+            set(SPOOL_TEST_DEVICE_PLATFORM tvos)
+            set(SPOOL_TEST_DEVICE_ARTIFACTS "${CMAKE_CURRENT_SOURCE_DIR}/build/tvos/smoke")
+        endif()
+        foreach(phase IN ITEMS traditional e2e)
+            add_test(NAME "${phase}-native-device"
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/run-device-tests.py"
+                    --platform "${SPOOL_TEST_DEVICE_PLATFORM}" --phase "${phase}"
+                    --artifact-dir "${SPOOL_TEST_DEVICE_ARTIFACTS}")
+            set_tests_properties("${phase}-native-device" PROPERTIES LABELS "${phase}" TIMEOUT 0)
+        endforeach()
+    else()
+    find_package(Threads REQUIRED)
+    find_package(Qt6 REQUIRED COMPONENTS QuickTest)
+    get_target_property(SPOOL_APP_SOURCES spool SOURCES)
+    set(SPOOL_TEST_PLATFORM_SOURCES ${SPOOL_APP_SOURCES})
+    list(FILTER SPOOL_TEST_PLATFORM_SOURCES INCLUDE REGEX "/[A-Za-z]+PlatformCapabilities\\.cpp$")
+    add_executable(spool-tests tests/TestRunner.cpp tests/TestVariants.cpp ${SPOOL_TRADITIONAL_TEST_SOURCES})
+    target_include_directories(spool-tests PRIVATE tests src "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    target_compile_definitions(spool-tests PRIVATE TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+        SPOOL_TEST_RUNNER=1)
+    target_link_libraries(spool-tests PRIVATE spool-core Threads::Threads ${SPOOL_PROVIDER_BUNDLE_TARGET})
+    target_sources(spool-tests PRIVATE sdk/provider-contract-runner.cpp ${SPOOL_TEST_PLATFORM_SOURCES})
+    if(TARGET spoolet)
+        target_sources(spool-tests PRIVATE tests/automation/LocalControlProtocolTest.cpp
+            tests/automation/LocalControlAdmissionTest.cpp src/automation/LocalControlProtocol.cpp
+            src/automation/LocalCommandServer.cpp)
+    endif()
+    add_test(NAME traditional-native COMMAND spool-tests --run-all --results "${CMAKE_CURRENT_BINARY_DIR}/traditional-results.json")
+    set_tests_properties(traditional-native PROPERTIES LABELS traditional ENVIRONMENT "${SPOOL_TEST_ENV}" TIMEOUT 0)
     add_test(NAME provider-sdk-tool
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/provider_package_test.py")
     add_test(NAME local-provider-overrides
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/LocalProviderOverridesTest.py")
-    add_executable(provider-contract-runner sdk/provider-contract-runner.cpp)
-    target_link_libraries(provider-contract-runner PRIVATE Qt6::Core Qt6::Qml)
-    target_sources(provider-contract-runner PRIVATE ${SPOOL_PROVIDER_BUNDLE_SOURCES})
-    add_test(NAME bundled-jellyfin
-        COMMAND provider-contract-runner "${CMAKE_CURRENT_SOURCE_DIR}/tests/providers/fixtures/bundled-jellyfin.mjs")
-    add_test(NAME bundled-jellyfin-interpreter
-        COMMAND provider-contract-runner "${CMAKE_CURRENT_SOURCE_DIR}/tests/providers/fixtures/bundled-jellyfin.mjs")
-    set_tests_properties(bundled-jellyfin bundled-jellyfin-interpreter PROPERTIES ENVIRONMENT "QML_DISABLE_DISK_CACHE=1")
-    set_property(TEST bundled-jellyfin-interpreter APPEND PROPERTY ENVIRONMENT "QV4_FORCE_INTERPRETER=1")
     if(SPOOL_WEBOS)
         set(SPOOL_FFMPEG_AUDIT_PLATFORM webos)
     elseif(APPLE)
@@ -1092,19 +1092,10 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
             endif()
         endforeach()
         pkg_check_modules(FFMPEG_AUDIT REQUIRED IMPORTED_TARGET libavutil libavcodec libavformat libavfilter)
-        add_executable(ffmpeg-compliance-tests tests/media/FfmpegComplianceTest.cpp)
-        set_target_properties(ffmpeg-compliance-tests PROPERTIES
-            AUTOMOC OFF
-            AUTOUIC OFF
-            AUTORCC OFF
-            INTERPROCEDURAL_OPTIMIZATION OFF
-            INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF
-            INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL OFF)
-        target_include_directories(ffmpeg-compliance-tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
-        target_compile_definitions(ffmpeg-compliance-tests PRIVATE
+        target_sources(spool-tests PRIVATE tests/media/FfmpegComplianceTest.cpp)
+        target_compile_definitions(spool-tests PRIVATE
             TEST_MEDIA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/media/fixtures")
-        target_link_libraries(ffmpeg-compliance-tests PRIVATE PkgConfig::FFMPEG_AUDIT)
-        add_test(NAME ffmpeg-compliance COMMAND ffmpeg-compliance-tests)
+        target_link_libraries(spool-tests PRIVATE PkgConfig::FFMPEG_AUDIT)
     endif()
     add_test(NAME ffmpeg-capability-generator
         COMMAND "${Python3_EXECUTABLE}"
@@ -1135,9 +1126,39 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/RenderBenchmarkReportTest.py"
             "${CMAKE_CURRENT_SOURCE_DIR}/tools/compare-render-benchmark.py"
     )
+    add_test(NAME test-driver-ordering
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/TestDriverTest.py")
 
-    find_program(QMLTESTRUNNER_EXECUTABLE NAMES qmltestrunner)
-    if(QMLTESTRUNNER_EXECUTABLE)
+    set(SPOOL_E2E_SOURCES tests/TestRunner.cpp tests/QmlTestRunner.cpp tests/ExtensionIntegration.h
+        tests/ArtworkIntegration.h tests/player/MpvVideoItemTest.cpp tests/player/MpvFullscreenTest.cpp
+        tests/e2e/AppJourneyTest.cpp tests/e2e/JellyfinFixture.cpp)
+    if(APPLE AND NOT SPOOL_APPLE_MOBILE)
+        set_source_files_properties(tests/player/MpvFullscreenTest.cpp PROPERTIES LANGUAGE OBJCXX)
+    endif()
+    qt_add_executable(spool-e2e-tests ${SPOOL_E2E_SOURCES})
+    file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/native-spool-e2e-path.txt"
+        CONTENT "$<TARGET_FILE:spool-e2e-tests>\n")
+    file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/native-spoolet-path.txt"
+        CONTENT "$<TARGET_FILE:spoolet>\n")
+    target_include_directories(spool-e2e-tests PRIVATE tests src "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    target_compile_definitions(spool-e2e-tests PRIVATE TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+        SPOOL_E2E_APP="$<TARGET_FILE:spool>" SPOOL_E2E_SPOOLET="$<TARGET_FILE:spoolet>")
+    if(SPOOL_TEST_RENDER_BACKEND STREQUAL "opengl")
+        target_compile_definitions(spool-e2e-tests PRIVATE SPOOL_TEST_OPENGL_ONLY=1)
+    endif()
+    target_link_libraries(spool-e2e-tests PRIVATE spool-core Qt6::QuickTest)
+    add_dependencies(spool-e2e-tests spool spoolet)
+    # The journey launches the actual build product, with its shipped runtime
+    # fonts at the platform's normal application-root location.
+    if(WIN32)
+        set(SPOOL_E2E_FONT_DIR "$<TARGET_FILE_DIR:spool>/fonts")
+    else()
+        set(SPOOL_E2E_FONT_DIR "$<TARGET_FILE_DIR:spool>/../fonts")
+    endif()
+    add_custom_command(TARGET spool-e2e-tests POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/qml/fonts"
+            "${SPOOL_E2E_FONT_DIR}"
+        VERBATIM)
         set(SPOOL_QML_TESTS
             route-policy tests/qml/tst_RoutePolicy.qml
             key-router tests/qml/tst_KeyRouter.qml
@@ -1166,36 +1187,27 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
             list-scroll-bar tests/qml/tst_ListScrollBar.qml
             inline-slider tests/qml/tst_InlineSlider.qml
         )
-        # The subtitle panel test has never run on macOS; it was narrowed to
-        # Windows alone while chasing that, which silently dropped Linux too.
-        if(NOT APPLE)
-            list(APPEND SPOOL_QML_TESTS
-                subtitle-settings-panel tests/qml/tst_SubtitleSettingsPanel.qml
-            )
-        endif()
+        list(APPEND SPOOL_QML_TESTS
+            subtitle-settings-panel tests/qml/tst_SubtitleSettingsPanel.qml
+        )
 
-        # These tests instantiate production surfaces and primitives that need
-        # registered singletons or native items. Filesystem imports bypass the
-        # application's generated singleton qmldirs and native registrations.
-        find_package(Qt6 REQUIRED COMPONENTS QuickTest)
-        qt_add_executable(spool-qml-tests tests/QmlTestRunner.cpp tests/ExtensionIntegration.h tests/ArtworkIntegration.h)
-        target_compile_definitions(spool-qml-tests PRIVATE TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
-        target_link_libraries(spool-qml-tests PRIVATE spool-core Qt6::QuickTest)
+        # Register component and integration selectors inside the GUI binary.
+        list(APPEND SPOOL_QML_TESTS
+            extension-integration tests/qml/tst_ExtensionIntegration.qml
+            provider-forms tests/qml/tst_ProviderForms.qml
+            artwork-integration tests/qml/tst_ArtworkIntegration.qml)
         if(QT6_IS_SHARED_LIBS_BUILD)
-            set_property(TARGET spool-qml-tests PROPERTY QT_QML_MODULE_NO_IMPORT_SCAN TRUE)
+            set_property(TARGET spool-e2e-tests PROPERTY QT_QML_MODULE_NO_IMPORT_SCAN TRUE)
         else()
             get_target_property(SPOOL_TEST_SCAN_ARGS spool QT_QML_IMPORT_SCANNER_EXTRA_ARGS)
-            set_property(TARGET spool-qml-tests PROPERTY QT_QML_IMPORT_SCANNER_EXTRA_ARGS ${SPOOL_TEST_SCAN_ARGS})
+            set_property(TARGET spool-e2e-tests PROPERTY QT_QML_IMPORT_SCANNER_EXTRA_ARGS ${SPOOL_TEST_SCAN_ARGS})
         endif()
-        get_target_property(SPOOL_APP_SOURCES spool SOURCES)
-        set(SPOOL_TEST_PLATFORM_SOURCES ${SPOOL_APP_SOURCES})
-        list(FILTER SPOOL_TEST_PLATFORM_SOURCES INCLUDE REGEX "/[A-Za-z]+PlatformCapabilities\\.cpp$")
         set(SPOOL_TEST_QML_RESOURCES ${SPOOL_APP_SOURCES})
         list(FILTER SPOOL_TEST_QML_RESOURCES INCLUDE REGEX "/qrc_(qmake_Spool|application_icons|trickplay_preview_shaders|spool_raw_qml_[0-9]+(_extra_qmldirs)?)\\.cpp$")
         # Reuse the application's generated resources rather than declaring a
         # second Spool module (which would also overwrite qrc_qmake_Spool.cpp).
-        target_sources(spool-qml-tests PRIVATE ${SPOOL_TEST_PLATFORM_SOURCES} ${SPOOL_TEST_QML_RESOURCES})
-        qt_add_resources(spool-qml-tests "component_qml_tests"
+        target_sources(spool-e2e-tests PRIVATE ${SPOOL_TEST_PLATFORM_SOURCES} ${SPOOL_TEST_QML_RESOURCES})
+        qt_add_resources(spool-e2e-tests "component_qml_tests"
             PREFIX "/qt/qml/Spool"
             FILES
                 tests/qml/tst_MediaRow.qml
@@ -1207,53 +1219,49 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
                 tests/qml/tst_ProviderForms.qml
                 tests/qml/tst_ArtworkIntegration.qml
                 tests/qml/tst_PlayerSeekBarHover.qml
+                tests/qml/tst_OptionPickerInput.qml
         )
 
-        get_filename_component(SPOOL_QML_PREFIX "${Qt6Qml_DIR}/../../.." ABSOLUTE)
-        set(SPOOL_QML_IMPORT_DIR "${SPOOL_QML_PREFIX}/lib/qt-6/qml")
-        set(SPOOL_QML_TEST_ENV
-            "QT_QPA_PLATFORM=offscreen"
-            "QT_QUICK_BACKEND=software"
-            "QML_DISABLE_DISK_CACHE=1"
-            "QML2_IMPORT_PATH=${SPOOL_QML_IMPORT_DIR}"
-            "QML_IMPORT_PATH=${SPOOL_QML_IMPORT_DIR}"
-            ${SPOOL_TEST_ENV}
-        )
-
-        add_test(NAME extension-integration
-            COMMAND spool-qml-tests -input ":/qt/qml/Spool/tests/qml/tst_ExtensionIntegration.qml")
-        set_tests_properties(extension-integration PROPERTIES
-            ENVIRONMENT "${SPOOL_QML_TEST_ENV};SPOOL_EXTENSION_INTEGRATION=1" TIMEOUT 90)
-        add_test(NAME provider-forms
-            COMMAND spool-qml-tests -input ":/qt/qml/Spool/tests/qml/tst_ProviderForms.qml")
-        set_tests_properties(provider-forms PROPERTIES ENVIRONMENT "${SPOOL_QML_TEST_ENV}" TIMEOUT 30)
-        add_test(NAME artwork-integration
-            COMMAND spool-qml-tests -input ":/qt/qml/Spool/tests/qml/tst_ArtworkIntegration.qml")
-        set_tests_properties(artwork-integration PROPERTIES
-            ENVIRONMENT "${SPOOL_QML_TEST_ENV};SPOOL_ARTWORK_INTEGRATION=1" TIMEOUT 30)
-
+        set(qml_registry "${CMAKE_CURRENT_BINARY_DIR}/generated/QmlTestSelectors.cpp")
+        file(WRITE "${qml_registry}" "#include \"TestMain.h\"\n#include <QByteArray>\nint spoolRunQml(int, char **, const char *);\nnamespace {\n")
         list(LENGTH SPOOL_QML_TESTS SPOOL_QML_TEST_COUNT)
         math(EXPR SPOOL_QML_TEST_LAST "${SPOOL_QML_TEST_COUNT} - 1")
         foreach(qml_index RANGE 0 ${SPOOL_QML_TEST_LAST} 2)
             math(EXPR qml_source_index "${qml_index} + 1")
             list(GET SPOOL_QML_TESTS ${qml_index} qml_test_name)
             list(GET SPOOL_QML_TESTS ${qml_source_index} qml_test_source)
-            if(qml_test_name STREQUAL "subtitle-settings-panel"
-                OR qml_test_name STREQUAL "remote-control-page" OR qml_test_name STREQUAL "provider-install-dialog"
-                OR qml_test_name STREQUAL "provider-shell" OR qml_test_name STREQUAL "player-seek-bar-hover"
-                OR qml_test_name STREQUAL "media-row")
-                add_test(NAME ${qml_test_name}
-                    COMMAND spool-qml-tests -input ":/qt/qml/Spool/${qml_test_source}"
-                )
+            if(qml_test_name MATCHES "^(subtitle-settings-panel|remote-control-page|provider-install-dialog|provider-shell|player-seek-bar-hover|media-row|extension-integration|provider-forms|artwork-integration|option-picker-input)$")
+                set(qml_input ":/qt/qml/Spool/${qml_test_source}")
             else()
-                add_test(NAME ${qml_test_name}
-                    COMMAND "${QMLTESTRUNNER_EXECUTABLE}"
-                        -input "${CMAKE_CURRENT_SOURCE_DIR}/${qml_test_source}"
-                )
+                set(qml_input "${CMAKE_CURRENT_SOURCE_DIR}/${qml_test_source}")
             endif()
-            set_tests_properties(${qml_test_name} PROPERTIES ENVIRONMENT "${SPOOL_QML_TEST_ENV}")
+            set(qml_environment "")
+            if(qml_test_name MATCHES "^(extension-integration|provider-shell)$")
+                set(qml_environment "qputenv(\"SPOOL_EXTENSION_INTEGRATION\", \"1\");")
+            elseif(qml_test_name STREQUAL "artwork-integration")
+                set(qml_environment "qputenv(\"SPOOL_ARTWORK_INTEGRATION\", \"1\");")
+            endif()
+            file(APPEND "${qml_registry}" "int test${qml_index}(int argc, char **argv) { ${qml_environment} return spoolRunQml(argc, argv, \"${qml_input}\"); }\nconst bool registered${qml_index} = SpoolTests::registerTest(\"${qml_test_name}\", &test${qml_index});\n")
         endforeach()
-        set_tests_properties(provider-shell PROPERTIES ENVIRONMENT "${SPOOL_QML_TEST_ENV};SPOOL_EXTENSION_INTEGRATION=1")
+        file(APPEND "${qml_registry}" "}\n")
+        target_sources(spool-e2e-tests PRIVATE "${qml_registry}")
+        add_test(NAME gui-e2e-native COMMAND spool-e2e-tests --run-all --workers 1 --timeout-ms 600000 --results "${CMAKE_CURRENT_BINARY_DIR}/e2e-results.json")
+        set_tests_properties(gui-e2e-native PROPERTIES LABELS e2e ENVIRONMENT "${SPOOL_TEST_ENV}" TIMEOUT 0)
+        foreach(test_target IN ITEMS spool-tests spool-e2e-tests)
+            set_target_properties(${test_target} PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF
+                INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL OFF)
+        endforeach()
+        set_tests_properties(provider-sdk-tool local-provider-overrides ffmpeg-capability-generator module-seam
+            network-shaper render-benchmark-report test-driver-ordering PROPERTIES LABELS traditional)
+        if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            set_tests_properties(package-audit PROPERTIES LABELS traditional)
+        endif()
+    endif()
+    if(SPOOL_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        foreach(test_target IN ITEMS spool-tests spool-e2e-tests)
+            target_compile_options(${test_target} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+            target_link_options(${test_target} PRIVATE -fsanitize=address,undefined)
+        endforeach()
     endif()
 endif()
 

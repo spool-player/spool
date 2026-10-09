@@ -24,6 +24,7 @@ TestCase {
         property var rows: []
         property var completions: []
         property var pendingAuthentication: null
+        property var pendingAuthenticationRejection: null
         property var pendingPoll: null
         property int closes: 0
         function request(operation, args) {
@@ -43,7 +44,10 @@ TestCase {
                                            codeEnabled: true
                                        })
             if (operation === "authenticate")
-                return new Promise(resolve => pendingAuthentication = resolve)
+                return new Promise((resolve, reject) => {
+                    pendingAuthentication = resolve
+                    pendingAuthenticationRejection = reject
+                })
             if (operation === "codeStart")
                 return Promise.resolve({
                                            code: "123456",
@@ -148,6 +152,7 @@ TestCase {
     function init() {
         provider.completions = []
         provider.pendingAuthentication = null
+        provider.pendingAuthenticationRejection = null
         provider.pendingPoll = null
         provider.closes = 0
         provider.arguments = {
@@ -162,6 +167,59 @@ TestCase {
                                              })
         verify(result)
         return result
+    }
+    function accessibleItem(item, name) {
+        if (!item.Accessible.ignored && item.Accessible.name === name)
+            return item
+        for (const child of item.children || []) {
+            const found = accessibleItem(child, name)
+            if (found)
+                return found
+        }
+        return null
+    }
+    function test_wrappedRejectionKeepsPasswordVisibleWithoutFocusSteal() {
+        const view = form(login)
+        view.width = 360
+        view.height = 280
+        view.errorMessages = {
+            invalid_credentials:
+            "Wrong username or password. Check your account name and enter your password again to sign in to this server."
+        }
+        view.connect("fixture.invalid")
+        tryCompare(view, "step", "account")
+        const username = accessibleItem(view, "Username")
+        const password = accessibleItem(view, "Password")
+        verify(username)
+        verify(password)
+        username.text = "member"
+        password.text = "incorrect"
+        password.forceActiveFocus()
+        keyClick(Qt.Key_Return)
+        tryVerify(() => provider.pendingAuthenticationRejection !== null)
+        provider.pendingAuthenticationRejection("invalid_credentials")
+        tryCompare(view, "busy", false)
+        tryCompare(view, "error", view.errorMessages.invalid_credentials)
+        compare(username.text, "member")
+        verify(password.activeFocus)
+        const error = accessibleItem(view, view.error)
+        verify(error)
+        compare(error.Accessible.role, Accessible.StaticText)
+        compare(error.Accessible.focusable, false)
+        const caption = error.children.find(child => typeof child.lineCount === "number" && child.text === view.error)
+        verify(caption)
+        tryVerify(() => caption.lineCount > 1)
+        compare(caption.truncated, false)
+        tryVerify(() => {
+            for (const item of [password, error]) {
+                const bounds = item.mapToItem(view, 0, 0, item.width, item.height)
+                if (bounds.x < 0 || bounds.y < 0 || bounds.x + bounds.width > view.width || bounds.y + bounds.height
+                        > view.height)
+                    return false
+            }
+            return true
+        })
+        verify(password.activeFocus)
     }
     function test_destructivePickerStartsOnCancel() {
         provider.arguments = {

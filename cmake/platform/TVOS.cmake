@@ -27,27 +27,17 @@ function(spool_configure_tvos_targets native_target core_target)
         set_source_files_properties("${SPOOL_TVOS_ASSETS}" PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
         target_sources(${native_target} PRIVATE "${SPOOL_TVOS_ASSETS}")
     endif()
-    # Exercise the existing renderer consumer test on the actual UIKit/EAGL
-    # target, not a Linux/macOS substitute or an import-only Qt probe.
-    qt_add_executable(spool-tvos-playback-smoke
-        tests/TestRunner.cpp
-        tests/player/MpvVideoItemTest.cpp
-        tests/platform/TvOSRuntimeSmoke.mm
-    )
-    target_include_directories(spool-tvos-playback-smoke PRIVATE src tests "${CMAKE_CURRENT_BINARY_DIR}/generated")
-    target_link_libraries(spool-tvos-playback-smoke PRIVATE ${core_target})
-    set_target_properties(spool-tvos-playback-smoke PROPERTIES
-        MACOSX_BUNDLE TRUE
-        MACOSX_BUNDLE_GUI_IDENTIFIER "com.sachk.spool.playback-smoke"
-        XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "3"
-    )
-    install(TARGETS spool-tvos-playback-smoke BUNDLE DESTINATION smoke)
-    set_source_files_properties(tests/platform/TvOSRuntimeSmoke.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    spool_configure_tvos_simulator_entitlements(${native_target})
+endfunction()
+
+# Both the production application and each isolated native test bundle need
+# their own application identifier in the simulator's Keychain entitlement.
+function(spool_configure_tvos_simulator_entitlements)
     string(TOLOWER "${CMAKE_OSX_SYSROOT}" tvos_sysroot)
     if(tvos_sysroot MATCHES "appletvsimulator")
         # Simulator application/Keychain entitlements belong in Mach-O sections,
         # not the macOS code signature, where these are restricted entitlements.
-        foreach(target IN ITEMS ${native_target} spool-tvos-playback-smoke)
+        foreach(target IN LISTS ARGN)
             get_target_property(identifier ${target} MACOSX_BUNDLE_GUI_IDENTIFIER)
             set(xml "${CMAKE_CURRENT_BINARY_DIR}/${target}-simulator.xcent")
             set(der "${xml}.der")

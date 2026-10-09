@@ -4,10 +4,12 @@
 #include "app/LocalizationManager.h"
 #include "cache/DatabaseManager.h"
 #include "diagnostics/InputLatencyMonitor.h"
+#include "platform/PlatformCapabilities.h"
 #include "platform/PlatformSettingsPolicy.h"
 
 #include "RecordingArtworkSource.h"
 #include "TestMain.h"
+#include "TestRequire.h"
 
 #include <QCoreApplication>
 #include <QCoroTask>
@@ -23,18 +25,11 @@
 using Spool::ArtworkService;
 using Spool::DatabaseManager;
 using Spool::MovieItem;
-using Spool::platformDefaultArtworkFormat;
 using Spool::SettingsController;
 
 namespace {
 
-void require(bool condition, const char *message)
-{
-    if (condition)
-        return;
-    std::cerr << message << '\n';
-    std::exit(EXIT_FAILURE);
-}
+using SpoolTests::require;
 
 } // namespace
 
@@ -64,12 +59,15 @@ SPOOL_TEST_MAIN("settings-controller")
     SettingsController settings(&database, nullptr, &artwork);
     QCoro::waitFor(settings.loadLocalAsync());
 
-    // A fresh profile leaves the codec to the platform, and the artwork
-    // service has to be told before the first poster is requested rather than
-    // when the settings page is first opened.
-    require(posterUrl().contains(QStringLiteral("format=") + QString::fromLatin1(platformDefaultArtworkFormat())),
-        "artwork did not start on the platform's default format");
-    require(posterUrl().contains(QStringLiteral("quality=75")), "artwork did not start at the default webp quality");
+    // Automatic encoding is part of the device contract, not an expected value
+    // obtained from the policy being tested. Native Apple TV keeps WebP; only
+    // webOS and Android televisions choose JPEG.
+    const auto& capabilities = Spool::platformCapabilities();
+    const bool defaultJpeg = capabilities.isWebOS || (capabilities.isAndroid && capabilities.isTV);
+    require(posterUrl().contains(defaultJpeg ? QStringLiteral("format=jpeg") : QStringLiteral("format=webp")),
+        "artwork did not start on the device's default format");
+    require(posterUrl().contains(defaultJpeg ? QStringLiteral("quality=82") : QStringLiteral("quality=75")),
+        "artwork did not start at the default quality for its format");
 
     settings.setValue(QStringLiteral("artwork/format"), QStringLiteral("jpeg"));
     require(posterUrl().contains(QStringLiteral("format=jpeg")), "changing the artwork format did not reach artwork");
@@ -80,7 +78,7 @@ SPOOL_TEST_MAIN("settings-controller")
     settings.setValue(QStringLiteral("artwork/format"), QStringLiteral("webp"));
     require(
         posterUrl().contains(QStringLiteral("quality=75")), "switching back to webp did not restore the webp quality");
-    require(settings.uiScalePercent() == 100, "desktop UI scale default was not 100 percent");
+    require(settings.uiScalePercent() == 100, "fresh profile UI scale default was not 100 percent");
     require(!settings.value(QStringLiteral("playback/manualStreamingBitrate")).toBool(),
         "fresh profile unexpectedly enabled the manual streaming limit");
     require(!settings.value(QStringLiteral("playback/unlimitedLocalBitrate")).toBool(),
@@ -90,7 +88,8 @@ SPOOL_TEST_MAIN("settings-controller")
     require(settings.value(QStringLiteral("playback/rememberSeriesAudioTrack")).toBool(),
         "fresh profile did not remember per-series audio tracks by default");
     require(settings.playerControlTooltipsEnabled(), "fresh profile unexpectedly hid player control tooltips");
-    require(settings.remoteControlTargetEnabled(), "desktop remote-control target default was not enabled");
+    require(settings.remoteControlTargetEnabled() == !capabilities.isMobile,
+        "remote control must default off on handsets and on for desktop/TV targets");
 
     settings.setValue(QStringLiteral("playback/forwardCacheSizeMiB"), QStringLiteral("256"));
     require(settings.value(QStringLiteral("playback/forwardCacheSizeMiB")).toString() == QStringLiteral("256"),
@@ -101,8 +100,21 @@ SPOOL_TEST_MAIN("settings-controller")
     settings.setValue(QStringLiteral("playback/rememberSeriesAudioTrack"), false);
     require(!settings.value(QStringLiteral("playback/rememberSeriesAudioTrack")).toBool(),
         "series audio-track retention toggle was not updated");
+    // Exercise both transitions even on a handset, where false is the default.
+    // Defaults are resolved without materializing a persisted override. First
+    // establish false, then true is a real transition on every device kind.
+    settings.setValue(QStringLiteral("remote/acceptCommands"), false);
+    require(!settings.remoteControlTargetEnabled(), "remote target baseline could not be disabled");
+    settings.setValue(QStringLiteral("remote/acceptCommands"), true);
+    require(settings.remoteControlTargetEnabled(), "remote target could not be enabled");
+    require(
+        QCoro::waitFor(database.loadSettingAsync(QStringLiteral("remote/acceptCommands"))) == QStringLiteral("true"),
+        "enabled remote target toggle was not persisted");
     settings.setValue(QStringLiteral("remote/acceptCommands"), false);
     require(!settings.remoteControlTargetEnabled(), "remote target toggle was not applied");
+    require(
+        QCoro::waitFor(database.loadSettingAsync(QStringLiteral("remote/acceptCommands"))) == QStringLiteral("false"),
+        "disabled remote target toggle was not persisted");
 
     settings.setAudioDelayMs(120);
     require(settings.audioDelayMs() == 120, "audio delay setter did not update the global desktop value");

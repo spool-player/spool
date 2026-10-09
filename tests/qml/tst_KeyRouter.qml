@@ -243,6 +243,55 @@ TestCase {
         compare(activateCalls, 1)
     }
 
+    function test_remoteSelectRemainsImmediate_data() {
+        return [
+                    {
+                        tag: "rapid-select",
+                        directionHoldFirst: false,
+                        selections: 2
+                    },
+                    {
+                        tag: "select-after-direction-hold",
+                        directionHoldFirst: true,
+                        selections: 1
+                    }
+                ]
+    }
+
+    function test_remoteSelectRemainsImmediate(data) {
+        let activated = 0
+        keyRouter.activeTarget = {
+            routeKey: function () {
+                return false
+            },
+            longPress: function () {
+                return false
+            },
+            activate: function () {
+                ++activated
+            }
+        }
+        const event = {
+            key: Qt.Key_Down,
+            text: "",
+            modifiers: Qt.NoModifier,
+            isAutoRepeat: false
+        }
+        if (data.directionHoldFirst) {
+            keyRouter.dispatch(event, "press")
+            keyRouter.dispatch(event, "release")
+            keyRouter.dispatch(event, "press")
+            keyRouter.dispatch(event, "release")
+        }
+        event.key = Qt.Key_Return
+        for (let selection = 0; selection < data.selections; ++selection) {
+            verify(keyRouter.dispatch(event, "press"))
+            compare(activated, selection)
+            verify(keyRouter.dispatch(event, "release"))
+            compare(activated, selection + 1)
+        }
+    }
+
     function test_longPressReleaseFinishesOpeningGesture() {
         verify(keyRouter.pressAccept(Qt.Key_Return, false))
         keyRouter.longPressHandled = true

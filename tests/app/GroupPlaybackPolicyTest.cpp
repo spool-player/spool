@@ -2,6 +2,7 @@
 
 #include "../providers/ProviderFixture.h"
 #include "TestMain.h"
+#include "TestRequire.h"
 #include "cache/DatabaseManager.h"
 #include "player/PlayQueueController.h"
 #include "player/PlayerController.h"
@@ -22,13 +23,7 @@ using namespace Spool;
 
 namespace {
 
-void require(bool condition, const char *message)
-{
-    if (condition)
-        return;
-    std::cerr << message << '\n';
-    std::exit(1);
-}
+using SpoolTests::require;
 
 bool near(double value, double expected, double tolerance = 0.001)
 {

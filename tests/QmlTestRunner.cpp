@@ -1,3 +1,4 @@
+#include "TestMain.h"
 #include "app/ArtworkService.h"
 #include "app/TrickplayPreviewItem.h"
 #include "diagnostics/InputLatencyMonitor.h"
@@ -6,6 +7,7 @@
 #include "ArtworkIntegration.h"
 #include "ExtensionIntegration.h"
 
+#include <QByteArray>
 #include <QDir>
 #include <QFontDatabase>
 #include <QQmlEngine>
@@ -13,6 +15,7 @@
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QtQuickTest/quicktest.h>
+#include <vector>
 
 class QmlTestSetup final : public QObject {
     Q_OBJECT
@@ -30,7 +33,7 @@ public slots:
 
     void applicationAvailable()
     {
-        const QDir fonts(QStringLiteral(TEST_SOURCE_DIR "/qml/fonts"));
+        const QDir fonts(SpoolTests::fixturePath("qml/fonts"));
         for (const auto& file : fonts.entryList({ "*.ttf", "*.otf" }, QDir::Files))
             if (QFontDatabase::addApplicationFont(fonts.filePath(file)) < 0)
                 qFatal("test font registration failed");
@@ -68,6 +71,34 @@ private:
     Spool::InputLatencyMonitor *m_latency = nullptr;
 };
 
-QUICK_TEST_MAIN_WITH_SETUP(spool, QmlTestSetup)
+int spoolRunQml(int argc, char **argv, const char *input)
+{
+#ifdef Q_OS_WIN
+    // Qt's plain stdout logger otherwise uses OutputDebugString when the
+    // selector has no console. The supervisor retains stdout/stderr in its
+    // private per-attempt log, so explicitly keep test results on that stream.
+    qputenv("QT_FORCE_STDERR_LOGGING", "1");
+#endif
+    std::vector<char *> arguments;
+    arguments.reserve(size_t(argc) + 5);
+    arguments.insert(arguments.end(), argv, argv + argc);
+    char logOption[] = "-o";
+    char logOutput[] = "-,txt";
+    // Normal supervised selectors have no QtTest arguments. Leave explicit
+    // command-line logging/format choices intact for targeted invocations.
+    if (argc == 1) {
+        arguments.push_back(logOption);
+        arguments.push_back(logOutput);
+    }
+    QByteArray option("-input");
+    QByteArray path(input);
+    arguments.push_back(option.data());
+    arguments.push_back(path.data());
+    const int count = int(arguments.size());
+    arguments.push_back(nullptr);
+    QmlTestSetup setup;
+    const QByteArray sourceRoot = SpoolTests::fixturePath("").toUtf8();
+    return quick_test_main_with_setup(count, arguments.data(), "spool", sourceRoot.constData(), &setup);
+}
 
 #include "QmlTestRunner.moc"

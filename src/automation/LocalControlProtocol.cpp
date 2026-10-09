@@ -1,51 +1,117 @@
 #include "LocalControlProtocol.h"
 
+#include <QCryptographicHash>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QLocalSocket>
+#include <QNetworkProxy>
 #include <QRegularExpression>
 #include <QStandardPaths>
+#include <QTcpSocket>
 #include <QUuid>
+#include <algorithm>
 #ifdef Q_OS_UNIX
 #include <sys/stat.h>
+#include <sys/un.h>
 #include <unistd.h>
 #endif
 
 namespace Spool::LocalControl {
+namespace {
+    QString privateDirectory(const QString& base, QString *error)
+    {
+        if (base.isEmpty()) {
+            *error = QStringLiteral("No user-local runtime directory is available");
+            return {};
+        }
+        const QString path = QDir(base).filePath(QStringLiteral("spool-control"));
+        if (!QFileInfo::exists(path) && !QDir().mkdir(path)) {
+            *error = QStringLiteral("Cannot create the local control directory");
+            return {};
+        }
+#ifdef Q_OS_UNIX
+        struct stat info {};
+        const QByteArray encoded = QFile::encodeName(path);
+        if (lstat(encoded.constData(), &info) != 0 || !S_ISDIR(info.st_mode) || info.st_uid != geteuid()
+            || chmod(encoded.constData(), 0700) != 0) {
+            *error = QStringLiteral("Local control directory is not a private owned directory");
+            return {};
+        }
+#else
+        if (QFileInfo(path).isSymLink() || !QFileInfo(path).isDir()) {
+            *error = QStringLiteral("Local control directory is not a user directory");
+            return {};
+        }
+#endif
+        return path;
+    }
+}
+
 QString directory(QString *error)
 {
-#ifdef Q_OS_UNIX
-    const QString base = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
+    QString base = qEnvironmentVariable("SPOOL_DATA_HOME");
+    if (!base.isEmpty()) {
+        if (!QDir::isAbsolutePath(base)) {
+            *error = QStringLiteral("The explicit data directory must be absolute");
+            return {};
+        }
+        base = QDir(base).filePath(QStringLiteral("runtime"));
+        if (!QDir().mkpath(base)) {
+            *error = QStringLiteral("Cannot create the explicit runtime directory");
+            return {};
+        }
+    } else {
+#if defined(SPOOL_ANDROID) || defined(SPOOL_APPLE_MOBILE)
+        base = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation);
+#elif defined(Q_OS_UNIX)
+        base = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
 #else
-    const QString base = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+        base = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
 #endif
-    if (base.isEmpty()) {
-        *error = QStringLiteral("No user-local runtime directory is available");
+    }
+    return privateDirectory(base, error);
+}
+
+QString localEndpoint(const QString& registryDirectory, const QString& instance, QString *error)
+{
+    const QString root = QFileInfo(registryDirectory).canonicalFilePath();
+    if (root.isEmpty() || !validInstance(instance)) {
+        *error = QStringLiteral("Cannot resolve the control registry or instance identifier");
         return {};
     }
-    const QString path = QDir(base).filePath(QStringLiteral("spool-control"));
-    if (!QFileInfo::exists(path) && !QDir().mkdir(path)) {
-        *error = QStringLiteral("Cannot create the local control directory");
-        return {};
-    }
+    QByteArray identity = root.toUtf8();
+    identity.append('\0');
+    identity.append(instance.toUtf8());
+    const QString suffix
+        = QString::fromLatin1(QCryptographicHash::hash(identity, QCryptographicHash::Sha256).toHex().left(24));
 #ifdef Q_OS_UNIX
-    struct stat info {};
-    const QByteArray encoded = QFile::encodeName(path);
-    if (lstat(encoded.constData(), &info) != 0 || !S_ISDIR(info.st_mode) || info.st_uid != geteuid()
-        || chmod(encoded.constData(), 0700) != 0) {
-        *error = QStringLiteral("Local control directory is not a private owned directory");
+    QString runtime = qEnvironmentVariable("XDG_RUNTIME_DIR");
+    if (!runtime.isEmpty()) {
+        struct stat base {};
+        if (!QDir::isAbsolutePath(runtime) || lstat(QFile::encodeName(runtime).constData(), &base) != 0
+            || !S_ISDIR(base.st_mode) || base.st_uid != geteuid() || (base.st_mode & 0077) != 0) {
+            *error = QStringLiteral("XDG_RUNTIME_DIR must be an absolute private owned directory");
+            return {};
+        }
+    } else {
+        runtime = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
+    }
+    const QString sockets = privateDirectory(runtime, error);
+    if (sockets.isEmpty())
+        return {};
+    const QString endpoint = QDir(sockets).filePath(QStringLiteral("s-") + suffix);
+    if (QFile::encodeName(endpoint).size() >= qsizetype(sizeof(sockaddr_un {}.sun_path))) {
+        *error = QStringLiteral(
+            "The OS user runtime directory is too long for a UNIX socket; use a shorter private runtime directory");
         return {};
     }
+    return endpoint;
 #else
-    if (QFileInfo(path).isSymLink() || !QFileInfo(path).isDir()) {
-        *error = QStringLiteral("Local control directory is not a user directory");
-        return {};
-    }
+    return QStringLiteral("spool-control-") + suffix;
 #endif
-    return path;
 }
 
 bool validInstance(const QString& instance)
@@ -79,13 +145,25 @@ QJsonObject readDescriptor(const QString& path)
     const QString token = result.value(QStringLiteral("token")).toString();
     if (!validInstance(instance) || token.size() != 64 || endpoint.isEmpty() || endpoint.size() > 256)
         return {};
+    if (result.value(QStringLiteral("transport")).toString() == QStringLiteral("tcp")) {
+        const int port = result.value(QStringLiteral("port")).toInt();
+        if (endpoint != QStringLiteral("127.0.0.1") || port < 1 || port > 65535)
+            return {};
+        return result;
+    }
+    if (result.contains(QStringLiteral("transport")))
+        return {};
+    QString error;
+    const QString expected = localEndpoint(QFileInfo(path).absolutePath(), instance, &error);
 #ifdef Q_OS_UNIX
-    if (QFileInfo(endpoint).absolutePath() != QFileInfo(path).absolutePath()
-        || !QFileInfo(endpoint).fileName().startsWith(QStringLiteral("s-")))
+    if (expected.isEmpty() || endpoint != expected)
         return {};
 #else
-    if (!endpoint.startsWith(QStringLiteral("spool-control-")) || endpoint.contains(QLatin1Char('/'))
-        || endpoint.contains(QLatin1Char('\\')))
+    const QString prefix = expected + QLatin1Char('-');
+    const QString nonce = endpoint.mid(prefix.size());
+    if (expected.isEmpty() || !endpoint.startsWith(prefix) || nonce.size() != 32
+        || std::any_of(nonce.cbegin(), nonce.cend(),
+            [](QChar value) { return !((value >= '0' && value <= '9') || (value >= 'a' && value <= 'f')); }))
         return {};
 #endif
     return result;
@@ -109,33 +187,58 @@ QJsonObject request(const QJsonObject& descriptor, const QString& command, const
     QElapsedTimer elapsed;
     elapsed.start();
     const auto remaining = [&] { return qMax(0, timeoutMs - int(elapsed.elapsed())); };
+    const bool remote = descriptor.value(QStringLiteral("transport")).toString() == QStringLiteral("tcp");
+    if (remote
+        && (descriptor.value(QStringLiteral("endpoint")).toString() != QStringLiteral("127.0.0.1")
+            || descriptor.value(QStringLiteral("port")).toInt() < 1
+            || descriptor.value(QStringLiteral("port")).toInt() > 65535))
+        return failure(id, QStringLiteral("invalid_descriptor"), QStringLiteral("TCP control must use IPv4 loopback"));
+    const auto exchange = [&](auto& socket) -> QJsonObject {
+        if (!socket.waitForConnected(remaining()))
+            return failure(id, QStringLiteral("unavailable"), QStringLiteral("Instance is not reachable"));
+        if (socket.write(bytes) != bytes.size())
+            return failure(id, QStringLiteral("write_failed"), QStringLiteral("Could not send command"));
+        while (socket.bytesToWrite() > 0) {
+            if (remaining() <= 0)
+                return failure(id, QStringLiteral("timeout"), QStringLiteral("Command write timed out"));
+            // A peer can finish its reply and close while the wait processes
+            // completion. The drained write buffer, not another notification,
+            // determines whether the complete request has been sent.
+            if (!socket.waitForBytesWritten(remaining()) && socket.bytesToWrite() > 0)
+                return failure(id, QStringLiteral("timeout"), QStringLiteral("Command write timed out"));
+        }
+        QByteArray reply;
+        while (true) {
+            reply += socket.readAll();
+            if (reply.size() > MaxResponseBytes)
+                return failure(id, QStringLiteral("response_too_large"), QStringLiteral("Response exceeds 1 MiB"));
+            if (reply.contains('\n'))
+                break;
+            if (remaining() <= 0)
+                return failure(
+                    id, QStringLiteral("timeout"), QStringLiteral("Instance did not complete command in time"));
+            if (!socket.waitForReadyRead(remaining()) && socket.bytesAvailable() == 0)
+                return failure(
+                    id, QStringLiteral("timeout"), QStringLiteral("Instance did not complete command in time"));
+        }
+        QJsonParseError parseError;
+        const QJsonObject result = QJsonDocument::fromJson(reply.left(reply.indexOf('\n')), &parseError).object();
+        if (parseError.error != QJsonParseError::NoError || result.value(QStringLiteral("id")).toString() != id
+            || !result.value(QStringLiteral("ok")).isBool())
+            return failure(
+                id, QStringLiteral("invalid_response"), QStringLiteral("Invalid response or mismatched request ID"));
+        return result;
+    };
+    if (remote) {
+        QTcpSocket socket;
+        socket.setProxy(QNetworkProxy::NoProxy);
+        socket.setReadBufferSize(MaxResponseBytes + 1);
+        socket.connectToHost(QHostAddress::LocalHost, quint16(descriptor.value(QStringLiteral("port")).toInt()));
+        return exchange(socket);
+    }
     QLocalSocket socket;
     socket.setReadBufferSize(MaxResponseBytes + 1);
     socket.connectToServer(descriptor.value(QStringLiteral("endpoint")).toString());
-    if (!socket.waitForConnected(remaining()))
-        return failure(id, QStringLiteral("unavailable"), QStringLiteral("Instance is not reachable"));
-    if (socket.write(bytes) != bytes.size())
-        return failure(id, QStringLiteral("write_failed"), QStringLiteral("Could not send command"));
-    while (socket.bytesToWrite() > 0) {
-        if (remaining() <= 0 || !socket.waitForBytesWritten(remaining()))
-            return failure(id, QStringLiteral("timeout"), QStringLiteral("Command write timed out"));
-    }
-    QByteArray reply;
-    while (true) {
-        reply += socket.readAll();
-        if (reply.size() > MaxResponseBytes)
-            return failure(id, QStringLiteral("response_too_large"), QStringLiteral("Response exceeds 1 MiB"));
-        if (reply.contains('\n'))
-            break;
-        if (remaining() <= 0 || !socket.waitForReadyRead(remaining()))
-            return failure(id, QStringLiteral("timeout"), QStringLiteral("Instance did not complete command in time"));
-    }
-    QJsonParseError parseError;
-    const QJsonObject result = QJsonDocument::fromJson(reply.left(reply.indexOf('\n')), &parseError).object();
-    if (parseError.error != QJsonParseError::NoError || result.value(QStringLiteral("id")).toString() != id
-        || !result.value(QStringLiteral("ok")).isBool())
-        return failure(
-            id, QStringLiteral("invalid_response"), QStringLiteral("Invalid response or mismatched request ID"));
-    return result;
+    return exchange(socket);
 }
 }

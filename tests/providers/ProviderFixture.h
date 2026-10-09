@@ -1,5 +1,7 @@
 #pragma once
 
+#include "TestMain.h"
+
 #include "provider/ProviderPackage.h"
 
 #include <QDir>
@@ -71,9 +73,13 @@ inline Spool::ProviderPackageContents package(
     const QString& id = QStringLiteral("fixture.test"), const QString& version = QStringLiteral("1.0.0"))
 {
     const auto read = [](const char *name) {
-        QFile file(QStringLiteral(TEST_SOURCE_DIR "/tests/providers/fixtures/") + QLatin1String(name));
-        file.open(QIODevice::ReadOnly);
-        return file.readAll();
+        QFile file(SpoolTests::fixturePath("tests/providers/fixtures/") + QLatin1String(name));
+        if (!file.open(QIODevice::ReadOnly))
+            qFatal("required provider fixture could not be opened: %s", name);
+        const QByteArray bytes = file.readAll();
+        if (file.error() != QFileDevice::NoError)
+            qFatal("required provider fixture could not be read: %s", name);
+        return bytes;
     };
     const QJsonObject manifest { { QStringLiteral("format"), 3 }, { QStringLiteral("id"), id },
         { QStringLiteral("name"), QStringLiteral("Fixture") }, { QStringLiteral("version"), version },

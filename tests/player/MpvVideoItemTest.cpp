@@ -13,6 +13,10 @@
 #include <QQuickWindow>
 #include <QSGTexture>
 #include <QSGTextureProvider>
+#ifdef Q_OS_WIN
+#include <QOpenGLContext>
+#include <QOpenGLFunctions>
+#endif
 #include <QSurfaceFormat>
 #include <QTemporaryFile>
 #include <QTimer>
@@ -189,9 +193,9 @@ bool containsNeutralOsd(const QImage& image, const QImage& baseline)
     return neutral >= 8;
 }
 
-// The video is red over blue, so the frame is the right way up when the top of
-// the window is red and the bottom is blue. Counting rather than sampling one
-// pixel keeps letterboxing and the window's own background out of the answer.
+// The independent fixture is 64x64, red over blue. Require the same ordering
+// counts and strict band colors inside its expected aspect-fit square, not the
+// portrait window's letterbox (whose lower quarter is outside that picture).
 bool isRightWayUp(const QImage& image)
 {
     if (image.isNull())
@@ -212,9 +216,11 @@ bool isRightWayUp(const QImage& image)
     }
     std::fprintf(stderr, "orientation: redAbove=%d blueAbove=%d redBelow=%d blueBelow=%d\n", redAbove, blueAbove,
         redBelow, blueBelow);
+    const int pictureSide = std::min(image.width(), image.height());
+    const int pictureTop = (image.height() - pictureSide) / 2;
     return redAbove > blueAbove && blueBelow > redBelow
-        && isRed(image.pixelColor(image.width() / 2, image.height() / 4))
-        && isBlue(image.pixelColor(image.width() / 2, 3 * image.height() / 4));
+        && isRed(image.pixelColor(image.width() / 2, pictureTop + pictureSide / 4))
+        && isBlue(image.pixelColor(image.width() / 2, pictureTop + 3 * pictureSide / 4));
 }
 
 } // namespace
@@ -234,7 +240,7 @@ SPOOL_TEST_MAIN("mpv-video-item")
     if (api == "vulkan")
         std::fprintf(stderr, "requested Vulkan scene graph\n");
     QSurfaceFormat format;
-#ifdef Q_OS_TVOS
+#if defined(Q_OS_TVOS) || defined(Q_OS_ANDROID)
     format.setRenderableType(QSurfaceFormat::OpenGLES);
     format.setVersion(3, 0);
 #else
@@ -242,7 +248,16 @@ SPOOL_TEST_MAIN("mpv-video-item")
     format.setVersion(3, 3);
 #endif
     format.setAlphaBufferSize(0);
+#ifdef Q_OS_ANDROID
+    QSurfaceFormat::setDefaultFormat(format);
+#endif
     QGuiApplication app(argc, argv);
+    const QDir fonts(SpoolTests::fixturePath("qml/fonts"));
+    if (!fonts.exists()) {
+        std::fprintf(stderr, "shipped OSD font directory is missing\n");
+        return 1;
+    }
+    const QByteArray osdFonts = fonts.absolutePath().toUtf8();
 
     QTemporaryFile video(QDir::tempPath() + QStringLiteral("/mpv-video-item-XXXXXX.mkv"));
     if (!writeVideo(video)) {
@@ -264,6 +279,19 @@ SPOOL_TEST_MAIN("mpv-video-item")
     QObject::connect(window.contentItem(), &QQuickItem::widthChanged, &videoItem, fitSurface);
     QObject::connect(window.contentItem(), &QQuickItem::heightChanged, &videoItem, fitSurface);
     fitSurface();
+#ifdef Q_OS_WIN
+    std::atomic_bool cpuOpenGLProven { false };
+    QObject::connect(
+        &window, &QQuickWindow::afterRendering, &videoItem,
+        [&] {
+            if (auto *context = QOpenGLContext::currentContext()) {
+                const auto *renderer = context->functions()->glGetString(GL_RENDERER);
+                if (renderer && QByteArray(reinterpret_cast<const char *>(renderer)).toLower().contains("llvmpipe"))
+                    cpuOpenGLProven.store(true);
+            }
+        },
+        Qt::DirectConnection);
+#endif
 #if SPOOL_MPV_ITEM_RHI
     QObject::connect(
         &window, &QQuickWindow::afterRendering, &videoItem,
@@ -275,7 +303,7 @@ SPOOL_TEST_MAIN("mpv-video-item")
         },
         Qt::DirectConnection);
 #endif
-#ifdef Q_OS_TVOS
+#if defined(Q_OS_TVOS) || defined(Q_OS_ANDROID)
     window.showFullScreen();
 #else
     window.show();
@@ -283,7 +311,7 @@ SPOOL_TEST_MAIN("mpv-video-item")
     app.processEvents();
     const auto captureItem = [&] {
         const QImage image = window.grabWindow();
-#ifdef Q_OS_TVOS
+#if defined(Q_OS_TVOS) || defined(Q_OS_ANDROID)
         if (image.isNull())
             return image;
         const qreal xScale = qreal(image.width()) / window.contentItem()->width();
@@ -318,9 +346,9 @@ SPOOL_TEST_MAIN("mpv-video-item")
     // Reusing an item after detach must reset first-frame state and publish
     // the new context, including when Qt replaces the render target on resize.
     for (const QSize size : { QSize(320, 180), QSize(480, 270) }) {
-#ifdef Q_OS_TVOS
-        // UIKit owns the fullscreen native window; resize the real video
-        // viewport instead of requesting an unsupported television window size.
+#if defined(Q_OS_TVOS) || defined(Q_OS_ANDROID)
+        // The mobile platform owns the fullscreen native window; resize the
+        // real video viewport instead of requesting a desktop window size.
         viewportFraction = size.width() == 320 ? 1.0 : 2.0 / 3.0;
 #else
         window.resize(size);
@@ -334,14 +362,17 @@ SPOOL_TEST_MAIN("mpv-video-item")
         // that asked for logging.
         if (handle && verbose
             && (mpv_set_option_string(handle, "terminal", "yes") < 0
-                || mpv_set_option_string(handle, "msg-level", "all=debug") < 0)) {
+                || mpv_set_option_string(handle, "msg-level", "all=debug") < 0
+                || mpv_set_option_string(handle, "gpu-debug", "yes") < 0)) {
             std::fprintf(stderr, "failed to enable mpv logging\n");
             return 1;
         }
         if (!handle || mpv_set_option_string(handle, "terminal", verbose ? "yes" : "no") < 0
             || mpv_set_option_string(handle, "vo", "libmpv") < 0 || mpv_set_option_string(handle, "hwdec", "no") < 0
             || mpv_set_option_string(handle, "osd-color", "#FFFFFFFF") < 0
-            || mpv_set_option_string(handle, "osd-font-size", "48") < 0 || mpv_initialize(handle) < 0) {
+            || mpv_set_option_string(handle, "osd-font-size", "48") < 0
+            || mpv_set_option_string(handle, "osd-fonts-dir", osdFonts.constData()) < 0
+            || mpv_set_option_string(handle, "osd-font", "IBM Plex Sans Var") < 0 || mpv_initialize(handle) < 0) {
             std::fprintf(stderr, "failed to initialize mpv\n");
             if (handle)
                 mpv_terminate_destroy(handle);
@@ -397,10 +428,53 @@ SPOOL_TEST_MAIN("mpv-video-item")
 #endif
         const QImage beforeOsd = captureItem();
         const char *osdCommand[] = { "show-text", "SDR white", "10000", nullptr };
+        double beforeOsdPosition = -1;
+        const int beforeOsdPositionStatus = mpv_get_property(handle, "time-pos", MPV_FORMAT_DOUBLE, &beforeOsdPosition);
+        const int osdCommandStatus = mpv_command(handle, osdCommand);
         bool neutralOsd = false;
-        if (mpv_command(handle, osdCommand) >= 0) {
+        if (osdCommandStatus >= 0) {
             neutralOsd
                 = waitForPresentedFrame([&](const QImage& image) { return containsNeutralOsd(image, beforeOsd); });
+        }
+        if (!rendered || !upright || !neutralOsd) {
+            int64_t osdLevel = -1;
+            int videoOsd = -1;
+            int paused = -1;
+            int coreIdle = -1;
+            double afterOsdPosition = -1;
+            const int osdLevelStatus = mpv_get_property(handle, "osd-level", MPV_FORMAT_INT64, &osdLevel);
+            const int videoOsdStatus = mpv_get_property(handle, "video-osd", MPV_FORMAT_FLAG, &videoOsd);
+            const int pausedStatus = mpv_get_property(handle, "pause", MPV_FORMAT_FLAG, &paused);
+            const int coreIdleStatus = mpv_get_property(handle, "core-idle", MPV_FORMAT_FLAG, &coreIdle);
+            const int afterOsdPositionStatus
+                = mpv_get_property(handle, "time-pos", MPV_FORMAT_DOUBLE, &afterOsdPosition);
+            std::fprintf(stderr,
+                "native OSD: command=%d level=%lld levelStatus=%d video=%d videoStatus=%d"
+                " pause=%d pauseStatus=%d coreIdle=%d coreIdleStatus=%d"
+                " beforePosition=%.3f beforePositionStatus=%d afterPosition=%.3f afterPositionStatus=%d\n",
+                osdCommandStatus, static_cast<long long>(osdLevel), osdLevelStatus, videoOsd, videoOsdStatus, paused,
+                pausedStatus, coreIdle, coreIdleStatus, beforeOsdPosition, beforeOsdPositionStatus, afterOsdPosition,
+                afterOsdPositionStatus);
+            mpv_node dimensions {};
+            if (mpv_get_property(handle, "osd-dimensions", MPV_FORMAT_NODE, &dimensions) >= 0) {
+                if (dimensions.format == MPV_FORMAT_NODE_MAP) {
+                    std::fprintf(stderr, "native presentation:");
+                    for (int index = 0; index < dimensions.u.list->num; ++index) {
+                        const auto& value = dimensions.u.list->values[index];
+                        if (value.format == MPV_FORMAT_INT64)
+                            std::fprintf(stderr, " %s=%lld", dimensions.u.list->keys[index],
+                                static_cast<long long>(value.u.int64));
+                        else if (value.format == MPV_FORMAT_DOUBLE)
+                            std::fprintf(stderr, " %s=%.3f", dimensions.u.list->keys[index], value.u.double_);
+                    }
+                    std::fprintf(stderr, "\n");
+                }
+                mpv_free_node_contents(&dimensions);
+            }
+            const QString capturePath = QDir::tempPath() + QStringLiteral("/mpv-video-item-failure.png");
+            const QImage frame = !rendered || !upright ? beforeOsd : captureItem();
+            if (frame.save(capturePath))
+                std::fprintf(stderr, "native failure frame: %s\n", qPrintable(capturePath));
         }
         const bool released = videoItem.releaseMpvHandle();
         mpv_terminate_destroy(handle);
@@ -419,14 +493,22 @@ SPOOL_TEST_MAIN("mpv-video-item")
                 window.width(), window.height(), window.contentItem()->width(), window.contentItem()->height(),
                 videoItem.width(), videoItem.height(), failedFrame.width(), failedFrame.height(),
                 qPrintable(upper.name()), qPrintable(lower.name()));
-            failedFrame.save(QDir::tempPath() + QStringLiteral("/mpv-video-item-failure.png"));
             return 1;
         }
     }
+#ifdef Q_OS_WIN
+    if (qEnvironmentVariable("SPOOL_TEST_RENDER_BACKEND") == "opengl" && !cpuOpenGLProven.load()) {
+        std::fprintf(stderr, "Windows CPU OpenGL test did not observe the required llvmpipe GL_RENDERER\n");
+        return 1;
+    }
+    if (cpuOpenGLProven.load())
+        std::fprintf(stderr, "native mpv/Qt OpenGL frames proved Mesa llvmpipe GL_RENDERER\n");
+#endif
     std::fprintf(stderr, "mpv video smoke: upright frames and OSD rendered across detach and resize\n");
     return 0;
 }
 
+#if !defined(Q_OS_TVOS) && !defined(Q_OS_ANDROID) && !defined(SPOOL_TEST_OPENGL_ONLY)
 namespace {
 
 int vulkanEntry(int argc, char **argv)
@@ -440,3 +522,4 @@ int vulkanEntry(int argc, char **argv)
 [[maybe_unused]] const bool vulkanRegistered = ::SpoolTests::registerTest("mpv-video-item-vulkan", &vulkanEntry);
 
 } // namespace
+#endif

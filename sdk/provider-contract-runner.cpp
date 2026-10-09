@@ -44,7 +44,7 @@ int main(int argc, char **argv)
     }
 #ifdef SPOOL_TEST_RUNNER
     const QString fixture = app.arguments().size() == 1
-        ? QStringLiteral(TEST_SOURCE_DIR "/tests/providers/fixtures/bundled-jellyfin.mjs")
+        ? SpoolTests::fixturePath("tests/providers/fixtures/bundled-jellyfin.mjs")
         : app.arguments()[1];
 #else
     const QString fixture = app.arguments()[1];

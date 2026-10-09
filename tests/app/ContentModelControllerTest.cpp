@@ -8,6 +8,7 @@
 #include "provider/SearchSource.h"
 
 #include "TestMain.h"
+#include "TestRequire.h"
 
 #include <QCoreApplication>
 #include <QCoroFuture>
@@ -47,13 +48,7 @@ using Spool::SearchSource;
 
 namespace {
 
-void require(bool condition, const char *message)
-{
-    if (condition)
-        return;
-    std::cerr << message << '\n';
-    std::exit(EXIT_FAILURE);
-}
+using SpoolTests::require;
 
 LibraryItem makeLibrary(const QString& id, const QString& name, const QString& collectionType)
 {

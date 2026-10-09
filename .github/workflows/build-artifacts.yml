@@ -34,7 +34,7 @@ on:
         default: false
         type: boolean
       build_tvos:
-        description: "Build unsigned Apple TV device IPA and run simulator smoke"
+        description: "Build unsigned Apple TV device IPA and simulator app"
         required: true
         default: true
         type: boolean
@@ -229,6 +229,59 @@ jobs:
           echo "build-common.sh OK"
 
 
+  linux-sanitizers:
+    name: Linux real decoder and package consumer ASan/UBSan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    needs: lint
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_linux }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - uses: ./.github/actions/install-nix
+        with:
+          nix_conf: |
+            experimental-features = nix-command flakes
+      - uses: cachix/cachix-action@3ba601ff5bbb07c7220846facfa2cd81eeee15a1 # v16
+        with:
+          name: spool
+          skipPush: true
+      - name: Build instrumented production core and unified native tests
+        id: sanitizer-build
+        env:
+          BUILD_ROOT: ${{ github.workspace }}/build/linux-sanitizers
+          SPOOL_CMAKE_EXTRA_ARGS: -DSPOOL_SANITIZERS=ON
+          JOBS: 2
+        run: nix develop .#native -c bash tools/build-linux-release.sh
+      - name: Exercise actual bounded decoder and provider-package consumer
+        run: |
+          nix develop .#native -c env \
+            ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+            UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            build/linux-sanitizers/app/spool-tests --run-all \
+            --filter bounded-zstd,provider-package-unpack --workers 1 \
+            --results "$PWD/build/linux-sanitizers/app/sanitizer-results.json"
+      - name: Prove foreign-owner admission at the actual server boundary
+        if: ${{ !cancelled() && steps.sanitizer-build.outcome == 'success' }}
+        run: |
+          sudo env \
+            ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+            UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            "$PWD/build/linux-sanitizers/app/spool-tests" \
+            --child spoolet-admission --require-foreign-owner
+      - name: Preserve sanitizer selector evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: internal-linux-sanitizer-results
+          path: |
+            build/linux-sanitizers/app/sanitizer-results.json
+            build/linux-sanitizers/app/sanitizer-results.json.*.log
+          if-no-files-found: warn
+          retention-days: 7
+
   linux-packages:
     name: Linux packages
     runs-on: ubuntu-24.04
@@ -304,17 +357,27 @@ jobs:
       - name: Build host app
         run: nix develop .#native -c bash tools/build-linux-release.sh
 
-      - name: Run native tests
+      - name: Run traditional and real GUI e2e tests
         run: |
-          nix develop .#native -c ctest --test-dir build/linux-release/app \
-            -E '^mpv-video-item' --parallel "$(nproc)" --output-on-failure
+          nix develop .#native -c python tools/run-tests.py \
+            --build-dir build/linux-release/app --workers "$(nproc)"
+
+      - name: Retain internal native phase results after failures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: internal-linux-unified-tests
+          path: |
+            build/linux-release/app/*-results.json*
+            build/linux-release/app/test-phases.json
+            build/linux-release/app/test-artifacts/app-journey-*/*.png
+          if-no-files-found: ignore
+          retention-days: 1
 
 
       - name: Lint compiled QML
         run: nix develop .#native -c cmake --build build/linux-release/app --target spool_qmllint_strict
 
-      - name: Launch-test host app UI
-        run: nix develop .#native -c bash tools/launch-native-app.sh build/linux-release/install/bin/spool
 
       # A page switch is meant to cost one frame. That is a number, so it is
       # measured every commit rather than noticed once it has got bad.
@@ -448,6 +511,14 @@ jobs:
     # Public repositories receive unlimited standard GitHub-hosted runner
     # minutes, so pushes, pull requests, and releases exercise macOS too.
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_macos }}
+    env:
+      # MoltenVK's documented discrete-binding path avoids an unsupported
+      # argument-encoder selector in Apple's hosted paravirtualized Metal GPU.
+      # This still executes real Vulkan/Metal and retains every Vulkan selector.
+      MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS: "0"
+      # Select the documented public Metal buffer allocator without placement
+      # heaps; real Vulkan initialization, rendering and readback checks remain.
+      MVK_CONFIG_USE_MTLHEAP: "0"
     strategy:
       # Apple Silicon and Intel Macs each get a native build; one failing
       # architecture should still let the other produce its DMG.
@@ -455,7 +526,7 @@ jobs:
       matrix:
         include:
           - arch: arm64
-            runner: macos-14
+            runner: macos-15
           - arch: x86_64
             runner: macos-15-intel
     steps:
@@ -577,10 +648,6 @@ jobs:
           SPOOL_MACOS_CREDENTIAL_SERVICE: ${{ inputs.enable_macos_signing && 'com.sachk.spool' || '' }}
         run: nix develop .#native --no-write-lock-file -c bash tools/build-macos.sh
 
-      - name: Run native tests
-        run: |
-          nix develop .#native --no-write-lock-file -c ctest --test-dir build/macos/app \
-            --parallel "$(sysctl -n hw.ncpu)" --output-on-failure
 
       - name: Lint compiled QML
         run: nix develop .#native --no-write-lock-file -c cmake --build build/macos/app --target spool_qmllint_strict
@@ -617,10 +684,6 @@ jobs:
           print("Bundled Vulkan loader and MoltenVK load successfully; Metal surface extension available")
           PY
 
-      - name: Launch-test macOS app UI
-        env:
-          SPOOL_LAUNCH_TEST_QPA_PLATFORM: cocoa
-        run: nix develop .#native --no-write-lock-file -c bash tools/launch-native-app.sh build/macos/install/Spool.app
 
       - name: Sign macOS application
         if: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.enable_macos_signing }}
@@ -761,10 +824,7 @@ jobs:
             -m qtshadertools qttasktree qtwebsockets qtimageformats
       - name: Build actual source Qt, media closure, and tvOS app
         run: bash tools/build-tvos.sh
-      - name: Exercise native Apple TV simulator UI and playback
-        if: ${{ matrix.sdk == 'appletvsimulator' }}
-        run: bash tools/apple/smoke-tvos.sh build/tvos/appletvsimulator-arm64/install/Spool.app
-      - name: Package validated unsigned device IPA
+      - name: Package artifact-audited unsigned device IPA (no device runtime claim)
         if: ${{ matrix.sdk == 'appletvos' }}
         run: bash tools/package-tvos.sh build/tvos/appletvos-arm64/install/Spool.app dist/tvos
       - name: Upload only the device release package
@@ -775,7 +835,7 @@ jobs:
           path: dist/tvos/Spool-*-tvOS-arm64.ipa
           if-no-files-found: error
           retention-days: ${{ inputs.release && 1 || 7 }}
-      - name: Archive simulator proof without losing executable permissions
+      - name: Archive simulator build without losing executable permissions
         if: ${{ matrix.sdk == 'appletvsimulator' }}
         run: |
           tar -czf "$RUNNER_TEMP/tvos-simulator-arm64.tar.gz" \
@@ -787,9 +847,6 @@ jobs:
           name: internal-tvos-simulator-arm64
           path: |
             ${{ runner.temp }}/tvos-simulator-arm64.tar.gz
-            build/tvos/smoke/*.png
-            build/tvos/smoke/result.json
-            build/tvos/smoke/credentials-result.json
           retention-days: ${{ inputs.release && 1 || 7 }}
       - name: Save coherent Apple dependency cache
         if: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release && steps.tvos-source-cache.outputs.cache-hit != 'true' }}
@@ -1089,6 +1146,7 @@ jobs:
           SPOOL_ANDROID_KEYSTORE_STORE_PASS: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release && secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD || '' }}
           SPOOL_ANDROID_KEYSTORE_KEY_PASS: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release && secrets.ANDROID_RELEASE_KEY_PASSWORD || '' }}
           ANDROID_ABI: ${{ matrix.abi }}
+          SPOOL_ANDROID_BUILD_TESTS: ${{ matrix.abi == 'x86_64' && 'ON' || 'OFF' }}
         run: nix develop .#android -c bash tools/android/build-apks.sh
 
       - name: Verify native libraries stay compressed
@@ -1136,26 +1194,35 @@ jobs:
             build/android/qcoro
           key: ${{ steps.android-cache.outputs.cache-primary-key }}
 
-      - name: Launch-test both launcher categories in headless emulator
+      - name: Build same-binary native controller for the actual mobile app journey
         if: ${{ matrix.abi == 'x86_64' }}
-        run: |
-          nix develop .#android -c bash tools/android/emulator-launch-test.sh \
-            dist/android/spool-x86_64.apk
+        run: nix develop .#native -c bash tools/build-linux-release.sh
 
-      - name: Upload launch-test diagnostics
-        if: ${{ failure() && matrix.abi == 'x86_64' }}
+      - name: Run strict traditional, GUI, and real app journey phases on Android phone
+        if: ${{ matrix.abi == 'x86_64' }}
+        env:
+          SPOOL_TEST_DEVICE_CLEANUP_REGRESSIONS: "1"
+        run: |
+          nix develop .#android -c env SPOOL_ANDROID_FORM_FACTOR=phone \
+            bash tools/android/emulator-launch-test.sh \
+            dist/android/spool-e2e-app-x86_64.apk
+
+      - name: Upload internal emulator test receipts and diagnostics
+        if: ${{ always() && matrix.abi == 'x86_64' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
         with:
-          name: spool-android-launch-test
+          name: internal-spool-android-tests
           path: |
-            build/android/launch-test
-            build/android/emulator.log
+            build/android/launch-test/**/safe-export/**
+            dist/android/spool-tests-x86_64.apk
+            dist/android/spool-e2e-tests-x86_64.apk
+            dist/android/spool-e2e-app-x86_64.apk
           retention-days: 1
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
         with:
           name: spool-android-apks-${{ matrix.abi }}
-          path: dist/android/*.apk
+          path: dist/android/spool-${{ matrix.abi }}.apk
           if-no-files-found: error
           retention-days: ${{ inputs.release && 1 || 7 }}
 
@@ -1365,11 +1432,27 @@ jobs:
 
       - name: Build application
         shell: pwsh
-        run: tools\windows\build.ps1 -Clean
+        run: tools\windows\build.ps1 -Clean -CMakeArguments '-DSPOOL_TEST_RENDER_BACKEND=opengl'
 
-      - name: Run tests
+      - name: Install pinned real OpenGL and fixture test dependencies
+        shell: pwsh
+        run: tools\windows\install-test-runtime.ps1
+
+      - name: Run traditional and real OpenGL GUI e2e tests
         shell: pwsh
         run: tools\windows\test.ps1
+      - name: Retain internal native phase results after failures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: internal-windows-unified-tests
+          path: |
+            build/windows-release/app/*-results.json*
+            build/windows-release/app/test-phases.json
+            build/windows-release/app/test-artifacts/app-journey-*/*.png
+          if-no-files-found: ignore
+          retention-days: 1
+
 
       - name: Stage and launch-test release payload
         shell: pwsh

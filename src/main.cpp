@@ -17,7 +17,7 @@
 #include "common/AsyncTask.h"
 #include "common/LogRotation.h"
 #include "common/TlsTrust.h"
-#if !defined(SPOOL_ANDROID) && !defined(SPOOL_WEBOS) && !defined(SPOOL_APPLE_MOBILE)
+#if !defined(SPOOL_WEBOS)
 #include "automation/LocalCommandServer.h"
 #endif
 #include "app/DownloadManager.h"
@@ -474,6 +474,9 @@ int main(int argc, char **argv)
     g_startupTimer.start();
     QElapsedTimer& startupTimer = g_startupTimer;
     bool launchTest = false;
+#ifndef SPOOL_WEBOS
+    int automationPort = -1;
+#endif
     QString dataDirectory;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-v") == 0) {
@@ -484,6 +487,31 @@ int main(int argc, char **argv)
             launchTest = true;
         if (strcmp(argv[i], "--unredacted-urls") == 0)
             Spool::setDiagnosticUrlsUnredacted(true);
+        const QByteArray argument(argv[i]);
+        if (argument == "--automation-port" || argument.startsWith("--automation-port=")) {
+#ifdef SPOOL_WEBOS
+            std::fprintf(stderr, "Loopback automation is not supported on webOS\n");
+            return 1;
+#else
+            QByteArray value;
+            if (argument == "--automation-port") {
+                if (++i >= argc) {
+                    std::fprintf(stderr, "--automation-port requires a port in 0..65535\n");
+                    return 1;
+                }
+                value = argv[i];
+            } else {
+                value = argument.mid(sizeof("--automation-port=") - 1);
+            }
+            bool valid = false;
+            const uint port = value.toUInt(&valid);
+            if (!valid || port > 65535 || automationPort >= 0) {
+                std::fprintf(stderr, "--automation-port requires one port in 0..65535\n");
+                return 1;
+            }
+            automationPort = int(port);
+#endif
+        }
         if (strcmp(argv[i], "--data-dir") == 0) {
 #if defined(SPOOL_WEBOS) || defined(SPOOL_ANDROID) || defined(SPOOL_APPLE_MOBILE)
             std::fprintf(stderr, "--data-dir is supported only on desktop platforms\n");
@@ -1268,15 +1296,27 @@ int main(int argc, char **argv)
     }
 
     QTimer::singleShot(1000, router.get(), [router = router.get()] { router->beginSession(false); });
-#if !defined(SPOOL_ANDROID) && !defined(SPOOL_WEBOS) && !defined(SPOOL_APPLE_MOBILE)
+#if !defined(SPOOL_WEBOS)
     Spool::LocalCommandServer localCommands(controller.get(), router.get(), &window, &downloads, &hub);
-    if (!app.arguments().contains(QStringLiteral("--no-local-control"))) {
+    const bool controlDisabled = app.arguments().contains(QStringLiteral("--no-local-control"));
+    if (automationPort >= 0 && controlDisabled) {
+        std::fprintf(stderr, "--automation-port conflicts with --no-local-control\n");
+        return 1;
+    }
+#if defined(SPOOL_ANDROID) || defined(SPOOL_APPLE_MOBILE)
+    const bool startLocalControl = automationPort >= 0;
+#else
+    const bool startLocalControl = !controlDisabled;
+#endif
+    if (startLocalControl) {
         QString error;
         const QString instance = optionValue(app.arguments(), QStringLiteral("--instance"), "SPOOL_INSTANCE");
-        if (!localCommands.start(instance, &error)) {
+        const bool started = automationPort >= 0 ? localCommands.startTcp(instance, quint16(automationPort), &error)
+                                                 : localCommands.start(instance, &error);
+        if (!started) {
             logLine("local control unavailable: %s", qPrintable(error));
             // An explicitly named launch must not silently target a different instance.
-            if (!instance.isEmpty())
+            if (!instance.isEmpty() || automationPort >= 0)
                 return 1;
         }
     }

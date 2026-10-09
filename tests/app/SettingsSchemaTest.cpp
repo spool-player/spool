@@ -2,6 +2,7 @@
 #include "app/LocalizationManager.h"
 
 #include "TestMain.h"
+#include "TestRequire.h"
 
 #include <QCoreApplication>
 #include <QHash>
@@ -11,7 +12,6 @@
 #include <QVariantMap>
 
 #include <cstdlib>
-#include <iostream>
 
 using namespace Spool;
 
@@ -24,10 +24,8 @@ QString keyString(const SettingSpec& spec)
 
 void require(bool condition, const QString& message)
 {
-    if (condition)
-        return;
-    std::cerr << message.toStdString() << '\n';
-    std::exit(EXIT_FAILURE);
+    if (!condition)
+        SpoolTests::require(false, message.toUtf8().constData());
 }
 
 const SettingSpec& requiredSpec(const QString& key)
@@ -177,6 +175,12 @@ void audioOutputChoicesMatchPlatform()
     require(
         normalizedSettingValue(audioOutput, QStringLiteral("starfish")).toString() == QStringLiteral("starfish-pcm"),
         QStringLiteral("legacy Starfish output did not normalize to starfish-pcm"));
+#elif defined(Q_OS_ANDROID) || defined(SPOOL_APPLE_MOBILE)
+    // Mobile media stacks expose system-managed output, not Linux/macOS
+    // desktop audio backends, even when Qt also defines their OS-family macro.
+    const QStringList expectedChoices { QStringLiteral("auto") };
+    const QString expectedDefault = QStringLiteral("auto");
+    const QString unknownFallback = QStringLiteral("auto");
 #elif defined(Q_OS_LINUX)
     const QStringList expectedChoices { QStringLiteral("auto"), QStringLiteral("pipewire"), QStringLiteral("pulse"),
         QStringLiteral("alsa") };
@@ -206,9 +210,16 @@ void audioOutputChoicesMatchPlatform()
     }
     require(normalizedSettingValue(audioOutput, QStringLiteral("unexpected")).toString() == unknownFallback,
         QStringLiteral("unknown audio output did not use the platform default"));
+#if defined(Q_OS_ANDROID) || defined(SPOOL_APPLE_MOBILE)
+    for (const QString& desktopBackend : { QStringLiteral("pipewire"), QStringLiteral("pulse"), QStringLiteral("alsa"),
+             QStringLiteral("wasapi"), QStringLiteral("coreaudio") }) {
+        require(normalizedSettingValue(audioOutput, desktopBackend).toString() == QStringLiteral("auto"),
+            QStringLiteral("mobile audio retained unsupported desktop backend %1").arg(desktopBackend));
+    }
+#endif
 #ifndef SPOOL_WEBOS
     require(!expectedChoices.contains(QStringLiteral("starfish-pcm")),
-        QStringLiteral("desktop audio choices must not expose Starfish"));
+        QStringLiteral("non-webOS audio choices must not expose Starfish"));
 #endif
 }
 

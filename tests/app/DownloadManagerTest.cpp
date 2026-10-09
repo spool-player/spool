@@ -1,6 +1,7 @@
 #include "app/DownloadManager.h"
 #include "../providers/ProviderFixture.h"
 #include "TestMain.h"
+#include "TestRequire.h"
 #include "cache/DatabaseManager.h"
 #include "provider/ProviderRegistry.h"
 #include "provider/ProviderUiContext.h"
@@ -21,19 +22,12 @@
 #include <QTimer>
 #include <algorithm>
 #include <clocale>
-#include <cstdlib>
 #include <functional>
 #include <iostream>
 #include <mpv/client.h>
 
 namespace {
-void require(bool condition, const char *message)
-{
-    if (!condition) {
-        std::cerr << message << '\n';
-        std::exit(1);
-    }
-}
+using SpoolTests::require;
 void waitUntil(const std::function<bool()>& condition, const char *message)
 {
     QElapsedTimer timer;
@@ -90,8 +84,13 @@ SPOOL_TEST_MAIN("download-manager")
     std::setlocale(LC_NUMERIC, "C");
     using namespace Spool;
     QTemporaryDir root;
+    require(root.isValid(), "isolated download data directory exists");
+    qputenv("SPOOL_DATA_HOME", root.path().toUtf8());
+    // Mobile destinations must be an app-storage choice, not an arbitrary
+    // directory. Use the real default under our isolated application data root.
+    const QString destination = root.filePath("downloads");
     qputenv("SPOOL_CREDENTIAL_STORE_DIR", root.filePath("credentials").toUtf8());
-    const QByteArray media = readFile(QStringLiteral(TEST_SOURCE_DIR "/tests/media/fixtures/remux-h264.mp4"));
+    const QByteArray media = readFile(SpoolTests::fixturePath("tests/media/fixtures/remux-h264.mp4"));
     require(media.size() > 1024, "real finite media fixture exists");
     QTcpServer server;
     QTcpServer foreign;
@@ -227,7 +226,7 @@ export function createSource(config, sourceHost) {
     QString completedPath;
     {
         DownloadManager downloads(&hub, root.filePath("ledger"));
-        downloads.setDestination(QUrl::fromLocalFile(root.filePath("media")));
+        downloads.setDestination(QUrl::fromLocalFile(destination));
         downloads.setEnabled(false);
         downloads.start(movie, hub.downloadOptions(movie).front().toMap());
         require(downloads.jobs().isEmpty() && authenticated == 0,
@@ -298,7 +297,7 @@ export function createSource(config, sourceHost) {
         downloads.setEnabled(false);
         require(downloads.statusFor(cancelItem).value("state").toString() == "cancelled",
             "cancel is explicit and terminal");
-        require(QDir(root.filePath("media")).entryList(QDir::Files).size() == 1,
+        require(QDir(destination).entryList(QDir::Files).size() == 1,
             "cancel deletes partial output without damaging completed files");
         downloads.retry(cancelledId);
         require(downloads.statusFor(cancelItem).value("id").toString() == cancelledId
@@ -315,7 +314,7 @@ export function createSource(config, sourceHost) {
                 "invalid download fails visibly");
             require(!downloads.statusFor(item).value("error").toString().isEmpty(),
                 "failed transfer exposes an actionable status");
-            require(QDir(root.filePath("media")).entryList(QDir::Files).size() == 1,
+            require(QDir(destination).entryList(QDir::Files).size() == 1,
                 "failure never publishes a partial or manifest file");
         }
         require(foreignRequests == 0, "redirect never leaks download authentication to a foreign origin");

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "TestMain.h"
+
 #include "app/DownloadManager.h"
 #include "app/LocalizationManager.h"
 #include "app/RemoteTargetsController.h"
@@ -85,7 +87,7 @@ public:
         package.files["manifest.json"] = QJsonDocument(manifest).toJson();
         package.manifest = *Spool::ProviderManifest::parse(package.files["manifest.json"]);
         for (const auto& file : { QString("extension-integration.mjs"), QString("IntegrationPin.qml") }) {
-            QFile input(QStringLiteral(TEST_SOURCE_DIR "/tests/providers/fixtures/") + file);
+            QFile input(SpoolTests::fixturePath("tests/providers/fixtures/") + file);
             if (!input.open(QIODevice::ReadOnly))
                 qFatal("integration fixture missing");
             package.files[file.endsWith("mjs") ? "logic/provider.mjs" : "ui/Selection.qml"] = input.readAll();
@@ -195,7 +197,7 @@ private:
             state = { { "native",
                           QVariantMap { { "audioLanguage", "eng" }, { "audioMode", "Default" },
                               { "subtitleLanguage", "eng" }, { "subtitleMode", "Default" } } },
-                { "writes", 0 },
+                { "writes", 0 }, { "remoteTargetRequests", 0 },
                 { "queue",
                     QVariantList { QVariantMap { { "id", "movie" }, { "title", "Film" }, { "type", "Movie" },
                                        { "entryId", "one" } },
@@ -216,11 +218,12 @@ private:
         else if (operation == "dataWrite") {
             state["document"] = args.value("value");
             state["writes"] = state["writes"].toInt() + 1;
-        } else if (operation == "remoteTargets")
+        } else if (operation == "remoteTargets") {
+            state["remoteTargetRequests"] = state["remoteTargetRequests"].toInt() + 1;
             return { { "targets",
                 QVariantList { QVariantMap { { "id", "tv" }, { "name", "Loopback TV" },
                     { "commands", QVariantList { "pause", "queueRemove" } }, { "queueEditing", "in-place" } } } } };
-        else if (operation == "remoteState")
+        } else if (operation == "remoteState")
             return { { "state", "playing" }, { "commands", QVariantList { "pause", "queueRemove" } },
                 { "positionTicks", "100000000" }, { "runtimeTicks", "1000000000" },
                 { "queueRevision", QString::number(commands) } };

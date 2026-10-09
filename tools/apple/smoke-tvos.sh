@@ -3,118 +3,88 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 app="${1:?Pass the built tvOS Spool.app}"
 [[ "$(uname -s)" == Darwin ]] || { echo 'error: Apple TV simulator requires macOS/Xcode' >&2; exit 1; }
+host_build="${SPOOL_DEVICE_HOST_BUILD_DIR:-$ROOT/build/macos/app}"
+if [[ -z "${SPOOL_DEVICE_HOST_E2E:-}" ]]; then
+  [[ -f "$host_build/native-spool-e2e-path.txt" ]] || {
+    echo 'error: build the native host journey controller with tools/build-macos.sh first' >&2
+    exit 1
+  }
+  read -r SPOOL_DEVICE_HOST_E2E <"$host_build/native-spool-e2e-path.txt"
+fi
+if [[ -z "${SPOOL_E2E_SPOOLET:-}" ]]; then
+  [[ -f "$host_build/native-spoolet-path.txt" ]] || {
+    echo 'error: build the matching native spoolet with tools/build-macos.sh first' >&2
+    exit 1
+  }
+  read -r SPOOL_E2E_SPOOLET <"$host_build/native-spoolet-path.txt"
+fi
+export SPOOL_DEVICE_HOST_E2E SPOOL_E2E_SPOOLET
+export SPOOL_E2E_ISOLATED_DEVICE=1
 result="$ROOT/build/tvos/smoke"
 mkdir -p "$result"
 runtime="$(xcrun simctl list runtimes --json | python3 -c 'import json,sys; r=[x for x in json.load(sys.stdin)["runtimes"] if x["isAvailable"] and x["identifier"].startswith("com.apple.CoreSimulator.SimRuntime.tvOS")]; print(sorted(r,key=lambda x:tuple(map(int,x["version"].split("."))))[-1]["identifier"])')"
 device_type="$(xcrun simctl list devicetypes --json | python3 -c 'import json,sys; print(next(x["identifier"] for x in json.load(sys.stdin)["devicetypes"] if x["name"].startswith("Apple TV 4K")))')"
-device="$(xcrun simctl create Spool-tvOS-smoke "$device_type" "$runtime")"
+device="$(xcrun simctl create Spool-tvOS-tests "$device_type" "$runtime")"
 cleanup() { xcrun simctl shutdown "$device" >/dev/null 2>&1 || true; xcrun simctl delete "$device"; }
 trap cleanup EXIT
 xcrun simctl boot "$device"
 xcrun simctl bootstatus "$device" -b
-# simctl's console mode returns after process exit. Parse only the exact
-# credential-free consumer-test result, never dump full app/provider logs.
-python3 - "$device" "$app" "$result" <<'PY'
-import json, plistlib, re, subprocess, sys, tempfile, uuid
+export SPOOL_TVOS_DEVICE="$device"
+# Install the real product and both unified native selector bundles. Application
+# and Keychain entitlements stay embedded by the simulator linker; the local
+# macOS signature must not duplicate restricted iOS entitlements (AMFI rejects it).
+python3 - "$device" "$app" <<'PY'
+import plistlib
+import subprocess
+import sys
+import tempfile
 from pathlib import Path
 
-device, app, output = sys.argv[1:]
-output = Path(output)
-app = Path(app)
-smoke = app.parent / "smoke" / "spool-tvos-playback-smoke.app"
-bundle_ids = []
+device, app = sys.argv[1:]
+app = Path(app).resolve()
+bundles = (app, app.parent / "tests/spool-tests.app", app.parent / "tests/spool-e2e-tests.app")
 with tempfile.TemporaryDirectory(prefix="spool-tvos-sign-") as signing:
-    for bundle in (app, smoke):
+    for bundle in bundles:
         with (bundle / "Info.plist").open("rb") as metadata:
             identifier = plistlib.load(metadata)["CFBundleIdentifier"]
-        bundle_ids.append(identifier)
-        # Application/Keychain entitlements are embedded by the simulator
-        # linker. The host macOS signature must contain only its local debug
-        # entitlement; signing restricted iOS entitlements makes AMFI kill it.
         entitlements = Path(signing) / (identifier + ".plist")
         with entitlements.open("wb") as file:
             plistlib.dump({"com.apple.security.get-task-allow": True}, file)
         subprocess.run(["codesign", "--force", "--sign", "-", "--timestamp=none",
                         "--entitlements", str(entitlements), "--generate-entitlement-der", str(bundle)], check=True)
         subprocess.run(["xcrun", "simctl", "install", device, str(bundle)], check=True)
-app_id, smoke_id = bundle_ids
-checks = [
-    (app_id, ["--launch-test"], "launch test: application UI rendered"),
-    (smoke_id, ["mpv-video-item"],
-     "mpv video smoke: upright frames and OSD rendered across detach and resize"),
-    (smoke_id, ["tvos-audio"],
-     "tvOS audio smoke: AudioUnit output advanced with exclusive playback session"),
-    (smoke_id, ["tvos-credentials"], None),
-]
-results = {}
-for bundle, arguments, expected in checks:
-    receipt = None
-    launch_arguments = arguments
-    if arguments == ["tvos-credentials"]:
-        container = subprocess.check_output(
-            ["xcrun", "simctl", "get_app_container", device, bundle, "data"], text=True).strip()
-        receipt = Path(container) / "tmp" / "tvos-credentials-result.json"
-        receipt.unlink(missing_ok=True)
-        (output / "credentials-result.json").unlink(missing_ok=True)
-        nonce = uuid.uuid4().hex
-        launch_arguments = [*arguments, nonce]
-    # Selectors are separate native executions, not arguments to a process
-    # UIKit may still be retiring after the previous consumer returned.
-    process = subprocess.run(["xcrun", "simctl", "launch", "--console", "--terminate-running-process",
-                              device, bundle, *launch_arguments],
-                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=90)
-    if receipt is None:
-        passed = process.returncode == 0 and expected in process.stdout
-    else:
-        try:
-            report = json.loads(receipt.read_text())
-        except (OSError, ValueError):
-            report = None
-        expected_report = {"case": "tvos-credentials", "nonce": nonce,
-                           "saved": True, "loaded": True, "removed": True, "writable": True}
-        valid = (isinstance(report, dict) and report.keys() == expected_report.keys()
-                 and report["case"] == expected_report["case"] and report["nonce"] == nonce
-                 and all(type(report[key]) is bool for key in ["saved", "loaded", "removed", "writable"]))
-        passed = process.returncode == 0 and valid and report == expected_report
-        if valid:
-            (output / "credentials-result.json").write_text(json.dumps(report, indent=2) + "\n")
-            if passed and "Keychain roundtrip and sandbox file persistence passed" not in process.stdout:
-                print("tvOS credentials smoke: console marker absent; fresh native receipt passed")
-        if not passed:
-            print("tvOS credentials smoke: native receipt " + (
-                json.dumps({key: report[key] for key in ["saved", "loaded", "removed", "writable"]})
-                if valid else "missing or invalid"))
-    results[arguments[0]] = passed
-    print(f"{arguments[0]}: {'passed' if passed else 'FAILED'}")
-    if not passed:
-        print(f"native consumer exit: {process.returncode}")
-        # Report only controlled native smoke diagnostics; URLs/auth are absent
-        # from these test result lines and provider logs are deliberately omitted.
-        lines = process.stdout.splitlines()
-        # simctl rejects a process before any app/provider code runs. Preserve
-        # its nested native launch error, not unrelated application output.
-        native_error = next((index for index, line in enumerate(lines)
-                             if line.startswith("An error was encountered processing the command")), None)
-        if native_error is not None:
-            for line in lines[native_error:]:
-                print(re.sub(r"https?://\S+", "[redacted-url]", line))
-        for line in lines:
-            if any(marker in line for marker in ["launch test:", "video result:", "orientation:", "viewport:",
-                                                "first video frame", "render context handoff did not complete",
-                                                "render context was not ready", "failed to initialize mpv",
-                                                "tvOS audio smoke:", "tvOS credentials smoke:",
-                                                "startup:", "[qml]", "font registration failed:",
-                                                "database initialization failed:", "dyld[",
-                                                "An error was encountered processing the command"]):
-                print(re.sub(r"https?://\S+", "[redacted-url]", line))
-        if arguments == ["mpv-video-item"]:
-            container = subprocess.check_output(
-                ["xcrun", "simctl", "get_app_container", device, bundle, "data"], text=True).strip()
-            frame = Path(container) / "tmp" / "mpv-video-item-failure.png"
-            if frame.exists():
-                (output / "video-failure.png").write_bytes(frame.read_bytes())
-        (output / "result.json").write_text(json.dumps(results, indent=2) + "\n")
-        raise SystemExit(1)
-(output / "result.json").write_text(json.dumps(results, indent=2) + "\n")
 PY
-xcrun simctl io "$device" screenshot "$result/simulator.png"
+build_dir="${SPOOL_TVOS_TEST_BUILD_DIR:-$(dirname "$app")/../app}"
+status=0
+# CTest traditional and e2e phases use run-device-tests.py, requiring fresh native
+# nonce receipts and preserving the extra Keychain/sandbox consumer receipt.
+# Both phases finish even when a selector fails, crashes, or exceeds its deadline.
+nix develop "$ROOT#native" -c python "$ROOT/tools/run-tests.py" \
+  --build-dir "$build_dir" --config Release --workers 1 || status=1
+# Keep the product bundle's UI launch contract in addition to native GPU/QML
+# selectors. This is not substituted for a provider/playback app journey.
+python3 - "$device" "$app" "$result" <<'PY' || status=1
+import json
+import plistlib
+import subprocess
+import sys
+from pathlib import Path
+
+device, app, output = sys.argv[1:]
+with (Path(app) / "Info.plist").open("rb") as file:
+    bundle = plistlib.load(file)["CFBundleIdentifier"]
+try:
+    process = subprocess.run(["xcrun", "simctl", "launch", "--console", "--terminate-running-process",
+                              device, bundle, "--launch-test"], stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT, text=True, timeout=90)
+    passed = process.returncode == 0 and "launch test: application UI rendered" in process.stdout
+except subprocess.TimeoutExpired:
+    subprocess.run(["xcrun", "simctl", "terminate", device, bundle],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    passed = False
+(Path(output) / "launch-result.json").write_text(json.dumps({"application-ui-rendered": passed}, indent=2) + "\n")
+print("application UI launch: " + ("passed" if passed else "FAILED"))
+raise SystemExit(0 if passed else 1)
+PY
+xcrun simctl io "$device" screenshot "$result/simulator.png" || status=1
+exit "$status"

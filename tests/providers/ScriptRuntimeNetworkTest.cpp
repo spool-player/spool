@@ -382,7 +382,7 @@ SPOOL_TEST_MAIN("script-runtime-network")
         ++snapshots;
         return QList<QHostAddress>(40, QHostAddress(QHostAddress::LocalHost));
     };
-    ScriptRuntime runtime(QStringLiteral(TEST_SOURCE_DIR "/tests/providers/fixtures/network.mjs"), {}, hooks);
+    ScriptRuntime runtime(SpoolTests::fixturePath("tests/providers/fixtures/network.mjs"), {}, hooks);
     const QVariantMap capabilities { { "httpMetadata", true }, { "originGrants", true }, { "lanProbe", true },
         { "discovery", true } };
     QCoro::waitFor(runtime.addSource("draft", {}, { QUrl(origin) }, capabilities, true));
@@ -530,7 +530,7 @@ SPOOL_TEST_MAIN("script-runtime-network")
     rejects(runtime.call("draft", "probe", probe), "discovery_denied");
     ScriptRuntime::NetworkHooks emptyHooks;
     emptyHooks.lanTargets = [] { return QList<QHostAddress>(); };
-    ScriptRuntime empty(QStringLiteral(TEST_SOURCE_DIR "/tests/providers/fixtures/network.mjs"), {}, emptyHooks);
+    ScriptRuntime empty(SpoolTests::fixturePath("tests/providers/fixtures/network.mjs"), {}, emptyHooks);
     QCoro::waitFor(empty.addSource("draft", {}, {}, capabilities, true));
     QCoro::waitFor(empty.allowLanDiscovery("draft"));
     const auto noInterfaces = QCoro::waitFor(empty.call("draft", "probe", probe));

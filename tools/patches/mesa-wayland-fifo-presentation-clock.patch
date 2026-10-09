@@ -1,0 +1,24 @@
+Mesa Wayland WSI: serialize automatic FIFO targets in the compositor clock.
+
+The swapchain's target bookkeeping is in its own time domain (normally
+CLOCK_MONOTONIC). wp_commit_timer_v1.set_timestamp requires the compositor's
+presentation clock, which Weston X11 may advertise as CLOCK_MONOTONIC_RAW.
+Reuse Mesa's existing reverse conversion only at the automatic FIFO handover;
+application-provided absolute timing is already converted by its setter.
+
+Fixes: 660136d8abe7cf6997168c174f82adb59c47f0d4
+Upstream source: https://gitlab.freedesktop.org/mesa/mesa/-/blob/mesa-26.2.2/src/vulkan/wsi/wsi_common_wayland.c
+Protocol: https://gitlab.freedesktop.org/wayland/wayland-protocols/-/blob/main/staging/commit-timing/commit-timing-v1.xml
+
+--- a/src/vulkan/wsi/wsi_common_wayland.c
++++ b/src/vulkan/wsi/wsi_common_wayland.c
+@@ -3259,5 +3259,8 @@
+       /* Take back 500 us as a safety margin, to ensure we don't miss our
+        * target due to round-off error.
+        */
+-      timespec_from_nsec(&target_ts, target - 500000);
++      /* Keep prediction in swapchain time, but serialize the constraint in
++       * the compositor's presentation clock domain. */
++      timespec_from_nsec(&target_ts,
++                        wsi_wl_convert_wayland_to_swapchain_time(chain, target - 500000, true));
+    }

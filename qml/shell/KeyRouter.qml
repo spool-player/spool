@@ -159,8 +159,8 @@ FocusScope {
         // A different key is genuinely down now, so whatever was waiting is up.
         if (heldReleaseKey)
             flushHeldRelease()
-        if (!platformMayPairHolds || platformPairsHolds || key !== lastReleaseKey || Date.now() - lastReleaseAt
-                >= releaseGrace)
+        if (!InputKeys.isDirection(key) || !platformMayPairHolds || platformPairsHolds || key !== lastReleaseKey || Date.now(
+                    ) - lastReleaseAt >= releaseGrace)
             return false
         console.info("input: this platform holds a key by repeating press and release")
         platformPairsHolds = true
@@ -387,7 +387,7 @@ FocusScope {
             noteRelease(key)
             // Qt's own auto-repeat releases are already understood downstream
             // and are never the dialect this holds back.
-            if (platformPairsHolds && !repeat) {
+            if (platformPairsHolds && InputKeys.isDirection(key) && !repeat) {
                 heldReleaseKey = key
                 heldReleaseModifiers = event.modifiers
                 heldReleaseTimer.restart()
