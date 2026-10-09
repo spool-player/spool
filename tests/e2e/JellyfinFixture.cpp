@@ -53,8 +53,7 @@ JellyfinFixture::JellyfinFixture(QByteArray bytes)
         while (auto *socket = webSockets.nextPendingConnection()) {
             socket->setParent(&webSockets);
             QObject::connect(socket, &QWebSocket::disconnected, socket, &QObject::deleteLater);
-            // The real event channel stays quiet: no library/group/remote data
-            // is fabricated and no message is echoed into the app.
+            eventSockets.append(socket);
         }
     });
     server.listen(QHostAddress::LocalHost, 0);
@@ -66,7 +65,7 @@ QString JellyfinFixture::origin() const
 QJsonObject JellyfinFixture::source() const
 {
     return { { "Id", "journey-source" }, { "Name", "Original" }, { "Container", "mkv" }, { "Protocol", "File" },
-        { "VideoType", "VideoFile" }, { "RunTimeTicks", 300000000 }, { "Size", media.size() }, { "Bitrate", 128000 },
+        { "VideoType", "VideoFile" }, { "RunTimeTicks", 900000000 }, { "Size", media.size() }, { "Bitrate", 128000 },
         { "SupportsDirectPlay", true }, { "SupportsDirectStream", true }, { "SupportsTranscoding", false },
         { "MediaStreams",
             QJsonArray { QJsonObject { { "Index", 0 }, { "Type", "Video" }, { "Codec", "ffv1" }, { "Width", 640 },
@@ -74,13 +73,50 @@ QJsonObject JellyfinFixture::source() const
 }
 QJsonObject JellyfinFixture::movie() const
 {
-    return { { "Id", movieId }, { "Name", "Journey Film" }, { "SortName", "Journey Film" }, { "Type", "Movie" },
-        { "MediaType", "Video" }, { "IsFolder", false }, { "LocationType", "FileSystem" },
-        { "RunTimeTicks", 300000000 }, { "ProductionYear", 2026 },
+    QJsonObject item { { "Id", movieId }, { "Name", "Journey Film" }, { "SortName", "Journey Film" },
+        { "Type", "Movie" }, { "MediaType", "Video" }, { "IsFolder", false }, { "LocationType", "FileSystem" },
+        { "RunTimeTicks", 900000000 }, { "ProductionYear", 2026 },
         { "Overview", "A finite red then green picture above a blue lower half." },
         { "ImageTags", QJsonObject { { "Primary", "journey-poster" } } },
         { "UserData", QJsonObject { { "PlaybackPositionTicks", 0 }, { "Played", false } } },
         { "MediaSources", QJsonArray { source() } } };
+    if (episodeMode) {
+        item["Type"] = "Episode";
+        item["SeriesId"] = "journey-series";
+        item["SeriesName"] = "Journey Series";
+        item["SeasonId"] = "journey-season";
+        item["ParentIndexNumber"] = 1;
+        item["IndexNumber"] = 1;
+    }
+    return item;
+}
+void JellyfinFixture::setItemDetailsHeld(bool held)
+{
+    itemDetailsHeld = held;
+    if (held)
+        return;
+    for (const auto& [socket, snapshot] : std::exchange(pendingDetails, decltype(pendingDetails) {})) {
+        if (!socket)
+            continue;
+        socket->setProperty("heldDetails", false);
+        respond(socket, 200, snapshot);
+        ++detailResponses;
+    }
+}
+bool JellyfinFixture::sendRemotePlay(qint64 positionTicks)
+{
+    const QJsonObject message { { "MessageType", "Play" },
+        { "Data",
+            QJsonObject { { "ItemIds", QJsonArray { movieId } }, { "StartIndex", 0 },
+                { "StartPositionTicks", positionTicks }, { "PlayCommand", "PlayNow" } } } };
+    const QString encoded = QString::fromUtf8(QJsonDocument(message).toJson(QJsonDocument::Compact));
+    bool sent = false;
+    for (const auto& socket : std::as_const(eventSockets)) {
+        if (socket && socket->state() == QAbstractSocket::ConnectedState) {
+            sent = socket->sendTextMessage(encoded) > 0 || sent;
+        }
+    }
+    return sent;
 }
 void JellyfinFixture::accept()
 {
@@ -88,7 +124,7 @@ void JellyfinFixture::accept()
         auto pending = std::make_shared<QByteArray>();
         QObject::connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
         QTimer::singleShot(10000, socket, [socket] {
-            if (!socket->property("websocket").toBool())
+            if (!socket->property("websocket").toBool() && !socket->property("heldDetails").toBool())
                 socket->abort();
         });
         QObject::connect(socket, &QTcpSocket::readyRead, socket, [this, socket, pending] {
@@ -275,7 +311,22 @@ void JellyfinFixture::handle(QTcpSocket *socket, const QByteArray& header, const
             ++authenticatedBrowse;
         json(QJsonObject { { "Items", QJsonArray { movie() } }, { "TotalRecordCount", 1 } });
     } else if (method == "GET" && path == "/Users/" + userId + "/Items/" + movieId) {
-        json(movie());
+        ++detailRequests;
+        if (itemDetailsHeld) {
+            socket->setProperty("heldDetails", true);
+            pendingDetails.append({ socket, QJsonDocument(movie()).toJson(QJsonDocument::Compact) });
+        } else {
+            json(movie());
+            ++detailResponses;
+        }
+    } else if (method == "GET" && path == "/Shows/journey-series/Episodes") {
+        ++episodeRequests;
+        json(QJsonObject { { "Items", QJsonArray { movie() } }, { "TotalRecordCount", 1 } });
+    } else if (method == "GET" && path == "/Shows/journey-series/Seasons") {
+        json(QJsonObject { { "Items",
+                               QJsonArray { QJsonObject { { "Id", "journey-season" }, { "Name", "Season 1" },
+                                   { "Type", "Season" }, { "SeriesId", "journey-series" }, { "IndexNumber", 1 } } } },
+            { "TotalRecordCount", 1 } });
     } else if (method == "GET" && path == "/Users/" + userId + "/Items/Latest") {
         json(QJsonArray { movie() });
     } else if (method == "GET"

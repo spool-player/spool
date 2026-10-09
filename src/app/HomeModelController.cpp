@@ -501,6 +501,17 @@ void HomeModelController::advanceNextUp(const MovieItem& completed, const MovieI
 
 void HomeModelController::reconcilePlaybackRows(std::vector<MovieItem>& resume, std::vector<MovieItem>& nextUp)
 {
+    if (m_api) {
+        auto kept = resume.begin();
+        for (auto it = resume.begin(); it != resume.end(); ++it) {
+            if (m_api->applyLocalPlaybackState(*it) && !isMeaningfulResumePosition(it->resumeTicks, it->runtimeTicks))
+                continue;
+            if (kept != it)
+                *kept = std::move(*it);
+            ++kept;
+        }
+        resume.erase(kept, resume.end());
+    }
     const auto playedLocally = [this](const MovieItem& item) { return m_locallyPlayed.contains(item.id); };
     std::erase_if(resume, playedLocally);
     // A home request started before completion, or an eventually consistent
@@ -518,6 +529,9 @@ void HomeModelController::reconcilePlaybackRows(std::vector<MovieItem>& resume, 
             ++it;
         }
     }
+    if (m_api)
+        for (MovieItem& item : nextUp)
+            m_api->applyLocalPlaybackState(item);
     std::erase_if(nextUp, playedLocally);
 }
 
@@ -614,6 +628,10 @@ void HomeModelController::reset()
 
 bool HomeModelController::updateLatestLibraryRows(std::vector<PendingLatestLibrarySection> sections)
 {
+    if (m_api)
+        for (PendingLatestLibrarySection& section : sections)
+            for (MovieItem& item : section.items)
+                m_api->applyLocalPlaybackState(item);
     std::sort(sections.begin(), sections.end(),
         [](const PendingLatestLibrarySection& left, const PendingLatestLibrarySection& right) {
             return left.order < right.order;

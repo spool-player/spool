@@ -3,10 +3,14 @@
 #include <QByteArray>
 #include <QJsonObject>
 #include <QMap>
+#include <QPointer>
 #include <QStringList>
 #include <QTcpServer>
 #include <QTcpSocket>
+#include <QWebSocket>
 #include <QWebSocketServer>
+
+#include <utility>
 
 // A protocol fixture, not a substitute provider. The shipped Jellyfin package
 // performs all login, mapping, playback negotiation and download operations.
@@ -29,6 +33,15 @@ public:
     qint64 mediaBytes = 0;
     QList<QJsonObject> reports;
     QStringList unexpected;
+    int detailRequests = 0;
+    int detailResponses = 0;
+    int episodeRequests = 0;
+    void setEpisodeMode()
+    {
+        episodeMode = true;
+    }
+    void setItemDetailsHeld(bool held);
+    bool sendRemotePlay(qint64 positionTicks);
     // Existing idle event transport survives; every new authenticated request is rejected.
     void setNewRequestsAvailable(bool available)
     {
@@ -51,5 +64,9 @@ private:
     QByteArray artwork;
     QMap<QString, QJsonObject> documents;
     bool newRequestsAvailable = true;
+    bool episodeMode = false;
+    bool itemDetailsHeld = false;
+    QList<std::pair<QPointer<QTcpSocket>, QByteArray>> pendingDetails;
+    QList<QPointer<QWebSocket>> eventSockets;
 };
 }

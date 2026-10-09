@@ -1,7 +1,9 @@
 #include "app/ContentModelController.h"
+#include "app/BrowseSessionController.h"
 #include "app/HomeModelController.h"
 #include "app/LibraryPrefetchController.h"
 #include "app/SearchController.h"
+#include "app/UserItemStateController.h"
 #include "common/AsyncTask.h"
 #include "common/MetaJson.h"
 #include "provider/Catalog.h"
@@ -67,6 +69,7 @@ public:
     std::vector<MovieItem> nextUpRows;
     QHash<QString, std::vector<MovieItem>> latestRows;
     std::shared_ptr<QPromise<std::vector<MovieItem>>> pendingResume;
+    std::shared_ptr<QPromise<MovieItem>> pendingDetails;
     QHash<QString, std::shared_ptr<QPromise<std::vector<MovieItem>>>> pendingLatest;
     int completedHomeRequests = 0;
     bool signedIn() const override
@@ -116,10 +119,17 @@ public:
 
     QCoro::Task<MovieItem> fetchItemDetails(QString itemId) override
     {
+        if (pendingDetails) {
+            auto future = pendingDetails->future();
+            auto awaitable = qCoro(future);
+            co_return co_await awaitable.takeResult();
+        }
         MovieItem item;
         item.id = itemId;
-        item.title = QStringLiteral("Movie One");
-        item.itemType = QStringLiteral("Movie");
+        item.title = QStringLiteral("Episode One");
+        item.itemType = QStringLiteral("Episode");
+        item.seriesId = QStringLiteral("series-1");
+        item.seasonId = QStringLiteral("season-1");
         item.runtimeTicks = 1200LL * 10'000'000;
         co_return item;
     }
@@ -519,9 +529,26 @@ SPOOL_TEST_MAIN("content-model-controller")
     controller.updateResumeTicks(QStringLiteral("another-movie"), 360LL * 10'000'000);
     require(displayedDetail.resumeTicks == 240LL * 10'000'000,
         "another item's playback changed the displayed detail position");
-    controller.updatePlayed(QStringLiteral("movie-1"), true);
+    Spool::UserItemStateController itemState(nullptr, nullptr, nullptr, &controller, nullptr);
+    const MovieItem stoppedItem = displayedDetail;
+    itemState.recordPlaybackStopped(stoppedItem, stoppedItem.id, stoppedItem.runtimeTicks, true, {});
     require(displayedDetail.played && displayedDetail.resumeTicks == 0,
         "completed playback left resumable progress in item details");
+    MovieItem staleDetails = stoppedItem;
+    staleDetails.resumeTicks = 120LL * 10'000'000;
+    staleDetails.played = false;
+    auto replayDetails = std::make_shared<QPromise<MovieItem>>();
+    replayDetails->start();
+    catalog.pendingDetails = replayDetails;
+    const MovieItem watchedItem = displayedDetail;
+    controller.loadItemDetail(watchedItem.id);
+    itemState.recordPlaybackStopped(watchedItem, watchedItem.id, 1LL * 10'000'000, false, {});
+    replayDetails->addResult(staleDetails);
+    replayDetails->finish();
+    waitUntil([&] { return displayedDetail.id == watchedItem.id; }, "delayed short-replay details did not settle");
+    require(displayedDetail.played && displayedDetail.resumeTicks == 0,
+        "a short replay and stale details must not unwatch a completed item");
+    catalog.pendingDetails.reset();
     controller.updatePlayed(QStringLiteral("movie-1"), false);
     require(!displayedDetail.played && displayedDetail.resumeTicks == 0,
         "marking an item unwatched left stale detail state");
@@ -830,6 +857,9 @@ SPOOL_TEST_MAIN("content-model-controller")
     TestCatalog playbackCatalog;
     LibraryPrefetchController playbackPrefetch(&playbackCatalog);
     HomeModelController playbackHome(nullptr, &playbackCatalog, &playbackPrefetch);
+    ContentModelController playbackContent(&playbackCatalog, &playbackPrefetch);
+    Spool::BrowseSessionController playbackBrowse(&playbackPrefetch);
+    Spool::UserItemStateController playbackState(nullptr, &playbackBrowse, &playbackHome, &playbackContent, nullptr);
     MovieItem completedEpisode;
     completedEpisode.id = QStringLiteral("account01:episode-1");
     completedEpisode.seriesId = QStringLiteral("account01:series-1");
@@ -848,16 +878,18 @@ SPOOL_TEST_MAIN("content-model-controller")
     beforeCompletion->start();
     playbackCatalog.pendingResume = beforeCompletion;
     playbackHome.refresh(homeLibraries);
-    playbackHome.updatePlayed(completedEpisode.id, true);
-    require(playbackHome.nextUpItems()->count() == 0 && playbackHome.resumeItems()->count() == 0,
-        "completion must immediately remove the episode from Next Up and Continue Watching");
+    playbackState.recordPlaybackStopped(
+        completedEpisode, completedEpisode.id, completedEpisode.runtimeTicks, true, successor);
+    require(playbackHome.nextUpItems()->count() == 1 && playbackHome.nextUpItems()->get(0).id == successor.id
+            && playbackHome.resumeItems()->count() == 0,
+        "completion must immediately replace the episode with its successor and clear Continue Watching");
     beforeCompletion->addResult(std::vector<MovieItem> { completedEpisode });
     beforeCompletion->finish();
     waitUntil([&] { return !playbackHome.loading(); }, "pre-completion home request did not settle");
-    require(playbackHome.nextUpItems()->count() == 0 && playbackHome.resumeItems()->count() == 0,
-        "a home response started before completion must not resurrect the completed episode");
+    require(playbackHome.nextUpItems()->count() == 1 && playbackHome.nextUpItems()->get(0).id == successor.id
+            && playbackHome.resumeItems()->count() == 0,
+        "a home response started before completion must preserve the successor, not resurrect the completed episode");
 
-    playbackHome.advanceNextUp(completedEpisode, successor);
     require(playbackHome.nextUpItems()->get(0).id == successor.id,
         "the known successor must be visible before the server refresh");
     playbackCatalog.pendingResume.reset();
@@ -892,13 +924,56 @@ SPOOL_TEST_MAIN("content-model-controller")
     beforePartialStop->start();
     playbackCatalog.pendingResume = beforePartialStop;
     playbackHome.refreshPlaybackRows();
-    playbackHome.upsertResumeItem(successor, 80'000'000);
+    playbackState.recordPlaybackStopped(successor, successor.id, 80'000'000, false, {});
     beforePartialStop->addResult(std::vector<MovieItem> {});
     beforePartialStop->finish();
     waitUntil([&] { return playbackCatalog.completedHomeRequests == 3; }, "old playback refresh did not settle");
     require(playbackHome.resumeItems()->get(0).id == successor.id
             && playbackHome.resumeItems()->get(0).resumeTicks == 80'000'000,
         "a refresh predating a partial stop cannot erase the newly recorded Continue Watching item");
+
+    const LibraryItem progressLibrary
+        = makeLibrary(QStringLiteral("progress-library"), QStringLiteral("Progress library"), QStringLiteral("movies"));
+    auto staleLatestProgress = std::make_shared<QPromise<std::vector<MovieItem>>>();
+    staleLatestProgress->start();
+    playbackCatalog.pendingResume.reset();
+    playbackCatalog.pendingLatest.insert(progressLibrary.id, staleLatestProgress);
+    playbackHome.invalidate();
+    playbackHome.refresh({ progressLibrary });
+    PagedMovieItems cachedProgress;
+    cachedProgress.items = { successor };
+    cachedProgress.totalRecordCount = 1;
+    playbackPrefetch.storePage(QStringLiteral("progress-page"), cachedProgress);
+    playbackState.recordPlaybackStopped(successor, successor.id, 140'000'000, false, {});
+    staleLatestProgress->addResult(std::vector<MovieItem> { successor });
+    staleLatestProgress->finish();
+    waitUntil([&] { return !playbackHome.loading(); }, "delayed latest progress rows did not settle");
+    require(playbackHome.latestLibraryRows().size() == 1, "stale latest response did not expose its real row");
+    auto *progressRows = qobject_cast<MovieGridModel *>(
+        playbackHome.latestLibraryRows().front().toMap().value(QStringLiteral("model")).value<QObject *>());
+    require(progressRows && progressRows->get(0).resumeTicks == 140'000'000,
+        "a delayed latest row must not revert the newer stopped position");
+    require(playbackBrowse.applyCachedPage(QStringLiteral("progress-page")) == 1
+            && playbackBrowse.items()->get(0).resumeTicks == 140'000'000,
+        "hydrating cached browse rows must use the newer stopped position");
+    playbackState.recordPlaybackStopped(successor, successor.id, successor.runtimeTicks - 10LL * 10'000'000, false, {});
+    require(playbackHome.resumeItems()->count() == 0 && progressRows->get(0).resumeTicks == 0
+            && playbackBrowse.items()->get(0).resumeTicks == 0,
+        "near-completion must immediately clear unresumable progress across visible rows");
+    require(playbackBrowse.applyCachedPage(QStringLiteral("progress-page")) == 1
+            && playbackBrowse.items()->get(0).resumeTicks == 0,
+        "cached browse hydration must not resurrect near-complete progress");
+    playbackState.applyPlayed(successor.id, true);
+    playbackState.applyPlayed(successor.id, false);
+    require(playbackBrowse.applyCachedPage(QStringLiteral("progress-page")) == 1
+            && !playbackBrowse.items()->get(0).played && playbackBrowse.items()->get(0).resumeTicks == 0,
+        "marking an episode unwatched must clear cached progress without marking it played");
+    cachedProgress.items.front().resumeTicks = 160'000'000;
+    playbackPrefetch.storePage(QStringLiteral("progress-page"), cachedProgress);
+    playbackContent.reset();
+    require(playbackBrowse.applyCachedPage(QStringLiteral("progress-page")) == 1
+            && playbackBrowse.items()->get(0).resumeTicks == 160'000'000,
+        "session reset must discard old local precedence and accept the new server state");
 
     return EXIT_SUCCESS;
 }

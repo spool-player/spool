@@ -222,8 +222,8 @@ private:
     void playEpisodeWithContext(const MovieItem& episode, int direction, bool fromStart, PlayDestination destination);
     void playLocalQueueNext(PlayDestination destination);
     void playLocalQueuePrevious(PlayDestination destination);
-    void playQueueCurrent(bool fromStart = false);
-    void startQueuedPlayback(bool fromStart = false);
+    void playQueueCurrent(bool fromStart = false, std::optional<qint64> explicitPositionTicks = {});
+    void startQueuedPlayback(bool fromStart = false, std::optional<qint64> explicitPositionTicks = {});
     // AppControllerRemote.cpp: commands another client sent through a source.
     void handleRemoteCommand(const QString& accountId, const QVariantMap& command);
     void playRemoteItems(const QString& accountId, const QVariantMap& command);

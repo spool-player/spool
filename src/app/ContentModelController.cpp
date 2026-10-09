@@ -91,7 +91,9 @@ void ContentModelController::loadDetailRows(
     } else if (loadEpisodes) {
         Async::runLatest(
             this, m_api->fetchEpisodes(seriesId, seasonId), m_detailRowsGeneration, generation,
-            [this, generation, seriesId, itemId, itemType](const std::vector<MovieItem>& episodes) {
+            [this, generation, seriesId, itemId, itemType](std::vector<MovieItem> episodes) {
+                for (MovieItem& episode : episodes)
+                    m_api->applyLocalPlaybackState(episode);
                 qInfo() << "detail rows: episodes loaded" << seriesId << episodes.size();
                 int initialIndex = episodicPlaybackStartIndex(episodes);
                 if (initialIndex < 0) {
@@ -108,8 +110,8 @@ void ContentModelController::loadDetailRows(
                         initialIndex = static_cast<int>(std::distance(episodes.cbegin(), current));
                 }
                 m_detailContextInitialIndex = initialIndex;
-                m_detailSeasons.setMovies(episodes);
-                m_prefetch->prefetchPosters(episodes);
+                m_detailSeasons.setMovies(std::move(episodes));
+                m_prefetch->prefetchPosters(m_detailSeasons.movies());
                 emit detailRowsChanged();
                 finishDetailRowLoad(generation);
             },
@@ -193,8 +195,9 @@ void ContentModelController::loadItemDetail(const QString& itemId)
 
     Async::runLatest(
         this, m_api->fetchItemDetails(itemId), m_detailItemGeneration, generation,
-        [this](const MovieItem& item) {
-            m_detailItem = item;
+        [this](MovieItem item) {
+            m_api->applyLocalPlaybackState(item);
+            m_detailItem = std::move(item);
             emit detailItemChanged();
         },
         [this](const std::exception_ptr& error) {
@@ -356,7 +359,11 @@ void ContentModelController::prepareLinkedItem(const QString& itemId, const QStr
 
 void ContentModelController::updateResumeTicks(const QString& itemId, qint64 positionTicks)
 {
-    if (!itemId.isEmpty() && m_detailItem.id == itemId) {
+    if (itemId.isEmpty() || positionTicks < 0)
+        return;
+    if (m_api)
+        m_api->recordLocalResumeTicks(itemId, positionTicks);
+    if (m_detailItem.id == itemId) {
         const qint64 ticks = normalizedResumeTicks(positionTicks, m_detailItem.runtimeTicks);
         if (m_detailItem.resumeTicks != ticks) {
             m_detailItem.resumeTicks = ticks;
@@ -387,8 +394,11 @@ void ContentModelController::updateFavorite(const QString& itemId, bool favorite
 
 void ContentModelController::updatePlayed(const QString& itemId, bool played)
 {
-    if (!itemId.isEmpty() && m_detailItem.id == itemId
-        && (m_detailItem.played != played || m_detailItem.resumeTicks != 0)) {
+    if (itemId.isEmpty())
+        return;
+    if (m_api)
+        m_api->recordLocalPlayed(itemId, played);
+    if (m_detailItem.id == itemId && (m_detailItem.played != played || m_detailItem.resumeTicks != 0)) {
         m_detailItem.played = played;
         m_detailItem.resumeTicks = 0;
         emit detailItemChanged();
@@ -412,6 +422,8 @@ void ContentModelController::reset()
     m_detailSimilarItems.clear();
     clearPersonItems();
     m_linkedItems.clear();
+    if (m_api)
+        m_api->clearLocalPlaybackState();
     m_detailItem = {};
     m_detailRowsBusy = false;
     m_detailContextInitialIndex = 0;

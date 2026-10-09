@@ -4,10 +4,12 @@
 
 #include <QCoroTask>
 
+#include <QHash>
 #include <QString>
 #include <QStringList>
 #include <QVariantMap>
 
+#include <optional>
 #include <vector>
 
 namespace Spool {
@@ -46,6 +48,50 @@ public:
     // when the source offers no filtering.
     virtual QCoro::Task<QVariantMap> fetchLibraryFilterOptions(QString libraryId, QString collectionType = {}) = 0;
     virtual QCoro::Task<std::vector<MovieItem>> fetchItemsByIds(QStringList itemIds) = 0;
+
+    // Locally observed user state outranks asynchronously hydrated snapshots
+    // until this catalog session/account is reset. Resume writes do not change
+    // watched state: a short replay of a watched item remains watched.
+    void recordLocalResumeTicks(const QString& itemId, qint64 positionTicks)
+    {
+        if (!itemId.isEmpty() && positionTicks >= 0)
+            m_localPlaybackState[itemId].resumeTicks = positionTicks;
+    }
+    void recordLocalPlayed(const QString& itemId, bool played)
+    {
+        if (!itemId.isEmpty())
+            m_localPlaybackState.insert(itemId, { 0, played });
+    }
+    bool applyLocalPlaybackState(MovieItem& item) const
+    {
+        const auto state = m_localPlaybackState.constFind(item.id);
+        if (state == m_localPlaybackState.cend())
+            return false;
+        item.resumeTicks = normalizedResumeTicks(state->resumeTicks, item.runtimeTicks);
+        if (state->played)
+            item.played = *state->played;
+        return true;
+    }
+    void clearLocalPlaybackState(const QString& itemIdPrefix = {})
+    {
+        if (itemIdPrefix.isEmpty()) {
+            m_localPlaybackState.clear();
+            return;
+        }
+        for (auto it = m_localPlaybackState.begin(); it != m_localPlaybackState.end();) {
+            if (it.key().startsWith(itemIdPrefix))
+                it = m_localPlaybackState.erase(it);
+            else
+                ++it;
+        }
+    }
+
+private:
+    struct LocalPlaybackState {
+        qint64 resumeTicks = 0;
+        std::optional<bool> played;
+    };
+    QHash<QString, LocalPlaybackState> m_localPlaybackState;
 };
 
 } // namespace Spool

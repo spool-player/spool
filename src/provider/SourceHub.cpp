@@ -540,8 +540,7 @@ void SourceHub::addSource(Provider *provider)
         if (type == QStringLiteral("playbackQueueStatus")) {
             const QString state = payload.value(QStringLiteral("state")).toString();
             const QString revision = payload.value(QStringLiteral("revision")).toString();
-            if (!m_registry->hasCapability(accountId, QStringLiteral("playbackQueueReporting"))
-                || revision.isEmpty()
+            if (!m_registry->hasCapability(accountId, QStringLiteral("playbackQueueReporting")) || revision.isEmpty()
                 || revision != m_queueSnapshots.value(accountId).value(QStringLiteral("revision")).toString()
                 || (state != QStringLiteral("preparing") && state != QStringLiteral("ready")
                     && state != QStringLiteral("unavailable")))
@@ -566,6 +565,7 @@ void SourceHub::removeSource(const QString& accountId)
 {
     if (!m_entries.contains(prefixOf(accountId)))
         return;
+    clearLocalPlaybackState(prefixOf(accountId) + QLatin1Char(':'));
     const Entry entry = m_entries.take(prefixOf(accountId));
     if (m_speedTestAccount == accountId)
         cancelSpeedTest();
@@ -758,8 +758,8 @@ QCoro::Task<QVariantList> SourceHub::fetchItemActions(
         args.insert(QStringLiteral("containerId"), rawId(containerId));
     if (!entryId.isEmpty())
         args.insert(QStringLiteral("entryId"), entryId);
-    const auto result = co_await m_registry->callSource(
-        account, QStringLiteral("itemActions"), std::move(args), std::move(scope));
+    const auto result
+        = co_await m_registry->callSource(account, QStringLiteral("itemActions"), std::move(args), std::move(scope));
     const auto actions = result.value(QStringLiteral("actions")).toList();
     if (result.value(QStringLiteral("actions")).metaType().id() != QMetaType::QVariantList)
         throw std::runtime_error("invalid_item_actions");
@@ -1158,6 +1158,7 @@ MovieItem SourceHub::scopedItem(MovieItem item, const QString& accountId) const
     item.thumbItemId = scoped(accountId, item.thumbItemId);
     for (PersonItem& person : item.people)
         person.id = scoped(accountId, person.id);
+    applyLocalPlaybackState(item);
     return item;
 }
 
@@ -1185,6 +1186,9 @@ template <typename Fetch> QCoro::Task<std::vector<MovieItem>> SourceHub::gather(
             qWarning() << "hub:" << accountId.left(kPrefix) << "left out of a merged list:" << error.what();
         }
     }
+    for (std::vector<MovieItem>& items : lists)
+        for (MovieItem& item : items)
+            applyLocalPlaybackState(item);
     co_return interleave(std::move(lists), limit);
 }
 
@@ -1346,6 +1350,8 @@ QCoro::Task<std::vector<MovieItem>> SourceHub::fetchItemsByIds(QStringList itemI
         if (it != found.cend())
             ordered.push_back(*it);
     }
+    for (MovieItem& item : ordered)
+        applyLocalPlaybackState(item);
     co_return ordered;
 }
 
@@ -1385,7 +1391,11 @@ QCoro::Task<void> SourceHub::searchProgressively(QString searchTerm, int limit, 
     run->query = folded(searchTerm);
     run->limit = limit;
     run->serial = serial;
-    run->update = std::move(update);
+    run->update = [this, update = std::move(update)](std::vector<MovieItem> items) {
+        for (MovieItem& item : items)
+            applyLocalPlaybackState(item);
+        update(std::move(items));
+    };
     if (run->plan.empty()) {
         run->update({});
         co_return;
