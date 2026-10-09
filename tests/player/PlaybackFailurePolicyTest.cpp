@@ -5,6 +5,7 @@
 
 #include <mpv/client.h>
 
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <limits>
@@ -64,6 +65,16 @@ SPOOL_TEST_MAIN("playback-failure-policy")
         "a nonfinite runtime cannot invent watched completion");
     require(!PlaybackFailurePolicy::watchedOnStop(true, true, true, true, 95.0, 100.0, 90),
         "a loaded playback failure remains ineligible even after the threshold");
+    require(PlaybackFailurePolicy::watchedOnStop(true, false, true, true, 18.0, 20.0, 90),
+        "the exact numerical percentage boundary is inclusive even when native seek timestamps quantize");
+    require(!PlaybackFailurePolicy::watchedOnStop(true, false, true, true, std::nextafter(18.0, 0.0), 20.0, 90),
+        "even the adjacent double below the boundary is not watched");
+    require(PlaybackFailurePolicy::watchedOnStop(true, false, true, true, std::nextafter(18.0, 20.0), 20.0, 90),
+        "the adjacent double above the boundary is watched");
+    require(PlaybackFailurePolicy::watchedOnStop(true, false, true, true, 20.0, 20.0, 100),
+        "a100-percent device threshold requires the full known duration");
+    require(PlaybackFailurePolicy::watchedOnStop(true, false, true, true, 10.0, 20.0, 50),
+        "the lowest device threshold also includes its exact numerical boundary");
 
     require(PlaybackFailurePolicy::shouldResumeInterrupted(0.0, 1200.0),
         "an interruption after real progress resumes where it broke");

@@ -67,8 +67,11 @@ TestCase {
         return SettingsSync.states[key] || ({})
     }
     function selectSetting(key) {
-        settingsPage.reconcileSettingsRows(settingsPage.rebuildVisibleRows(), key, true)
-        compare(settingsPage.currentRow().key, key)
+        const destination = Settings.settingsSchema.find(row => row.key === key)
+        verify(destination, "Setting is absent from the public schema: " + key)
+        settingsPage.openCategory(destination.categoryId, key)
+        tryCompare(settingsPage, "selectedRowKey", key)
+        compare(settingsPage.pageMode, "category")
     }
     function record(identity, key) {
         return Integration.stats(identity).document.entries[key].value
@@ -92,8 +95,8 @@ TestCase {
         compare(Settings.uiScalePercent, 100)
         tryCompare(settingsPage, "contentReady", true)
 
-        // Real QML value editors -> Settings -> durable intent -> worker HTTP ->
-        // stateful loopback -> read-back -> real per-setting status.
+        // Settings category controls -> Settings -> durable intent -> worker
+        // HTTP -> stateful loopback -> read-back -> per-setting status.
         settingsPage.setRowValue(settingsPage.rowsByKey["audio/trackMode"], "Smart", -1)
         selectSetting("theme/reducedMotion")
         settingsPage.activateRow(settingsPage.currentRow(), settingsPage.currentIndex)
@@ -153,8 +156,8 @@ TestCase {
         wait(400)
         compare(Settings.values["audio/trackMode"], "Default")
 
-        // Both real settings surfaces, three viewports, two zoom levels and
-        // confirmed/pending/error/opt-out states, without a desktop window.
+        // Category, sync and subtitle surfaces across three viewports, two zoom
+        // levels and confirmed/pending/error/opt-out states in the active window.
         for (const size of [[1280, 720], [1920, 1080], [3840, 2160]]) {
             testCase.width = size[0]
             testCase.height = size[1]

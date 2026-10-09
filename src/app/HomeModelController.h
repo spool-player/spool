@@ -121,6 +121,7 @@ private:
     SourceHub::HomeQuery m_homeQuery;
     QString m_preferredProviderId;
     QString m_providerScopeMessage;
+    QString m_providerAccountScopeKey;
     std::vector<LibraryItem> m_allLibraries;
     MovieGridModel m_resumeItems;
     MovieGridModel m_nextUpItems;

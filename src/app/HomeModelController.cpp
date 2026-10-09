@@ -170,8 +170,10 @@ HomeModelController::HomeModelController(
     , m_prefetch(prefetch)
 {
     m_sources = dynamic_cast<SourceHub *>(catalog);
-    if (m_sources)
+    if (m_sources) {
+        m_providerAccountScopeKey = m_sources->homeScopeKey(m_homeQuery);
         connect(m_sources, &SourceHub::homeProvidersChanged, this, &HomeModelController::updateProviderScope);
+    }
 }
 
 QVariantList HomeModelController::providerChoices() const
@@ -212,11 +214,21 @@ bool HomeModelController::includesItem(const QString& scopedId) const
 
 void HomeModelController::updateProviderScope()
 {
+    const QString previousModuleId = m_homeQuery.moduleId;
     if (m_sources) {
         const QVariantMap status = m_sources->homeProviderStatus(m_preferredProviderId);
         m_homeQuery.moduleId = status.value(QStringLiteral("moduleId")).toString();
         m_providerScopeMessage = status.value(QStringLiteral("message")).toString();
     }
+    const QString accountScopeKey = m_sources ? m_sources->homeScopeKey(m_homeQuery) : QString();
+    if (previousModuleId == m_homeQuery.moduleId && accountScopeKey == m_providerAccountScopeKey) {
+        // Removal/start/stop and metadata updates can describe the same
+        // authorized scope repeatedly. Publish chooser/status changes without
+        // restarting its in-flight feeds or exhausting provider admission.
+        emit providerScopeChanged();
+        return;
+    }
+    m_providerAccountScopeKey = accountScopeKey;
     // Invalidate before publishing the new scope so no stale cards are visible
     // in the new selection, even while old provider requests are still pending.
     invalidate([this](const QString& id) { return includesItem(id); });

@@ -262,7 +262,6 @@ AppController::AppController(
             accounts.insert(source->id());
         const auto isAvailable
             = [this, &accounts](const QString& id) { return accounts.contains(m_provider->accountOf(id)); };
-        m_home->invalidate(isAvailable);
         std::vector<LibraryItem> libraries;
         for (const LibraryItem& library : m_libraries.libraries()) {
             if (isAvailable(library.id))

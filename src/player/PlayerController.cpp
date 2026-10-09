@@ -1918,6 +1918,27 @@ void PlayerController::stopWithReason(const QString& reason, bool explicitStop)
     if (!m_sessionActive)
         return;
 
+    // A paused resume may still show its seed, and a playing clock can be a
+    // little ahead of the last observation. Completion uses one native stop
+    // snapshot, never a requested seek or an estimated UI position.
+    if (explicitStop && m_fileLoaded && !m_pendingSeek && !m_seeking && !m_positionTracker.seekInFlight()) {
+        auto *handle = m_mpvLifecycle.handle();
+        double nativePosition = 0.0;
+        double nativeDuration = 0.0;
+        const bool sampledPosition = handle
+            && mpv_get_property(handle, "time-pos", MPV_FORMAT_DOUBLE, &nativePosition) >= 0
+            && std::isfinite(nativePosition);
+        const bool sampledDuration = handle
+            && mpv_get_property(handle, "duration", MPV_FORMAT_DOUBLE, &nativeDuration) >= 0
+            && std::isfinite(nativeDuration);
+        if (sampledDuration)
+            m_positionTracker.setDuration(m_timeline.sourceDuration(nativeDuration));
+        if (sampledPosition)
+            m_positionTracker.update(m_timeline.sourceSeconds(nativePosition));
+        if (!sampledPosition || !sampledDuration)
+            explicitStop = false;
+    }
+
     // Drop the UI synchronously so navigation never waits for backend unload.
     stopProgressReporting(false, false, explicitStop);
 

@@ -19,7 +19,9 @@
 #include <cmath>
 #include <cstdlib>
 #include <functional>
+#include <iomanip>
 #include <iostream>
+#include <optional>
 #include <utility>
 
 using namespace Spool;
@@ -178,12 +180,14 @@ void watchedStopPolicy(const QString& directory, NativeAppWindow& window)
     bool watched = false;
     bool reachedEnd = false;
     qint64 stoppedTicks = 0;
+    quint64 stoppedReportId = 0;
     int stops = 0;
     const auto stopped = [&](const QString& id, qint64 ticks, bool isWatched, bool ended, quint64 reportId) {
         ++stops;
         watched = isWatched;
         reachedEnd = ended;
         stoppedTicks = ticks;
+        stoppedReportId = reportId;
         itemState.recordPlaybackStopped(item, id, ticks, isWatched, {}, reportId);
     };
     QObject::connect(&player, &PlayerController::playbackStopped, &itemState, stopped);
@@ -195,39 +199,57 @@ void watchedStopPolicy(const QString& directory, NativeAppWindow& window)
         target.play(session, true);
         waitUntil([&] { return target.fileLoaded() && target.paused() && !target.seeking(); },
             "paused threshold fixture loads and settles");
-        processFor(150);
-        require(std::abs(target.positionSeconds() - seconds) < 0.02, "mpv confirms the requested stop position");
+        require(std::abs(target.positionSeconds() - seconds) < 0.02,
+            "paused fixture starts near its target; the stop receipt determines the actual threshold input");
     };
 
     struct Case {
         int percent;
         double seconds;
-        bool watched;
+        std::optional<bool> watched;
     };
-    for (const Case test : { Case { 90, 17.75, false }, Case { 90, 18.0, true }, Case { 90, 18.25, true },
-             Case { 95, 18.0, false }, Case { 50, 10.0, true }, Case { 100, 19.5, false } }) {
+    for (const Case test : { Case { 90, 17.75, false }, Case { 90, 18.0, std::nullopt }, Case { 90, 18.25, true },
+             Case { 95, 18.0, false }, Case { 50, 10.0, std::nullopt }, Case { 50, 10.25, true },
+             Case { 100, 19.5, false } }) {
         itemState.setPlayed(item.id, false);
         player.setWatchedThresholdPercent(test.percent);
         startAt(player, test.seconds);
+        const double observedDuration = player.durationSeconds();
+        const bool wasSeeking = player.seeking();
         player.stop();
-        require(!player.sessionActive() && watched == test.watched && !reachedEnd,
-            "configured explicit stop marks watched at its boundary without a natural end or successor");
-        waitUntil([&] { return details().played == test.watched; }, "stop policy reaches the durable item-state sink");
+        const qint64 observedRuntimeTicks = qRound64(observedDuration * 10'000'000.0);
+        const bool observedQualifies
+            = observedRuntimeTicks > 0 && stoppedTicks * 100 >= observedRuntimeTicks * test.percent;
+        const bool intendedSide = !test.watched.has_value() || observedQualifies == *test.watched;
+        const bool classificationMatches = !player.sessionActive() && watched == observedQualifies && !reachedEnd;
+        if (!intendedSide || !classificationMatches) {
+            std::cerr << std::setprecision(17) << "watched-stop receipt: percent=" << test.percent
+                      << " requestedSeconds=" << test.seconds << " stoppedTicks=" << stoppedTicks
+                      << " observedDuration=" << observedDuration << " seekingBeforeStop=" << wasSeeking
+                      << " reportId=" << stoppedReportId << " watched=" << watched << " reachedEnd=" << reachedEnd
+                      << " observedQualifies=" << observedQualifies << '\n';
+        }
+        require(observedRuntimeTicks == media.runtimeTicks && intendedSide,
+            "real native stop input must have the known WAV duration and lie on the intended threshold side");
+        require(classificationMatches,
+            "configured explicit stop follows its observed native position without a natural end or successor");
+        waitUntil(
+            [&] { return details().played == observedQualifies; }, "stop policy reaches the durable item-state sink");
         processFor(50);
         const MovieItem stored = details();
-        require(stored.resumeTicks == (test.watched ? 0 : stoppedTicks),
+        require(stored.resumeTicks == (observedQualifies ? 0 : stoppedTicks),
             "watched clears resume only after the stopped report; unwatched near-end progress stays honest");
         LocalProvider restored(QStringLiteral("restored-watched-test"), {}, nullptr, inventory, stateDirectory.path());
         restored.scan();
         const MovieItem reloaded = QCoro::waitFor(restored.fetchItemDetails(item.id));
-        require(reloaded.played == test.watched && reloaded.resumeTicks == stored.resumeTicks,
+        require(reloaded.played == observedQualifies && reloaded.resumeTicks == stored.resumeTicks,
             "watched and resume state survive a fresh provider, not just an in-memory echo");
         player.teardownMpv();
     }
 
     itemState.setPlayed(item.id, false);
     player.setWatchedThresholdPercent(90);
-    startAt(player, 18.0);
+    startAt(player, 18.25);
     player.stopWithReason(QStringLiteral("account-identity-changed"));
     require(!watched && !reachedEnd && !details().played, "internal interruption is not an explicit watched stop");
     player.teardownMpv();
@@ -255,7 +277,7 @@ void watchedStopPolicy(const QString& directory, NativeAppWindow& window)
         QObject::connect(&ordered, &PlayerController::playbackStopped, &itemState, stopped);
         QObject::connect(&ordered, &PlayerController::watchedPersistenceRequested, &itemState,
             &UserItemStateController::persistPlaybackWatched);
-        startAt(ordered, 18.0);
+        startAt(ordered, 18.25);
         ordered.setVolume(77);
         require(delayed.startEntered && !delayed.progressEntered, "progress waits for the outstanding start report");
         delayed.startGate.finish();
@@ -283,7 +305,7 @@ void watchedStopPolicy(const QString& directory, NativeAppWindow& window)
         QObject::connect(&cancelled, &PlayerController::playbackStopped, &itemState, stopped);
         QObject::connect(&cancelled, &PlayerController::watchedPersistenceRequested, &itemState,
             &UserItemStateController::persistPlaybackWatched);
-        startAt(cancelled, 18.0);
+        startAt(cancelled, 18.25);
         cancelled.stop();
         require(
             watched && delayed.stopsEntered == 1 && !details().played, "watched mutation is pending on stop receipt");
@@ -303,10 +325,10 @@ void watchedStopPolicy(const QString& directory, NativeAppWindow& window)
         QObject::connect(&repeated, &PlayerController::playbackStopped, &itemState, stopped);
         QObject::connect(&repeated, &PlayerController::watchedPersistenceRequested, &itemState,
             &UserItemStateController::persistPlaybackWatched);
-        startAt(repeated, 18.0);
+        startAt(repeated, 18.25);
         repeated.stop();
         require(watched && delayed.stopsEntered == 1, "first repeated-item watched stop enters its held report");
-        startAt(repeated, 18.25);
+        startAt(repeated, 18.5);
         repeated.stop();
         require(watched && !reachedEnd, "second repeated-item stop also qualifies without natural advancement");
         processFor(100);
