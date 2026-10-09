@@ -1200,6 +1200,7 @@ SPOOL_TEST_MAIN("app-journey")
 
         journey.command({ "navigate", "settings" });
         journey.label("Appearance");
+        journey.click("Playback");
         const bool originalPreview = journey.command({ "settings", "get", "playback/seekPreviews" })["values"]
                                          .toObject()["playback/seekPreviews"]
                                          .toBool();
@@ -1212,6 +1213,9 @@ SPOOL_TEST_MAIN("app-journey")
                     != originalPreview;
             },
             "settings UI toggle did not commit its public value");
+        journey.command({ "key", "back" });
+        journey.label("Appearance");
+        journey.click("Downloads");
         journey.click("Play saved files offline", true);
         journey.label("Journey Film");
         journey.label("Downloaded");
