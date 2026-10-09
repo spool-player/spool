@@ -931,11 +931,14 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
         mpv-option-profile tests/player/MpvOptionProfileTest.cpp
         render-target-profile tests/player/RenderTargetProfileTest.cpp
         playback-failure-policy tests/player/PlaybackFailurePolicyTest.cpp
-        player-controller tests/player/PlayerControllerTest.cpp
         play-queue-controller tests/player/PlayQueueControllerTest.cpp
         play-queue-outline-model tests/player/PlayQueueOutlineModelTest.cpp
         series-audio-selection tests/player/SeriesAudioSelectionTest.cpp
     )
+    if(ANDROID OR SPOOL_APPLE_MOBILE)
+        # Keep the existing mobile audio/stop owner in its traditional bundle.
+        list(APPEND SPOOL_TESTS_player player-controller tests/player/PlayerControllerTest.cpp)
+    endif()
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         list(APPEND SPOOL_TESTS_platform
             linux-memory-policy tests/platform/LinuxMemoryPolicyTest.cpp
@@ -1131,8 +1134,11 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
     add_test(NAME test-driver-ordering
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/TestDriverTest.py")
 
+    # URL-only native playlists require real video-surface admission; the
+    # desktop controller consumer therefore belongs to the serial GPU phase.
     set(SPOOL_E2E_SOURCES tests/TestRunner.cpp tests/QmlTestRunner.cpp tests/ExtensionIntegration.h
         tests/ArtworkIntegration.h tests/player/MpvVideoItemTest.cpp tests/player/MpvFullscreenTest.cpp
+        tests/player/PlayerControllerTest.cpp
         tests/e2e/AppJourneyTest.cpp tests/e2e/JellyfinFixture.cpp)
     if(APPLE AND NOT SPOOL_APPLE_MOBILE)
         set_source_files_properties(tests/player/MpvFullscreenTest.cpp PROPERTIES LANGUAGE OBJCXX)

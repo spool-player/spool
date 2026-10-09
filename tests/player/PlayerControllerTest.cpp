@@ -3,6 +3,7 @@
 #include "TestRequire.h"
 #include "app/UserItemStateController.h"
 #include "platform/NativeAppWindow.h"
+#include "player/MpvVideoItem.h"
 #include "providers/local/LocalProvider.h"
 
 #include <QCoroFuture>
@@ -12,9 +13,12 @@
 #include <QFile>
 #include <QGuiApplication>
 #include <QPromise>
+#include <QQuickWindow>
+#include <QSurfaceFormat>
 #include <QTemporaryDir>
 #include <QThread>
 
+#include <atomic>
 #include <clocale>
 #include <cmath>
 #include <cstdlib>
@@ -346,6 +350,7 @@ void watchedStopPolicy(const QString& directory, NativeAppWindow& window)
     }
 }
 
+#if !defined(Q_OS_ANDROID) && !defined(SPOOL_APPLE_MOBILE)
 void localPlaylistLifecycle(const QString& directory, NativeAppWindow& window)
 {
     const PlaybackSession first = audioSession(directory, QStringLiteral("native-first"), 1);
@@ -381,12 +386,18 @@ void localPlaylistLifecycle(const QString& directory, NativeAppWindow& window)
         "a real zero-entry playlist is rejected with an error instead of remaining active and preparing");
     player.teardownMpv();
 }
+#endif
 } // namespace
 
 SPOOL_TEST_MAIN("player-controller")
 {
 #if !defined(Q_OS_ANDROID) && !defined(SPOOL_APPLE_MOBILE)
-    qputenv("QT_QPA_PLATFORM", QByteArrayLiteral("offscreen"));
+    QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
+    QSurfaceFormat format;
+    format.setRenderableType(QSurfaceFormat::OpenGL);
+    format.setVersion(3, 3);
+    format.setAlphaBufferSize(0);
+    QSurfaceFormat::setDefaultFormat(format);
 #endif
     QGuiApplication app(argc, argv);
     std::setlocale(LC_NUMERIC, "C");
@@ -397,6 +408,17 @@ SPOOL_TEST_MAIN("player-controller")
     config.close();
 
     NativeAppWindow window(QStringLiteral("player-controller-test"));
+#if !defined(Q_OS_ANDROID) && !defined(SPOOL_APPLE_MOBILE)
+    window.resize(320, 180);
+    MpvVideoItem video(window.contentItem());
+    video.setSize(QSizeF(window.size()));
+    QObject::connect(&window, &QWindow::widthChanged, &video, [&] { video.setWidth(window.width()); });
+    QObject::connect(&window, &QWindow::heightChanged, &video, [&] { video.setHeight(window.height()); });
+    std::atomic<int> swaps { 0 };
+    QObject::connect(&window, &QQuickWindow::frameSwapped, &window, [&] { ++swaps; }, Qt::DirectConnection);
+    window.show();
+    waitUntil([&] { return swaps.load() > 0; }, "native player fixture presents its real first frame");
+#endif
     PlayerController player(&window, nullptr, nullptr, {});
     player.setMpvConfigPolicy({ MpvConfigPolicy::Mode::Custom, directory.path() });
     const PlaybackSession first = audioSession(directory.path(), QStringLiteral("episode-1"), 1);
@@ -441,6 +463,8 @@ SPOOL_TEST_MAIN("player-controller")
     player.stop();
     player.teardownMpv();
     watchedStopPolicy(directory.path(), window);
+#if !defined(Q_OS_ANDROID) && !defined(SPOOL_APPLE_MOBILE)
     localPlaylistLifecycle(directory.path(), window);
+#endif
     return EXIT_SUCCESS;
 }

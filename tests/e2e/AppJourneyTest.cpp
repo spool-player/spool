@@ -469,6 +469,7 @@ private:
     qint64 deviceLaunchEpoch = 0;
 };
 enum class TextSurface { Window, LibraryRow };
+enum class TextPreprocess { Original, Neutral, Inverse, Positive, Adaptive };
 struct Words {
     QString text;
     QList<qsizetype> starts;
@@ -688,11 +689,15 @@ public:
         }
         return image;
     }
-    QList<Words> words(const QString& imagePath, int mode, const QPoint& origin = {}, bool neutralText = false,
-        bool highContrast = false, bool positiveContrast = false)
+    QList<Words> words(const QString& imagePath, int mode, const QPoint& origin = {},
+        TextPreprocess preprocess = TextPreprocess::Original)
     {
         QString inputPath = imagePath;
-        const int scale = mode == 6 || positiveContrast ? 2 : 1;
+        const bool neutralText = preprocess == TextPreprocess::Neutral;
+        const bool highContrast = preprocess == TextPreprocess::Inverse;
+        const bool positiveContrast = preprocess == TextPreprocess::Positive;
+        const bool adaptiveContrast = preprocess == TextPreprocess::Adaptive;
+        const int scale = mode == 6 || positiveContrast || adaptiveContrast ? 2 : 1;
         if (scale > 1) {
             // Small captions beside a focus outline can be omitted even by
             // text-block segmentation. Resample only the actual framebuffer;
@@ -714,9 +719,9 @@ public:
                     }
                 }
             }
-            if (positiveContrast) {
-                // Standard BT.601 luma preserves dark captions on coloured
-                // controls for sparse OCR without manufacturing glyph pixels.
+            if (positiveContrast || adaptiveContrast) {
+                // Preserve standard BT.601 luma for adaptive thresholding, or
+                // binarize dark captions on coloured controls for sparse OCR.
                 const QImage source = image.convertToFormat(QImage::Format_RGB32);
                 image = QImage(source.size(), QImage::Format_Grayscale8);
                 for (int y = 0; y < source.height(); ++y) {
@@ -725,7 +730,7 @@ public:
                     for (int x = 0; x < source.width(); ++x) {
                         const QRgb pixel = sourcePixels[x];
                         const int luma = (77 * qRed(pixel) + 150 * qGreen(pixel) + 29 * qBlue(pixel) + 128) >> 8;
-                        pixels[x] = luma > 64 ? 255 : 0;
+                        pixels[x] = adaptiveContrast ? luma : luma > 64 ? 255 : 0;
                     }
                 }
             } else if (highContrast) {
@@ -738,7 +743,8 @@ public:
                         pixels[x] = pixels[x] > 64 ? 0 : 255;
                 }
             }
-            inputPath += positiveContrast ? QStringLiteral(".ocr-positive.png")
+            inputPath += adaptiveContrast ? QStringLiteral(".ocr-adaptive.png")
+                : positiveContrast        ? QStringLiteral(".ocr-positive.png")
                 : highContrast            ? QStringLiteral(".ocr-contrast.png")
                 : neutralText             ? QStringLiteral(".ocr-neutral.png")
                                           : QStringLiteral(".ocr.png");
@@ -752,8 +758,11 @@ public:
                     && file.commit(),
                 "captured OCR image could not be normalized");
         }
-        const QByteArray tsv
-            = run(ocr, { inputPath, "stdout", "-l", "eng", "--psm", QString::number(mode), "tsv" }, environment);
+        QStringList arguments { inputPath, "stdout", "-l", "eng", "--psm", QString::number(mode) };
+        if (adaptiveContrast)
+            arguments << "-c" << "thresholding_method=2";
+        arguments << "tsv";
+        const QByteArray tsv = run(ocr, arguments, environment);
         QList<Words> lines;
         QString previous;
         for (const QByteArray& row : tsv.split('\n')) {
@@ -822,11 +831,13 @@ public:
                 if (candidate.isEmpty() && surface == TextSurface::Window)
                     candidate = locate(words(imagePath, 6));
                 if (candidate.isEmpty())
-                    candidate = locate(words(imagePath, 6, region.topLeft(), true));
+                    candidate = locate(words(imagePath, 6, region.topLeft(), TextPreprocess::Neutral));
                 if (candidate.isEmpty())
-                    candidate = locate(words(imagePath, 6, region.topLeft(), false, true));
+                    candidate = locate(words(imagePath, 6, region.topLeft(), TextPreprocess::Inverse));
                 if (candidate.isEmpty())
-                    candidate = locate(words(imagePath, 11, region.topLeft(), false, false, true));
+                    candidate = locate(words(imagePath, 11, region.topLeft(), TextPreprocess::Positive));
+                if (candidate.isEmpty())
+                    candidate = locate(words(imagePath, 3, region.topLeft(), TextPreprocess::Adaptive));
                 if (!candidate.isEmpty()) {
                     if (surface == TextSurface::Window
                         || (!previous.isEmpty() && (candidate.center() - previous.center()).manhattanLength() <= 2
