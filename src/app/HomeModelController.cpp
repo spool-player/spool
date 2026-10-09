@@ -5,6 +5,7 @@
 #include "../common/MetaJson.h"
 #include "LibraryPrefetchController.h"
 #include "LibraryQuery.h"
+#include "SettingsController.h"
 
 #include <QDebug>
 #include <QHash>
@@ -168,6 +169,70 @@ HomeModelController::HomeModelController(
     , m_api(catalog)
     , m_prefetch(prefetch)
 {
+    m_sources = dynamic_cast<SourceHub *>(catalog);
+    if (m_sources)
+        connect(m_sources, &SourceHub::homeProvidersChanged, this, &HomeModelController::updateProviderScope);
+}
+
+QVariantList HomeModelController::providerChoices() const
+{
+    return m_sources ? m_sources->homeProviderChoices() : QVariantList {};
+}
+
+void HomeModelController::attachSettings(SettingsController *settings)
+{
+    m_settings = settings;
+    connect(settings, &SettingsController::settingChanged, this, [this](const QString& key) {
+        if (key == QStringLiteral("home/providerId"))
+            setPreferredProviderId(m_settings->value(key).toString());
+    });
+    setPreferredProviderId(settings->value(QStringLiteral("home/providerId")).toString());
+}
+
+void HomeModelController::selectProvider(const QString& moduleId)
+{
+    if (m_settings)
+        m_settings->setValue(QStringLiteral("home/providerId"), moduleId);
+    else
+        setPreferredProviderId(moduleId);
+}
+
+void HomeModelController::setPreferredProviderId(const QString& moduleId)
+{
+    if (m_preferredProviderId == moduleId)
+        return;
+    m_preferredProviderId = moduleId;
+    updateProviderScope();
+}
+
+bool HomeModelController::includesItem(const QString& scopedId) const
+{
+    return !m_sources || m_sources->containsHomeItem(m_homeQuery, scopedId);
+}
+
+void HomeModelController::updateProviderScope()
+{
+    if (m_sources) {
+        const QVariantMap status = m_sources->homeProviderStatus(m_preferredProviderId);
+        m_homeQuery.moduleId = status.value(QStringLiteral("moduleId")).toString();
+        m_providerScopeMessage = status.value(QStringLiteral("message")).toString();
+    }
+    // Invalidate before publishing the new scope so no stale cards are visible
+    // in the new selection, even while old provider requests are still pending.
+    invalidate([this](const QString& id) { return includesItem(id); });
+    emit providerScopeChanged();
+    if (!m_allLibraries.empty())
+        refresh(m_allLibraries);
+}
+
+QCoro::Task<std::vector<MovieItem>> HomeModelController::fetchResumeItems()
+{
+    return m_sources ? m_sources->fetchHomeResumeItems(m_homeQuery) : m_api->fetchResumeItems();
+}
+
+QCoro::Task<std::vector<MovieItem>> HomeModelController::fetchNextUpEpisodes()
+{
+    return m_sources ? m_sources->fetchHomeNextUpEpisodes(m_homeQuery) : m_api->fetchNextUpEpisodes();
 }
 
 QVariantList HomeModelController::latestLibraryRows() const
@@ -206,12 +271,17 @@ bool HomeModelController::applyCachedPayload(const QJsonObject& payload)
         section.order = row.value(QStringLiteral("order")).toInt();
         section.library = metaFromJson<LibraryItem>(row.value(QStringLiteral("library")).toObject());
         section.items = movieArrayFromJson(row.value(QStringLiteral("items")).toArray());
-        if (!section.library.id.isEmpty() && !section.items.empty())
-            sections.push_back(std::move(section));
+        if (!section.library.id.isEmpty() && includesItem(section.library.id) && !section.items.empty()) {
+            std::erase_if(section.items, [this](const MovieItem& item) { return !includesItem(item.id); });
+            if (!section.items.empty())
+                sections.push_back(std::move(section));
+        }
     }
 
     auto resume = movieArrayFromJson(payload.value(QStringLiteral("resumeItems")).toArray());
     auto nextUp = movieArrayFromJson(payload.value(QStringLiteral("nextUpItems")).toArray());
+    std::erase_if(resume, [this](const MovieItem& item) { return !includesItem(item.id); });
+    std::erase_if(nextUp, [this](const MovieItem& item) { return !includesItem(item.id); });
     reconcilePlaybackRows(resume, nextUp);
     m_resumeItems.setMovies(std::move(resume));
     m_nextUpItems.setMovies(std::move(nextUp));
@@ -249,7 +319,7 @@ QCoro::Task<void> HomeModelController::loadCachedPayloadAsync()
 
 QString HomeModelController::payloadCacheKey() const
 {
-    return m_api ? m_api->libraryScopeKey() : QString();
+    return m_sources ? m_sources->homeScopeKey(m_homeQuery) : m_api ? m_api->libraryScopeKey() : QString();
 }
 
 void HomeModelController::saveCachedPayload(const QJsonObject& payload)
@@ -261,9 +331,13 @@ void HomeModelController::saveCachedPayload(const QJsonObject& payload)
 
 void HomeModelController::refresh(const std::vector<LibraryItem>& libraries)
 {
+    m_allLibraries = libraries;
+    std::vector<LibraryItem> selectedLibraries;
+    for (const LibraryItem& library : libraries) {
+        if (includesItem(library.id))
+            selectedLibraries.push_back(library);
+    }
     if (!m_api || !m_api->signedIn())
-        return;
-    if (libraries.empty())
         return;
     if (m_loaded || m_refreshInFlight)
         return;
@@ -272,7 +346,7 @@ void HomeModelController::refresh(const std::vector<LibraryItem>& libraries)
     m_refreshInFlight = true;
     if (m_latestLibrarySections.empty()) {
         std::vector<PendingLatestLibrarySection> sections;
-        for (const LibraryItem& library : libraries) {
+        for (const LibraryItem& library : selectedLibraries) {
             if (supportsLatestLibraryRow(library))
                 sections.push_back({ static_cast<int>(sections.size()), library, {} });
         }
@@ -282,7 +356,7 @@ void HomeModelController::refresh(const std::vector<LibraryItem>& libraries)
     emit loadingChanged();
     m_prefetch->stop();
     Async::runScoped(
-        this, refreshAsync(libraries, generation), []() {},
+        this, refreshAsync(std::move(selectedLibraries), generation), []() {},
         [this, generation](const std::exception_ptr& error) {
             if (!m_generation.isCurrent(generation))
                 return;
@@ -305,8 +379,8 @@ QCoro::Task<void> HomeModelController::refreshAsync(
             latestLibraries.push_back(library);
     }
 
-    auto resumeTask = m_api->fetchResumeItems();
-    auto nextUpTask = m_api->fetchNextUpEpisodes();
+    auto resumeTask = fetchResumeItems();
+    auto nextUpTask = fetchNextUpEpisodes();
     std::vector<QCoro::Task<std::vector<MovieItem>>> latestTasks;
     latestTasks.reserve(latestLibraries.size());
     for (const LibraryItem& library : latestLibraries)
@@ -384,6 +458,9 @@ QCoro::Task<std::vector<MovieItem>> HomeModelController::fetchLatestLibraryItems
     int limit = library.collectionType == QStringLiteral("tvshows") ? kInitialTvRawItems : kTargetItems;
     while (limit <= kMaximumRawItems) {
         std::vector<MovieItem> rawItems = co_await m_api->fetchLatestItems(library.id, limit);
+        if (!includesItem(library.id))
+            co_return std::vector<MovieItem> {};
+        std::erase_if(rawItems, [this](const MovieItem& item) { return !includesItem(item.id); });
         const int rawCount = static_cast<int>(rawItems.size());
         std::vector<MovieItem> groupedItems = groupLatestItems(library, std::move(rawItems));
         qInfo() << "home: latest fill raw=" << rawCount << "grouped=" << groupedItems.size() << "limit=" << limit;
@@ -411,7 +488,7 @@ void HomeModelController::recordLibraryUse(const LibraryItem& library)
 
 void HomeModelController::upsertResumeItem(MovieItem item, qint64 positionTicks)
 {
-    if (item.id.isEmpty())
+    if (item.id.isEmpty() || !includesItem(item.id))
         return;
 
     m_playbackRowsGeneration.invalidate();
@@ -486,7 +563,7 @@ void HomeModelController::updatePlayed(const QString& itemId, bool played)
 void HomeModelController::advanceNextUp(const MovieItem& completed, const MovieItem& successor)
 {
     if (completed.seriesId.isEmpty() || successor.id.isEmpty() || successor.id == completed.id
-        || successor.seriesId != completed.seriesId || successor.played)
+        || successor.seriesId != completed.seriesId || successor.played || !includesItem(successor.id))
         return;
     m_optimisticNextUp.insert(completed.seriesId, successor);
     auto items = m_nextUpItems.movies();
@@ -536,8 +613,8 @@ void HomeModelController::refreshPlaybackRows()
 
 QCoro::Task<void> HomeModelController::refreshPlaybackRowsAsync(RequestGeneration::Token generation)
 {
-    auto resumeTask = m_api->fetchResumeItems();
-    auto nextUpTask = m_api->fetchNextUpEpisodes();
+    auto resumeTask = fetchResumeItems();
+    auto nextUpTask = fetchNextUpEpisodes();
     auto resume = co_await resumeTask;
     auto nextUp = co_await nextUpTask;
     if (!m_playbackRowsGeneration.isCurrent(generation))
@@ -608,6 +685,7 @@ void HomeModelController::reset()
     m_nextUpItems.clear();
     m_recentLibraryIds.clear();
     m_latestLibrarySections.clear();
+    m_allLibraries.clear();
     emit latestLibraryRowsChanged();
     emit loadingChanged();
 }

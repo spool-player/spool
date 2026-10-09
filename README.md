@@ -62,6 +62,27 @@ succeeded. Protected profiles that need interaction stay locked on startup.
 Search uses only the viewers selected for Home, never the combined permissions
 of an adult and child profile saved on the same server.
 
+### Desktop file drops
+
+Drop local files onto Spool or use **Open files (Ctrl+O)**. Media-only drops
+start immediately while idle; during playback, **Play now** is explicit.
+**Add to queue** appends to an existing local-file session. Files play in the
+supplied order; `.m3u`, `.m3u8` and `.pls` playlists use mpv's native handling.
+The queue mirrors mpv's entry IDs, including expanded playlists, without
+importing a library or creating a provider account. Mounted shares and UNC
+paths are preserved; unavailable paths and unsupported network protocols are
+reported by the installed mpv backend, not handled by a separate SMB engine.
+Provider/group queues retain their existing ownership.
+
+Spool provider packages use **`.szo` (Spool Zstandard Object)**. A drop inspects
+the package without running its JavaScript or QML, then asks for explicit trust
+and installation with **Cancel** selected initially. The readable confirmation
+shows identity, versions, declared capabilities, network origins and changes;
+self-supplied publisher names and byte digests are not authentication.
+Multiple packages require individual consent. Mixed package/media drops ask
+which operation to perform before installing or playing anything. Drops wait
+while another editor or approval dialog owns input.
+
 ### Offline downloads
 
 Open an item's menu and choose **Download…**. Original media is offered where

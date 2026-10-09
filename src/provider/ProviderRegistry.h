@@ -115,7 +115,8 @@ public:
 
     // Replaces a module's code in place: running accounts restart on the new
     // version without the app restarting.
-    QCoro::Task<void> install(ProviderPackageContents package);
+    QCoro::Task<void> install(ProviderPackageContents package, std::function<bool()> admission = {},
+        std::function<void(qint64, qint64)> progress = {});
     QCoro::Task<void> uninstall(QString moduleId);
 
     QCoro::Task<QVariantMap> callSource(
@@ -278,6 +279,7 @@ private:
     QVariantMap m_device;
     ScriptRuntime::NetworkHooks m_hooks;
     QHash<QString, ProviderModule> m_modules;
+    QHash<QString, quint64> m_installRevisions;
     std::vector<ProviderAccount> m_accounts;
     QHash<QString, Running> m_running;
     QHash<QString, QString> m_runtimeSources;

@@ -106,6 +106,17 @@ public:
     // Calls an operation on the account behind a scoped or account ID.
     QCoro::Task<QVariantMap> call(QString accountId, QString operation, QVariantMap arguments = {});
     void setVideoCodecs(QStringList codecs, bool restrict);
+    // Home has its own query scope; it never changes enabled accounts or
+    // the sources used by browsing, search, playback and remote control.
+    struct HomeQuery {
+        QString moduleId; // Empty means every currently authorized browsing source.
+    };
+    QVariantList homeProviderChoices() const;
+    QVariantMap homeProviderStatus(const QString& preferredModuleId) const;
+    bool containsHomeItem(const HomeQuery& query, const QString& scopedId) const;
+    QString homeScopeKey(const HomeQuery& query) const;
+    QCoro::Task<std::vector<MovieItem>> fetchHomeResumeItems(HomeQuery query, int limit = 24);
+    QCoro::Task<std::vector<MovieItem>> fetchHomeNextUpEpisodes(HomeQuery query, int limit = 24);
     void setVideoPreviewsEnabled(bool enabled);
 
     // Menu policy is fetched only on opening; results are tied to this request.
@@ -197,6 +208,7 @@ public:
 
 signals:
     void browseSourcesChanged();
+    void homeProvidersChanged();
     void accountEvent(const QString& accountId, const QString& type, const QVariantMap& payload);
     void streamingQualityChanged();
     void itemActionsReady(int requestId, const QVariantList& actions, const QString& problem);
@@ -240,8 +252,13 @@ private:
     template <typename Fetch>
     QCoro::Task<std::vector<MovieItem>> gather(Fetch fetch, int limit, bool searchOnly = false);
 
+    std::vector<Provider *> homeSources(const HomeQuery& query) const;
+    void updateHomeAccounts();
+    template <typename Fetch> QCoro::Task<std::vector<MovieItem>> gatherHome(HomeQuery query, Fetch fetch, int limit);
     ProviderRegistry *m_registry;
     QHash<QString, Entry> m_entries; // by prefix
+    QHash<QString, QString> m_homeAccountModules;
+    QSet<QString> m_homeUnavailableAccounts;
     Capabilities m_capabilities;
     Playback *m_playback = nullptr;
     QTimer m_settled;

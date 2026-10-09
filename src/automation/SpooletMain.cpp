@@ -32,6 +32,7 @@ QJsonObject help()
                     QJsonArray { QStringLiteral("help | instances | status | state"),
                         QStringLiteral(
                             "navigate home|search|settings | home | back | key up|down|left|right|ok|back|space"),
+                        QStringLiteral("navigate providerDetails MODULE_ID | navigate subtitleSettings [SETTING_KEY]"),
                         QStringLiteral("items [browse|libraries|resume|next-up] [OFFSET] [LIMIT] | library "
                                        "QUALIFIED_ID | load-more"),
                         QStringLiteral("play QUALIFIED_ID [--from-start] | pause | resume | stop | seek SECONDS"),
@@ -88,14 +89,28 @@ int main(int argc, char **argv)
     QString command = arguments.takeFirst();
     QJsonObject args;
     const auto count = [&](int low, int high) { return arguments.size() >= low && arguments.size() <= high; };
-    if (command == QStringLiteral("navigate") || command == QStringLiteral("key")
-        || command == QStringLiteral("library") || command == QStringLiteral("screenshot")) {
+    if (command == QStringLiteral("navigate")) {
+        if (!count(1, 2))
+            return error(QStringLiteral("Usage: navigate ROUTE [MODULE_ID|SETTING_KEY]"));
+        const QString route = arguments.first();
+        args.insert(QStringLiteral("route"), route);
+        if (route == QStringLiteral("providerDetails")) {
+            if (!count(2, 2))
+                return error(QStringLiteral("Usage: navigate providerDetails MODULE_ID"));
+            args.insert(QStringLiteral("moduleId"), arguments.at(1));
+        } else if (route == QStringLiteral("subtitleSettings")) {
+            if (count(2, 2))
+                args.insert(QStringLiteral("rowKey"), arguments.at(1));
+        } else if (!count(1, 1)) {
+            return error(QStringLiteral("This route does not accept a route argument"));
+        }
+    } else if (command == QStringLiteral("key") || command == QStringLiteral("library")
+        || command == QStringLiteral("screenshot")) {
         if (!count(1, 1))
             return error(QStringLiteral("Command requires one argument"));
-        const QString key = command == QStringLiteral("navigate") ? QStringLiteral("route")
-            : command == QStringLiteral("key")                    ? QStringLiteral("name")
-            : command == QStringLiteral("library")                ? QStringLiteral("id")
-                                                                  : QStringLiteral("path");
+        const QString key = command == QStringLiteral("key") ? QStringLiteral("name")
+            : command == QStringLiteral("library")           ? QStringLiteral("id")
+                                                             : QStringLiteral("path");
         args.insert(key,
             command == QStringLiteral("screenshot") && descriptorPath.isEmpty()
                 ? QFileInfo(arguments.first()).absoluteFilePath()

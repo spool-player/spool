@@ -67,18 +67,30 @@ void UserItemStateController::applyPlayed(const QString& itemId, bool played)
     emit playedChanged(itemId, played);
 }
 
-void UserItemStateController::recordPlaybackStopped(
-    const MovieItem& item, const QString& itemId, qint64 positionTicks, bool completed, const MovieItem& successor)
+void UserItemStateController::recordPlaybackStopped(const MovieItem& item, const QString& itemId, qint64 positionTicks,
+    bool watched, const MovieItem& successor, quint64 reportId)
 {
-    if (!completed) {
+    if (!watched) {
         applyResumeTicks(itemId, positionTicks);
         if (m_home && item.id == itemId)
             m_home->upsertResumeItem(item, positionTicks);
         return;
     }
+    if (itemId.isEmpty())
+        return;
+    if (reportId != 0)
+        m_pendingPlaybackWatched.insert(itemId, reportId);
     if (m_home && item.id == itemId)
         m_home->advanceNextUp(item, successor);
     applyPlayed(itemId, true);
+}
+
+void UserItemStateController::persistPlaybackWatched(const QString& itemId, quint64 reportId)
+{
+    const auto pending = m_pendingPlaybackWatched.constFind(itemId);
+    if (pending == m_pendingPlaybackWatched.cend() || pending.value() != reportId)
+        return;
+    m_pendingPlaybackWatched.remove(itemId);
     if (!m_api || !m_api->signedIn())
         return;
     Async::runScoped(
@@ -107,6 +119,7 @@ void UserItemStateController::setPlayed(const QString& itemId, bool played)
 {
     if (itemId.isEmpty() || !m_api || !m_api->signedIn())
         return;
+    m_pendingPlaybackWatched.remove(itemId);
     applyPlayed(itemId, played);
     Async::runScoped(
         this, m_api->setItemPlayed(itemId, played),
@@ -124,6 +137,7 @@ void UserItemStateController::clearProgress(const QString& itemId)
 {
     if (itemId.isEmpty() || !m_api || !m_api->signedIn())
         return;
+    m_pendingPlaybackWatched.remove(itemId);
     applyResumeTicks(itemId, 0);
     applyPlayed(itemId, false);
     Async::runScoped(

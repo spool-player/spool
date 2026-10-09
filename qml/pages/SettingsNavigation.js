@@ -159,6 +159,73 @@ function valueRoute(mode, action, editsValue) {
     return { "mode": "row", "effect": action === "left" || action === "right" ? "value" : "none" }
 }
 
+var categories = [
+    { "id": "appearance", "title": "Appearance" },
+    { "id": "playback", "title": "Playback" },
+    { "id": "subtitles", "title": "Subtitles" },
+    { "id": "streaming", "title": "Streaming" },
+    { "id": "sources", "title": "Sources" },
+    { "id": "downloads", "title": "Downloads" },
+    { "id": "diagnostics", "title": "Diagnostics & About" }
+]
+
+function categoryTitle(id) {
+    for (let index = 0; index < categories.length; ++index)
+        if (categories[index].id === id)
+            return categories[index].title
+    return "Settings"
+}
+
+function matchesSearch(row, query, choices) {
+    const terms = String(query || "").toLocaleLowerCase().trim().split(/\s+/)
+    const text = [row.title, row.description, row.key, row.searchKeywords, categoryTitle(row.categoryId)]
+          .concat(row.choiceValues || [], choices || row.choiceLabels || []).join(" ").toLocaleLowerCase()
+    for (let index = 0; index < terms.length; ++index)
+        if (text.indexOf(terms[index]) < 0)
+            return false
+    return true
+}
+
+// Recover in the viewport that the pointer left behind, never scroll back to
+// an old anchor. InputKeys owns candidate preference and visibility threshold.
+function recoverVisibleSelection(view, clipItem, inputKeys) {
+    const selected = view.itemAtIndex(view.currentIndex)
+    const candidate = inputKeys.topLeftVisibleCandidate(view, clipItem)
+    if (view.activeFocus && selected) {
+        const rect = selected.mapToItem(clipItem, 0, 0, selected.width, selected.height)
+        const viewport = view.mapToItem(clipItem, 0, 0, view.width, view.height)
+        const width = Math.max(0, Math.min(rect.x + rect.width, viewport.x + viewport.width, clipItem.width)
+                               - Math.max(rect.x, viewport.x, 0))
+        const height = Math.max(0, Math.min(rect.y + rect.height, viewport.y + viewport.height, clipItem.height)
+                                - Math.max(rect.y, viewport.y, 0))
+        if (width * height / Math.max(1, rect.width * rect.height) >= inputKeys.focusRecoveryVisibleThreshold)
+            return false
+        // At large zoom a row may exceed the whole viewport. InputKeys' partial
+        // candidate fallback still makes the visible part of that row usable.
+        if (candidate && candidate.index === view.currentIndex && rect.height > view.height && height > 0)
+            return false
+    }
+    if (candidate)
+        inputKeys.focusIndexWithoutScrolling(view, candidate.index)
+    return true
+}
+
+// A recovery press is not an edit gesture. Qt may send synthetic releases
+// between repeats; only the physical release permits the next action.
+function consumeRecoveryGesture(view, clipItem, inputKeys, gesture, key, phase, repeat) {
+    if (phase === "release") {
+        if (!repeat && gesture.key === key)
+            gesture.key = 0
+        return true
+    }
+    if (gesture.key === key)
+        return true
+    if (!recoverVisibleSelection(view, clipItem, inputKeys))
+        return false
+    gesture.key = key
+    return true
+}
+
 var subtitleSections = [
     { "title": "Size and position", "keys": ["subtitles/scalePercent", "subtitles/verticalPositionPercent",
         "subtitles/alwaysOverridePositionAndSize", "subtitles/allowInBlackBars"] },

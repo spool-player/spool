@@ -10,6 +10,10 @@ FocusScope {
     property string username: ""
     property string detail: ""
     property string errorText: ""
+    property string providerName: ""
+    property string providerId: ""
+    property url providerIcon
+    property string providerVersion: ""
     property color detailColor: Theme.textMuted
     property string badgeIcon: ""
     property bool badgeAlert: false
@@ -43,7 +47,11 @@ FocusScope {
     focusPolicy: Qt.StrongFocus
     Accessible.role: Accessible.Button
     Accessible.name: detail.length > 0 ? username + ", " + detail : username
-    Accessible.description: addTile ? "" : "Press Menu or hold for options"
+    Accessible.description: addTile ? "" : [providerName.length > 0 ? providerName + (providerVersion.length > 0
+                                                                                      ? ", installed provider version "
+                                                                                        + providerVersion : "") : "",
+                                            errorText, "Press Menu or hold for options"].filter(part => part.length
+                                                                                                        > 0).join(". ")
     Accessible.onPressAction: root.accepted()
 
     Rectangle {
@@ -102,6 +110,45 @@ FocusScope {
             height: width
             running: root.busy
             visible: root.busy
+        }
+
+        ProviderIcon {
+            id: providerStamp
+            anchors.left: parent.left
+            anchors.bottom: parent.bottom
+            anchors.margins: Metrics.scaled(6)
+            width: Math.min(Metrics.scaled(28), Math.round(root.tileSize * 0.24))
+            height: width
+            visible: !root.addTile && root.providerName.length > 0
+            source: root.providerIcon
+            name: root.providerName
+            seed: root.providerId
+            Accessible.ignored: true
+        }
+
+        Rectangle {
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            anchors.margins: Metrics.scaled(6)
+            width: Math.min(versionLabel.implicitWidth + Metrics.scaled(8), root.tileSize - providerStamp.width
+                            - Metrics.scaled(20))
+            height: versionLabel.implicitHeight + Metrics.scaled(4)
+            radius: Metrics.scaled(4)
+            color: Theme.bgPanel
+            visible: !root.addTile && root.providerVersion.length > 0
+
+            AppText {
+                id: versionLabel
+                anchors.fill: parent
+                anchors.margins: Metrics.scaled(2)
+                text: root.providerVersion
+                font.pixelSize: Metrics.scaled(root.tileSize < Metrics.scaled(96) ? 10 : 12)
+                minimumPixelSize: Metrics.scaled(8)
+                fontSizeMode: Text.Fit
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+                Accessible.ignored: true
+            }
         }
     }
 

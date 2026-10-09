@@ -276,6 +276,25 @@ FocusScope {
         InputKeys.focus(list)
     }
 
+    // Route search to the existing editor without beginning an edit or preview.
+    function focusSetting(key) {
+        if (choiceVisible || resetVisible || editingKey.length)
+            return false
+        let target = SettingsNavigation.indexForRowKey(rowsModel, key)
+        if (target < 0) {
+            advancedExpanded = true
+            rebuildRows(false)
+            target = SettingsNavigation.indexForRowKey(rowsModel, key)
+        }
+        if (target < 0)
+            return false
+        focusRow(target)
+        if (target > 0)
+            list.positionViewAtIndex(target - 1, ListView.Beginning)
+        list.positionViewAtIndex(target, ListView.Contain)
+        return true
+    }
+
     function beginReset() {
         const snapshot = {}
         for (let index = 0; index < appearanceKeys.length; ++index)

@@ -24,7 +24,7 @@ working packages must not be described as already published releases.
 
 | | |
 | --- | --- |
-| `ProviderPackage` | Reads a `.tar.zst` using the official libzstd library, validates manifest format 3 and every path, installs versions through a staging directory |
+| `ProviderPackage` | Reads `.szo` (ustar compressed with official libzstd), validates manifest format 3 and every path, stages inert files before registry admission and atomic activation |
 | `ProviderRegistry` | Every module (bundled at `qrc:/providers/<id>/`, installed under the data directory; newest wins) and every account. Starts enabled accounts, owns setup drafts, screens (`ProviderUiContext`) and `pick()` |
 | `ScriptRuntime` / `ScriptBridge` | One worker thread and QJSEngine per module; `createSource(configuration, host)` per account; host HTTP, sockets, timers, discovery, events. Only snake_case error codes cross back |
 | `PortableProvider` | One running account as a `Provider`: catalogue, search, item state, playback and artwork from its operations and URL templates |
@@ -126,6 +126,16 @@ The preference applies to the viewer actually selected, including a previously
 saved viewer chosen instead of the newly added account; finishing clears the
 new account's onboarding marker.
 
+Installed providers are reachable from **Profiles & servers** and each profile set's
+**Provider settings** button. The provider detail page shows the installed package
+version (not a server version), recorded installation provenance and update status,
+then saved accounts identified by account ID. Account settings mount the provider's
+existing settings surface; opening this page never activates a locked viewer.
+Reconnect, profile activation and PIN approval remain explicit provider-owned flows.
+Watching-profile tiles and linked login choices carry the installed provider logo
+at bottom-left and version at bottom-right, with complete provider/version text for
+assistive technology. Compact login tiles retain their lock badge above the stamps.
+
 **Profiles & servers** shows each set with its server(s), its startup choice and
 Add profile, then one tile per person. Tiles carry one short state (Watching,
 Opening…, PIN required, Couldn't open, Sign in again, Removing…). An actionable
@@ -206,11 +216,45 @@ On first launch after upgrading, sign-ins saved by the old native Jellyfin clien
   remain unchanged; empty overrides preserve release behavior. Pin published release assets.
 - **Store**: spool-player/spool-providers lists reviewed releases; first-party ids (`spool.*`) follow
   their own releases automatically, community ones change through pull requests.
-- **Link**: a GitHub or GitLab project, a release's `.tar.zst`, or any site serving
-  `spool-provider.json`. Updated from the same feed.
+- **Link**: a GitHub or GitLab project, a release package link, or any site serving
+  `spool-provider.json`. Updated from the same feed. Future packages use `.szo`
+  (Spool Zstandard Object); existing published `.tar.zst` URLs remain valid transport names.
+- **Local file** (open builds only): inspect a bounded package without executing JS/QML,
+  loading candidate icons, starting accounts or changing the installation. Host confirmation
+  shows supplied, unverified publisher text, installed → incoming version, provenance,
+  declared capabilities/network scope and their differences, and code/credential trust.
+  Cancel invalidates consent without changing installed code or saved accounts.
 
 Every download is installed only when its SHA-256 matches the entry. Installing a newer version
 restarts that module's accounts in place.
+
+`Store.inspectFile(fileUrl)` returns a request ID and asynchronously reports
+`fileInspectionFinished(requestId, preview, error)`, also publishing `inspectedPackage`.
+The preview's opaque token binds exact validated contents and the installed-provider revision.
+`installInspected(token)` consumes that approval without rereading the pathname, and reports
+`fileInstallationFinished(token, moduleId, error)`. A changed pathname cannot swap approved bytes.
+`cancelInspection(operationId)` cancels only its matching inspection/consent/install; omitting
+the argument cancels the current operation. Still-staging cancellation prevents activation.
+Staging never mounts candidate code; the registry rechecks lifetime, per-module revision and
+consent immediately before activation. Local transfer rows carry `operationToken` and actual
+committed staging-file byte counts. Consumers retain modal input ownership until their matching
+completion, never advancing from unrelated global `problem`/`installed` signals.
+
+A matching module ID, claimed publisher or supplied digest is not distribution authentication.
+Unverified local files cannot replace native, bundled, official, community, URL or unknown
+installed identities. Only an existing file-installed provider may receive a newer local-file
+version, with renewed explicit consent every time. Saved accounts, their credentials,
+session identity and approved origins remain registry-owned; install approval is not login,
+PIN, LAN or network-origin approval. File providers are never automatically updated from
+a catalogue/feed, and installation does not change the device's update policy.
+
+`Store.classifyFiles(urls)` returns a request ID and reports
+`filesClassified(requestId, packages, media, error)` after bounded worker-thread content sniffing.
+Special files are rejected before opening; Unix nonblocking open and handle validation also
+reject a regular-file-to-FIFO substitution. Neither package decoding nor file reads run on
+the GUI thread. `isPackageCandidate(fileUrl)` is a suffix-only `.szo` naming hint, not content
+validation or trust. Malformed candidates remain inspection errors, not fallback media.
+`Store.installedProviders` exposes only module IDs and safe provenance channel names.
 
 Stremio owns its add-on setup/settings and stream/torrent-file picker. It reads
 trusted Stremio add-on catalogues and metadata; HTTP streams play directly,

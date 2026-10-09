@@ -595,6 +595,7 @@ qt_add_qml_module(spool
         qml/pages/AccountsPage.qml
         qml/pages/AddProviderPage.qml
         qml/pages/ProviderScreenPage.qml
+        qml/pages/ProviderDetailsPage.qml
         qml/primitives/ActionButton.qml
         qml/primitives/AppText.qml
         qml/primitives/AtomicViewReveal.qml
@@ -693,6 +694,7 @@ if(NOT SPOOL_WEBOS)
     qt_target_qml_sources(spool
         QML_FILES
             qml/pages/DesktopFolderDialog.qml
+            qml/shell/FileDropDialog.qml
     )
 endif()
 

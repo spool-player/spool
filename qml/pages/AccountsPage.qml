@@ -26,9 +26,15 @@ FocusScope {
     property var removingPerson: null
     property bool onboardingAsked: false
     property string onboardingViewerId: ""
+    // File admission waits even while a modal loader is still creating its item.
+    readonly property bool modalVisible: menuLoader.active || removeConfirmation.active || onboardingDialog.active
     onOnboardingIdChanged: {
         onboardingViewerId = ""
         onboardingAsked = false
+    }
+
+    function moduleFor(id) {
+        return Providers.modules.find(module => module.id === id) || null
     }
 
     readonly property var sections: {
@@ -312,6 +318,11 @@ FocusScope {
             if (tiles.length)
                 rows.push(tiles)
         }
+        for (let i = 0; i < providerRepeater.count; ++i) {
+            const provider = providerRepeater.itemAt(i)
+            if (provider)
+                rows.push([provider])
+        }
         rows.push([addServerButton])
         return rows
     }
@@ -340,10 +351,40 @@ FocusScope {
         return item && item.personKey !== undefined ? item : null
     }
 
+    function visibleCandidate(items) {
+        return InputKeys.topLeftVisibleCandidate({
+                                                     count: items.length,
+                                                     width: flick.width,
+                                                     height: flick.height,
+                                                     itemAtIndex: index => items[index],
+                                                     mapToItem: (item, x, y, width, height) => flick.mapToItem(item, x,
+                                                                                                               y, width, height)
+                                                 }, flick)
+    }
+
+    function usableStop(item) {
+        if (!item || !item.visible || !item.enabled)
+            return false
+        const candidate = visibleCandidate([item])
+        return candidate && (candidate.fullyVisible || candidate.visibleFraction
+                             >= InputKeys.focusRecoveryVisibleThreshold)
+    }
+
+    function recoverVisibleFocus() {
+        const items = focusRows().flat().filter(item => item.visible && item.enabled)
+        const candidate = visibleCandidate(items)
+        if (!candidate)
+            return false
+        const item = items[candidate.index]
+        item.forceActiveFocus()
+        lastFocus = item.focusKey
+        return true
+    }
+
     function focusStop(item) {
         if (!item)
             return
-        InputKeys.focus(item)
+        item.forceActiveFocus()
         const point = item.mapToItem(flick.contentItem, 0, 0)
         const margin = Metrics.scaled(24)
         if (point.y - margin < flick.contentY)
@@ -416,8 +457,8 @@ FocusScope {
         if (!InputKeys.isDirection(key))
             return false
         const position = focusPosition()
-        if (position.row < 0) {
-            focusInitial()
+        if (position.row < 0 || !usableStop(position.rows[position.row][position.column])) {
+            recoverVisibleFocus()
             return true
         }
         const rows = position.rows
@@ -448,8 +489,8 @@ FocusScope {
             return menuLoader.item.activate()
         const position = focusPosition()
         const item = position.row >= 0 ? position.rows[position.row][position.column] : null
-        if (!item)
-            return focusInitial()
+        if (!usableStop(item))
+            return recoverVisibleFocus()
         if (item.personKey !== undefined)
             openPerson(person(item.personKey))
         else
@@ -458,8 +499,8 @@ FocusScope {
 
     function longPress() {
         const item = activeTile()
-        if (!item)
-            return false
+        if (!usableStop(item))
+            return recoverVisibleFocus()
         openPersonMenu(person(item.personKey), item)
         return true
     }
@@ -601,10 +642,14 @@ FocusScope {
                 }
                 ActionButton {
                     id: cancelButton
+                    readonly property string focusKey: "cancelPending"
                     visible: root.pendingAccountId.length > 0
                     kind: "flat"
                     text: "Cancel"
-                    onClicked: root.cancelPending()
+                    onClicked: {
+                        root.focusStop(cancelButton)
+                        root.cancelPending()
+                    }
                 }
             }
 
@@ -619,7 +664,7 @@ FocusScope {
                     spacing: Metrics.scaled(12)
 
                     function headerStops() {
-                        return [startupButton, addProfileButton].filter(item => item.visible)
+                        return [providerSettingsButton, startupButton, addProfileButton].filter(item => item.visible)
                     }
                     function tileStops() {
                         const tiles = []
@@ -666,6 +711,21 @@ FocusScope {
                             Layout.fillWidth: true
                             spacing: Metrics.scaled(12)
                             ActionButton {
+                                id: providerSettingsButton
+                                readonly property string focusKey: "provider:" + sectionItem.modelData.key
+                                onActiveFocusChanged: if (activeFocus)
+                                                          root.lastFocus = focusKey
+                                kind: "flat"
+                                iconName: "settings"
+                                text: "Provider settings"
+                                onClicked: {
+                                    root.focusStop(providerSettingsButton)
+                                    root.shell.pushRoute("providerDetails", {
+                                                             moduleId: sectionItem.modelData.moduleId
+                                                         })
+                                }
+                            }
+                            ActionButton {
                                 id: startupButton
                                 readonly property string focusKey: "startup:" + sectionItem.modelData.key
                                 onActiveFocusChanged: if (activeFocus)
@@ -673,7 +733,10 @@ FocusScope {
                                 kind: "flat"
                                 iconName: "power_settings_new"
                                 text: root.startupText(sectionItem.modelData)
-                                onClicked: root.openStartupMenu(sectionItem.modelData, startupButton)
+                                onClicked: {
+                                    root.focusStop(startupButton)
+                                    root.openStartupMenu(sectionItem.modelData, startupButton)
+                                }
                             }
                             ActionButton {
                                 id: addProfileButton
@@ -684,9 +747,11 @@ FocusScope {
                                 kind: "flat"
                                 iconName: "person_add"
                                 text: "Add profile"
-                                onClicked: root.shell.openProviderScreen(Providers.beginSetup(
-                                                                             sectionItem.modelData.moduleId,
-                                                                             sectionItem.modelData.people[0].accounts[0].id))
+                                onClicked: {
+                                    root.focusStop(addProfileButton)
+                                    root.shell.openProviderScreen(Providers.beginSetup(sectionItem.modelData.moduleId,
+                                                                                       sectionItem.modelData.people[0].accounts[0].id))
+                                }
                             }
                         }
                     }
@@ -712,6 +777,11 @@ FocusScope {
                                 tileSize: Metrics.scaled(Metrics.laneAtLeast(root.width, "regular") ? 120 : 96)
                                 focused: activeFocus && Metrics.keyboardFocusActive
                                 username: modelData.label
+                                readonly property var installedModule: root.moduleFor(modelData.moduleId)
+                                providerId: modelData.moduleId
+                                providerName: installedModule ? installedModule.name : ""
+                                providerIcon: installedModule ? installedModule.iconUrl : ""
+                                providerVersion: installedModule ? installedModule.version : ""
                                 errorText: root.errorOf(modelData)
                                 detail: {
                                     const label = root.stateLabel(tile.profileState)
@@ -740,6 +810,43 @@ FocusScope {
                                 }
                             }
                         }
+                    }
+                }
+            }
+
+            AppText {
+                Layout.fillWidth: true
+                visible: !root.startupMode && root.onboardingId.length === 0
+                text: "Installed providers"
+                font.pixelSize: Metrics.bodySizePx + Metrics.scaled(4)
+                font.weight: Font.DemiBold
+            }
+
+            Repeater {
+                id: providerRepeater
+                model: !root.startupMode && root.onboardingId.length === 0 ? Providers.modules : []
+                delegate: ServerCard {
+                    id: moduleCard
+                    required property var modelData
+                    readonly property string focusKey: "module:" + modelData.id
+                    Layout.fillWidth: true
+                    title: modelData.name
+                    serverAddress: "Installed provider version " + modelData.version
+                    providerName: modelData.name
+                    providerId: modelData.id
+                    providerIcon: modelData.iconUrl
+                    providerVersion: modelData.version
+                    focused: activeFocus && Metrics.keyboardFocusActive
+                    onActiveFocusChanged: if (activeFocus)
+                                              root.lastFocus = focusKey
+                    function clicked() {
+                        accepted()
+                    }
+                    onAccepted: {
+                        root.focusStop(moduleCard)
+                        root.shell.pushRoute("providerDetails", {
+                                                 moduleId: modelData.id
+                                             })
                     }
                 }
             }

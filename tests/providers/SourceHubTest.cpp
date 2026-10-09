@@ -591,6 +591,9 @@ SPOOL_TEST_MAIN("source-hub")
         DatabaseManager homeDatabase;
         require(homeDatabase.initialize(directory.filePath(QStringLiteral("home/cache.sqlite"))),
             "isolated homepage database opens");
+        require(
+            ProviderPackage::install(ProviderFixture::package(QStringLiteral("fixture.other")), installs).has_value(),
+            "second Home provider fixture installs");
         ProviderRegistry homeRegistry(&homeDatabase);
         homeRegistry.setInstallDirectory(installs);
         homeRegistry.loadModules();
@@ -599,15 +602,9 @@ SPOOL_TEST_MAIN("source-hub")
         QCoro::waitFor(homeRegistry.restore());
         LibraryPrefetchController homePrefetch(&homeHub);
         HomeModelController home(nullptr, &homeHub, &homePrefetch);
-        QObject::connect(&homeHub, &SourceHub::browseSourcesChanged, &home, [&] {
-            QSet<QString> accounts;
-            for (Provider *source : homeHub.sources())
-                accounts.insert(source->id());
-            home.invalidate([&](const QString& id) { return accounts.contains(homeHub.accountOf(id)); });
-        });
-        const auto addHomeAccount = [&](const QString& key) {
+        const auto addHomeAccount = [&](const QString& key, const QString& module = QStringLiteral("fixture.test")) {
             const QString id = homeRegistry.finishSetup({},
-                { { QStringLiteral("module"), QStringLiteral("fixture.test") }, { QStringLiteral("account"), key },
+                { { QStringLiteral("module"), module }, { QStringLiteral("account"), key },
                     { QStringLiteral("label"), key },
                     { QStringLiteral("configuration"), QVariantMap { { QStringLiteral("label"), key } } } });
             homeRegistry.useAccount(id);
@@ -615,7 +612,25 @@ SPOOL_TEST_MAIN("source-hub")
         };
         const QString removedAccount = addHomeAccount(QStringLiteral("home-removed"));
         const QString retainedAccount = addHomeAccount(QStringLiteral("home-retained"));
-        waitUntil([&] { return homeHub.sources().size() == 2; }, "both homepage accounts start");
+        const QString otherAccount = addHomeAccount(QStringLiteral("home-other"), QStringLiteral("fixture.other"));
+        waitUntil([&] { return homeHub.sources().size() == 3; }, "all homepage accounts start");
+        const QString globalScope = homeHub.libraryScopeKey();
+        const auto excludedFeeds = [&] {
+            return QCoro::waitFor(homeHub.call(otherAccount, QStringLiteral("batchStats")))
+                .value(QStringLiteral("homeFeeds"))
+                .toMap();
+        };
+        const QVariantMap beforeFeeds = excludedFeeds();
+        const SourceHub::HomeQuery selected { QStringLiteral("fixture.test") };
+        for (const auto& items : { QCoro::waitFor(homeHub.fetchHomeResumeItems(selected, 1)),
+                 QCoro::waitFor(homeHub.fetchHomeNextUpEpisodes(selected, 1)) }) {
+            require(items.size() == 1 && homeHub.accountOf(items.front().id) != otherAccount,
+                "selected-provider feeds fill their limit from selected accounts, before aggregation");
+        }
+        require(excludedFeeds() == beforeFeeds && homeHub.sources().size() == 3
+                && homeHub.libraryScopeKey() == globalScope && homeRegistry.sourceRunning(otherAccount),
+            "Home scope does not request excluded feeds or change global browsing/account state");
+        home.selectProvider(QStringLiteral("fixture.test"));
         home.refresh(QCoro::waitFor(homeHub.fetchLibraries()));
         waitUntil([&] { return !home.loading(); }, "multi-account homepage loads");
         require(home.latestLibraryRows().size() == 2, "homepage initially includes both accounts' latest rows");
@@ -626,6 +641,9 @@ SPOOL_TEST_MAIN("source-hub")
         require(hasAccount(home.resumeItems(), removedAccount) && hasAccount(home.resumeItems(), retainedAccount)
                 && hasAccount(home.nextUpItems(), removedAccount) && hasAccount(home.nextUpItems(), retainedAccount),
             "continue watching and next-up initially contain both accounts");
+        require(excludedFeeds() == beforeFeeds && !hasAccount(home.resumeItems(), otherAccount)
+                && !hasAccount(home.nextUpItems(), otherAccount),
+            "all selected Home rows avoid querying or displaying another provider");
         homeRegistry.removeAccount(removedAccount);
         waitUntil([&] { return !homeHub.source(removedAccount); }, "account removal completes");
         const auto onlyRetained = [&](MovieGridModel *model) {
@@ -645,10 +663,30 @@ SPOOL_TEST_MAIN("source-hub")
         require(onlyRetained(home.resumeItems()) && onlyRetained(home.nextUpItems())
                 && home.latestLibraryRows().size() == 1,
             "homepage refresh retains only the remaining account's content");
+        bool signInRejected = false;
+        try {
+            QCoro::waitFor(homeHub.call(retainedAccount, QStringLiteral("expired")));
+        } catch (const std::exception&) {
+            signInRejected = true;
+        }
+        require(signInRejected, "real provider sign-in rejection is delivered");
+        waitUntil([&] { return !home.loading() && hasAccount(home.resumeItems(), otherAccount); },
+            "auth withdrawal falls back even when the expired source remains running");
+        require(!homeHub.containsHomeItem(selected, homeHub.scoped(retainedAccount, QStringLiteral("0")))
+                && QCoro::waitFor(homeHub.fetchHomeResumeItems(selected, 1)).empty()
+                && !hasAccount(home.resumeItems(), retainedAccount) && !home.providerScopeMessage().isEmpty(),
+            "auth-withdrawn accounts are excluded before Home query limits and visible cards");
         homeRegistry.setAccountEnabled(retainedAccount, false);
+        waitUntil([&] { return !home.loading() && hasAccount(home.resumeItems(), otherAccount); },
+            "withdrawing the selected provider falls back to authorized All-provider feeds");
+        require(home.providerId().isEmpty() && home.preferredProviderId() == QStringLiteral("fixture.test")
+                && !home.providerScopeMessage().isEmpty() && !hasAccount(home.resumeItems(), retainedAccount)
+                && home.latestLibraryRows().size() == 1,
+            "fallback explains the unavailable selection and never restores withdrawn account content");
+        homeRegistry.setAccountEnabled(otherAccount, false);
         require(home.resumeItems()->rowCount() == 0 && home.nextUpItems()->rowCount() == 0
                 && home.latestLibraryRows().isEmpty(),
-            "removing the final browsed source immediately empties the homepage");
+            "removing the final authorized Home source immediately empties the homepage");
     }
 
     return 0;

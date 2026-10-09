@@ -7,12 +7,18 @@
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QElapsedTimer>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QNetworkAccessManager>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QTemporaryDir>
 #include <QThread>
+#include <QTimer>
+
+#ifdef Q_OS_UNIX
+#include <sys/stat.h>
+#endif
 
 #include <cstdlib>
 #include <functional>
@@ -102,6 +108,8 @@ SPOOL_TEST_MAIN("provider-store")
              { "https://github.com/o/r/tree/main/logic",
                  "https://github.com/o/r/releases/latest/download/spool-provider.json" },
              { "https://github.com/o/r/releases/download/v1.0.0/o.r-1.0.0.tar.zst",
+                 "https://github.com/o/r/releases/download/v1.0.0/spool-provider.json" },
+             { "https://github.com/o/r/releases/download/v1.0.0/o.r-1.0.0.szo",
                  "https://github.com/o/r/releases/download/v1.0.0/spool-provider.json" },
              { "https://gitlab.com/group/sub/project",
                  "https://gitlab.com/group/sub/project/-/releases/permalink/latest/downloads/spool-provider.json" },
@@ -343,6 +351,244 @@ SPOOL_TEST_MAIN("provider-store")
             refused = true;
         }
         require(refused, "and its registry has nowhere to install to");
+    }
+    {
+        ProviderStore store(&registry, &database, &network, QUrl(QStringLiteral("https://store.test/")));
+        problems.clear();
+        QObject::connect(&store, &ProviderStore::problem, [&](const QString& message) { problems.append(message); });
+        QObject::connect(
+            &store, &ProviderStore::installed, [&](const QString& id, const QString&) { installed.append(id); });
+        QHash<QString, QVariantMap> inspectionOutcomes;
+        QHash<QString, QVariantMap> installationOutcomes;
+        QObject::connect(&store, &ProviderStore::fileInspectionFinished,
+            [&](const QString& request, const QVariantMap& preview, const QString& error) {
+                require(!inspectionOutcomes.contains(request), "inspection completion is exactly once per request");
+                inspectionOutcomes.insert(request, { { "preview", preview }, { "error", error } });
+            });
+        QObject::connect(&store, &ProviderStore::fileInstallationFinished,
+            [&](const QString& token, const QString& moduleId, const QString& error) {
+                installationOutcomes.insert(token, { { "id", moduleId }, { "error", error } });
+            });
+        QVariantList localTransfers;
+        QObject::connect(&store, &ProviderStore::busyChanged, [&] {
+            for (const QVariant& value : store.transfers()) {
+                if (!value.toMap().value("operationToken").toString().isEmpty())
+                    localTransfers.append(value);
+            }
+        });
+        const QString path = directory.filePath(QStringLiteral("review.szo"));
+        const QUrl fileUrl = QUrl::fromLocalFile(path);
+        const auto writeFile = [&](const QByteArray& bytes) {
+            QFile file(path);
+            require(file.open(QIODevice::WriteOnly | QIODevice::Truncate) && file.write(bytes) == bytes.size(),
+                "the local package fixture is written");
+        };
+        const auto inspect = [&](const QByteArray& bytes) {
+            writeFile(bytes);
+            const QString request = store.inspectFile(fileUrl);
+            require(
+                !inspectionOutcomes.contains(request), "inspection result arrives after its request ID is returned");
+            store.addFromUrl(QString()); // Unrelated global error must not complete this request.
+            waitUntil([&] { return inspectionOutcomes.contains(request); }, "scoped local inspection completes");
+            return inspectionOutcomes.value(request).value("preview").toMap();
+        };
+        const QString id = QStringLiteral("fixture.file");
+        const QByteArray first = ProviderFixture::archive(ProviderFixture::package(id));
+        const QByteArray second = ProviderFixture::archive(ProviderFixture::package(id, QStringLiteral("1.1.0")));
+        const QVariantMap preview = inspect(first);
+        const QString token = preview.value("token").toString();
+        require(!token.isEmpty() && preview.value("publisherVerified") == false
+                && preview.value("provenance") == "local-file" && preview.value("installedVersion").toString().isEmpty()
+                && preview.value("sha256").toString()
+                    == QString::fromLatin1(QCryptographicHash::hash(first, QCryptographicHash::Sha256).toHex())
+                && !registry.module(id) && !QFileInfo::exists(QDir(registry.installDirectory()).filePath(id)),
+            "inspection binds actual bytes without registering code or writing an installed package");
+        store.installInspected(QStringLiteral("not-the-token"));
+        require(!registry.module(id) && store.inspectedPackage().value("token") == token,
+            "a guessed token cannot authorize installation");
+        store.cancelInspection(QStringLiteral("unrelated-operation"));
+        require(store.inspectedPackage().value("token") == token, "another operation cannot cancel this consent");
+        store.cancelInspection(token);
+        store.installInspected(token);
+        require(
+            store.inspectedPackage().isEmpty() && !registry.module(id), "cancelled consent cannot later be replayed");
+
+        const QString approved = inspect(first).value("token").toString();
+        writeFile(second);
+        store.installInspected(approved);
+        store.addFromUrl(QString());
+        require(!installationOutcomes.contains(approved), "an unrelated global error cannot finish a local install");
+        waitUntil([&] { return installed.contains(id); }, "an approved local file installs");
+        require(installationOutcomes.value(approved).value("id") == id
+                && installationOutcomes.value(approved).value("error").toString().isEmpty(),
+            "local installation success carries the approved token and module identity");
+        qint64 expectedBytes = 0;
+        const auto expectedPackage = ProviderFixture::package(id);
+        for (const QByteArray& bytes : expectedPackage.files)
+            expectedBytes += bytes.size();
+        bool completedBytes = false;
+        for (const QVariant& value : localTransfers) {
+            const QVariantMap row = value.toMap();
+            if (row.value("operationToken") != approved)
+                continue;
+            require(row.value("id") == id && row.value("state") == "installing",
+                "local transfer progress stays correlated with the approved provider");
+            completedBytes |= row.value("received").toLongLong() == expectedBytes
+                && row.value("total").toLongLong() == expectedBytes;
+        }
+        require(completedBytes && store.transfers().isEmpty(),
+            "real staged-file byte progress reaches completion and the transfer closes");
+        require(registry.module(id)->manifest.version == "1.0.0",
+            "changing the pathname after inspection cannot swap in unapproved bytes");
+        QFile installedManifest(registry.module(id)->file(QStringLiteral("manifest.json")).toLocalFile());
+        require(installedManifest.open(QIODevice::ReadOnly)
+                && QJsonDocument::fromJson(installedManifest.readAll()).object().value("version").toString() == "1.0.0",
+            "the immutable approved version reaches disk, not just the module listing");
+
+        const QVariantMap update = inspect(second);
+        require(update.value("isUpdate").toBool() && update.value("installedVersion") == "1.0.0"
+                && update.value("version") == "1.1.0" && update.value("installedProvenance") == "file"
+                && update.value("warning").toString().contains(QStringLiteral("renewed trust")),
+            "a file-provider update displays old/new versions and renewed credential trust");
+        installed.removeAll(id);
+        store.installInspected(update.value("token").toString());
+        waitUntil([&] { return installed.contains(id); }, "renewed consent installs a local update");
+        require(registry.module(id)->manifest.version == "1.1.0", "the approved local update is active");
+        require(inspect(first).isEmpty() && registry.module(id)->manifest.version == "1.1.0",
+            "a stale local version cannot delete the active newer installation");
+
+        store.refresh(true);
+        waitUntil([&] { return !store.loading(); }, "takeover catalogue loads");
+        installed.removeAll(QStringLiteral("fixture.other"));
+        store.install(QStringLiteral("fixture.other"));
+        waitUntil([&] { return installed.contains(QStringLiteral("fixture.other")); }, "community identity exists");
+        for (const QString& trusted :
+            { QStringLiteral("spool.jellyfin"), QStringLiteral("fixture.test"), QStringLiteral("fixture.other"),
+                QStringLiteral("fixture.linked"), QStringLiteral("fixture.manual") }) {
+            const QString version = registry.module(trusted)->manifest.version;
+            auto takeover = ProviderFixture::package(trusted, QStringLiteral("999.0.0"));
+            QJsonObject manifest = QJsonDocument::fromJson(takeover.files.value("manifest.json")).object();
+            manifest.insert("publisher", registry.module(trusted)->manifest.publisher);
+            takeover.files["manifest.json"] = QJsonDocument(manifest).toJson();
+            require(inspect(ProviderFixture::archive(takeover)).isEmpty()
+                    && registry.module(trusted)->manifest.version == version
+                    && problems.last().contains(QStringLiteral("unverified local file")),
+                "matching identity and publisher claims never authorize trusted-distribution takeover");
+        }
+
+        const QString cancelledId = QStringLiteral("fixture.cancelled");
+        const QString cancelled
+            = inspect(ProviderFixture::archive(ProviderFixture::package(cancelledId))).value("token").toString();
+        store.installInspected(cancelled);
+        store.cancelInspection();
+        waitUntil([&] { return !store.busy().contains(cancelledId); }, "cancelled staging settles");
+        require(!registry.module(cancelledId)
+                && !QFileInfo::exists(QDir(registry.installDirectory()).filePath(cancelledId + "/1.0.0")),
+            "cancellation during async staging never activates candidate bytes");
+
+        const QString revisedId = QStringLiteral("fixture.revised");
+        const QString revised
+            = inspect(ProviderFixture::archive(ProviderFixture::package(revisedId))).value("token").toString();
+        QCoro::waitFor(registry.install(ProviderFixture::package(revisedId, QStringLiteral("1.1.0"))));
+        store.installInspected(revised);
+        require(store.inspectedPackage().isEmpty() && registry.module(revisedId)->manifest.version == "1.1.0",
+            "replacement after preview invalidates consent before stale activation");
+
+        writeFile(QByteArrayLiteral("not a package"));
+        QHash<QString, QVariantMap> classifications;
+        QObject::connect(&store, &ProviderStore::filesClassified,
+            [&](const QString& request, const QVariantList& packages, const QVariantList& media, const QString& error) {
+                classifications.insert(request, { { "packages", packages }, { "media", media }, { "error", error } });
+            });
+        const auto classify = [&](const QVariantList& urls) {
+            const QString request = store.classifyFiles(urls);
+            require(!classifications.contains(request), "classification completion follows returned request ownership");
+            waitUntil([&] { return classifications.contains(request); }, "scoped file classification completes");
+            return classifications.value(request);
+        };
+        require(store.isPackageCandidate(fileUrl), "a malformed dedicated-suffix file stays a package candidate");
+        require(inspect(QByteArrayLiteral("not a package")).isEmpty(), "malformed candidates report an error");
+        const QString unlabeledPath = directory.filePath(QStringLiteral("unlabeled.bin"));
+        require(QFile::copy(path, unlabeledPath), "unlabeled negative fixture is copied");
+        require(classify({ QUrl::fromLocalFile(unlabeledPath) }).value("media").toList().size() == 1,
+            "ordinary bytes are classified as media without package filename guessing");
+        writeFile(first);
+        QFile::remove(unlabeledPath);
+        require(QFile::copy(path, unlabeledPath)
+                && classify({ QUrl::fromLocalFile(unlabeledPath) }).value("packages").toList().size() == 1,
+            "asynchronous bounded content sniff recognizes an unlabeled provider archive");
+#ifdef Q_OS_UNIX
+        const QString fifoPath = directory.filePath(QStringLiteral("special.pipe"));
+        require(::mkfifo(QFile::encodeName(fifoPath).constData(), 0600) == 0, "native FIFO fixture is created");
+        const QUrl fifoUrl = QUrl::fromLocalFile(fifoPath);
+        require(!store.isPackageCandidate(fifoUrl), "cheap filename hint never opens a special file");
+        bool heartbeat = false;
+        QTimer::singleShot(0, &app, [&] { heartbeat = true; });
+        const QVariantMap special = classify({ fifoUrl });
+        require(heartbeat && !special.value("error").toString().isEmpty()
+                && special.value("packages").toList().isEmpty() && special.value("media").toList().isEmpty(),
+            "a real FIFO is rejected off-thread without blocking GUI events or falling back to media");
+        const QString specialRequest = store.inspectFile(fifoUrl);
+        waitUntil(
+            [&] { return inspectionOutcomes.contains(specialRequest); }, "special-file inspection rejects safely");
+        require(!inspectionOutcomes.value(specialRequest).value("error").toString().isEmpty(),
+            "the consent inspection path also refuses nonregular files before opening them");
+#endif
+    }
+
+    {
+        // Registry lifecycle risks differ from the Store's token checks.
+        const QString id = QStringLiteral("fixture.file");
+        bool approved = true;
+        auto revoked
+            = registry.install(ProviderFixture::package(id, QStringLiteral("1.2.0")), [&approved] { return approved; });
+        approved = false;
+        bool cancelled = false;
+        try {
+            QCoro::waitFor(std::move(revoked));
+        } catch (const std::exception&) {
+            cancelled = true;
+        }
+        require(cancelled && registry.module(id)->manifest.version == "1.1.0"
+                && QFileInfo::exists(QDir(registry.installDirectory()).filePath(id + "/1.1.0"))
+                && !QFileInfo::exists(QDir(registry.installDirectory()).filePath(id + "/1.2.0")),
+            "revoked admission after staging preserves installed bytes and module identity");
+
+        auto stale = registry.install(ProviderFixture::package(id, QStringLiteral("1.2.0")));
+        QCoro::waitFor(registry.install(ProviderFixture::package(id, QStringLiteral("1.3.0"))));
+        cancelled = false;
+        try {
+            QCoro::waitFor(std::move(stale));
+        } catch (const std::exception&) {
+            cancelled = true;
+        }
+        require(cancelled && registry.module(id)->manifest.version == "1.3.0"
+                && !QFileInfo::exists(QDir(registry.installDirectory()).filePath(id + "/1.2.0")),
+            "a superseded registry transaction cannot activate stale staged bytes");
+
+        auto owner = std::make_unique<ProviderRegistry>(&database);
+        const QString root = directory.filePath(QStringLiteral("abandoned-owner"));
+        owner->setInstallDirectory(root);
+        auto abandoned = owner->install(ProviderFixture::package(QStringLiteral("fixture.abandoned")));
+        owner.reset();
+        cancelled = false;
+        try {
+            QCoro::waitFor(std::move(abandoned));
+        } catch (const std::exception&) {
+            cancelled = true;
+        }
+        require(cancelled && !QFileInfo::exists(QDir(root).filePath(QStringLiteral("fixture.abandoned/1.0.0"))),
+            "destroying the registry during staging cannot publish a package");
+    }
+
+    for (ProviderSources policy : { ProviderSources::Curated, ProviderSources::Bundled }) {
+        ProviderStore store(&registry, &database, &network, QUrl(QStringLiteral("https://store.test/")), policy);
+        int rejected = 0;
+        QObject::connect(&store, &ProviderStore::problem, [&](const QString&) { ++rejected; });
+        store.inspectFile(QUrl::fromLocalFile(directory.filePath(QStringLiteral("review.szo"))));
+        waitUntil([&] { return rejected == 1; }, "restricted policy returns its queued inspection error");
+        require(rejected == 1 && store.inspectedPackage().isEmpty() && store.busy().isEmpty(),
+            "restricted source policies reject local inspection without any code or disk work");
     }
     return 0;
 }

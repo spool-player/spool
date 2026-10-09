@@ -15,6 +15,10 @@ public:
     // earlier is an interruption and must neither mark it played nor advance
     // the queue.
     static FileEnd classifyFileEnd(bool failed, int mpvReason, double positionSeconds, double durationSeconds);
+    // Watched-on-stop is a device policy, not a natural end or queue advance.
+    // The position must come from playback, never a pending seek or resume seed.
+    static bool watchedOnStop(bool explicitStop, bool failed, bool loaded, bool hasPlaybackPosition,
+        double positionSeconds, double durationSeconds, int thresholdPercent);
     // An interrupted stream is resumed only when it got further than where it
     // started, so a source that keeps ending early cannot restart forever.
     static bool shouldResumeInterrupted(double startSeconds, double positionSeconds);

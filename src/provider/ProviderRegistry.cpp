@@ -197,7 +197,11 @@ void ProviderRegistry::setRuntimeEnvironment(QVariantMap device, ScriptRuntime::
 
 void ProviderRegistry::setInstallDirectory(const QString& path)
 {
-    m_installDirectory = path;
+    if (m_installDirectory != path) {
+        for (auto it = m_installRevisions.begin(); it != m_installRevisions.end(); ++it)
+            ++it.value();
+        m_installDirectory = path;
+    }
 }
 
 void ProviderRegistry::registerPackage(ProviderManifest manifest, QUrl root, bool bundled)
@@ -214,6 +218,7 @@ void ProviderRegistry::registerPackage(ProviderManifest manifest, QUrl root, boo
     module.root = std::move(root);
     module.bundled = bundled;
     module.runtime = existing != m_modules.cend() ? existing->runtime : nullptr;
+    ++m_installRevisions[id];
     m_modules.insert(id, std::move(module));
 }
 
@@ -251,6 +256,7 @@ void ProviderRegistry::addNativeModule(ProviderManifest manifest, ProviderModule
     module.native = std::move(factory);
     module.root = std::move(uiRoot);
     module.bundled = true;
+    ++m_installRevisions[module.manifest.id];
     m_modules.insert(module.manifest.id, std::move(module));
     emit modulesChanged();
 }
@@ -919,18 +925,38 @@ void ProviderRegistry::persist(bool credentials)
                 .toJson(QJsonDocument::Compact)));
 }
 
-QCoro::Task<void> ProviderRegistry::install(ProviderPackageContents package)
+QCoro::Task<void> ProviderRegistry::install(
+    ProviderPackageContents package, std::function<bool()> admission, std::function<void(qint64, qint64)> progress)
 {
     const QString root = m_installDirectory;
     if (root.isEmpty())
         throw std::runtime_error("installs_disabled");
-    // Disk writes stay off the GUI thread.
+    const QString id = package.manifest.id;
+    if (admission && !admission())
+        throw std::runtime_error("install_cancelled");
+    if (const auto *existing = module(id);
+        existing && ProviderPackage::compareVersions(package.manifest.version, existing->manifest.version) <= 0)
+        throw std::runtime_error("install_version_not_newer");
+    const quint64 revision = ++m_installRevisions[id];
+    QPointer<ProviderRegistry> guard(this);
+    // Only inert files are written in the worker. Admission and activation
+    // share the registry thread, so a concurrent replacement cannot slip
+    // between the final revision check and publishing candidate code.
+    auto staged = co_await Async::background([package, root, progress = std::move(progress)] {
+        QString error;
+        auto staged = ProviderPackage::stage(package, root, &error, progress);
+        if (!staged)
+            throw std::runtime_error(error.toStdString());
+        return staged;
+    });
+    if (!guard)
+        throw std::runtime_error("install_cancelled");
+    if (m_installRevisions.value(id) != revision || m_installDirectory != root || (admission && !admission()))
+        throw std::runtime_error("install_cancelled");
     QString error;
-    const auto directory = co_await Async::background(
-        [package, root, &error] { return ProviderPackage::install(package, root, &error); });
+    const auto directory = ProviderPackage::activate(*staged, &error);
     if (!directory)
         throw std::runtime_error(error.toStdString());
-    const QString id = package.manifest.id;
     const ScriptRuntime *before = m_modules.contains(id) ? m_modules[id].runtime : nullptr;
     registerPackage(package.manifest, QUrl::fromLocalFile(*directory + QLatin1Char('/')), false);
     if (before || m_modules[id].runtime)
@@ -942,6 +968,7 @@ QCoro::Task<void> ProviderRegistry::install(ProviderPackageContents package)
 QCoro::Task<void> ProviderRegistry::uninstall(QString moduleId)
 {
     clearGrants(moduleId);
+    ++m_installRevisions[moduleId];
     const ProviderModule *existing = module(moduleId);
     if (!existing || (existing->bundled && !existing->overridesBundled) || existing->native)
         co_return;

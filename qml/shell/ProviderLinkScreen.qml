@@ -6,6 +6,8 @@ import Spool
 FocusScope {
     id: root
     property var provider
+    readonly property var installedModule: provider ? Providers.modules.find(module => module.id === provider.moduleId) :
+                                                      null
     property string title: ""
     property string instructions: ""
     property string code: ""
@@ -114,8 +116,16 @@ FocusScope {
                 width: ListView.view.width
                 title: modelData.title || modelData.name || ""
                 serverAddress: modelData.address || ""
+                providerName: root.installedModule ? root.installedModule.name : ""
+                providerId: root.provider ? root.provider.moduleId : ""
+                providerIcon: root.installedModule ? root.installedModule.iconUrl : ""
+                providerVersion: root.installedModule ? root.installedModule.version : ""
                 enabled: !root.busy
-                onAccepted: root.choiceSelected(index)
+                onAccepted: {
+                    choicesList.currentIndex = index
+                    choicesList.forceActiveFocus()
+                    root.choiceSelected(index)
+                }
             }
             function activate() {
                 if (currentItem)

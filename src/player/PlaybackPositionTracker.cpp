@@ -44,6 +44,11 @@ double PlaybackPositionTracker::duration() const
     return m_durationSeconds;
 }
 
+bool PlaybackPositionTracker::hasPlaybackPosition() const
+{
+    return m_hasMpvPosition && !seekInFlight();
+}
+
 void PlaybackPositionTracker::setDuration(double seconds)
 {
     m_durationSeconds = std::isfinite(seconds) ? qMax(0.0, seconds) : 0.0;
@@ -63,12 +68,14 @@ void PlaybackPositionTracker::beginSeek(double targetSeconds)
 {
     ++m_issuedSeeks;
     m_positionSeconds = clamp(targetSeconds);
+    m_hasMpvPosition = false;
     m_positionClock.invalidate();
 }
 
 void PlaybackPositionTracker::beginBlindSeek()
 {
     ++m_issuedSeeks;
+    m_hasMpvPosition = false;
     m_positionClock.invalidate();
 }
 
@@ -79,6 +86,7 @@ void PlaybackPositionTracker::replaceSeek(double targetSeconds)
         return;
     }
     m_positionSeconds = clamp(targetSeconds);
+    m_hasMpvPosition = false;
     m_positionClock.invalidate();
 }
 

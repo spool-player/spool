@@ -41,8 +41,10 @@ assets/            icon and anything else the screens show
 - `origins` are reachable by every account; `*` allows any HTTP(S) origin. Anything else an account
   reaches is what its login screen allowed with `provider.allowOrigin(url)`.
 - `actions` appear in the item menu for the listed types and run through `runItemAction`.
-- Packages are `.tar.zst` (ustar, zstd), at most 16 MiB, 512 files, 32 MiB expanded. Paths are
-  relative, without hidden parts, of the listed types; links and native binaries are refused.
+- Packages use `.szo` (Spool Zstandard Object): unchanged ustar compressed with zstd,
+  at most 16 MiB, 512 files, 32 MiB expanded. Paths are relative, without hidden parts,
+  of the listed types; links and native binaries are refused. Published archive URLs
+  remain opaque transport names; existing `.tar.zst` releases stay valid.
 - `format: 3` is the only package schema gate. The manifest has no `api` or
   `extensions` fields; packages containing either are rejected.
 - `capabilities` is required: an array of at most 24 known names, with no
@@ -50,9 +52,9 @@ assets/            icon and anything else the screens show
   Account availability is reported separately; see [Capabilities](#capabilities).
 
 ```
-python3 sdk/spool-provider.py build path/to/provider           # dist/<id>-<version>.tar.zst
-python3 sdk/spool-provider.py validate dist/<id>-<version>.tar.zst
-python3 sdk/spool-provider.py feed dist/<id>-<version>.tar.zst --url https://…/<id>-<version>.tar.zst
+python3 sdk/spool-provider.py build path/to/provider           # dist/<id>-<version>.szo
+python3 sdk/spool-provider.py validate dist/<id>-<version>.szo
+python3 sdk/spool-provider.py feed dist/<id>-<version>.szo --url https://…/<id>-<version>.szo
 ```
 
 Building is reproducible. It needs Python 3.14, or the `zstd` command on older Pythons.

@@ -43,36 +43,69 @@ FocusScope {
                               pin: value
                           })
     }
+    function recoverListFocus(view) {
+        const candidate = InputKeys.topLeftVisibleCandidate(view, view)
+        const selected = InputKeys.topLeftVisibleCandidate({
+                                                               count: view.currentItem ? 1 : 0,
+                                                               width: view.width,
+                                                               height: view.height,
+                                                               itemAtIndex: index => view.currentItem,
+                                                               mapToItem: (clip, x, y, width, height) => view.mapToItem(
+                                                                                                             clip, x, y,
+                                                                                                             width, height)
+                                                           }, view)
+        if (view.activeFocus && selected && (selected.fullyVisible || selected.visibleFraction
+                                             >= InputKeys.focusRecoveryVisibleThreshold))
+            return false
+        if (candidate)
+            InputKeys.focusIndexWithoutScrolling(view, candidate.index)
+        return true
+    }
+
     function activate() {
         const item = Window.activeFocusItem
+        if (InputKeys.isTextInputItem(item) || (item && !root.activeFocus))
+            return
+        const view = kind === "download" ? downloadList : choosing ? list : null
+        if (view && (view.activeFocus || !item || item === root)) {
+            if (!recoverListFocus(view))
+                view.activate()
+            return
+        }
         if (item && typeof item.activate === "function")
             item.activate()
         else if (item && typeof item.clicked === "function")
             item.clicked()
     }
     function routeKey(key, phase, repeat) {
-        if (kind !== "download")
+        const item = Window.activeFocusItem
+        if (InputKeys.isTextInputItem(item) || (item && !root.activeFocus))
+            return false
+        if (kind !== "download" && !choosing)
             return false
         if (InputKeys.isBack(key, false, false)) {
             if (phase === "release")
                 provider.close()
             return true
         }
+        const view = kind === "download" ? downloadList : list
         if (InputKeys.isAccept(key))
             return true
         if (!InputKeys.isDirection(key))
             return false
-        if (phase === "press" && (key === Qt.Key_Up || key === Qt.Key_Down)) {
-            if (downloadList.activeFocus) {
-                const next = downloadList.currentIndex + (key === Qt.Key_Down ? 1 : -1)
-                if (next >= 0 && next < downloadList.count) {
-                    downloadList.currentIndex = next
-                    downloadList.positionViewAtIndex(next, ListView.Contain)
+        if (choosing && item && item !== root && !view.activeFocus)
+            return false
+        if (phase === "press") {
+            if (recoverListFocus(view))
+                return true
+            if (key === Qt.Key_Up || key === Qt.Key_Down) {
+                const next = view.currentIndex + (key === Qt.Key_Down ? 1 : -1)
+                if (next >= 0 && next < view.count) {
+                    view.currentIndex = next
+                    view.positionViewAtIndex(next, ListView.Contain)
                 } else {
                     InputKeys.focus(cancelButton)
                 }
-            } else if (downloadList.count > 0) {
-                InputKeys.focus(downloadList)
             }
         }
         return true
@@ -168,11 +201,14 @@ FocusScope {
                 label: record.title
                 iconName: root.kind === "collection" ? "video_library" : "playlist_play"
                 highlighted: ListView.isCurrentItem && list.activeFocus
-                onHovered: list.currentIndex = index
-                onActivated: root.provider.complete({
-                                                        targetId: record.id,
-                                                        targetName: record.title
-                                                    })
+                onActivated: {
+                    list.currentIndex = index
+                    InputKeys.focus(list)
+                    root.provider.complete({
+                                               targetId: record.id,
+                                               targetName: record.title
+                                           })
+                }
             }
             function activate() {
                 if (currentItem)
@@ -195,10 +231,13 @@ FocusScope {
                 detail: String(modelData.detail || "")
                 iconName: "download"
                 highlighted: ListView.isCurrentItem && downloadList.activeFocus
-                onHovered: downloadList.currentIndex = index
-                onActivated: root.provider.complete({
-                                                        variantId: modelData.id
-                                                    })
+                onActivated: {
+                    downloadList.currentIndex = index
+                    InputKeys.focus(downloadList)
+                    root.provider.complete({
+                                               variantId: modelData.id
+                                           })
+                }
             }
             function activate() {
                 if (currentItem)

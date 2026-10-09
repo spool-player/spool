@@ -6,6 +6,7 @@ export function createSource(config, sourceHost) {
     let queueCalls = 0;
     let queue = [];
     const reports = [];
+    const homeFeeds = {resume: 0, nextUp: 0, latest: 0};
     const item = function(id) {
         const row = {id: id, title: config.label + ' ' + id, type: 'Movie'};
         if (config.pagination)
@@ -91,6 +92,7 @@ export function createSource(config, sourceHost) {
             return {items: rows, cursor: null, exhausted: true};
         },
         latest: function(args) {
+            ++homeFeeds.latest;
             failing();
             return {items: [item('new-1'), item('new-2'), item('new-3')].slice(0, args.limit), cursor: null,
                 exhausted: true};
@@ -99,10 +101,11 @@ export function createSource(config, sourceHost) {
         seasons: paginated,
         episodes: paginated,
         personItems: paginated,
-        resume: paginated,
-        nextUp: paginated,
+        resume: function(args) { ++homeFeeds.resume; return paginated(args); },
+        nextUp: function(args) { ++homeFeeds.nextUp; return paginated(args); },
         batchStats: function() {
-            return {requests: batches, maximumActive: maximumBatches, queueCalls: queueCalls, queue: queue};
+            return {requests: batches, maximumActive: maximumBatches, queueCalls: queueCalls, queue: queue,
+                homeFeeds: homeFeeds};
         },
         groupSend: function(args) {
             ++queueCalls;

@@ -8,6 +8,8 @@ import Spool
 FocusScope {
     id: root
     property var provider
+    readonly property var installedModule: provider ? Providers.modules.find(module => module.id === provider.moduleId) :
+                                                      null
     property string serviceName: ""
     property var errorMessages: ({})
     // A provider can resolve its private saved server to public login context.
@@ -506,6 +508,11 @@ FocusScope {
                         required property var modelData
                         tileSize: Metrics.scaled(80)
                         username: modelData.name
+                        providerName: root.installedModule ? root.installedModule.name : ""
+                        providerId: root.provider ? root.provider.moduleId : ""
+                        providerIcon: root.installedModule ? root.installedModule.iconUrl : ""
+                        providerVersion: root.installedModule ? root.installedModule.version : ""
+                        badgeIcon: modelData.hasPassword ? "lock" : ""
                         onAccepted: {
                             usernameField.text = modelData.name
                             if (modelData.hasPassword)

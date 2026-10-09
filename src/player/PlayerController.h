@@ -16,6 +16,7 @@
 #include <QObject>
 #include <QStringList>
 #include <QTimer>
+#include <QUrl>
 #include <QVariant>
 
 #ifdef Q_OS_ANDROID
@@ -82,6 +83,8 @@ class PlayerController final : public QObject {
     Q_PROPERTY(QString activeSegmentType READ activeSegmentType NOTIFY segmentsChanged)
     Q_PROPERTY(double activeSegmentEndSeconds READ activeSegmentEndSeconds NOTIFY segmentsChanged)
     Q_PROPERTY(bool trickplayAvailable READ trickplayAvailable NOTIFY trickplayChanged)
+    Q_PROPERTY(bool localPlaylist READ localPlaylist NOTIFY localPlaylistChanged)
+    Q_PROPERTY(QVariantList localPlaylistEntries READ localPlaylistEntries NOTIFY localPlaylistChanged)
 
 public:
     PlayerController(NativeAppWindow *window, PlaybackSource *api, TlsTrustController *tlsTrust,
@@ -147,6 +150,20 @@ public:
     void setTrickplayService(TrickplayService *service);
 
     Q_INVOKABLE void play(const Spool::PlaybackSession& session, bool startPaused = false);
+    void playLocalFiles(const QList<QUrl>& urls);
+    bool appendLocalFiles(const QList<QUrl>& urls);
+    bool localPlaylist() const
+    {
+        return m_localPlaylist;
+    }
+    QVariantList localPlaylistEntries() const
+    {
+        return m_localPlaylistEntries;
+    }
+    void selectLocalPlaylistEntry(const QString& entryId);
+    void stepLocalPlaylist(int direction);
+    bool moveLocalPlaylistRange(int from, int count, int to);
+    void removeLocalPlaylistEntry(const QString& entryId);
     void setMediaSegments(const QString& itemId, const std::vector<MediaSegment>& segments);
     Q_INVOKABLE void togglePause();
     Q_INVOKABLE bool forwardMpvKey(int key, int modifiers, const QString& text, bool pressed, bool repeat);
@@ -176,7 +193,8 @@ public:
     Q_INVOKABLE void nextChapter();
     Q_INVOKABLE void previousChapter();
     Q_INVOKABLE void stop();
-    Q_INVOKABLE void stopWithReason(const QString& reason);
+    Q_INVOKABLE void stopWithReason(const QString& reason, bool explicitStop = false);
+    void setWatchedThresholdPercent(int percent);
     Q_INVOKABLE void setNightModeEnabled(bool enabled);
     Q_INVOKABLE void setToneMappingVisualizationEnabled(bool enabled);
     Q_INVOKABLE void setAudioDelayMs(int delayMs);
@@ -235,7 +253,8 @@ signals:
     void chaptersChanged();
     // Also emitted between sessions so Stop cancels pending queue negotiation.
     void stopRequested();
-    void playbackStopped(const QString& itemId, qint64 positionTicks, bool completed);
+    void playbackStopped(const QString& itemId, qint64 positionTicks, bool watched, bool reachedEnd, quint64 reportId);
+    void watchedPersistenceRequested(const QString& itemId, quint64 reportId);
     // The stream ended before the item did. Emitted after playbackStopped,
     // which has already recorded the position as a resume point.
     void playbackInterrupted(const QString& itemId, qint64 positionTicks, bool resumable);
@@ -253,6 +272,8 @@ signals:
     void volumeChanged();
     void playbackSpeedChanged();
     void effectivePlaybackSpeedChanged();
+    void localPlaylistChanged();
+    void localEntryEnded(const QString& entryId, qint64 positionTicks, bool completed);
 
 public:
     // Silence active playback before application services and the render
@@ -267,6 +288,14 @@ public:
 
 private:
     QHash<int, QByteArray> m_mpvKeys;
+    void playSession(const PlaybackSession& session, bool startPaused, const QList<QUrl>& localFiles);
+    void refreshLocalPlaylist();
+    void beginLocalEntry(qint64 entryId);
+    bool loadLocalFiles(const QList<QUrl>& urls);
+    bool m_localPlaylist = false;
+    bool m_localEntryStarted = false;
+    qint64 m_localEntryId = -1;
+    QVariantList m_localPlaylistEntries;
     void logColorDiagnostics(mpv_handle *handle);
     bool usesUserMpvConfig() const;
     int uiTrackIndexForStream(const QString& type, int streamIndex, int firstUiIndex) const;
@@ -303,7 +332,7 @@ private:
         });
     }
     void startProgressReporting();
-    void stopProgressReporting(bool failed = false, bool completed = false);
+    void stopProgressReporting(bool failed = false, bool reachedEnd = false, bool explicitStop = false);
     bool mpvCommand(QByteArrayList command);
     bool beginSeekCommand(double targetSeconds, const QByteArray& flags);
     QByteArrayList buildSeekCommand(double targetSeconds, const QByteArray& flags) const;
@@ -365,6 +394,7 @@ private:
     bool m_visible = false;
     bool m_sessionActive = false;
     bool m_fileLoaded = false;
+    int m_watchedThresholdPercent = 90;
     bool m_seekDispatchReady = false;
     bool m_paused = false;
     bool m_buffering = false;

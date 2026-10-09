@@ -213,14 +213,14 @@ namespace ProviderPackage {
         const size_t frameSize = ZSTD_findFrameCompressedSize(archive.constData(), archive.size());
         if (declared == ZSTD_CONTENTSIZE_ERROR || ZSTD_isError(frameSize) || frameSize != size_t(archive.size())
             || (declared != ZSTD_CONTENTSIZE_UNKNOWN && declared > ceiling)) {
-            fail(error, QStringLiteral("Package is not a valid .tar.zst archive"));
+            fail(error, QStringLiteral("Package is not a valid zstd-compressed provider archive"));
             return std::nullopt;
         }
         const size_t capacity = declared == ZSTD_CONTENTSIZE_UNKNOWN ? ceiling : static_cast<size_t>(declared);
         QByteArray tar(static_cast<qsizetype>(capacity), Qt::Uninitialized);
         const size_t written = ZSTD_decompress(tar.data(), capacity, archive.constData(), archive.size());
         if (ZSTD_isError(written)) {
-            fail(error, QStringLiteral("Package is not a valid .tar.zst archive"));
+            fail(error, QStringLiteral("Package is not a valid zstd-compressed provider archive"));
             return std::nullopt;
         }
         tar.truncate(static_cast<qsizetype>(written));
@@ -245,38 +245,80 @@ namespace ProviderPackage {
         return package;
     }
 
-    std::optional<QString> install(const ProviderPackageContents& package, const QString& root, QString *error)
+    StagedPackage::~StagedPackage()
+    {
+        if (!m_path.isEmpty())
+            QDir(m_path).removeRecursively();
+    }
+
+    std::shared_ptr<StagedPackage> stage(const ProviderPackageContents& package, const QString& root, QString *error,
+        const std::function<void(qint64, qint64)>& progress)
     {
         const QDir providerDir(QDir(root).filePath(package.manifest.id));
         const QString target = providerDir.filePath(package.manifest.version);
         const QString staging
             = providerDir.filePath(QStringLiteral(".staging-") + QUuid::createUuid().toString(QUuid::Id128));
-        const auto abandon = [&](const QString& message) -> std::optional<QString> {
+        const auto abandon = [&](const QString& message) -> std::shared_ptr<StagedPackage> {
             QDir(staging).removeRecursively();
             fail(error, message);
-            return std::nullopt;
+            return {};
         };
         if (!QDir().mkpath(staging))
             return abandon(QStringLiteral("Could not create %1").arg(staging));
+        qint64 written = 0;
+        qint64 total = 0;
+        if (progress) {
+            for (const QByteArray& file : package.files)
+                total += file.size();
+            progress(0, total);
+        }
         for (auto it = package.files.cbegin(); it != package.files.cend(); ++it) {
             const QString path = QDir(staging).filePath(it.key());
             QDir().mkpath(QFileInfo(path).path());
             QSaveFile file(path);
             if (!file.open(QIODevice::WriteOnly) || file.write(it.value()) != it.value().size() || !file.commit())
                 return abandon(QStringLiteral("Could not write %1").arg(it.key()));
+            if (progress)
+                progress(written += it.value().size(), total);
         }
-        // Versions are immutable: reinstalling the same one replaces it whole.
-        QDir(target).removeRecursively();
-        if (!QDir().rename(staging, target))
-            return abandon(
-                QStringLiteral("Could not activate %1 %2").arg(package.manifest.id, package.manifest.version));
-        // Only the newest version stays; the running engine has already read
-        // its module and components, so an older directory is dead weight.
+        return std::shared_ptr<StagedPackage>(new StagedPackage(staging, target, package.manifest.version));
+    }
+
+    std::optional<QString> activate(StagedPackage& staged, QString *error)
+    {
+        if (staged.m_path.isEmpty()) {
+            fail(error, QStringLiteral("Package staging was already consumed"));
+            return std::nullopt;
+        }
+        const QDir providerDir(QFileInfo(staged.m_target).path());
+        const QString backup
+            = providerDir.filePath(QStringLiteral(".replaced-") + QUuid::createUuid().toString(QUuid::Id128));
+        const bool replacing = QFileInfo::exists(staged.m_target);
+        if (replacing && !QDir().rename(staged.m_target, backup)) {
+            fail(error, QStringLiteral("Could not preserve the installed package"));
+            return std::nullopt;
+        }
+        if (!QDir().rename(staged.m_path, staged.m_target)) {
+            if (replacing)
+                QDir().rename(backup, staged.m_target);
+            fail(error, QStringLiteral("Could not activate the staged package"));
+            return std::nullopt;
+        }
+        staged.m_path.clear();
+        if (replacing)
+            QDir(backup).removeRecursively();
+        // Uncommitted stages belong to their transactions, never to this one.
         for (const QString& other : providerDir.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
-            if (other != package.manifest.version)
+            if (other != staged.m_version && !other.startsWith(QLatin1Char('.')))
                 QDir(providerDir.filePath(other)).removeRecursively();
         }
-        return target;
+        return staged.m_target;
+    }
+
+    std::optional<QString> install(const ProviderPackageContents& package, const QString& root, QString *error)
+    {
+        auto staged = stage(package, root, error);
+        return staged ? activate(*staged, error) : std::nullopt;
     }
 
     QMap<QString, QString> installedVersions(const QString& root)

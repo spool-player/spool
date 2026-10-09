@@ -125,6 +125,7 @@ public:
     Q_INVOKABLE void playItemId(const QString& itemId, bool fromStart = false);
     // Explicit local launch path: inbound/CLI playback must never be relayed.
     void playLocalItemId(const QString& itemId, bool fromStart = false);
+    Q_INVOKABLE void playLocalFiles(const QList<QUrl>& urls, bool append = false);
     // Validated same-user automation; shares group/local semantics with inbound controls.
     bool handleLocalControl(const QVariantMap& command);
     Q_INVOKABLE void transferPlaybackToRemote();
@@ -229,7 +230,8 @@ private:
     void playRemoteItems(const QString& accountId, const QVariantMap& command);
     // Folder-like containers open their child listing; everything else plays directly.
     void playOrOpen(const MovieItem& item, bool fromStart = false);
-    void handlePlaybackStopped(const QString& itemId, qint64 positionTicks, bool completed);
+    void handlePlaybackStopped(
+        const QString& itemId, qint64 positionTicks, bool watched, bool reachedEnd, quint64 reportId);
 
     struct SourceAnalysis {
         qint64 bitrate = 0;

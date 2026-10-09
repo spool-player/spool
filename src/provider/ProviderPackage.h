@@ -7,7 +7,10 @@
 #include <QVariantList>
 #include <QVariantMap>
 
+#include <functional>
+#include <memory>
 #include <optional>
+#include <utility>
 
 namespace Spool {
 
@@ -49,6 +52,31 @@ struct ProviderPackageContents {
 // native binaries are rejected before a byte touches the disk.
 namespace ProviderPackage {
     std::optional<ProviderPackageContents> read(const QByteArray& archive, QString *error = nullptr);
+    // Staging is inert. The registry admits and activates it only after
+    // rechecking its owner, module revision and the caller's consent.
+    class StagedPackage {
+    public:
+        ~StagedPackage();
+        StagedPackage(const StagedPackage&) = delete;
+        StagedPackage& operator=(const StagedPackage&) = delete;
+
+    private:
+        friend std::shared_ptr<StagedPackage> stage(
+            const ProviderPackageContents&, const QString&, QString *, const std::function<void(qint64, qint64)>&);
+        friend std::optional<QString> activate(StagedPackage&, QString *);
+        StagedPackage(QString path, QString target, QString version)
+            : m_path(std::move(path))
+            , m_target(std::move(target))
+            , m_version(std::move(version))
+        {
+        }
+        QString m_path;
+        QString m_target;
+        QString m_version;
+    };
+    std::shared_ptr<StagedPackage> stage(const ProviderPackageContents& package, const QString& root,
+        QString *error = nullptr, const std::function<void(qint64, qint64)>& progress = {});
+    std::optional<QString> activate(StagedPackage& staged, QString *error = nullptr);
     // Writes <root>/<id>/<version>/ through a staging directory so a failed
     // install never leaves a half-written version behind. Returns the
     // version directory.

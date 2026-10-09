@@ -923,6 +923,7 @@ int main(int argc, char **argv)
         &window, &Spool::NativeAppWindow::closeRequested, controller.get(),
         [controller = controller.get()]() {
             logLine("window close requested: stopping controllers");
+            controller->stopPlayback();
             controller->shutdown();
         },
         Qt::DirectConnection);

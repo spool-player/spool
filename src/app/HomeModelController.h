@@ -4,6 +4,7 @@
 #include "../media/MediaTypes.h"
 #include "../models/MovieGridModel.h"
 #include "../provider/Catalog.h"
+#include "../provider/SourceHub.h"
 #include <QCoroTask>
 #include <QHash>
 #include <QJsonObject>
@@ -22,12 +23,17 @@ namespace Spool {
 class DatabaseManager;
 class LibraryPrefetchController;
 
+class SettingsController;
 class HomeModelController final : public QObject {
     Q_OBJECT
     Q_PROPERTY(Spool::MovieGridModel *resumeItems READ resumeItems CONSTANT)
     Q_PROPERTY(Spool::MovieGridModel *nextUpItems READ nextUpItems CONSTANT)
     Q_PROPERTY(QVariantList latestLibraryRows READ latestLibraryRows NOTIFY latestLibraryRowsChanged)
     Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
+    Q_PROPERTY(QString preferredProviderId READ preferredProviderId NOTIFY providerScopeChanged)
+    Q_PROPERTY(QString providerId READ providerId NOTIFY providerScopeChanged)
+    Q_PROPERTY(QString providerScopeMessage READ providerScopeMessage NOTIFY providerScopeChanged)
+    Q_PROPERTY(QVariantList providerChoices READ providerChoices NOTIFY providerScopeChanged)
 
 public:
     HomeModelController(
@@ -47,6 +53,22 @@ public:
         return m_refreshInFlight;
     }
 
+    QString preferredProviderId() const
+    {
+        return m_preferredProviderId;
+    }
+    QString providerId() const
+    {
+        return m_homeQuery.moduleId;
+    }
+    QString providerScopeMessage() const
+    {
+        return m_providerScopeMessage;
+    }
+    QVariantList providerChoices() const;
+    void attachSettings(SettingsController *settings);
+    Q_INVOKABLE bool includesItem(const QString& scopedId) const;
+    Q_INVOKABLE void selectProvider(const QString& moduleId);
     bool applyCachedPayload(const QJsonObject& payload);
     void loadCachedPayload();
     void refresh(const std::vector<LibraryItem>& libraries);
@@ -63,6 +85,7 @@ public:
 signals:
     void latestLibraryRowsChanged();
     void loadingChanged();
+    void providerScopeChanged();
 
 private:
     struct LatestLibrarySection {
@@ -86,9 +109,19 @@ private:
     QCoro::Task<void> refreshPlaybackRowsAsync(RequestGeneration::Token generation);
     void reconcilePlaybackRows(std::vector<MovieItem>& resume, std::vector<MovieItem>& nextUp);
 
+    void updateProviderScope();
+    void setPreferredProviderId(const QString& moduleId);
+    QCoro::Task<std::vector<MovieItem>> fetchResumeItems();
+    QCoro::Task<std::vector<MovieItem>> fetchNextUpEpisodes();
     DatabaseManager *m_database = nullptr;
     Catalog *m_api = nullptr;
     LibraryPrefetchController *m_prefetch = nullptr;
+    SourceHub *m_sources = nullptr;
+    SettingsController *m_settings = nullptr;
+    SourceHub::HomeQuery m_homeQuery;
+    QString m_preferredProviderId;
+    QString m_providerScopeMessage;
+    std::vector<LibraryItem> m_allLibraries;
     MovieGridModel m_resumeItems;
     MovieGridModel m_nextUpItems;
     std::vector<LatestLibrarySection> m_latestLibrarySections;
