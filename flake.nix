@@ -1008,9 +1008,9 @@
               else
                 ${if localProviders then ''
                 # Sibling changes are not part of the flake source ID.
-                nix develop "$REPO_ROOT#native" -c bash -c "$scrub"'; exec bash "$REPO_ROOT/tools/build-local-providers.sh"'
+                nix develop "$REPO_ROOT#native" -c bash --noprofile --norc -c "$scrub"'; exec bash "$REPO_ROOT/tools/build-local-providers.sh"'
                 '' else ''
-                nix develop "$REPO_ROOT#native" -c bash -c "$scrub; ${buildRootExport}export SPOOL_CMAKE_EXTRA_ARGS='${cmakeExtraArgs}'; ${runnerBuildCommand}"
+                nix develop "$REPO_ROOT#native" -c bash --noprofile --norc -c "$scrub; ${buildRootExport}export SPOOL_CMAKE_EXTRA_ARGS='${cmakeExtraArgs}'; ${runnerBuildCommand}"
                 ''}
                 mkdir -p "$(dirname "$BUILD_STAMP")"
                 printf '%s\n' "${stagedSourceId}" > "$BUILD_STAMP"
@@ -1032,7 +1032,7 @@
             export MPV_LIB="$REPO_ROOT/${runnerMpvLibraryPath}"
             runtime_env='eval "current_lib_path=\"''${${libraryPathVariable}:-}\""; export ${libraryPathVariable}="$MPV_LIB:${nativeRuntimeLibPath}''${current_lib_path:+:$current_lib_path}"; export QT_PLUGIN_PATH="${qtPluginPath}"; export QML2_IMPORT_PATH="${qmlImportPath}"; export QML_IMPORT_PATH="$QML2_IMPORT_PATH"'
             export LC_NUMERIC=C
-            exec nix develop "$REPO_ROOT#native" -c bash -c "$scrub; $runtime_env"'; exec ${launchPrefix}"$@"' _ "$BIN" "$@"
+            exec nix develop "$REPO_ROOT#native" -c bash --noprofile --norc -c "$scrub; $runtime_env"'; exec ${launchPrefix}"$@"' _ "$BIN" "$@"
           '';
 
           builder = makeRunner {
