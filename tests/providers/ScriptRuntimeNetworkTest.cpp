@@ -174,7 +174,7 @@ void plexSessions()
     serve(alternate3, "machine");
     ScriptRuntime::NetworkHooks hooks;
     hooks.network = [](QNetworkAccessManager *manager) { manager->setProxy(QNetworkProxy::NoProxy); };
-    ScriptRuntime plex(QStringLiteral(TEST_SOURCE_DIR "/tests/providers/fixtures/plex-network.mjs"), {}, hooks);
+    ScriptRuntime plex(SpoolTests::fixturePath("tests/providers/fixtures/plex-network.mjs"), {}, hooks);
     const QVariantMap offers { { "accountActivation", true }, { "originGrants", true }, { "httpMetadata", true } };
     const QList<QUrl> approved { QUrl(cloudOrigin), QUrl(firstOrigin), QUrl(secondOrigin), QUrl(backupOrigin),
         QUrl(origin(alternate1)), QUrl(origin(alternate2)), QUrl(origin(alternate3)) };

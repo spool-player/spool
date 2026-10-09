@@ -4,6 +4,7 @@
 
 #include "app/DownloadManager.h"
 #include "app/HomeModelController.h"
+#include "app/LibraryPrefetchController.h"
 #include "app/LocalizationManager.h"
 #include "app/RemoteTargetsController.h"
 #include "app/SettingsController.h"
@@ -119,7 +120,8 @@ public:
         downloads = std::make_unique<Spool::DownloadManager>(hub.get(), directory.filePath("downloads"));
         QCoro::waitFor(settings->loadLocalAsync());
         QCoro::waitFor(sync->loadLocalAsync());
-        home = std::make_unique<Spool::HomeModelController>(&database, hub->catalog(), nullptr);
+        prefetch = std::make_unique<Spool::LibraryPrefetchController>(hub->catalog());
+        home = std::make_unique<Spool::HomeModelController>(&database, hub->catalog(), prefetch.get());
         home->attachSettings(settings.get());
     }
     void expose(QQmlEngine *engine)
@@ -254,6 +256,7 @@ private:
     std::unique_ptr<Spool::ProviderRegistry> registry;
     std::unique_ptr<Spool::SourceHub> hub;
     std::unique_ptr<Spool::SettingsController> settings;
+    std::unique_ptr<Spool::LibraryPrefetchController> prefetch;
     std::unique_ptr<Spool::HomeModelController> home;
     std::unique_ptr<Spool::SettingsSyncController> sync;
     std::unique_ptr<Spool::RemoteTargetsController> remote;
