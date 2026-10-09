@@ -25,12 +25,12 @@ void UserItemStateController::applyResumeTicks(const QString& itemId, qint64 pos
     if (itemId.isEmpty() || positionTicks < 0)
         return;
 
+    if (m_content)
+        m_content->updateResumeTicks(itemId, positionTicks);
     if (m_browse)
         m_browse->updateResumeTicks(itemId, positionTicks);
     if (m_home)
         m_home->updateResumeTicks(itemId, positionTicks);
-    if (m_content)
-        m_content->updateResumeTicks(itemId, positionTicks);
     if (m_search)
         m_search->updateResumeTicks(itemId, positionTicks);
 }
@@ -56,12 +56,12 @@ void UserItemStateController::applyPlayed(const QString& itemId, bool played)
     if (itemId.isEmpty())
         return;
 
+    if (m_content)
+        m_content->updatePlayed(itemId, played);
     if (m_browse)
         m_browse->updatePlayed(itemId, played);
     if (m_home)
         m_home->updatePlayed(itemId, played);
-    if (m_content)
-        m_content->updatePlayed(itemId, played);
     if (m_search)
         m_search->updatePlayed(itemId, played);
     emit playedChanged(itemId, played);

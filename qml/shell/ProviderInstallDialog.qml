@@ -8,17 +8,20 @@ import "../primitives"
 OverlayDialog {
     id: root
     required property var transfers
-    visible: transfers.length > 0
+    property bool suspendLocalTransfers: false
+    readonly property var visibleTransfers: suspendLocalTransfers ? transfers.filter(transfer =>
+    !transfer.operationToken) : transfers
+    visible: visibleTransfers.length > 0
     focus: visible
     preferredWidth: 620
 
     function routeKey(key, phase, repeat) {
-        return true
+        return visible
     }
     function activate() {
     }
     function back() {
-        return true
+        return visible
     }
 
     AppText {
@@ -28,7 +31,7 @@ OverlayDialog {
         font.weight: Font.DemiBold
     }
     Repeater {
-        model: root.transfers
+        model: root.visibleTransfers
         delegate: ColumnLayout {
             id: transfer
             required property var modelData

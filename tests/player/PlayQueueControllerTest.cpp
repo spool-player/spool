@@ -332,6 +332,7 @@ SPOOL_TEST_MAIN("play-queue-controller")
     successor.seriesId = completed.seriesId;
     successor.seasonNumber = 1;
     successor.episodeNumber = 2;
+    successor.resumeTicks = 100'000'000;
     MovieItem laterSeason = successor;
     laterSeason.id = QStringLiteral("0123abcd:season-2-first");
     laterSeason.seasonNumber = 2;
@@ -346,6 +347,17 @@ SPOOL_TEST_MAIN("play-queue-controller")
         "manual queue order can differ from chronological Next Up");
     require(episodicQueue.nextUnplayedEpisode(completed).id == successor.id,
         "Next Up selects the nearest unplayed chronological episode from this scoped series, not queue order");
+    require(episodicQueue.updatePlayed(successor.id, true), "completed queue episode must accept played state");
+    require(episodicQueue.itemAt(3).played && episodicQueue.itemAt(3).resumeTicks == 0
+            && episodicQueue.get(3).value(QStringLiteral("played")).toBool(),
+        "completion must clear queue progress and publish watched state to item-details consumers");
+    require(episodicQueue.nextUnplayedEpisode(completed).id == laterSeason.id,
+        "a completed queue episode must not remain eligible as the nearest unplayed successor");
+    require(!episodicQueue.itemAt(1).played, "completion must not change another account's queued episode");
+    require(episodicQueue.updatePlayed(successor.id, false)
+            && !episodicQueue.get(3).value(QStringLiteral("played")).toBool()
+            && episodicQueue.nextUnplayedEpisode(completed).id == successor.id,
+        "mark unwatched must restore queue successor eligibility without stale progress");
     MovieItem unavailable = successor;
     unavailable.id = QStringLiteral("0123abcd:missing");
     unavailable.itemType = QStringLiteral("Series");

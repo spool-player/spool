@@ -221,6 +221,7 @@ struct MovieItem {
     Q_PROPERTY(QString dateLastContentAdded MEMBER dateLastContentAdded)
     Q_PROPERTY(int playCount MEMBER playCount)
     Q_PROPERTY(bool playable READ isPlayable)
+    Q_PROPERTY(QString playActionLabel READ playActionLabel)
     Q_PROPERTY(QString subtitle READ subtitle)
     Q_PROPERTY(bool favorite MEMBER favorite)
     Q_PROPERTY(bool played MEMBER played)
@@ -301,6 +302,7 @@ public:
     QList<ExternalUrlInfo> externalUrls;
 
     bool isPlayable() const;
+    QString playActionLabel() const;
     QString subtitle() const;
 
     friend bool operator==(const MovieItem&, const MovieItem&) = default;

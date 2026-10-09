@@ -144,6 +144,7 @@ public:
     void cancelEpisodeSuccessors();
     MovieItem nextUnplayedEpisode(const MovieItem& episode) const;
     bool updateResumeTicks(const QString& itemId, qint64 resumeTicks);
+    bool updatePlayed(const QString& itemId, bool played);
     bool updatePeople(const QString& itemId, const QList<PersonItem>& people);
 
 signals:

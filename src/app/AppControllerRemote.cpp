@@ -53,9 +53,16 @@ bool AppController::dispatchRemotePlay(const PlayDestination& destination, std::
             index = ids.size();
         ids.append(item.id);
     }
-    const MovieItem& item = items[size_t(startIndex)];
-    const qint64 ticks = positionTicks.value_or(
-        fromStart || !isMeaningfulResumePosition(item.resumeTicks, item.runtimeTicks) ? 0 : item.resumeTicks);
+    qint64 ticks = positionTicks.value_or(0);
+    if (!positionTicks && !fromStart) {
+        const MovieItem& selected = items[size_t(startIndex)];
+        MovieItem item;
+        item.id = selected.id;
+        item.runtimeTicks = selected.runtimeTicks;
+        item.resumeTicks = selected.resumeTicks;
+        m_catalog->applyLocalPlaybackState(item);
+        ticks = isMeaningfulResumePosition(item.resumeTicks, item.runtimeTicks) ? item.resumeTicks : 0;
+    }
     const auto selection = *destination;
     const bool startsPlayback = mode == QStringLiteral("now") || mode == QStringLiteral("shuffle");
     // The remote controller owns command busy/error state. Do not leave the
@@ -260,7 +267,7 @@ void AppController::playRemoteItems(const QString& accountId, const QVariantMap&
                 return;
             if (mode == QStringLiteral("shuffle"))
                 m_playQueue->setShuffled(true);
-            startQueuedPlayback(startTicks <= 0);
+            startQueuedPlayback(startTicks <= 0, std::max<qint64>(0, startTicks));
         },
         [this, generation](const std::exception_ptr& error) {
             if (!m_remotePlaybackRequestGeneration.isCurrent(generation))

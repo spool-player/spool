@@ -572,6 +572,7 @@ void SourceHub::removeSource(const QString& accountId)
 {
     if (!m_entries.contains(prefixOf(accountId)))
         return;
+    clearLocalPlaybackState(prefixOf(accountId) + QLatin1Char(':'));
     const Entry entry = m_entries.take(prefixOf(accountId));
     if (m_speedTestAccount == accountId)
         cancelSpeedTest();
@@ -1294,6 +1295,7 @@ MovieItem SourceHub::scopedItem(MovieItem item, const QString& accountId) const
     item.thumbItemId = scoped(accountId, item.thumbItemId);
     for (PersonItem& person : item.people)
         person.id = scoped(accountId, person.id);
+    applyLocalPlaybackState(item);
     return item;
 }
 
@@ -1321,6 +1323,9 @@ template <typename Fetch> QCoro::Task<std::vector<MovieItem>> SourceHub::gather(
             qWarning() << "hub:" << accountId.left(kPrefix) << "left out of a merged list:" << error.what();
         }
     }
+    for (std::vector<MovieItem>& items : lists)
+        for (MovieItem& item : items)
+            applyLocalPlaybackState(item);
     co_return interleave(std::move(lists), limit);
 }
 
@@ -1482,6 +1487,8 @@ QCoro::Task<std::vector<MovieItem>> SourceHub::fetchItemsByIds(QStringList itemI
         if (it != found.cend())
             ordered.push_back(*it);
     }
+    for (MovieItem& item : ordered)
+        applyLocalPlaybackState(item);
     co_return ordered;
 }
 
@@ -1521,7 +1528,11 @@ QCoro::Task<void> SourceHub::searchProgressively(QString searchTerm, int limit, 
     run->query = folded(searchTerm);
     run->limit = limit;
     run->serial = serial;
-    run->update = std::move(update);
+    run->update = [this, update = std::move(update)](std::vector<MovieItem> items) {
+        for (MovieItem& item : items)
+            applyLocalPlaybackState(item);
+        update(std::move(items));
+    };
     if (run->plan.empty()) {
         run->update({});
         co_return;

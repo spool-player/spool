@@ -689,10 +689,10 @@ public:
         return image;
     }
     QList<Words> words(const QString& imagePath, int mode, const QPoint& origin = {}, bool neutralText = false,
-        bool highContrast = false)
+        bool highContrast = false, bool positiveContrast = false)
     {
         QString inputPath = imagePath;
-        const int scale = mode == 6 ? 2 : 1;
+        const int scale = mode == 6 || positiveContrast ? 2 : 1;
         if (scale > 1) {
             // Small captions beside a focus outline can be omitted even by
             // text-block segmentation. Resample only the actual framebuffer;
@@ -714,7 +714,21 @@ public:
                     }
                 }
             }
-            if (highContrast) {
+            if (positiveContrast) {
+                // Standard BT.601 luma preserves dark captions on coloured
+                // controls for sparse OCR without manufacturing glyph pixels.
+                const QImage source = image.convertToFormat(QImage::Format_RGB32);
+                image = QImage(source.size(), QImage::Format_Grayscale8);
+                for (int y = 0; y < source.height(); ++y) {
+                    const auto *sourcePixels = reinterpret_cast<const QRgb *>(source.constScanLine(y));
+                    auto *pixels = image.scanLine(y);
+                    for (int x = 0; x < source.width(); ++x) {
+                        const QRgb pixel = sourcePixels[x];
+                        const int luma = (77 * qRed(pixel) + 150 * qGreen(pixel) + 29 * qBlue(pixel) + 128) >> 8;
+                        pixels[x] = luma > 64 ? 255 : 0;
+                    }
+                }
+            } else if (highContrast) {
                 // Focused rows can defeat page segmentation even after scaling.
                 // Preserve their actual light glyphs against a binary background.
                 image = image.convertToFormat(QImage::Format_Grayscale8);
@@ -724,9 +738,10 @@ public:
                         pixels[x] = pixels[x] > 64 ? 0 : 255;
                 }
             }
-            inputPath += highContrast ? QStringLiteral(".ocr-contrast.png")
-                : neutralText         ? QStringLiteral(".ocr-neutral.png")
-                                      : QStringLiteral(".ocr.png");
+            inputPath += positiveContrast ? QStringLiteral(".ocr-positive.png")
+                : highContrast            ? QStringLiteral(".ocr-contrast.png")
+                : neutralText             ? QStringLiteral(".ocr-neutral.png")
+                                          : QStringLiteral(".ocr.png");
             QSaveFile file(inputPath);
             require(file.open(QIODevice::WriteOnly)
                     && file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)
@@ -810,6 +825,8 @@ public:
                     candidate = locate(words(imagePath, 6, region.topLeft(), true));
                 if (candidate.isEmpty())
                     candidate = locate(words(imagePath, 6, region.topLeft(), false, true));
+                if (candidate.isEmpty())
+                    candidate = locate(words(imagePath, 11, region.topLeft(), false, false, true));
                 if (!candidate.isEmpty()) {
                     if (surface == TextSurface::Window
                         || (!previous.isEmpty() && (candidate.center() - previous.center()).manhattanLength() <= 2
@@ -945,7 +962,7 @@ QByteArray media(const QString& directory, const QProcessEnvironment& environmen
     const QString ffmpeg = executable("SPOOL_E2E_FFMPEG", QStandardPaths::findExecutable("ffmpeg"));
     run(ffmpeg,
         { "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i",
-            "color=c=blue:s=640x360:r=10:d=30", "-vf",
+            "color=c=blue:s=640x360:r=10:d=90", "-vf",
             "drawbox=x=0:y=0:w=640:h=180:color=red:t=fill:enable='lt(t,10)',"
             "drawbox=x=0:y=0:w=640:h=180:color=lime:t=fill:enable='gte(t,10)'",
             "-an", "-c:v", "ffv1", "-level", "3", "-g", "1", "-threads", "1", path },
@@ -1243,6 +1260,12 @@ SPOOL_TEST_MAIN("app-journey")
             "saved-media playback unexpectedly fetched the unavailable server");
 
         fixture.setNewRequestsAvailable(true);
+        // Keep server UserData at zero even after accepted stop reports. The
+        // real provider must hydrate details/series rows without rolling back
+        // the app's newer episode stop state.
+        fixture.setEpisodeMode();
+        fixture.setItemDetailsHeld(true);
+        const int detailsBeforePlayback = fixture.detailRequests;
         const qsizetype reportsBeforeOnline = fixture.reports.size();
         journey.command({ "home" });
         journey.openLibrary("Journey Library");
@@ -1253,6 +1276,8 @@ SPOOL_TEST_MAIN("app-journey")
                 return fixture.playbackNegotiations > 0 && journey.state()["playback"].toObject()["loaded"].toBool();
             },
             "online UI play did not negotiate and load real provider media");
+        journey.await([&] { return fixture.detailRequests > detailsBeforePlayback && fixture.episodeRequests > 0; },
+            "episode playback did not use real delayed details and series catalogue requests");
         journey.await(
             [&] {
                 return std::any_of(fixture.reports.cbegin() + reportsBeforeOnline, fixture.reports.cend(),
@@ -1261,19 +1286,152 @@ SPOOL_TEST_MAIN("app-journey")
                     });
             },
             "real provider playback start for the online item was not reported");
+        journey.command({ "pause" });
+        journey.await([&] { return journey.state()["playback"].toObject()["paused"].toBool(); },
+            "episode did not pause before the controlled stop position");
         journey.command({ "seek", "14" });
-        journey.await([&] { return frameHasBands(journey.capture(true), 1); },
+        journey.await(
+            [&] {
+                const double position = journey.state()["playback"].toObject()["position"].toDouble();
+                return position > 13.5 && position < 14.5 && frameHasBands(journey.capture(true), 1);
+            },
             "online GPU playback did not deliver negotiated media");
         journey.command({ "stop" });
+        qint64 firstStopTicks = -1;
         journey.await(
             [&] {
                 return std::any_of(fixture.reports.cbegin() + reportsBeforeOnline, fixture.reports.cend(),
-                    [](const QJsonObject& report) {
-                        return report["endpoint"] == "/Sessions/Playing/Stopped"
-                            && report["PositionTicks"].toVariant().toLongLong() > 100000000;
+                    [&firstStopTicks](const QJsonObject& report) {
+                        const qint64 ticks = report["PositionTicks"].toVariant().toLongLong();
+                        if (report["endpoint"] != "/Sessions/Playing/Stopped" || ticks <= 135000000
+                            || ticks >= 145000000)
+                            return false;
+                        firstStopTicks = ticks;
+                        return true;
                     });
             },
             "provider stop receipt did not independently observe the played media position");
+        journey.await([&] { return !journey.state()["playback"].toObject()["active"].toBool(); },
+            "episode did not finish stopping before delayed details were released");
+        const int responsesBeforeRelease = fixture.detailResponses;
+        fixture.setItemDetailsHeld(false);
+        journey.await([&] { return fixture.detailResponses > responsesBeforeRelease; },
+            "stale episode detail response was not released");
+        journey.label("Resume");
+
+        const auto resumeEpisode = [&](qint64 expectedTicks) {
+            journey.command({ "home" });
+            journey.openLibrary("Journey Library");
+            const int responsesBeforeReopen = fixture.detailResponses;
+            journey.click("Journey Film");
+            journey.await([&] { return fixture.detailResponses > responsesBeforeReopen; },
+                "reopened episode details did not fetch stale provider UserData");
+            journey.label("Resume");
+            const int episodesBeforeResume = fixture.episodeRequests;
+            const qsizetype reportsBeforeResume = fixture.reports.size();
+            journey.click("Resume", true);
+            journey.await(
+                [&] {
+                    return fixture.episodeRequests > episodesBeforeResume
+                        && journey.state()["playback"].toObject()["loaded"].toBool();
+                },
+                "Resume did not hydrate the selected episode queue and load real media");
+            journey.command({ "pause" });
+            journey.await([&] { return journey.state()["playback"].toObject()["paused"].toBool(); },
+                "resumed episode did not pause before observing its saved position");
+            journey.await(
+                [&] {
+                    return std::any_of(fixture.reports.cbegin() + reportsBeforeResume, fixture.reports.cend(),
+                        [expectedTicks](const QJsonObject& report) {
+                            return report["endpoint"] == "/Sessions/Playing" && report["ItemId"] == "journey-movie"
+                                && report["PositionTicks"].toVariant().toLongLong() == expectedTicks;
+                        });
+                },
+                "selected episode Resume lost the stopped position during stale series hydration");
+            journey.await(
+                [&] {
+                    const double position = journey.state()["playback"].toObject()["position"].toDouble();
+                    return position >= double(expectedTicks) / 10000000.0 - 0.5
+                        && position < double(expectedTicks) / 10000000.0 + 5.0
+                        && frameHasBands(journey.capture(true), 1);
+                },
+                "episode Resume did not decode the saved media position");
+        };
+        resumeEpisode(firstStopTicks);
+        journey.command({ "seek", "20" });
+        journey.await(
+            [&] {
+                const double position = journey.state()["playback"].toObject()["position"].toDouble();
+                return position > 19.5 && position < 20.5 && frameHasBands(journey.capture(true), 1);
+            },
+            "second episode stop position was not reached");
+        const qsizetype reportsBeforeSecondStop = fixture.reports.size();
+        qint64 secondStopTicks = -1;
+        journey.command({ "stop" });
+        journey.await([&] { return !journey.state()["playback"].toObject()["active"].toBool(); },
+            "second episode stop did not settle");
+        journey.await(
+            [&] {
+                return std::any_of(fixture.reports.cbegin() + reportsBeforeSecondStop, fixture.reports.cend(),
+                    [&secondStopTicks](const QJsonObject& report) {
+                        const qint64 ticks = report["PositionTicks"].toVariant().toLongLong();
+                        if (report["endpoint"] != "/Sessions/Playing/Stopped" || ticks <= 195000000
+                            || ticks >= 205000000)
+                            return false;
+                        secondStopTicks = ticks;
+                        return true;
+                    });
+            },
+            "second episode stop did not report its independently observed position");
+        resumeEpisode(secondStopTicks);
+        journey.command({ "stop" });
+        journey.await([&] { return !journey.state()["playback"].toObject()["active"].toBool(); },
+            "resumed episode did not stop before explicit restart");
+        const qsizetype reportsBeforeRemote = fixture.reports.size();
+        require(fixture.sendRemotePlay(70000000), "real remote event socket was not connected");
+        journey.await([&] { return journey.state()["playback"].toObject()["loaded"].toBool(); },
+            "real inbound remote Play did not load the selected episode");
+        journey.command({ "pause" });
+        journey.await(
+            [&] {
+                return std::any_of(fixture.reports.cbegin() + reportsBeforeRemote, fixture.reports.cend(),
+                    [](const QJsonObject& report) {
+                        return report["endpoint"] == "/Sessions/Playing" && report["ItemId"] == "journey-movie"
+                            && report["PositionTicks"].toVariant().toLongLong() == 70000000;
+                    });
+            },
+            "cached local resume progress overrode the explicit inbound remote start position");
+        journey.await(
+            [&] {
+                const double position = journey.state()["playback"].toObject()["position"].toDouble();
+                return position > 6.5 && position < 9.5 && frameHasBands(journey.capture(true), 0);
+            },
+            "inbound remote start did not decode the explicitly requested position");
+        journey.command({ "stop" });
+        journey.await([&] { return !journey.state()["playback"].toObject()["active"].toBool(); },
+            "remote episode did not stop before explicit restart");
+        journey.label("Start from beginning");
+        const qsizetype reportsBeforeRestart = fixture.reports.size();
+        journey.click("Start from beginning", true);
+        journey.await([&] { return journey.state()["playback"].toObject()["loaded"].toBool(); },
+            "explicit episode restart did not load");
+        journey.command({ "pause" });
+        journey.await(
+            [&] {
+                return std::any_of(fixture.reports.cbegin() + reportsBeforeRestart, fixture.reports.cend(),
+                    [](const QJsonObject& report) {
+                        return report["endpoint"] == "/Sessions/Playing" && report["ItemId"] == "journey-movie"
+                            && report["PositionTicks"].toVariant().toLongLong() == 0;
+                    });
+            },
+            "local resume precedence overrode explicit Play from start");
+        journey.await(
+            [&] {
+                return journey.state()["playback"].toObject()["position"].toDouble() < 5.0
+                    && frameHasBands(journey.capture(true), 0);
+            },
+            "explicit episode restart did not decode the beginning");
+        journey.command({ "stop" });
         require(fixture.unexpected.isEmpty(), "fixture observed unexpected or unauthorized production traffic");
         std::cout << "app-journey: real login/browse/settings/download/offline/online GPU journey completed\n";
         return 0;

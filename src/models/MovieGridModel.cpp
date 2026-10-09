@@ -15,11 +15,6 @@ namespace {
         return std::clamp(static_cast<double>(resumeTicks) / static_cast<double>(movie.runtimeTicks), 0.0, 1.0);
     }
 
-    qint64 displayResumeTicks(const MovieItem& movie)
-    {
-        return normalizedResumeTicks(movie.resumeTicks, movie.runtimeTicks);
-    }
-
     QString displayTitle(const MovieItem& movie)
     {
         if (movie.itemType == QStringLiteral("Episode") && !movie.seriesName.isEmpty())
@@ -62,7 +57,7 @@ QVariant MovieGridModel::data(const QModelIndex& index, int role) const
     case ProgressRole:
         return playbackProgress(movie);
     case PlayActionLabelRole:
-        return displayResumeTicks(movie) > 0 ? QStringLiteral("Resume") : QStringLiteral("Play");
+        return movie.playActionLabel();
     default:
         return {};
     }

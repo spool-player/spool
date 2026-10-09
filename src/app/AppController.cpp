@@ -188,6 +188,7 @@ AppController::AppController(
     m_itemState = new UserItemStateController(provider->itemState(), m_browse, m_home, m_content, m_search, this);
     connect(m_player, &PlayerController::watchedPersistenceRequested, m_itemState,
         &UserItemStateController::persistPlaybackWatched);
+    connect(m_itemState, &UserItemStateController::playedChanged, m_playQueue, &PlayQueueController::updatePlayed);
     m_group = new GroupPlaybackController(provider, player, m_playQueue, this);
     connect(m_group, &GroupPlaybackController::errorText, this, &AppController::showToast);
     connect(provider, &SourceHub::accountEvent, this,
@@ -1020,13 +1021,15 @@ void AppController::playEpisodicContainer(const QString& seriesId, const QString
                            : QStringLiteral("Finding the next episode in this season…"));
     Async::runScoped(
         this, m_catalog->fetchEpisodes(seriesId, seasonId),
-        [this, generation, destination](const std::vector<MovieItem>& episodes) {
+        [this, generation, destination](std::vector<MovieItem> episodes) {
             if (generation != m_episodeQueueGeneration)
                 return;
             m_episodeQueuePending = false;
             setBusy(false);
             if (!destinationIsCurrent(destination))
                 return;
+            for (MovieItem& episode : episodes)
+                m_catalog->applyLocalPlaybackState(episode);
             const int startIndex = episodicPlaybackStartIndex(episodes);
             if (startIndex < 0) {
                 setBusy(false);
@@ -1089,13 +1092,15 @@ void AppController::playEpisodeWithContext(
     setBusy(true, direction == 0 ? QStringLiteral("Loading episode queue…") : QStringLiteral("Finding episode…"));
     Async::runScoped(
         this, m_catalog->fetchEpisodes(episode.seriesId),
-        [this, generation, episode, direction, fromStart, destination](const std::vector<MovieItem>& episodes) {
+        [this, generation, episode, direction, fromStart, destination](std::vector<MovieItem> episodes) {
             if (generation != m_episodeQueueGeneration)
                 return;
             m_episodeQueuePending = false;
             setBusy(false);
             if (!destinationIsCurrent(destination))
                 return;
+            for (MovieItem& item : episodes)
+                m_catalog->applyLocalPlaybackState(item);
             const auto current = std::find_if(episodes.begin(), episodes.end(),
                 [&episode](const MovieItem& candidate) { return candidate.id == episode.id; });
             if (current == episodes.end()) {
@@ -1105,6 +1110,13 @@ void AppController::playEpisodeWithContext(
                 else
                     showToast(QStringLiteral("This episode was not found in its series."));
                 return;
+            }
+            if (direction == 0) {
+                // The selected item's state is newer than a series listing;
+                // a stop during this request is newer still.
+                current->resumeTicks = episode.resumeTicks;
+                current->played = episode.played;
+                m_catalog->applyLocalPlaybackState(*current);
             }
 
             int targetIndex = static_cast<int>(std::distance(episodes.begin(), current));
@@ -1149,10 +1161,10 @@ void AppController::playEpisodeWithContext(
         "episode queue context");
 }
 
-void AppController::startQueuedPlayback(bool fromStart)
+void AppController::startQueuedPlayback(bool fromStart, std::optional<qint64> explicitPositionTicks)
 {
     if (!inGroup()) {
-        playQueueCurrent(fromStart);
+        playQueueCurrent(fromStart, explicitPositionTicks);
         return;
     }
 
@@ -1162,9 +1174,11 @@ void AppController::startQueuedPlayback(bool fromStart)
     for (const PlaybackQueueItem& item : queue)
         itemIds.push_back(item.itemId);
 
-    const MovieItem item = m_playQueue->currentItem();
-    const qint64 startPositionTicks
-        = fromStart || !isMeaningfulResumePosition(item.resumeTicks, item.runtimeTicks) ? 0 : item.resumeTicks;
+    MovieItem item = m_playQueue->currentItem();
+    if (!explicitPositionTicks && !fromStart)
+        m_catalog->applyLocalPlaybackState(item);
+    const qint64 startPositionTicks = explicitPositionTicks.value_or(
+        fromStart || !isMeaningfulResumePosition(item.resumeTicks, item.runtimeTicks) ? 0 : item.resumeTicks);
     setBusy(true, QStringLiteral("Updating SyncPlay queue…"));
     const RequestGeneration::Token generation = m_syncPlayQueueRequestGeneration.next();
     // Arm this before SetNewQueue: the websocket PlayQueue update can arrive
@@ -1183,13 +1197,18 @@ void AppController::startQueuedPlayback(bool fromStart)
         "syncplay queue update");
 }
 
-void AppController::playQueueCurrent(bool fromStart)
+void AppController::playQueueCurrent(bool fromStart, std::optional<qint64> explicitPositionTicks)
 {
     MovieItem item = m_playQueue->currentItem();
     if (item.id.isEmpty())
         return;
-    if (fromStart || !isMeaningfulResumePosition(item.resumeTicks, item.runtimeTicks))
-        item.resumeTicks = 0;
+    if (explicitPositionTicks) {
+        item.resumeTicks = std::max<qint64>(0, *explicitPositionTicks);
+    } else {
+        m_catalog->applyLocalPlaybackState(item);
+        if (fromStart || !isMeaningfulResumePosition(item.resumeTicks, item.runtimeTicks))
+            item.resumeTicks = 0;
+    }
     m_activePlaybackItem = item;
     if (item.itemType == QStringLiteral("Movie") && item.people.isEmpty()) {
         const QString itemId = item.id;

@@ -193,15 +193,15 @@ KeyRouter {
     readonly property var activePage: routeStack.activeItem
     readonly property bool pageInputOwned: Boolean(activePage && (activePage.modalVisible || activePage.choiceVisible
                                                                   || activePage.resetVisible || activePage.editingKey))
-    readonly property bool fileInputBlocked: textInputActive || setupRoute || Providers.startupChoicePending
-                                             || startupSplash.visible || updateDialog.open || tlsTrustPending
-                                             || networkConsentPending || remoteGroupConfirmationPending
-                                             || providerOverlay !== null || Downloads.opened || itemMenuOpen
-                                             || mediaInfoVisible || navBar.menuOpen || pageInputOwned || (
-                                                 videoSurface.active && videoSurface.modalInputActive) || (
-                                                 providerInstallDialog.visible && (!fileDropDialog
-                                                                                   || fileDropDialog.phase
-                                                                                   !== "installing"))
+    readonly property bool unrelatedFileInputOwned: textInputActive || setupRoute || Providers.startupChoicePending
+                                                    || startupSplash.visible || updateDialog.open || tlsTrustPending
+                                                    || networkConsentPending || remoteGroupConfirmationPending
+                                                    || providerOverlay !== null || Downloads.opened || itemMenuOpen
+                                                    || mediaInfoVisible || navBar.menuOpen || pageInputOwned || (
+                                                        videoSurface.active && videoSurface.modalInputActive)
+    readonly property bool fileInputBlocked: unrelatedFileInputOwned || (providerInstallDialog.visible && (
+                                                                             !fileDropDialog || fileDropDialog.phase
+                                                                             !== "installing"))
     readonly property bool itemMenuOpen: itemContextMenuLoader.item ? itemContextMenuLoader.item.opened : false
     readonly property bool tlsTrustPending: TlsTrust.pending
     readonly property var networkConsent: Providers.networkConsent || ({})
@@ -1539,6 +1539,7 @@ KeyRouter {
         ProviderInstallDialog {
             id: providerInstallDialog
             transfers: Store.transfers
+            suspendLocalTransfers: root.unrelatedFileInputOwned
             z: 100
         }
 

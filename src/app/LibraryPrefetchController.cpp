@@ -100,7 +100,11 @@ std::optional<PagedMovieItems> LibraryPrefetchController::cachedPage(const QStri
     const auto it = m_pages.constFind(cacheKey);
     if (it == m_pages.constEnd())
         return std::nullopt;
-    return it.value();
+    PagedMovieItems page = it.value();
+    if (m_api)
+        for (MovieItem& item : page.items)
+            m_api->applyLocalPlaybackState(item);
+    return page;
 }
 
 void LibraryPrefetchController::storePage(const QString& cacheKey, const PagedMovieItems& page)
