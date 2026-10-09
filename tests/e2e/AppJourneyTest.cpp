@@ -689,10 +689,10 @@ public:
         return image;
     }
     QList<Words> words(const QString& imagePath, int mode, const QPoint& origin = {}, bool neutralText = false,
-        bool highContrast = false)
+        bool highContrast = false, bool positiveContrast = false)
     {
         QString inputPath = imagePath;
-        const int scale = mode == 6 ? 2 : 1;
+        const int scale = mode == 6 || positiveContrast ? 2 : 1;
         if (scale > 1) {
             // Small captions beside a focus outline can be omitted even by
             // text-block segmentation. Resample only the actual framebuffer;
@@ -714,7 +714,21 @@ public:
                     }
                 }
             }
-            if (highContrast) {
+            if (positiveContrast) {
+                // Standard BT.601 luma preserves dark captions on coloured
+                // controls for sparse OCR without manufacturing glyph pixels.
+                const QImage source = image.convertToFormat(QImage::Format_RGB32);
+                image = QImage(source.size(), QImage::Format_Grayscale8);
+                for (int y = 0; y < source.height(); ++y) {
+                    const auto *sourcePixels = reinterpret_cast<const QRgb *>(source.constScanLine(y));
+                    auto *pixels = image.scanLine(y);
+                    for (int x = 0; x < source.width(); ++x) {
+                        const QRgb pixel = sourcePixels[x];
+                        const int luma = (77 * qRed(pixel) + 150 * qGreen(pixel) + 29 * qBlue(pixel) + 128) >> 8;
+                        pixels[x] = luma > 64 ? 255 : 0;
+                    }
+                }
+            } else if (highContrast) {
                 // Focused rows can defeat page segmentation even after scaling.
                 // Preserve their actual light glyphs against a binary background.
                 image = image.convertToFormat(QImage::Format_Grayscale8);
@@ -724,9 +738,10 @@ public:
                         pixels[x] = pixels[x] > 64 ? 0 : 255;
                 }
             }
-            inputPath += highContrast ? QStringLiteral(".ocr-contrast.png")
-                : neutralText         ? QStringLiteral(".ocr-neutral.png")
-                                      : QStringLiteral(".ocr.png");
+            inputPath += positiveContrast ? QStringLiteral(".ocr-positive.png")
+                : highContrast            ? QStringLiteral(".ocr-contrast.png")
+                : neutralText             ? QStringLiteral(".ocr-neutral.png")
+                                          : QStringLiteral(".ocr.png");
             QSaveFile file(inputPath);
             require(file.open(QIODevice::WriteOnly)
                     && file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)
@@ -810,6 +825,8 @@ public:
                     candidate = locate(words(imagePath, 6, region.topLeft(), true));
                 if (candidate.isEmpty())
                     candidate = locate(words(imagePath, 6, region.topLeft(), false, true));
+                if (candidate.isEmpty())
+                    candidate = locate(words(imagePath, 11, region.topLeft(), false, false, true));
                 if (!candidate.isEmpty()) {
                     if (surface == TextSurface::Window
                         || (!previous.isEmpty() && (candidate.center() - previous.center()).manhattanLength() <= 2
