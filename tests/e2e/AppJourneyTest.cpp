@@ -1093,6 +1093,27 @@ SPOOL_TEST_MAIN("app-journey")
         const QString app = deviceKind.isEmpty() ? executable("SPOOL_E2E_APP", appDefault) : QString();
         const QString control = executable("SPOOL_E2E_SPOOLET", controlDefault);
         AppJourney::JellyfinFixture fixture(media(root.path(), environment));
+        QString fixturePhase = QStringLiteral("login");
+        const auto retainFixtureCounters = qScopeGuard([&] {
+            const QJsonObject counters { { "format", 1 }, { "phase", fixturePhase },
+                { "successfulLogins", fixture.successfulLogins }, { "rejectedLogins", fixture.rejectedLogins },
+                { "authenticatedViews", fixture.authenticatedViews },
+                { "authenticatedBrowse", fixture.authenticatedBrowse },
+                { "authenticatedRequests", fixture.authenticatedRequests },
+                { "playbackNegotiations", fixture.playbackNegotiations }, { "mediaRequests", fixture.mediaRequests },
+                { "mediaBytes", fixture.mediaBytes }, { "detailRequests", fixture.detailRequests },
+                { "detailResponses", fixture.detailResponses }, { "episodeRequests", fixture.episodeRequests },
+                { "episodeDetailRequests", fixture.episodeDetailRequests },
+                { "episodeDetailResponses", fixture.episodeDetailResponses },
+                { "playbackReports", fixture.reports.size() }, { "unexpectedRequests", fixture.unexpected.size() } };
+            QSaveFile diagnostics(root.filePath("fixture-counters.json"));
+            const QByteArray bytes = QJsonDocument(counters).toJson();
+            const bool saved = diagnostics.open(QIODevice::WriteOnly)
+                && diagnostics.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)
+                && diagnostics.write(bytes) == bytes.size() && diagnostics.commit();
+            if (!saved)
+                std::cerr << "app-journey: private fixture counter receipt could not be retained\n";
+        });
         const auto retainFixtureRejections = qScopeGuard([&] {
             if (fixture.unexpected.isEmpty())
                 return;
@@ -1148,13 +1169,23 @@ SPOOL_TEST_MAIN("app-journey")
         journey.await([&] { return posterVisible(journey.capture()); },
             "browse title is present but independent fixture artwork is not rendered");
         const auto rows = journey.command({ "items", "browse" })["items"].toArray();
-        require(rows.size() == 1 && rows[0].toObject()["title"] == "Journey Film"
-                && rows[0].toObject()["playable"].toBool(),
-            "visible browse did not expose the expected playable item");
-        const QString itemId = rows[0].toObject()["id"].toString();
-        require(itemId.endsWith(":journey-movie") && itemId != "journey-movie", "provider item lost account scoping");
+        require(rows.size() == 2, "initial cached library must contain the immutable Movie and Episode");
+        const auto movieRow = std::find_if(rows.cbegin(), rows.cend(),
+            [](const QJsonValue& row) { return row.toObject()["id"].toString().endsWith(":journey-movie"); });
+        const auto episodeRow = std::find_if(rows.cbegin(), rows.cend(),
+            [](const QJsonValue& row) { return row.toObject()["id"].toString().endsWith(":journey-episode"); });
+        require(movieRow != rows.cend() && (*movieRow).toObject()["title"] == "Journey Film"
+                && (*movieRow).toObject()["type"] == "Movie" && (*movieRow).toObject()["playable"].toBool(),
+            "visible browse did not expose the original playable Movie");
+        require(episodeRow != rows.cend() && (*episodeRow).toObject()["title"] == "Journey Episode"
+                && (*episodeRow).toObject()["type"] == "Episode" && (*episodeRow).toObject()["playable"].toBool(),
+            "initial browse cache did not expose the distinct playable Episode");
+        const QString itemId = (*movieRow).toObject()["id"].toString();
+        require(itemId != "journey-movie" && (*episodeRow).toObject()["id"].toString() != "journey-episode",
+            "provider items lost account scoping");
 
         // Open and operate the real item-menu/download dialog; list is only an observer.
+        fixturePhase = QStringLiteral("movie-download");
         journey.click("Journey Film", false, true);
         journey.click("Download");
         // Pointer hover can move the chooser's selection as it opens. Activate
@@ -1219,6 +1250,7 @@ SPOOL_TEST_MAIN("app-journey")
         journey.click("Play saved files offline", true);
         journey.label("Journey Film");
         journey.label("Downloaded");
+        fixturePhase = QStringLiteral("movie-offline");
         // Every new authenticated request is unavailable, including playback
         // negotiation, metadata and media. The pre-existing idle event socket
         // cannot supply a playback plan or a stream.
@@ -1284,26 +1316,33 @@ SPOOL_TEST_MAIN("app-journey")
         // Keep server UserData at zero even after accepted stop reports. The
         // real provider must hydrate details/series rows without rolling back
         // the app's newer episode stop state.
-        fixture.setEpisodeMode();
-        fixture.setItemDetailsHeld(true);
-        const int detailsBeforePlayback = fixture.detailRequests;
+        fixturePhase = QStringLiteral("episode-initial");
+        fixture.setEpisodeDetailsHeld(true);
+        const int detailsBeforePlayback = fixture.episodeDetailRequests;
+        const int episodesBeforePlayback = fixture.episodeRequests;
+        const int negotiationsBeforeOnline = fixture.playbackNegotiations;
         const qsizetype reportsBeforeOnline = fixture.reports.size();
         journey.command({ "home" });
         journey.openLibrary("Journey Library");
-        journey.click("Journey Film");
+        journey.click("Journey Series");
         journey.command({ "key", "ok" });
         journey.await(
             [&] {
-                return fixture.playbackNegotiations > 0 && journey.state()["playback"].toObject()["loaded"].toBool();
+                return fixture.playbackNegotiations > negotiationsBeforeOnline
+                    && journey.state()["playback"].toObject()["loaded"].toBool();
             },
             "online UI play did not negotiate and load real provider media");
-        journey.await([&] { return fixture.detailRequests > detailsBeforePlayback && fixture.episodeRequests > 0; },
+        journey.await(
+            [&] {
+                return fixture.episodeDetailRequests > detailsBeforePlayback
+                    && fixture.episodeRequests > episodesBeforePlayback;
+            },
             "episode playback did not use real delayed details and series catalogue requests");
         journey.await(
             [&] {
                 return std::any_of(fixture.reports.cbegin() + reportsBeforeOnline, fixture.reports.cend(),
                     [](const QJsonObject& report) {
-                        return report["endpoint"] == "/Sessions/Playing" && report["ItemId"] == "journey-movie";
+                        return report["endpoint"] == "/Sessions/Playing" && report["ItemId"] == "journey-episode";
                     });
             },
             "real provider playback start for the online item was not reported");
@@ -1318,14 +1357,15 @@ SPOOL_TEST_MAIN("app-journey")
             },
             "online GPU playback did not deliver negotiated media");
         journey.command({ "stop" });
+        fixturePhase = QStringLiteral("episode-first-stop");
         qint64 firstStopTicks = -1;
         journey.await(
             [&] {
                 return std::any_of(fixture.reports.cbegin() + reportsBeforeOnline, fixture.reports.cend(),
                     [&firstStopTicks](const QJsonObject& report) {
                         const qint64 ticks = report["PositionTicks"].toVariant().toLongLong();
-                        if (report["endpoint"] != "/Sessions/Playing/Stopped" || ticks <= 135000000
-                            || ticks >= 145000000)
+                        if (report["endpoint"] != "/Sessions/Playing/Stopped" || report["ItemId"] != "journey-episode"
+                            || ticks <= 135000000 || ticks >= 145000000)
                             return false;
                         firstStopTicks = ticks;
                         return true;
@@ -1334,18 +1374,19 @@ SPOOL_TEST_MAIN("app-journey")
             "provider stop receipt did not independently observe the played media position");
         journey.await([&] { return !journey.state()["playback"].toObject()["active"].toBool(); },
             "episode did not finish stopping before delayed details were released");
-        const int responsesBeforeRelease = fixture.detailResponses;
-        fixture.setItemDetailsHeld(false);
-        journey.await([&] { return fixture.detailResponses > responsesBeforeRelease; },
+        const int responsesBeforeRelease = fixture.episodeDetailResponses;
+        fixture.setEpisodeDetailsHeld(false);
+        journey.await([&] { return fixture.episodeDetailResponses > responsesBeforeRelease; },
             "stale episode detail response was not released");
         journey.label("Resume");
 
         const auto resumeEpisode = [&](qint64 expectedTicks) {
+            fixturePhase = QStringLiteral("episode-resume");
             journey.command({ "home" });
             journey.openLibrary("Journey Library");
-            const int responsesBeforeReopen = fixture.detailResponses;
-            journey.click("Journey Film");
-            journey.await([&] { return fixture.detailResponses > responsesBeforeReopen; },
+            const int responsesBeforeReopen = fixture.episodeDetailResponses;
+            journey.click("Journey Series");
+            journey.await([&] { return fixture.episodeDetailResponses > responsesBeforeReopen; },
                 "reopened episode details did not fetch stale provider UserData");
             journey.label("Resume");
             const int episodesBeforeResume = fixture.episodeRequests;
@@ -1364,7 +1405,7 @@ SPOOL_TEST_MAIN("app-journey")
                 [&] {
                     return std::any_of(fixture.reports.cbegin() + reportsBeforeResume, fixture.reports.cend(),
                         [expectedTicks](const QJsonObject& report) {
-                            return report["endpoint"] == "/Sessions/Playing" && report["ItemId"] == "journey-movie"
+                            return report["endpoint"] == "/Sessions/Playing" && report["ItemId"] == "journey-episode"
                                 && report["PositionTicks"].toVariant().toLongLong() == expectedTicks;
                         });
                 },
@@ -1388,6 +1429,7 @@ SPOOL_TEST_MAIN("app-journey")
             "second episode stop position was not reached");
         const qsizetype reportsBeforeSecondStop = fixture.reports.size();
         qint64 secondStopTicks = -1;
+        fixturePhase = QStringLiteral("episode-second-stop");
         journey.command({ "stop" });
         journey.await([&] { return !journey.state()["playback"].toObject()["active"].toBool(); },
             "second episode stop did not settle");
@@ -1396,8 +1438,8 @@ SPOOL_TEST_MAIN("app-journey")
                 return std::any_of(fixture.reports.cbegin() + reportsBeforeSecondStop, fixture.reports.cend(),
                     [&secondStopTicks](const QJsonObject& report) {
                         const qint64 ticks = report["PositionTicks"].toVariant().toLongLong();
-                        if (report["endpoint"] != "/Sessions/Playing/Stopped" || ticks <= 195000000
-                            || ticks >= 205000000)
+                        if (report["endpoint"] != "/Sessions/Playing/Stopped" || report["ItemId"] != "journey-episode"
+                            || ticks <= 195000000 || ticks >= 205000000)
                             return false;
                         secondStopTicks = ticks;
                         return true;
@@ -1409,6 +1451,7 @@ SPOOL_TEST_MAIN("app-journey")
         journey.await([&] { return !journey.state()["playback"].toObject()["active"].toBool(); },
             "resumed episode did not stop before explicit restart");
         const qsizetype reportsBeforeRemote = fixture.reports.size();
+        fixturePhase = QStringLiteral("episode-remote");
         require(fixture.sendRemotePlay(70000000), "real remote event socket was not connected");
         journey.await([&] { return journey.state()["playback"].toObject()["loaded"].toBool(); },
             "real inbound remote Play did not load the selected episode");
@@ -1417,7 +1460,7 @@ SPOOL_TEST_MAIN("app-journey")
             [&] {
                 return std::any_of(fixture.reports.cbegin() + reportsBeforeRemote, fixture.reports.cend(),
                     [](const QJsonObject& report) {
-                        return report["endpoint"] == "/Sessions/Playing" && report["ItemId"] == "journey-movie"
+                        return report["endpoint"] == "/Sessions/Playing" && report["ItemId"] == "journey-episode"
                             && report["PositionTicks"].toVariant().toLongLong() == 70000000;
                     });
             },
@@ -1433,6 +1476,7 @@ SPOOL_TEST_MAIN("app-journey")
             "remote episode did not stop before explicit restart");
         journey.label("Start from beginning");
         const qsizetype reportsBeforeRestart = fixture.reports.size();
+        fixturePhase = QStringLiteral("episode-restart");
         journey.click("Start from beginning", true);
         journey.await([&] { return journey.state()["playback"].toObject()["loaded"].toBool(); },
             "explicit episode restart did not load");
@@ -1441,7 +1485,7 @@ SPOOL_TEST_MAIN("app-journey")
             [&] {
                 return std::any_of(fixture.reports.cbegin() + reportsBeforeRestart, fixture.reports.cend(),
                     [](const QJsonObject& report) {
-                        return report["endpoint"] == "/Sessions/Playing" && report["ItemId"] == "journey-movie"
+                        return report["endpoint"] == "/Sessions/Playing" && report["ItemId"] == "journey-episode"
                             && report["PositionTicks"].toVariant().toLongLong() == 0;
                     });
             },
@@ -1454,6 +1498,7 @@ SPOOL_TEST_MAIN("app-journey")
             "explicit episode restart did not decode the beginning");
         journey.command({ "stop" });
         require(fixture.unexpected.isEmpty(), "fixture observed unexpected or unauthorized production traffic");
+        fixturePhase = QStringLiteral("complete");
         std::cout << "app-journey: real login/browse/settings/download/offline/online GPU journey completed\n";
         return 0;
     } catch (const std::exception& error) {

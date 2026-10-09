@@ -36,11 +36,9 @@ public:
     int detailRequests = 0;
     int detailResponses = 0;
     int episodeRequests = 0;
-    void setEpisodeMode()
-    {
-        episodeMode = true;
-    }
-    void setItemDetailsHeld(bool held);
+    int episodeDetailRequests = 0;
+    int episodeDetailResponses = 0;
+    void setEpisodeDetailsHeld(bool held);
     bool sendRemotePlay(qint64 positionTicks);
     // Existing idle event transport survives; every new authenticated request is rejected.
     void setNewRequestsAvailable(bool available)
@@ -55,6 +53,7 @@ public:
 private:
     QJsonObject source() const;
     QJsonObject movie() const;
+    QJsonObject episode() const;
     void accept();
     bool upgradeWebSocket(QTcpSocket *socket);
     void handle(QTcpSocket *socket, const QByteArray& header, const QByteArray& body);
@@ -64,8 +63,7 @@ private:
     QByteArray artwork;
     QMap<QString, QJsonObject> documents;
     bool newRequestsAvailable = true;
-    bool episodeMode = false;
-    bool itemDetailsHeld = false;
+    bool episodeDetailsHeld = false;
     QList<std::pair<QPointer<QTcpSocket>, QByteArray>> pendingDetails;
     QList<QPointer<QWebSocket>> eventSockets;
 };

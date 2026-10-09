@@ -48,7 +48,7 @@ FocusScope {
             "mode": pageMode,
             "categoryId": categoryId,
             "rowKey": selectedRowKey,
-            "contentY": settingsList.contentY,
+            "scrollOffset": settingsList.contentY - settingsList.originY,
             "query": searchQuery,
             "expanded": expandedGroups,
             "revealedRowKey": revealedRowKey
@@ -66,7 +66,9 @@ FocusScope {
         expandedGroups = saved.expanded
         revealedRowKey = saved.revealedRowKey
         reconcileSettingsRows(rebuildVisibleRows(), saved.rowKey, true)
-        settingsList.contentY = saved.contentY
+        // Incremental reconciliation can move ListView's content origin while
+        // retaining the result delegate. Raw contentY belongs to the old model.
+        settingsList.contentY = settingsList.originY + saved.scrollOffset
     }
 
     function openSearch() {

@@ -95,6 +95,40 @@ TestCase {
         compare(Settings.uiScalePercent, 100)
         tryCompare(settingsPage, "contentReady", true)
 
+        // Preserve the rendered search result, not just query/model state, when
+        // the category's retained row moves the ListView content origin.
+        Metrics.keyboardFocusActive = true
+        Settings.setValue("appearance/uiScalePercent", 180)
+        tryCompare(Settings, "uiScalePercent", 180)
+        verify(settingsPage.openSearch())
+        tryVerify(() => testCase.Window.window.activeFocusItem && testCase.Window.window.activeFocusItem.cursorPosition
+                        !== undefined)
+        for (const key of [Qt.Key_W, Qt.Key_A, Qt.Key_T, Qt.Key_C, Qt.Key_H, Qt.Key_E, Qt.Key_D])
+            keyClick(key)
+        tryCompare(settingsPage, "searchQuery", "watched")
+        tryCompare(settingsPage, "selectedRowKey", "playback/watchedThresholdPercent")
+        settingsPage.routeKey(Qt.Key_Down, "press", false)
+        settingsPage.routeKey(Qt.Key_Down, "release", false)
+        settingsPage.activate()
+        compare(settingsPage.pageMode, "category")
+        compare(settingsPage.categoryId, "playback")
+        compare(settingsPage.selectedRowKey, "playback/watchedThresholdPercent")
+        verify(settingsPage.back())
+        compare(settingsPage.pageMode, "search")
+        compare(settingsPage.searchQuery, "watched")
+        compare(settingsPage.selectedRowKey, "playback/watchedThresholdPercent")
+        tryVerify(() => {
+            const result = settingsPage.rowControlAt(settingsPage.currentIndex)
+            if (!result || !result.visible || result.height <= 0)
+                return false
+            const bounds = result.mapToItem(scene, 0, 0, result.width, result.height)
+            return bounds.y >= 0 && bounds.y + bounds.height <= scene.height
+        })
+        capture("settings-search-return-180")
+        verify(settingsPage.back())
+        Settings.setValue("appearance/uiScalePercent", 100)
+        tryCompare(Settings, "uiScalePercent", 100)
+
         // Settings category controls -> Settings -> durable intent -> worker
         // HTTP -> stateful loopback -> read-back -> per-setting status.
         settingsPage.setRowValue(settingsPage.rowsByKey["audio/trackMode"], "Smart", -1)

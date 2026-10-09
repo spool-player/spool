@@ -18,6 +18,7 @@ namespace AppJourney {
 namespace {
     const QString userId = QStringLiteral("journey-user");
     const QString movieId = QStringLiteral("journey-movie");
+    const QString episodeId = QStringLiteral("journey-episode");
     const QByteArray token = "journey-loopback-token";
     const QByteArray authorizationToken = "Token=\"" + token + '"';
     void respond(QTcpSocket *socket, int status, QByteArray bytes, const QByteArray& type = "application/json",
@@ -73,26 +74,28 @@ QJsonObject JellyfinFixture::source() const
 }
 QJsonObject JellyfinFixture::movie() const
 {
-    QJsonObject item { { "Id", movieId }, { "Name", "Journey Film" }, { "SortName", "Journey Film" },
+    return QJsonObject { { "Id", movieId }, { "Name", "Journey Film" }, { "SortName", "Journey Film" },
         { "Type", "Movie" }, { "MediaType", "Video" }, { "IsFolder", false }, { "LocationType", "FileSystem" },
         { "RunTimeTicks", 900000000 }, { "ProductionYear", 2026 },
         { "Overview", "A finite red then green picture above a blue lower half." },
         { "ImageTags", QJsonObject { { "Primary", "journey-poster" } } },
         { "UserData", QJsonObject { { "PlaybackPositionTicks", 0 }, { "Played", false } } },
         { "MediaSources", QJsonArray { source() } } };
-    if (episodeMode) {
-        item["Type"] = "Episode";
-        item["SeriesId"] = "journey-series";
-        item["SeriesName"] = "Journey Series";
-        item["SeasonId"] = "journey-season";
-        item["ParentIndexNumber"] = 1;
-        item["IndexNumber"] = 1;
-    }
-    return item;
 }
-void JellyfinFixture::setItemDetailsHeld(bool held)
+QJsonObject JellyfinFixture::episode() const
 {
-    itemDetailsHeld = held;
+    return QJsonObject { { "Id", episodeId }, { "Name", "Journey Episode" }, { "SortName", "Journey Series" },
+        { "Type", "Episode" }, { "MediaType", "Video" }, { "IsFolder", false }, { "LocationType", "FileSystem" },
+        { "RunTimeTicks", 900000000 }, { "ProductionYear", 2026 },
+        { "Overview", "An immutable episode with finite red then green media above a blue lower half." },
+        { "ImageTags", QJsonObject { { "Primary", "journey-poster" } } },
+        { "UserData", QJsonObject { { "PlaybackPositionTicks", 0 }, { "Played", false } } },
+        { "SeriesId", "journey-series" }, { "SeriesName", "Journey Series" }, { "SeasonId", "journey-season" },
+        { "ParentIndexNumber", 1 }, { "IndexNumber", 1 }, { "MediaSources", QJsonArray { source() } } };
+}
+void JellyfinFixture::setEpisodeDetailsHeld(bool held)
+{
+    episodeDetailsHeld = held;
     if (held)
         return;
     for (const auto& [socket, snapshot] : std::exchange(pendingDetails, decltype(pendingDetails) {})) {
@@ -101,13 +104,14 @@ void JellyfinFixture::setItemDetailsHeld(bool held)
         socket->setProperty("heldDetails", false);
         respond(socket, 200, snapshot);
         ++detailResponses;
+        ++episodeDetailResponses;
     }
 }
 bool JellyfinFixture::sendRemotePlay(qint64 positionTicks)
 {
     const QJsonObject message { { "MessageType", "Play" },
         { "Data",
-            QJsonObject { { "ItemIds", QJsonArray { movieId } }, { "StartIndex", 0 },
+            QJsonObject { { "ItemIds", QJsonArray { episodeId } }, { "StartIndex", 0 },
                 { "StartPositionTicks", positionTicks }, { "PlayCommand", "PlayNow" } } } };
     const QString encoded = QString::fromUtf8(QJsonDocument(message).toJson(QJsonDocument::Compact));
     bool sent = false;
@@ -249,7 +253,8 @@ void JellyfinFixture::handle(QTcpSocket *socket, const QByteArray& header, const
     }
     // Jellyfin's tag-addressed artwork endpoint is public; library and media
     // endpoints below still require the actual signed-in token.
-    if (method == "GET" && path == "/Items/" + movieId + "/Images/Primary"
+    if (method == "GET"
+        && (path == "/Items/" + movieId + "/Images/Primary" || path == "/Items/" + episodeId + "/Images/Primary")
         && query.queryItemValue("tag") == "journey-poster") {
         respond(socket, 200, artwork, "image/png");
         return;
@@ -268,9 +273,11 @@ void JellyfinFixture::handle(QTcpSocket *socket, const QByteArray& header, const
         return;
     }
     ++authenticatedRequests;
-    if (method == "POST" && path == "/Items/" + movieId + "/PlaybackInfo")
+    if (method == "POST"
+        && (path == "/Items/" + movieId + "/PlaybackInfo" || path == "/Items/" + episodeId + "/PlaybackInfo"))
         ++playbackNegotiations;
-    if ((method == "GET" || method == "HEAD") && path == "/Videos/" + movieId + "/stream")
+    if ((method == "GET" || method == "HEAD")
+        && (path == "/Videos/" + movieId + "/stream" || path == "/Videos/" + episodeId + "/stream"))
         ++mediaRequests;
     if (!newRequestsAvailable) {
         json(QJsonObject {}, 503);
@@ -309,30 +316,44 @@ void JellyfinFixture::handle(QTcpSocket *socket, const QByteArray& header, const
     } else if (method == "GET" && (path == "/Items" || path == "/Users/" + userId + "/Items")) {
         if (query.queryItemValue("ParentId") == "journey-library")
             ++authenticatedBrowse;
-        json(QJsonObject { { "Items", QJsonArray { movie() } }, { "TotalRecordCount", 1 } });
-    } else if (method == "GET" && path == "/Users/" + userId + "/Items/" + movieId) {
+        const QStringList ids = query.queryItemValue("Ids").split(',', Qt::SkipEmptyParts);
+        QJsonArray items;
+        if (ids.isEmpty() || ids.contains(movieId))
+            items.append(movie());
+        if (ids.isEmpty() || ids.contains(episodeId))
+            items.append(episode());
+        json(QJsonObject { { "Items", items }, { "TotalRecordCount", items.size() } });
+    } else if (method == "GET"
+        && (path == "/Users/" + userId + "/Items/" + movieId || path == "/Users/" + userId + "/Items/" + episodeId)) {
         ++detailRequests;
-        if (itemDetailsHeld) {
+        const bool episodeRequest = path == "/Users/" + userId + "/Items/" + episodeId;
+        if (episodeRequest)
+            ++episodeDetailRequests;
+        const QJsonObject item = episodeRequest ? episode() : movie();
+        if (episodeRequest && episodeDetailsHeld) {
             socket->setProperty("heldDetails", true);
-            pendingDetails.append({ socket, QJsonDocument(movie()).toJson(QJsonDocument::Compact) });
+            pendingDetails.append({ socket, QJsonDocument(item).toJson(QJsonDocument::Compact) });
         } else {
-            json(movie());
+            json(item);
             ++detailResponses;
+            if (episodeRequest)
+                ++episodeDetailResponses;
         }
     } else if (method == "GET" && path == "/Shows/journey-series/Episodes") {
         ++episodeRequests;
-        json(QJsonObject { { "Items", QJsonArray { movie() } }, { "TotalRecordCount", 1 } });
+        json(QJsonObject { { "Items", QJsonArray { episode() } }, { "TotalRecordCount", 1 } });
     } else if (method == "GET" && path == "/Shows/journey-series/Seasons") {
         json(QJsonObject { { "Items",
                                QJsonArray { QJsonObject { { "Id", "journey-season" }, { "Name", "Season 1" },
                                    { "Type", "Season" }, { "SeriesId", "journey-series" }, { "IndexNumber", 1 } } } },
             { "TotalRecordCount", 1 } });
     } else if (method == "GET" && path == "/Users/" + userId + "/Items/Latest") {
-        json(QJsonArray { movie() });
+        json(QJsonArray { movie(), episode() });
     } else if (method == "GET"
         && (path == "/Users/" + userId + "/Items/Resume" || path == "/Shows/NextUp"
-            || path == "/MediaSegments/" + movieId || path == "/Videos/journey-source/AdditionalParts"
-            || path == "/Items/" + movieId + "/Similar")) {
+            || path == "/MediaSegments/" + movieId || path == "/MediaSegments/" + episodeId
+            || path == "/Videos/journey-source/AdditionalParts" || path == "/Items/" + movieId + "/Similar"
+            || path == "/Items/" + episodeId + "/Similar")) {
         json(QJsonObject { { "Items", QJsonArray {} }, { "TotalRecordCount", 0 } });
     } else if (method == "GET" && path == "/Items/Filters") {
         json(QJsonObject { { "Genres", QJsonArray {} }, { "Years", QJsonArray {} } });
@@ -348,12 +369,14 @@ void JellyfinFixture::handle(QTcpSocket *socket, const QByteArray& header, const
             { "Configuration",
                 QJsonObject { { "AudioLanguagePreference", "" }, { "SubtitleLanguagePreference", "" },
                     { "PlayDefaultAudioTrack", true }, { "SubtitleMode", "Default" } } } });
-    } else if (method == "POST" && path == "/Items/" + movieId + "/PlaybackInfo") {
+    } else if (method == "POST"
+        && (path == "/Items/" + movieId + "/PlaybackInfo" || path == "/Items/" + episodeId + "/PlaybackInfo")) {
         const auto negotiation = QJsonDocument::fromJson(body).object();
         if (negotiation["UserId"] != userId || !negotiation["EnableDirectPlay"].toBool())
             unexpected.append("invalid playback negotiation");
         json(QJsonObject { { "PlaySessionId", "journey-session" }, { "MediaSources", QJsonArray { source() } } });
-    } else if ((method == "GET" || method == "HEAD") && path == "/Videos/" + movieId + "/stream") {
+    } else if ((method == "GET" || method == "HEAD")
+        && (path == "/Videos/" + movieId + "/stream" || path == "/Videos/" + episodeId + "/stream")) {
         qint64 first = 0;
         qint64 last = media.size() - 1;
         if (!range.isEmpty()) {
@@ -404,7 +427,8 @@ void JellyfinFixture::handle(QTcpSocket *socket, const QByteArray& header, const
         && (path == "/Sessions/Playing" || path == "/Sessions/Playing/Progress"
             || path == "/Sessions/Playing/Stopped")) {
         auto report = QJsonDocument::fromJson(body).object();
-        if (report["ItemId"] != movieId || report["PlaySessionId"] != "journey-session")
+        if ((report["ItemId"] != movieId && report["ItemId"] != episodeId)
+            || report["PlaySessionId"] != "journey-session")
             unexpected.append("invalid playback report identity");
         report.insert("endpoint", path);
         reports.append(report);
