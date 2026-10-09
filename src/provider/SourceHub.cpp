@@ -405,7 +405,14 @@ SourceHub::SourceHub(ProviderRegistry *registry, QObject *parent)
     });
     connect(registry, &ProviderRegistry::sourceStarted, this, &SourceHub::addSource);
     connect(registry, &ProviderRegistry::sourceStopped, this, &SourceHub::removeSource);
-    connect(registry, &ProviderRegistry::accountsChanged, this, &SourceHub::syncBrowse);
+    connect(registry, &ProviderRegistry::accountsChanged, this, [this] {
+        updateHomeAccounts();
+        syncBrowse();
+        emit homeProvidersChanged();
+    });
+    connect(registry, &ProviderRegistry::modulesChanged, this, &SourceHub::homeProvidersChanged);
+    connect(this, &SourceHub::browseSourcesChanged, this, &SourceHub::homeProvidersChanged);
+    updateHomeAccounts();
     const auto supportChanged = [this](const QString& account) {
         if (account == m_itemActionsAccount)
             cancelItemActions();
@@ -689,6 +696,136 @@ std::vector<Provider *> SourceHub::sources() const
     }
     std::sort(list.begin(), list.end(), [](Provider *a, Provider *b) { return a->id() < b->id(); });
     return list;
+}
+
+QVariantList SourceHub::homeProviderChoices() const
+{
+    QVariantList choices { QVariantMap {
+        { QStringLiteral("id"), QString() }, { QStringLiteral("name"), QStringLiteral("All providers") } } };
+    for (const QVariant& value : m_registry->modules()) {
+        const QVariantMap module = value.toMap();
+        choices.push_back(QVariantMap { { QStringLiteral("id"), module.value(QStringLiteral("id")) },
+            { QStringLiteral("name"), module.value(QStringLiteral("name")) },
+            { QStringLiteral("version"), module.value(QStringLiteral("version")) },
+            { QStringLiteral("iconUrl"), module.value(QStringLiteral("iconUrl")) } });
+    }
+    return choices;
+}
+
+QVariantMap SourceHub::homeProviderStatus(const QString& preferredModuleId) const
+{
+    QString effective = preferredModuleId;
+    QString message;
+    if (!preferredModuleId.isEmpty()) {
+        const ProviderModule *module = m_registry->module(preferredModuleId);
+        bool eligible = false;
+        bool disconnected = false;
+        for (const QVariant& value : m_registry->accounts()) {
+            const QVariantMap account = value.toMap();
+            if (account.value(QStringLiteral("moduleId")).toString() != preferredModuleId
+                || !account.value(QStringLiteral("enabled")).toBool()
+                || account.value(QStringLiteral("locked")).toBool()
+                || account.value(QStringLiteral("needsSignIn")).toBool()
+                || account.value(QStringLiteral("removing")).toBool())
+                continue;
+            eligible = true;
+            disconnected = disconnected || !account.value(QStringLiteral("running")).toBool();
+        }
+        if (!module || module->failed || !eligible) {
+            effective.clear();
+            message = QStringLiteral("Your selected Home provider is unavailable or has no authorized active profile. "
+                                     "Showing All providers. Choose a provider or reconnect in Sources.");
+        } else if (homeSources({ preferredModuleId }).empty() && disconnected) {
+            message = QStringLiteral("Your selected Home provider is temporarily disconnected. "
+                                     "Your preference is retained; reconnect in Sources or choose All providers.");
+        }
+    }
+    return { { QStringLiteral("moduleId"), effective }, { QStringLiteral("message"), message } };
+}
+
+void SourceHub::updateHomeAccounts()
+{
+    m_homeAccountModules.clear();
+    m_homeUnavailableAccounts.clear();
+    for (const QVariant& value : m_registry->accounts()) {
+        const QVariantMap account = value.toMap();
+        const QString id = account.value(QStringLiteral("id")).toString();
+        m_homeAccountModules.insert(id, account.value(QStringLiteral("moduleId")).toString());
+        if (!account.value(QStringLiteral("enabled")).toBool() || account.value(QStringLiteral("locked")).toBool()
+            || account.value(QStringLiteral("needsSignIn")).toBool()
+            || account.value(QStringLiteral("removing")).toBool())
+            m_homeUnavailableAccounts.insert(id);
+    }
+}
+
+std::vector<Provider *> SourceHub::homeSources(const HomeQuery& query) const
+{
+    auto selected = sources();
+    std::erase_if(selected, [&](Provider *provider) {
+        const QString account = provider->id();
+        return m_homeUnavailableAccounts.contains(account)
+            || (!query.moduleId.isEmpty() && m_homeAccountModules.value(account) != query.moduleId);
+    });
+    return selected;
+}
+
+bool SourceHub::containsHomeItem(const HomeQuery& query, const QString& scopedId) const
+{
+    if (scopedId.size() <= kPrefix || scopedId.at(kPrefix) != QLatin1Char(':'))
+        return false;
+    const auto entry = m_entries.constFind(scopedId.left(kPrefix));
+    return entry != m_entries.cend() && entry->provider && entry->browse
+        && !m_homeUnavailableAccounts.contains(entry->accountId)
+        && (query.moduleId.isEmpty() || m_homeAccountModules.value(entry->accountId) == query.moduleId);
+}
+
+QString SourceHub::homeScopeKey(const HomeQuery& query) const
+{
+    QStringList keys;
+    for (Provider *provider : homeSources(query))
+        keys.push_back(prefixOf(provider->id()));
+    return keys.join(QLatin1Char('+'));
+}
+
+template <typename Fetch>
+QCoro::Task<std::vector<MovieItem>> SourceHub::gatherHome(HomeQuery query, Fetch fetch, int limit)
+{
+    struct Pending {
+        QString accountId;
+        QPointer<Provider> provider;
+        QCoro::Task<std::vector<MovieItem>> task;
+    };
+    std::vector<Pending> pending;
+    for (Provider *provider : homeSources(query))
+        pending.push_back({ provider->id(), provider, fetch(provider) });
+    std::vector<std::vector<MovieItem>> lists;
+    for (auto& request : pending) {
+        try {
+            auto items = co_await std::move(request.task);
+            // A viewer can be withdrawn while its request is in flight.
+            if (request.provider && source(request.accountId) == request.provider
+                && containsHomeItem(query, scoped(request.accountId, QStringLiteral("home"))))
+                lists.push_back(scopedItems(std::move(items), request.accountId));
+        } catch (const std::exception&) {
+            qWarning() << "hub: Home feed unavailable from one selected account";
+        }
+    }
+    for (auto& items : lists)
+        std::erase_if(items, [this, &query](const MovieItem& item) { return !containsHomeItem(query, item.id); });
+    co_return interleave(std::move(lists), limit);
+}
+
+QCoro::Task<std::vector<MovieItem>> SourceHub::fetchHomeResumeItems(HomeQuery query, int limit)
+{
+    return gatherHome(
+        std::move(query), [limit](Provider *provider) { return provider->catalog()->fetchResumeItems(limit); }, limit);
+}
+
+QCoro::Task<std::vector<MovieItem>> SourceHub::fetchHomeNextUpEpisodes(HomeQuery query, int limit)
+{
+    return gatherHome(
+        std::move(query), [limit](Provider *provider) { return provider->catalog()->fetchNextUpEpisodes(limit); },
+        limit);
 }
 
 QCoro::Task<QVariantMap> SourceHub::call(QString accountId, QString operation, QVariantMap arguments)

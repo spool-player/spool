@@ -284,8 +284,8 @@ SettingSpec SettingSpec::duringHdrPlayback() const
     return spec;
 }
 
-// Declaration order is display order: rows appear in the settings page exactly
-// as listed, grouped by the group name they carry.
+// Declaration order determines row order within each stable category; common
+// controls precede the Advanced disclosure in the category consumer.
 const QVector<SettingSpec>& settingSpecs()
 {
     const PlatformAudioOutputPolicy& audioOutput = platformAudioOutputPolicy();
@@ -330,6 +330,10 @@ const QVector<SettingSpec>& settingSpecs()
                 SettingTarget::RememberSeriesAudioTrack),
             toggleSpec("settings/nightMode", "Playback", "Night mode", "Lifts quiet dialogue and tames loud scenes",
                 false, SettingTarget::NightMode),
+            sliderSpec("playback/watchedThresholdPercent", "Playback", "Mark watched at",
+                "Spool marks watched when playback stops at this percentage. Your server may mark it sooner. "
+                "Applies only on this device; does not change the server's resume policy",
+                "90", 50, 100, 1, "%", SettingTarget::External),
             sliderSpec("settings/audioDelayMs", "Playback", "Audio sync", "", "0", -2000, 2000, 10, "ms",
                 SettingTarget::AudioDelay),
             toggleSpec("playback/showVolumeSlider", "Playback", "Volume slider in the player", "", true,
@@ -568,6 +572,9 @@ const QVector<SettingSpec>& settingSpecs()
             selectSpec("providers/updates", "Accounts", "Provider updates", "", "ask", kProviderUpdateChoices,
                 SettingTarget::External),
             pageSpec("action/manageCertificates", "Accounts", "Remembered certificates", "", SettingType::Action),
+            selectSpec("home/providerId", "Accounts", "Home provider",
+                "All providers, or one installed provider, on Home only", "", nullptr, 0, SettingTarget::External,
+                SettingNormalizer::String),
 
             pageSpec("action/exportDiagnostics", "Diagnostics", "Export diagnostics", "", SettingType::Action),
             pageSpec("action/clearLogs", "Diagnostics", "Clear logs", "", SettingType::Action),
@@ -632,6 +639,33 @@ const QVector<SettingSpec>& settingSpecs()
             QStringLiteral("theme/antialiasedText"), QStringLiteral("theme/renderMode") };
         for (SettingSpec& spec : rows) {
             const QString key = QString::fromLatin1(spec.key);
+            const QLatin1String group(spec.group);
+            if (group == QLatin1String("Appearance"))
+                spec.categoryId = "appearance";
+            else if (group == QLatin1String("Playback") || group == QLatin1String("Remote Control")
+                || group == QLatin1String("Remote buttons"))
+                spec.categoryId = "playback";
+            else if (group == QLatin1String("Subtitles") || group == QLatin1String("Subtitle Appearance"))
+                spec.categoryId = "subtitles";
+            else if (group == QLatin1String("Streaming"))
+                spec.categoryId = "streaming";
+            else if (group == QLatin1String("Accounts"))
+                spec.categoryId = "sources";
+            else if (group == QLatin1String("Downloads"))
+                spec.categoryId = "downloads";
+            else
+                spec.categoryId = "diagnostics";
+            spec.destinationKey = spec.key;
+            if (group == QLatin1String("Subtitle Appearance"))
+                spec.destination = "subtitleSettings";
+            else if (key == QLatin1String("settings/audioDelayMs"))
+                spec.destination = "player";
+            if (key == QLatin1String("appearance/uiScalePercent"))
+                spec.searchKeywords = "zoom size interface UI scale accessibility";
+            else if (key == QLatin1String("playback/watchedThresholdPercent"))
+                spec.searchKeywords = "completion resume watched percentage progress";
+            else if (key == QLatin1String("action/accounts") || key == QLatin1String("action/providers"))
+                spec.searchKeywords = "sources server login account provider";
             if (portable.contains(key))
                 spec.syncPolicy = SettingSyncPolicy::PortableDefault;
             else if (device.contains(key))
@@ -782,6 +816,10 @@ QVariantList settingSchemaModel()
         QVariantMap row { { QStringLiteral("key"), QLatin1String(spec.key) },
             { QStringLiteral("source"), spec.persisted ? QStringLiteral("settings") : QStringLiteral("page") },
             { QStringLiteral("group"), QLatin1String(spec.group) },
+            { QStringLiteral("categoryId"), QLatin1String(spec.categoryId) },
+            { QStringLiteral("searchKeywords"), QLatin1String(spec.searchKeywords) },
+            { QStringLiteral("destinationKey"), QLatin1String(spec.destinationKey) },
+            { QStringLiteral("destination"), QLatin1String(spec.destination) },
             { QStringLiteral("title"), QLatin1String(spec.title) },
             { QStringLiteral("description"), QLatin1String(spec.description) },
             { QStringLiteral("type"), typeName(spec.type) },

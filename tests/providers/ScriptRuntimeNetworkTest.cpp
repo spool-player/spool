@@ -5,6 +5,13 @@
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QHash>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QNetworkAccessManager>
+#include <QNetworkProxy>
+#include <QSet>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QTimer>
@@ -31,6 +38,258 @@ template <typename T> void rejects(QCoro::Task<T> task, const char *code)
         return;
     }
     require(false, "operation should reject");
+}
+
+void plexSessions()
+{
+    using namespace Spool;
+    QTcpServer cloud, first, second, backup, alternate1, alternate2, alternate3, unapproved;
+    for (QTcpServer *server : { &cloud, &first, &second, &backup, &alternate1, &alternate2, &alternate3, &unapproved })
+        require(server->listen(QHostAddress::LocalHost), "Plex protocol fixture listens on loopback");
+    const auto origin
+        = [](const QTcpServer& server) { return QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort()); };
+    const QString cloudOrigin = origin(cloud), firstOrigin = origin(first);
+    const QString secondOrigin = origin(second), backupOrigin = origin(backup);
+    const QString unapprovedOrigin = origin(unapproved);
+    bool denyGuestSwitch = false, expireGuest = false, removeFirst = false, hangFirst = false;
+    int linkPolls = 0, guestSwitches = 0, deniedOriginRequests = 0;
+    QSet<quint16> probedPorts;
+    QObject::connect(&unapproved, &QTcpServer::newConnection, &unapproved, [&] {
+        ++deniedOriginRequests;
+        while (QTcpSocket *socket = unapproved.nextPendingConnection())
+            socket->deleteLater();
+    });
+    std::function<void()> onHome, onProbe;
+    const auto serve = [&](QTcpServer& server, const QString& identity) {
+        QObject::connect(&server, &QTcpServer::newConnection, &server, [&, identity, owner = &server] {
+            while (QTcpSocket *socket = owner->nextPendingConnection()) {
+                QObject::connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
+                QObject::connect(socket, &QTcpSocket::readyRead, socket, [&, socket, identity] {
+                    const QByteArray request = socket->property("request").toByteArray() + socket->readAll();
+                    socket->setProperty("request", request);
+                    const qsizetype headerEnd = request.indexOf("\r\n\r\n");
+                    if (headerEnd < 0 || socket->property("answered").toBool())
+                        return;
+                    int bodySize = 0;
+                    QByteArray token;
+                    for (QByteArray line : request.left(headerEnd).split('\n')) {
+                        line = line.trimmed();
+                        if (line.toLower().startsWith("content-length:"))
+                            bodySize = line.mid(15).trimmed().toInt();
+                        if (line.toLower().startsWith("x-plex-token:"))
+                            token = line.mid(13).trimmed();
+                    }
+                    if (request.size() < headerEnd + 4 + bodySize)
+                        return;
+                    socket->setProperty("answered", true);
+                    const QByteArray path = request.split(' ').value(1).split('?').front();
+                    const QByteArray form = request.mid(headerEnd + 4, bodySize);
+                    QByteArray body;
+                    int status = 200;
+                    if (identity != "cloud") {
+                        probedPorts.insert(socket->localPort());
+                        require(path == "/" && token.endsWith(identity == "other" ? "-other" : "-pms"),
+                            "PMS probes use only the selected resource credential");
+                        if (onProbe)
+                            onProbe();
+                        if (hangFirst && socket->localPort() == first.serverPort())
+                            return;
+                        body = QJsonDocument(
+                            QJsonObject { { "MediaContainer", QJsonObject { { "machineIdentifier", identity } } } })
+                                   .toJson(QJsonDocument::Compact);
+                    } else if (path == "/api/v2/pins/7") {
+                        ++linkPolls;
+                        require(token.isEmpty(), "device link poll is not authenticated with a PMS/member token");
+                        body = R"({"authToken":"fixture-owner"})";
+                    } else if (path == "/api/home/users") {
+                        require(token == "fixture-owner", "Home roster uses retained linked credentials");
+                        if (onHome)
+                            onHome();
+                        body
+                            = R"(<MediaContainer><User id="1" title="Owner" protected="1" admin="1"/><User id="2" title="Child" protected="1" restricted="1"/><User id="3" title="Guest" protected="0" restricted="1"/></MediaContainer>)";
+                    } else if (path.startsWith("/api/home/users/") && path.endsWith("/switch")) {
+                        require(token == "fixture-owner" && request.startsWith("POST ")
+                                && !request.left(headerEnd).contains("pin="),
+                            "Home switching uses owner credential and a transient form body");
+                        const QByteArray member = path.split('/').value(4);
+                        if (member == "3")
+                            ++guestSwitches;
+                        if ((member != "3" && form != "pin=1234") || (member == "3" && denyGuestSwitch))
+                            status = 401;
+                        else
+                            body = "<user id=\"" + member + "\" authenticationToken=\"fixture-"
+                                + (member == "2"        ? "member"
+                                        : member == "3" ? "guest"
+                                                        : "owner")
+                                + "\"/>";
+                    } else if (path == "/api/v2/user") {
+                        require(token == "fixture-owner" || token == "fixture-member" || token == "fixture-guest",
+                            "plex.tv identity never receives a resource token");
+                        if (expireGuest && token == "fixture-guest")
+                            status = 401;
+                        else
+                            body = QJsonDocument(
+                                QJsonObject { { "id",
+                                                  token == "fixture-owner"        ? 1
+                                                      : token == "fixture-member" ? 2
+                                                                                  : 3 },
+                                    { "title", "Fixture viewer" }, { "restricted", token != "fixture-owner" } })
+                                       .toJson();
+                    } else if (path == "/api/v2/resources") {
+                        require(token == "fixture-owner" || token == "fixture-member" || token == "fixture-guest",
+                            "accessible resources are requested under the selected member");
+                        QJsonArray resources;
+                        if (!removeFirst || token == "fixture-owner")
+                            resources.append(QJsonObject { { "provides", "server" }, { "clientIdentifier", "machine" },
+                                { "name", "First" }, { "accessToken", QString::fromLatin1(token) + "-pms" },
+                                { "connections",
+                                    QJsonArray { QJsonObject { { "uri", firstOrigin }, { "local", true } },
+                                        QJsonObject { { "uri", backupOrigin } },
+                                        QJsonObject { { "uri", origin(alternate1) } },
+                                        QJsonObject { { "uri", origin(alternate2) } },
+                                        QJsonObject { { "uri", origin(alternate3) } },
+                                        QJsonObject { { "uri", unapprovedOrigin } } } } });
+                        resources.append(QJsonObject { { "provides", "server" }, { "clientIdentifier", "other" },
+                            { "name", "Second" }, { "accessToken", QString::fromLatin1(token) + "-other" },
+                            { "connections", QJsonArray { QJsonObject { { "uri", secondOrigin } } } } });
+                        body = QJsonDocument(resources).toJson();
+                    } else {
+                        ++deniedOriginRequests;
+                        require(false, "Plex fixture received an unexpected protocol route");
+                    }
+                    socket->write("HTTP/1.1 " + QByteArray::number(status) + (status == 200 ? " OK" : " Unauthorized")
+                        + "\r\nConnection: close\r\nContent-Length: " + QByteArray::number(body.size()) + "\r\n\r\n"
+                        + body);
+                    socket->disconnectFromHost();
+                });
+            }
+        });
+    };
+    serve(cloud, "cloud");
+    serve(first, "machine");
+    serve(second, "other");
+    serve(backup, "machine");
+    serve(alternate1, "machine");
+    serve(alternate2, "machine");
+    serve(alternate3, "machine");
+    ScriptRuntime::NetworkHooks hooks;
+    hooks.network = [](QNetworkAccessManager *manager) { manager->setProxy(QNetworkProxy::NoProxy); };
+    ScriptRuntime plex(QStringLiteral(TEST_SOURCE_DIR "/tests/providers/fixtures/plex-network.mjs"), {}, hooks);
+    const QVariantMap offers { { "accountActivation", true }, { "originGrants", true }, { "httpMetadata", true } };
+    const QList<QUrl> approved { QUrl(cloudOrigin), QUrl(firstOrigin), QUrl(secondOrigin), QUrl(backupOrigin),
+        QUrl(origin(alternate1)), QUrl(origin(alternate2)), QUrl(origin(alternate3)) };
+    QHash<QString, QVariantMap> credentials;
+    QObject::connect(&plex, &ScriptRuntime::event, &plex,
+        [&](const QString& source, const QString& type, const QVariantMap& payload) {
+            if (type == "configuration")
+                credentials[source].insert(payload);
+        });
+    const auto add = [&](const QString& id, QVariantMap config, bool draft = false) {
+        config.insert("fixtureEndpoint", cloudOrigin);
+        QCoro::waitFor(plex.addSource(id, config, approved, offers, draft));
+    };
+    const auto call = [&](const QString& id, const QString& method, QVariantMap args = {}) {
+        return QCoro::waitFor(plex.call(id, method, args));
+    };
+    const auto activation = [](QString reason, QVariantMap answers = {}) {
+        QVariantMap value { { "reason", reason }, { "lastUsed", true } };
+        if (!answers.isEmpty())
+            value.insert("answers", answers);
+        return value;
+    };
+    QCoro::waitFor(plex.addSource("link", { { "fixtureEndpoint", cloudOrigin } }, { QUrl(cloudOrigin) }, offers, true));
+    const auto linked = call("link", "pinPoll", { { "id", "7" } });
+    require(
+        linked.value("homeUsers").toList().size() == 3 && !linked.value("user").toMap().contains("linkedAccountToken"),
+        "actual provider lists Home without publishing linked credentials to QML");
+    rejects(plex.call("link", "homeSelect", { { "userId", "2" }, { "pin", "wrong" } }), "invalid_pin");
+    const auto chosen = call("link", "homeSelect", { { "userId", "2" }, { "pin", "1234" } });
+    require(chosen.value("servers").toList().size() == 2
+            && !chosen.value("servers").toList().front().toMap().contains("token"),
+        "actual member resource chooser exposes no resource credential");
+    rejects(plex.call("link", "connect", { { "serverId", "machine" } }), "server_unreachable");
+    require(probedPorts.isEmpty() && !credentials.contains("link"),
+        "fresh Home sign-in starts cloud-only and cannot send member credentials to unapproved PMS origins");
+    QCoro::waitFor(plex.grantOrigins("link",
+        { QUrl(firstOrigin), QUrl(backupOrigin), QUrl(origin(alternate1)), QUrl(origin(alternate2)),
+            QUrl(origin(alternate3)) }));
+    const auto firstAccount = call("link", "connect", { { "serverId", "machine" } });
+    require(firstAccount.value("account") == "2@machine" && !firstAccount.contains("configuration")
+            && credentials.value("link").value("token") == "fixture-member-pms",
+        "native credential event, not UI completion, retains the member resource credential");
+    require(probedPorts.size() == 5 && deniedOriginRequests == 0,
+        "bounded provider workers probe every approved candidate beyond the native four-request budget without "
+        "expanding grants");
+    const QVariantMap savedFirst = credentials.value("link");
+    QCoro::waitFor(plex.grantOrigins("link", { QUrl(secondOrigin) }));
+    call("link", "connect", { { "serverId", "other" } });
+    const QVariantMap savedSecond = credentials.value("link");
+    require(savedFirst.value("linkedAccountToken") == "fixture-owner"
+            && savedFirst.value("activeAccountToken") == "fixture-member"
+            && savedSecond.value("token") == "fixture-member-other",
+        "two servers retain one linked/member chain but distinct server credentials");
+    plex.removeSource("link");
+    add("restart", savedSecond);
+    require(call("restart", "activate", activation("startup")).value("pick").toMap().value("kind") == "homePin",
+        "protected restored member stays private until its PIN");
+    rejects(plex.call("restart", "activate", activation("startup", { { "pin", "wrong" } })), "invalid_pin");
+    call("restart", "activate", activation("startup", { { "pin", "1234" } }));
+    require(credentials.value("restart").value("token") == "fixture-member-other",
+        "protected bad PIN remains retryable and restores only its selected server credential");
+    add("another", { { "setupAccount", savedFirst }, { "setupContext", QVariantMap { { "purpose", "addProfile" } } } },
+        true);
+    require(call("another", "setupResume").value("homeUsers").toList().size() == 3,
+        "another profile uses retained owner link through native HTTP");
+    call("another", "homeSelect", { { "userId", "3" }, { "pin", "" } });
+    call("another", "connect", { { "serverId", "machine" } });
+    const QVariantMap guest = credentials.value("another");
+    require(linkPolls == 1 && guest.value("token") == "fixture-guest-pms"
+            && guest.value("linkedAccountToken") == "fixture-owner",
+        "multiple watching profiles use one device link without an owner PMS fallback");
+    add("guest", guest);
+    const int switched = guestSwitches;
+    call("guest", "activate", activation("startup"));
+    require(guestSwitches == switched, "unprotected restart reuses retained member credential");
+    expireGuest = true;
+    denyGuestSwitch = true;
+    add("expired", guest);
+    rejects(plex.call("expired", "activate", activation("switch")), "http_401");
+    require(!credentials.contains("expired") && !call("expired", "describe").contains("artwork"),
+        "unprotected expired session requests reauthentication without PIN loop or credential overwrite");
+    expireGuest = false;
+    denyGuestSwitch = false;
+    removeFirst = true;
+    add("permission", guest);
+    rejects(plex.call("permission", "activate", activation("switch")), "permission_denied");
+    require(!call("permission", "describe").contains("artwork") && !credentials.contains("permission"),
+        "loss of member access fails closed even while owner/server credentials are retained");
+    removeFirst = false;
+    QVariantMap recover = savedFirst;
+    recover["connections"]
+        = QVariantList { QVariantMap { { "uri", firstOrigin } }, QVariantMap { { "uri", backupOrigin } } };
+    add("stable", recover);
+    call("stable", "activate", activation("linked"));
+    require(credentials.value("stable").value("server") == firstOrigin,
+        "server selection preserves preferred approved identity despite parallel replies");
+    hangFirst = true;
+    add("recover", recover);
+    QElapsedTimer timer;
+    timer.start();
+    call("recover", "activate", activation("linked"));
+    require(timer.elapsed() < 7000 && credentials.value("recover").value("server") == backupOrigin,
+        "approved backup proves the same PMS identity within the bounded probe deadline");
+    add("cancel", recover);
+    onProbe = [&] { plex.cancelScope("cancel", "selection"); };
+    rejects(plex.call("cancel", "activate", activation("linked"), "selection"), "action_cancelled");
+    onProbe = {};
+    require(!credentials.contains("cancel") && deniedOriginRequests == 0,
+        "cancelled activation and newly advertised unapproved origin never commit or expand access");
+    hangFirst = false;
+    add("cancelHome", savedFirst);
+    onHome = [&] { plex.cancelScope("cancelHome", "home"); };
+    rejects(plex.call("cancelHome", "activate", activation("switch"), "home"), "action_cancelled");
+    onHome = {};
+    require(!credentials.contains("cancelHome"), "cancelled Home roster cannot resume retained credentials");
 }
 } // namespace
 
@@ -277,5 +536,6 @@ SPOOL_TEST_MAIN("script-runtime-network")
     const auto noInterfaces = QCoro::waitFor(empty.call("draft", "probe", probe));
     require(noInterfaces.value("exhausted").toBool() && noInterfaces.value("responses").toList().isEmpty(),
         "an empty target snapshot finishes without issuing a request");
+    plexSessions();
     return 0;
 }

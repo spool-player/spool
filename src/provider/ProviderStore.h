@@ -8,6 +8,9 @@
 #include <QVariantList>
 #include <QVariantMap>
 
+#include "ProviderPackage.h"
+
+#include <memory>
 #include <optional>
 
 class QNetworkAccessManager;
@@ -51,6 +54,8 @@ class ProviderStore final : public QObject {
     Q_PROPERTY(QVariantList transfers READ transfers NOTIFY busyChanged)
     Q_PROPERTY(bool storeAvailable READ storeAvailable CONSTANT)
     Q_PROPERTY(bool linksAllowed READ linksAllowed CONSTANT)
+    Q_PROPERTY(QVariantMap inspectedPackage READ inspectedPackage NOTIFY inspectedPackageChanged)
+    Q_PROPERTY(QVariantList installedProviders READ installedProviders NOTIFY catalogChanged)
 
 public:
     ProviderStore(ProviderRegistry *registry, DatabaseManager *database, QNetworkAccessManager *network,
@@ -85,6 +90,13 @@ public:
     }
 
     QVariantList transfers() const;
+    QVariantMap inspectedPackage() const;
+    QVariantList installedProviders() const;
+    Q_INVOKABLE bool isPackageCandidate(const QUrl& url) const;
+    Q_INVOKABLE QString classifyFiles(const QVariantList& urls);
+    Q_INVOKABLE QString inspectFile(const QUrl& url);
+    Q_INVOKABLE void installInspected(const QString& token);
+    Q_INVOKABLE void cancelInspection(const QString& operationId = {});
 
     // official.json always; index.json too when asked for or when something
     // from it is installed.
@@ -106,15 +118,35 @@ signals:
     void catalogChanged();
     void updatesChanged();
     void busyChanged();
+    void inspectedPackageChanged();
     void installed(const QString& id, const QString& name);
     void problem(const QString& message);
+    void filesClassified(
+        const QString& requestId, const QVariantList& packages, const QVariantList& media, const QString& error);
+    void fileInspectionFinished(const QString& requestId, const QVariantMap& preview, const QString& error);
+    void fileInstallationFinished(const QString& token, const QString& moduleId, const QString& error);
 
 private:
     struct Origin {
-        QString channel; // official, community or url
+        QString channel; // official, community, url or file
         QUrl feed;
     };
 
+    struct Inspection {
+        ProviderPackageContents package;
+        QString token;
+        QString digest;
+        quint64 registryRevision = 0;
+        quint64 generation = 0;
+        Origin origin;
+        QVariantMap preview;
+    };
+
+    QCoro::Task<void> inspectFileAsync(QUrl url, quint64 generation, QString requestId);
+    void failInspection(const QString& requestId, const QString& error);
+    QCoro::Task<void> installInspectedAsync(std::unique_ptr<Inspection> inspection);
+    QString provenance(const QString& id) const;
+    bool permitsFileReplacement(const QString& id) const;
     // Where each installed provider came from; every write waits for it.
     QCoro::Task<void> loadOrigins();
     QCoro::Task<QByteArray> fetch(QUrl url, qint64 limit, QString transferId = {});
@@ -141,6 +173,14 @@ private:
     QString m_error;
     int m_loading = 0;
     bool m_originsLoaded = false;
+    std::unique_ptr<Inspection> m_inspection;
+    quint64 m_inspectionGeneration = 0;
+    quint64 m_registryRevision = 0;
+    bool m_inspecting = false;
+    bool m_fileInstalling = false;
+    bool m_classifying = false;
+    QString m_inspectionRequestId;
+    QString m_installingToken;
 };
 
 } // namespace Spool

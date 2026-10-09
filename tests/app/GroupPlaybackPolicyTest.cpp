@@ -1,8 +1,8 @@
 #include "app/GroupPlaybackController.h"
 
+#include "../providers/ProviderFixture.h"
 #include "TestMain.h"
 #include "TestRequire.h"
-#include "../providers/ProviderFixture.h"
 #include "cache/DatabaseManager.h"
 #include "player/PlayQueueController.h"
 #include "player/PlayerController.h"
@@ -16,8 +16,8 @@
 
 #include <cmath>
 #include <cstdlib>
-#include <iostream>
 #include <functional>
+#include <iostream>
 
 using namespace Spool;
 

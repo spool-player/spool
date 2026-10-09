@@ -175,7 +175,7 @@ Item {
             overlay.toggleDebugStats()
             break
         case "stop":
-            overlay.player.stopWithReason("remap-stop")
+            overlay.player.stopWithReason("remap-stop", true)
             break
         default:
             return false
@@ -223,7 +223,7 @@ Item {
             return true
         }
         if (key === Qt.Key_Q && overlay.hasPlayer) {
-            overlay.player.stopWithReason("player-q")
+            overlay.player.stopWithReason("player-q", true)
             return true
         }
         if (InputKeys.isMediaPrevious(key)) {

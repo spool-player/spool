@@ -21,6 +21,7 @@
 #include <cstdlib>
 #include <functional>
 #include <iostream>
+#include <optional>
 
 using namespace Spool;
 
@@ -219,12 +220,145 @@ void credentialRecordRestore()
     }
 }
 
+QVariantMap row(const ProviderRegistry& registry, const QString& id)
+{
+    for (const QVariant& value : registry.accounts()) {
+        if (value.toMap().value(QStringLiteral("id")) == id)
+            return value.toMap();
+    }
+    return {};
+}
+
+// Users of one server are one profile set: one viewer runs at a time, and the
+// set's startup choice survives a restart without waiting on anyone.
+void profileStartupChoices()
+{
+    QTemporaryDir directory;
+    require(directory.isValid(), "startup choice temporary directory");
+    qputenv("SPOOL_CREDENTIAL_STORE_DIR", directory.filePath(QStringLiteral("credentials")).toUtf8());
+    const QString installs = directory.filePath(QStringLiteral("providers"));
+    DatabaseManager database;
+    require(database.initialize(directory.filePath(QStringLiteral("cache.sqlite"))), "startup choice database opens");
+    QCoro::waitFor(database.schemaVersionAsync());
+    require(ProviderPackage::install(ProviderFixture::package(), installs).has_value(), "startup fixture installs");
+    QString alice;
+    QString bob;
+    QString carol;
+    {
+        ProviderRegistry registry(&database);
+        registry.setInstallDirectory(installs);
+        registry.loadModules();
+        QCoro::waitFor(registry.restore());
+        alice = signIn(registry, QStringLiteral("alice"), QStringLiteral("server-1"));
+        bob = signIn(registry, QStringLiteral("bob"), QStringLiteral("server-1"));
+        carol = signIn(registry, QStringLiteral("carol"), QStringLiteral("server-2"));
+        require(row(registry, bob).value(QStringLiteral("onboarding")).toBool()
+                && row(registry, alice).value(QStringLiteral("profileSet"))
+                    == row(registry, bob).value(QStringLiteral("profileSet"))
+                && row(registry, carol).value(QStringLiteral("profileSet"))
+                    != row(registry, bob).value(QStringLiteral("profileSet")),
+            "a second viewer of one server joins that server's profile set and is asked about startup");
+        require(!registry.setStartupChoice(alice, QStringLiteral("always")),
+            "only the active, authorized viewer can be opened unasked");
+        require(registry.setStartupChoice(bob, QStringLiteral("always"))
+                && !row(registry, bob).value(QStringLiteral("onboarding")).toBool()
+                && row(registry, alice).value(QStringLiteral("startupMode")) == QStringLiteral("always"),
+            "the explicit startup choice belongs to the whole server");
+        registry.useAccount(alice);
+        waitUntil([&] { return registry.sourceRunning(alice) && !registry.sourceRunning(bob); },
+            "switching viewers keeps one viewer per server");
+        require(registry.setStartupChoice(carol, QStringLiteral("ask")), "another server can ask at startup");
+        const QString frank = signIn(registry, QStringLiteral("frank"), QStringLiteral("server-4"), {},
+            QVariantMap { { QStringLiteral("signOutDelay"), 60000 } });
+        registry.removeAccount(frank);
+        require(row(registry, frank).value(QStringLiteral("removing")).toBool(),
+            "an active profile immediately shows removal while sign-out is pending");
+        require(!registry.setStartupChoice(frank, QStringLiteral("always")),
+            "a removing profile cannot become the startup default");
+        waitUntil([&] { return row(registry, frank).isEmpty(); }, "unresponsive sign-out settles local removal");
+    }
+    {
+        ProviderRegistry registry(&database);
+        registry.setInstallDirectory(installs);
+        registry.loadModules();
+        SourceHub hub(&registry);
+        bool announced = false;
+        QObject::connect(&hub, &SourceHub::sessionStarted, [&announced] { announced = true; });
+        QStringList problems;
+        QObject::connect(
+            &registry, &ProviderRegistry::problem, [&problems](const QString& message) { problems.append(message); });
+        QCoro::waitFor(registry.restore());
+        waitUntil([&] { return registry.sourceRunning(bob) && announced; },
+            "the pinned viewer opens instead of the last-used one, without Home waiting on the set that asks");
+        require(!registry.sourceRunning(alice) && !registry.sourceRunning(carol) && registry.startupChoicePending()
+                && row(registry, carol).value(QStringLiteral("connectionState")) == QStringLiteral("choose"),
+            "a set that asks starts nobody until a viewer is chosen");
+        registry.useAccount(carol);
+        waitUntil([&] { return registry.sourceRunning(carol) && !registry.startupChoicePending(); },
+            "choosing a viewer answers the startup question");
+
+        const QString offline = registry.finishSetup({},
+            { { QStringLiteral("module"), QStringLiteral("fixture.test") },
+                { QStringLiteral("account"), QStringLiteral("dave") },
+                { QStringLiteral("group"), QStringLiteral("server-3") },
+                { QStringLiteral("label"), QStringLiteral("Dave") },
+                { QStringLiteral("configuration"),
+                    QVariantMap { { QStringLiteral("describeFailure"), QStringLiteral("network_error") } } } });
+        waitUntil(
+            [&] { return row(registry, offline).value(QStringLiteral("connectionState")) == QStringLiteral("failed"); },
+            "an unreachable profile fails to open");
+        require(row(registry, offline).value(QStringLiteral("errorText"))
+                    == QStringLiteral("Couldn't reach the server. Check the connection and try again.")
+                && problems.isEmpty(),
+            "an explicit switch reports one actionable error on the profile, not a second toast");
+        registry.removeAccount(offline);
+        require(row(registry, offline).isEmpty(), "a profile that never opened can be removed");
+
+        const QVariantMap erin { { QStringLiteral("module"), QStringLiteral("fixture.test") },
+            { QStringLiteral("account"), QStringLiteral("erin") },
+            { QStringLiteral("group"), QStringLiteral("server-1") },
+            { QStringLiteral("label"), QStringLiteral("Erin") },
+            { QStringLiteral("configuration"), QVariantMap { { QStringLiteral("describeDelay"), 60000 } } } };
+        QString announcedSetup;
+        QObject::connect(
+            &registry, &ProviderRegistry::accountSetupStarted, [&](const QString& id) { announcedSetup = id; });
+        const QString slow = registry.finishSetup({}, erin);
+        std::optional<bool> finished;
+        QObject::connect(&registry, &ProviderRegistry::accountSelectionFinished, [&](const QString& id, bool selected) {
+            if (id == slow)
+                finished = selected;
+        });
+        waitUntil(
+            [&] { return row(registry, slow).value(QStringLiteral("pending")).toBool(); }, "the switch is pending");
+        require(announcedSetup == slow && !registry.sourceRunning(slow),
+            "setup opens its actionable profile before delayed activation can publish it");
+        registry.cancelActivation(slow);
+        waitUntil([&] { return finished.has_value(); }, "cancelling settles the pending switch");
+        require(
+            !*finished && registry.sourceRunning(bob) && !row(registry, slow).value(QStringLiteral("pending")).toBool(),
+            "a cancelled switch keeps the current viewer of that server");
+        require(registry.finishSetup({}, erin) == slow, "retrying keeps the same profile");
+        waitUntil([&] { return row(registry, slow).value(QStringLiteral("pending")).toBool(); }, "a retry is pending");
+        registry.removeAccount(slow);
+        require(row(registry, slow).isEmpty() && registry.sourceRunning(bob), "a pending profile can be removed");
+    }
+    {
+        ProviderRegistry registry(&database);
+        registry.setInstallDirectory(installs);
+        registry.loadModules();
+        QCoro::waitFor(registry.restore());
+        require(registry.startupChoicePending() && registry.accountList().size() == 3,
+            "the choice to ask persists, and removed profiles stay removed");
+    }
+}
+
 } // namespace
 
 SPOOL_TEST_MAIN("provider-registry")
 {
     QCoreApplication app(argc, argv);
     credentialRecordRestore();
+    profileStartupChoices();
     QTemporaryDir directory;
     require(directory.isValid(), "temporary directory");
     const QString credentials = directory.filePath(QStringLiteral("credentials"));
@@ -469,16 +603,14 @@ export function createSource(config, sourceHost) {
             "effective offers exist before a source is published");
     });
     auto *draft = qobject_cast<ProviderUiContext *>(registry.beginSetup("fixture.test"));
-    require(draft->capabilities().value("speedTest").toBool()
-            && !draft->capabilities().contains("itemActions"),
+    require(draft->capabilities().value("speedTest").toBool() && !draft->capabilities().contains("itemActions"),
         "login receives package declarations without granting live account availability");
     require(failure(registry.callSource(draft->sourceId(), "suggestions")) == "unsupported_capability",
         "drafts cannot call optional account operations");
     draft->close();
     const QString extendedAlice = signIn(registry, "alice", "capability-a");
     const QString extendedCarol = signIn(registry, "carol", "capability-c");
-    require(registry.hasCapability(extendedAlice, "speedTest")
-            && !registry.hasCapability(extendedCarol, "speedTest"),
+    require(registry.hasCapability(extendedAlice, "speedTest") && !registry.hasCapability(extendedCarol, "speedTest"),
         "accounts of one module independently offer or disable capabilities");
     require(extendedProviders[extendedAlice]->capabilities().testFlag(Provider::SpeedTest)
             && !extendedProviders[extendedCarol]->capabilities().testFlag(Provider::SpeedTest)
@@ -495,8 +627,7 @@ export function createSource(config, sourceHost) {
     require(QCoro::waitFor(registry.callSource(extendedCarol, "state")).value("calls").toInt() == 0
             && QCoro::waitFor(registry.callSource(extendedAlice, "state")).value("calls").toInt() == 0,
         "rejected calls execute no provider work");
-    const auto page
-        = QCoro::waitFor(registry.callSourceMediaPage(extendedAlice, "suggestions", {}, 10));
+    const auto page = QCoro::waitFor(registry.callSourceMediaPage(extendedAlice, "suggestions", {}, 10));
     require(page.items.size() == 1 && page.items.front().id == "suggestion" && page.exhausted,
         "available media operations use the typed worker decoder");
 
@@ -694,8 +825,8 @@ export function createSource(config, sourceHost) {
     require(
         QCoro::waitFor(registry.callSource(lanSource, "discoverMore", { { "inspect", true } })).value("ready").toBool(),
         "login drafts can dispatch their declared discovery operation");
-    require(
-        failure(registry.callSource(extendedAlice, "discoverMore", { { "inspect", true } })) == "unsupported_capability",
+    require(failure(registry.callSource(extendedAlice, "discoverMore", { { "inspect", true } }))
+            == "unsupported_capability",
         "draft discovery does not enable unoffered account operations");
     require(failure(registry.allowLanDiscovery(extendedAlice, "lan")) == "unsupported_capability",
         "signed-in accounts cannot request subnet discovery");
@@ -715,22 +846,21 @@ export function createSource(config, sourceHost) {
     require(!pendingSucceeded && !hub.capabilities().testFlag(Provider::SpeedTest)
             && !extendedProviders[extendedAlice]->capabilities().testFlag(Provider::Search)
             && !extendedProviders[extendedAlice]->capabilities().testFlag(Provider::PlaybackReporting)
-            && hub.capabilities().testFlag(Provider::Search)
-            && registry.hasCapability(extendedCarol, "suggestions"),
+            && hub.capabilities().testFlag(Provider::Search) && registry.hasCapability(extendedCarol, "suggestions"),
         "support loss hides aggregate controls without changing another account");
     const auto immutable = QCoro::waitFor(registry.callSource(extendedAlice, "state")).value("capabilities").toMap();
-    require(immutable.value("speedTest").toBool(),
-        "account offers never mutate the source host's package declarations");
+    require(
+        immutable.value("speedTest").toBool(), "account offers never mutate the source host's package declarations");
     QCoro::waitFor(registry.callSource(extendedCarol, "offers",
-        { { "capabilities", QVariantMap { { "suggestions", true }, { "speedTest", true }, { "itemActions", true } } } }));
+        { { "capabilities",
+            QVariantMap { { "suggestions", true }, { "speedTest", true }, { "itemActions", true } } } }));
     waitUntil([&] { return registry.hasCapability(extendedCarol, "speedTest"); },
         "new account offers refresh the existing provider");
-    require(hub.capabilities().testFlag(Provider::SpeedTest)
-            && !registry.hasCapability(extendedCarol, "itemActions"),
+    require(hub.capabilities().testFlag(Provider::SpeedTest) && !registry.hasCapability(extendedCarol, "itemActions"),
         "account offers cannot grant undeclared capabilities");
     for (const QVariant& invalidOffer : { QVariant(QVariantMap { { "suggestions", true }, { "unknown", true } }),
-             QVariant(QVariantMap { { "suggestions", true }, { "speedTest", 1 } }),
-             QVariant(QVariantList {}), QVariant(QStringLiteral("suggestions")), QVariant::fromValue(nullptr) }) {
+             QVariant(QVariantMap { { "suggestions", true }, { "speedTest", 1 } }), QVariant(QVariantList {}),
+             QVariant(QStringLiteral("suggestions")), QVariant::fromValue(nullptr) }) {
         QCoro::waitFor(registry.callSource(extendedCarol, "offers", { { "capabilities", invalidOffer } }));
         waitUntil([&] { return !registry.hasCapability(extendedCarol, "suggestions"); },
             "unknown or malformed offers withdraw the whole account offer");

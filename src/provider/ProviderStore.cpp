@@ -5,15 +5,26 @@
 #include "ProviderPackage.h"
 #include "ProviderRegistry.h"
 
+#include <QCoreApplication>
 #include <QCoroFuture>
 #include <QCoroNetworkReply>
 #include <QCryptographicHash>
+#include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QRegularExpression>
+#include <QTimer>
+#include <QUuid>
+
+#ifdef Q_OS_UNIX
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 
 namespace Spool {
 
@@ -25,6 +36,36 @@ namespace {
     QString text(const QVariantMap& map, const char *key)
     {
         return map.value(QLatin1String(key)).toString();
+    }
+
+    // Called only in a worker. On Unix, nonblocking open plus fstat also
+    // closes the regular-file -> FIFO substitution race.
+    bool openRegularFile(QFile& file, const QUrl& url)
+    {
+        if (!url.isLocalFile() || !QFileInfo(url.toLocalFile()).isFile())
+            return false;
+        file.setFileName(url.toLocalFile());
+#ifdef Q_OS_UNIX
+        const int fd = ::open(QFile::encodeName(url.toLocalFile()).constData(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+        if (fd < 0)
+            return false;
+        struct stat info {};
+        if (::fstat(fd, &info) != 0 || !S_ISREG(info.st_mode)
+            || !file.open(fd, QIODevice::ReadOnly, QFileDevice::AutoCloseHandle)) {
+            ::close(fd);
+            return false;
+        }
+        return true;
+#else
+        return file.open(QIODevice::ReadOnly);
+#endif
+    }
+
+    bool packageMagic(const QByteArray& magic)
+    {
+        return magic == QByteArrayLiteral("\x28\xb5\x2f\xfd")
+            || (magic.size() == 4 && (static_cast<unsigned char>(magic[0]) & 0xf0) == 0x50
+                && magic.mid(1) == QByteArrayLiteral("\x2a\x4d\x18"));
     }
 
     // A catalogue or feed entry is only usable with every field an install
@@ -58,7 +99,11 @@ ProviderStore::ProviderStore(ProviderRegistry *registry, DatabaseManager *databa
     , m_catalogBase(std::move(catalogBase))
     , m_sources(sources)
 {
-    connect(registry, &ProviderRegistry::modulesChanged, this, &ProviderStore::catalogChanged);
+    connect(registry, &ProviderRegistry::modulesChanged, this, [this] {
+        ++m_registryRevision;
+        cancelInspection();
+        emit catalogChanged();
+    });
     if (storeAvailable())
         Async::runScoped(this, loadOrigins(), [] { }, [](const std::exception_ptr&) { }, "provider origins");
 }
@@ -93,7 +138,7 @@ QUrl ProviderStore::feedUrlFor(const QString& input)
     if (path.endsWith(QStringLiteral(".json")))
         return url;
     // A package link from a release: its feed is published next to it.
-    if (path.endsWith(QStringLiteral(".tar.zst"))) {
+    if (path.endsWith(QStringLiteral(".szo")) || path.endsWith(QStringLiteral(".tar.zst"))) {
         url.setPath(path.left(path.lastIndexOf(QLatin1Char('/')) + 1) + QStringLiteral("spool-provider.json"));
         return url;
     }
@@ -261,13 +306,13 @@ QVariantList ProviderStore::community() const
             if (!module || shown.contains(id))
                 continue;
             const Origin origin = m_origins.value(id);
-            entries.append(QVariantMap { { QStringLiteral("id"), id },
-                { QStringLiteral("name"), module->manifest.name },
-                { QStringLiteral("summary"), module->manifest.summary },
-                { QStringLiteral("version"), module->manifest.version }, { QStringLiteral("format"), 3 },
-                { QStringLiteral("publisher"),
-                    origin.channel == QStringLiteral("url") ? origin.feed.host() : module->manifest.publisher },
-                { QStringLiteral("fromUrl"), origin.channel == QStringLiteral("url") } });
+            entries.append(
+                QVariantMap { { QStringLiteral("id"), id }, { QStringLiteral("name"), module->manifest.name },
+                    { QStringLiteral("summary"), module->manifest.summary },
+                    { QStringLiteral("version"), module->manifest.version }, { QStringLiteral("format"), 3 },
+                    { QStringLiteral("publisher"),
+                        origin.channel == QStringLiteral("url") ? origin.feed.host() : module->manifest.publisher },
+                    { QStringLiteral("fromUrl"), origin.channel == QStringLiteral("url") } });
         }
     }
     return annotate(entries);
@@ -380,13 +425,382 @@ void ProviderStore::addFromUrl(const QString& input)
     Async::runScoped(this, add(this, feed), [] { }, [](const std::exception_ptr&) { }, "provider add");
 }
 
+QVariantMap ProviderStore::inspectedPackage() const
+{
+    return m_inspection ? m_inspection->preview : QVariantMap {};
+}
+
+QString ProviderStore::provenance(const QString& id) const
+{
+    const ProviderModule *module = m_registry ? m_registry->module(id) : nullptr;
+    if (!module)
+        return {};
+    if (module->native)
+        return QStringLiteral("native");
+    if (module->bundled && !module->overridesBundled)
+        return QStringLiteral("bundled");
+    const QString channel = m_origins.value(id).channel;
+    if (channel == QStringLiteral("official") || channel == QStringLiteral("community")
+        || channel == QStringLiteral("url") || channel == QStringLiteral("file"))
+        return channel;
+    return QStringLiteral("unknown");
+}
+
+QVariantList ProviderStore::installedProviders() const
+{
+    QVariantList result;
+    if (m_registry) {
+        for (const QString& id : m_registry->moduleIds())
+            result.append(
+                QVariantMap { { QStringLiteral("id"), id }, { QStringLiteral("provenance"), provenance(id) } });
+    }
+    return result;
+}
+
+bool ProviderStore::permitsFileReplacement(const QString& id) const
+{
+    if (!m_registry)
+        return false;
+    const ProviderModule *module = m_registry->module(id);
+    return !module
+        || (!module->native && !module->bundled && !module->overridesBundled
+            && m_origins.value(id).channel == QStringLiteral("file"));
+}
+
+bool ProviderStore::isPackageCandidate(const QUrl& url) const
+{
+    // A cheap naming hint only. Content classification happens in a worker.
+    return url.isLocalFile() && url.fileName().endsWith(QStringLiteral(".szo"), Qt::CaseInsensitive);
+}
+
+QString ProviderStore::classifyFiles(const QVariantList& urls)
+{
+    const QString requestId = QUuid::createUuid().toString(QUuid::Id128);
+    if (m_classifying || urls.isEmpty() || urls.size() > 256) {
+        QTimer::singleShot(0, this, [this, requestId] {
+            emit filesClassified(
+                requestId, {}, {}, QStringLiteral("Choose up to 256 files after the current drop finishes."));
+        });
+        return requestId;
+    }
+    m_classifying = true;
+    QTimer::singleShot(0, this, [this, requestId, urls] {
+        struct Result {
+            QVariantList packages;
+            QVariantList media;
+            QString error;
+        };
+        const auto work = [urls] {
+            Result result;
+            for (const QVariant& value : urls) {
+                const QUrl url = value.toUrl();
+                if (!url.isValid() || url.isEmpty()) {
+                    result.error = QStringLiteral("The drop contains an invalid file location");
+                    break;
+                }
+                if (!url.isLocalFile()) {
+                    result.media.append(url);
+                    continue;
+                }
+                QFile file;
+                if (!openRegularFile(file, url)) {
+                    result.error = QStringLiteral("The drop contains an unreadable or special file");
+                    break;
+                }
+                const QByteArray magic = file.read(4);
+                if (file.error() != QFileDevice::NoError) {
+                    result.error = QStringLiteral("Couldn't inspect a dropped file");
+                    break;
+                }
+                if (url.fileName().endsWith(QStringLiteral(".szo"), Qt::CaseInsensitive) || packageMagic(magic))
+                    result.packages.append(url);
+                else
+                    result.media.append(url);
+            }
+            return result;
+        };
+        const auto classify
+            = [](decltype(work) work) -> QCoro::Task<Result> { co_return co_await Async::background(std::move(work)); };
+        Async::runScoped(
+            this, classify(work),
+            [this, requestId](Result result) {
+                m_classifying = false;
+                emit filesClassified(requestId, result.error.isEmpty() ? result.packages : QVariantList {},
+                    result.error.isEmpty() ? result.media : QVariantList {}, result.error);
+            },
+            [this, requestId](const std::exception_ptr&) {
+                m_classifying = false;
+                emit filesClassified(requestId, {}, {}, QStringLiteral("Couldn't classify the dropped files"));
+            },
+            "provider drop classification");
+    });
+    return requestId;
+}
+
+void ProviderStore::cancelInspection(const QString& operationId)
+{
+    if (!operationId.isEmpty() && operationId != m_inspectionRequestId && operationId != m_installingToken
+        && (!m_inspection || operationId != m_inspection->token))
+        return;
+    ++m_inspectionGeneration;
+    if (m_inspection) {
+        m_inspection.reset();
+        emit inspectedPackageChanged();
+    }
+}
+
+void ProviderStore::failInspection(const QString& requestId, const QString& error)
+{
+    emit fileInspectionFinished(requestId, {}, error);
+    emit problem(error);
+}
+
+QString ProviderStore::inspectFile(const QUrl& url)
+{
+    const QString requestId = QUuid::createUuid().toString(QUuid::Id128);
+    QString error;
+    if (!linksAllowed())
+        error = QStringLiteral("This version of Spool does not install providers from local files");
+    else if (m_inspecting || m_fileInstalling)
+        error = QStringLiteral("A provider file is already being processed. Please wait.");
+    else if (!url.isLocalFile())
+        error = QStringLiteral("Choose a local provider package file");
+    if (!error.isEmpty()) {
+        QTimer::singleShot(0, this, [this, requestId, error] { failInspection(requestId, error); });
+        return requestId;
+    }
+    cancelInspection();
+    m_inspectionRequestId = requestId;
+    m_inspecting = true;
+    const quint64 generation = m_inspectionGeneration;
+    setBusy(QStringLiteral("file"), QStringLiteral("inspecting"));
+    QTimer::singleShot(0, this, [this, url, generation, requestId] {
+        Async::runScoped(
+            this, inspectFileAsync(url, generation, requestId), [] {},
+            [this, requestId](const std::exception_ptr&) {
+                m_inspecting = false;
+                setBusy(QStringLiteral("file"), {});
+                failInspection(requestId, QStringLiteral("Couldn't inspect that provider package"));
+            },
+            "provider file inspection");
+    });
+    return requestId;
+}
+
+QCoro::Task<void> ProviderStore::inspectFileAsync(QUrl url, quint64 generation, QString requestId)
+{
+    QPointer<ProviderStore> guard(this);
+    co_await loadOrigins();
+    if (!guard)
+        co_return;
+    if (generation != m_inspectionGeneration) {
+        m_inspecting = false;
+        setBusy(QStringLiteral("file"), {});
+        emit fileInspectionFinished(requestId, {}, QStringLiteral("Provider inspection cancelled"));
+        co_return;
+    }
+    const quint64 revision = m_registryRevision;
+    struct Result {
+        std::optional<ProviderPackageContents> package;
+        QString digest;
+        QString error;
+    };
+    auto result = co_await Async::background([url = std::move(url)] {
+        Result result;
+        QFile file;
+        if (!openRegularFile(file, url)) {
+            result.error = QStringLiteral("Couldn't open that provider package");
+            return result;
+        }
+        if (file.size() <= 0 || file.size() > kPackageLimit) {
+            result.error = QStringLiteral("Provider package is empty or exceeds 16 MiB");
+            return result;
+        }
+        const QByteArray archive = file.read(kPackageLimit + 1);
+        if (file.error() != QFileDevice::NoError || !file.atEnd() || archive.size() > kPackageLimit) {
+            result.error = QStringLiteral("Couldn't read a bounded provider package");
+            return result;
+        }
+        result.package = ProviderPackage::read(archive, &result.error);
+        if (result.package)
+            result.digest = QString::fromLatin1(QCryptographicHash::hash(archive, QCryptographicHash::Sha256).toHex());
+        return result;
+    });
+    if (!guard)
+        co_return;
+    m_inspecting = false;
+    setBusy(QStringLiteral("file"), {});
+    if (generation != m_inspectionGeneration) {
+        emit fileInspectionFinished(requestId, {}, QStringLiteral("Provider inspection cancelled"));
+        co_return;
+    }
+    if (revision != m_registryRevision) {
+        failInspection(
+            requestId, QStringLiteral("Installed providers changed. Inspect the file again before approving it."));
+        co_return;
+    }
+    if (!result.package) {
+        // Decoder details may contain attacker-controlled paths; keep UI errors bounded.
+        failInspection(requestId, QStringLiteral("Invalid provider package: %1").arg(result.error.left(240)));
+        co_return;
+    }
+    const auto& manifest = result.package->manifest;
+    if (!permitsFileReplacement(manifest.id)) {
+        failInspection(requestId,
+            QStringLiteral("An unverified local file cannot replace this installed provider. "
+                           "Use its existing store or URL update source."));
+        co_return;
+    }
+    if (m_busy.contains(manifest.id)) {
+        failInspection(requestId,
+            QStringLiteral("That provider is already being changed. Inspect the file again when it finishes."));
+        co_return;
+    }
+    const ProviderModule *old = m_registry->module(manifest.id);
+    if (old && ProviderPackage::compareVersions(manifest.version, old->manifest.version) <= 0) {
+        failInspection(
+            requestId, QStringLiteral("A local-file update must have a newer version than the installed provider."));
+        co_return;
+    }
+    const QStringList oldCapabilities = old ? old->manifest.capabilities : QStringList {};
+    const QStringList oldOrigins = old ? old->manifest.origins : QStringList {};
+    const auto difference = [](const QStringList& left, const QStringList& right) {
+        QStringList result;
+        for (const QString& value : left) {
+            if (!right.contains(value) && !result.contains(value))
+                result.append(value);
+        }
+        return result;
+    };
+    auto inspection = std::make_unique<Inspection>();
+    inspection->token = QUuid::createUuid().toString(QUuid::Id128);
+    inspection->digest = std::move(result.digest);
+    inspection->registryRevision = revision;
+    inspection->generation = generation;
+    inspection->origin = m_origins.value(manifest.id);
+    inspection->preview = { { QStringLiteral("token"), inspection->token },
+        { QStringLiteral("sha256"), inspection->digest }, { QStringLiteral("id"), manifest.id },
+        { QStringLiteral("name"), manifest.name }, { QStringLiteral("summary"), manifest.summary },
+        { QStringLiteral("publisher"), manifest.publisher.left(256) }, { QStringLiteral("publisherVerified"), false },
+        { QStringLiteral("version"), manifest.version },
+        { QStringLiteral("installedVersion"), old ? old->manifest.version : QString() },
+        { QStringLiteral("provenance"), QStringLiteral("local-file") },
+        { QStringLiteral("installedProvenance"), provenance(manifest.id) },
+        { QStringLiteral("isUpdate"), old != nullptr }, { QStringLiteral("capabilities"), manifest.capabilities },
+        { QStringLiteral("origins"), manifest.origins },
+        { QStringLiteral("addedCapabilities"), difference(manifest.capabilities, oldCapabilities) },
+        { QStringLiteral("removedCapabilities"), difference(oldCapabilities, manifest.capabilities) },
+        { QStringLiteral("addedOrigins"), difference(manifest.origins, oldOrigins) },
+        { QStringLiteral("removedOrigins"), difference(oldOrigins, manifest.origins) },
+        { QStringLiteral("warning"),
+            old ? QStringLiteral("This local-file update is unverified and requires renewed trust. "
+                                 "Its code can access saved account credentials and active accounts may restart. "
+                                 "The claimed publisher and file hash do not authenticate the publisher.")
+                : QStringLiteral("This local file is unverified. Installing trusts its JavaScript and QML code "
+                                 "with credentials supplied to its accounts. The claimed publisher and file hash "
+                                 "do not authenticate the publisher.") } };
+    inspection->package = std::move(*result.package);
+    m_inspection = std::move(inspection);
+    const QVariantMap preview = m_inspection->preview;
+    emit inspectedPackageChanged();
+    emit fileInspectionFinished(requestId, preview, {});
+}
+
+void ProviderStore::installInspected(const QString& token)
+{
+    if (!linksAllowed() || !m_inspection || token.isEmpty() || token != m_inspection->token) {
+        const QString error = QStringLiteral("Provider approval expired. Inspect the file again.");
+        emit fileInstallationFinished(token, {}, error);
+        emit problem(error);
+        return;
+    }
+    const QString id = m_inspection->package.manifest.id;
+    if (m_inspection->registryRevision != m_registryRevision || !permitsFileReplacement(id)
+        || m_inspection->origin.channel != m_origins.value(id).channel
+        || m_inspection->origin.feed != m_origins.value(id).feed || m_busy.contains(id)) {
+        cancelInspection();
+        const QString error
+            = QStringLiteral("Installed providers changed. Inspect the file again before approving it.");
+        emit fileInstallationFinished(token, id, error);
+        emit problem(error);
+        return;
+    }
+    auto inspection = std::move(m_inspection);
+    m_fileInstalling = true;
+    m_installingToken = inspection->token;
+    m_transferProgress.insert(id,
+        QVariantMap { { QStringLiteral("name"), inspection->package.manifest.name },
+            { QStringLiteral("operationToken"), inspection->token }, { QStringLiteral("received"), 0 },
+            { QStringLiteral("total"), -1 } });
+    emit inspectedPackageChanged();
+    setBusy(id, QStringLiteral("installing"));
+    Async::runScoped(
+        this, installInspectedAsync(std::move(inspection)), [] { }, [](const std::exception_ptr&) { },
+        "provider file install");
+}
+
+QCoro::Task<void> ProviderStore::installInspectedAsync(std::unique_ptr<Inspection> inspection)
+{
+    QPointer<ProviderStore> guard(this);
+    const QString id = inspection->package.manifest.id;
+    const QString name = inspection->package.manifest.name;
+    const QString token = inspection->token;
+    const quint64 revision = inspection->registryRevision;
+    const quint64 generation = inspection->generation;
+    const Origin origin = inspection->origin;
+    const auto admitted = [guard, revision, generation, id, origin] {
+        return guard && guard->m_registry && guard->linksAllowed() && guard->m_registryRevision == revision
+            && guard->m_inspectionGeneration == generation && guard->permitsFileReplacement(id)
+            && guard->m_origins.value(id).channel == origin.channel && guard->m_origins.value(id).feed == origin.feed;
+    };
+    const auto progress = [guard, token, id](qint64 written, qint64 total) {
+        QMetaObject::invokeMethod(
+            QCoreApplication::instance(),
+            [guard, token, id, written, total] {
+                if (!guard || guard->m_installingToken != token || !guard->m_fileInstalling)
+                    return;
+                auto row = guard->m_transferProgress.value(id).toMap();
+                if (row.value(QStringLiteral("operationToken")).toString() != token)
+                    return;
+                row.insert(QStringLiteral("received"), written);
+                row.insert(QStringLiteral("total"), total);
+                guard->m_transferProgress.insert(id, row);
+                emit guard->busyChanged();
+            },
+            Qt::QueuedConnection);
+    };
+    try {
+        co_await m_registry->install(std::move(inspection->package), admitted, progress);
+        if (!guard)
+            co_return;
+        m_origins.insert(id, { QStringLiteral("file"), {} });
+        saveOrigins();
+        m_fileInstalling = false;
+        setBusy(id, {});
+        m_installingToken.clear();
+        m_inspectionRequestId.clear();
+        emit fileInstallationFinished(token, id, {});
+        emit installed(id, name);
+    } catch (const std::exception&) {
+        if (!guard)
+            co_return;
+        m_fileInstalling = false;
+        setBusy(id, {});
+        m_installingToken.clear();
+        m_inspectionRequestId.clear();
+        const QString error = QStringLiteral("Couldn't install that provider file. Inspect it again before retrying.");
+        emit fileInstallationFinished(token, id, error);
+        emit problem(error);
+    }
+}
+
 bool ProviderStore::allows(const Origin& origin) const
 {
     switch (m_sources) {
     case ProviderSources::Bundled:
         return false;
     case ProviderSources::Curated:
-        return origin.channel != QStringLiteral("url");
+        return origin.channel == QStringLiteral("official") || origin.channel == QStringLiteral("community");
     case ProviderSources::Open:
         return true;
     }
@@ -400,6 +814,10 @@ QCoro::Task<void> ProviderStore::installEntry(QVariantMap entry, Origin origin)
     // Every download comes through here, so this is the one gate.
     if (!allows(origin)) {
         qWarning("providers: %s is not from a source this build installs from", qPrintable(id));
+        co_return;
+    }
+    if (m_busy.contains(id)) {
+        emit problem(QStringLiteral("That provider is already being changed. Please wait."));
         co_return;
     }
     if (entry.value(QStringLiteral("format")).toInt() != 3) {
@@ -428,7 +846,7 @@ QCoro::Task<void> ProviderStore::installEntry(QVariantMap entry, Origin origin)
             co_return;
         if (!package || package->manifest.id != id || package->manifest.version != text(entry, "version"))
             throw std::runtime_error("package_mismatch");
-        co_await m_registry->install(*package);
+        co_await m_registry->install(*package, [guard] { return guard && guard->m_registry; });
         if (!guard)
             co_return;
         co_await loadOrigins();
@@ -486,6 +904,8 @@ QCoro::Task<void> ProviderStore::checkAsync(QString policy)
         QVariantMap latest;
         if (!allows(origin))
             continue;
+        if (origin.channel == QStringLiteral("file"))
+            continue; // Unverified local updates always require a fresh inspection and consent.
         if (origin.channel == QStringLiteral("url")) {
             try {
                 latest = QJsonDocument::fromJson(co_await fetch(origin.feed, kCatalogLimit)).object().toVariantMap();

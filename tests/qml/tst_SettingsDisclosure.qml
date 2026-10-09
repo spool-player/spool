@@ -135,4 +135,61 @@ TestCase {
         verify(settingsList.activeFocus)
         compare(containmentCount, 1)
     }
+
+    function test_offscreenAnchorRecoveryGesture_data() {
+        return [
+                    {
+                        tag: "right",
+                        key: Qt.Key_Right
+                    },
+                    {
+                        tag: "left",
+                        key: Qt.Key_Left
+                    },
+                    {
+                        tag: "down",
+                        key: Qt.Key_Down
+                    },
+                    {
+                        tag: "up",
+                        key: Qt.Key_Up
+                    }
+                ]
+    }
+
+    function test_offscreenAnchorRecoveryGesture(data) {
+        for (let index = 0; index < 8; ++index)
+            rowsModel.append({
+                                 "rowKey": "extra/" + index,
+                                 "showHeader": false,
+                                 "sourceIndex": 30 + index
+                             })
+        settingsList.forceLayout()
+        settingsList.currentIndex = 0
+        settingsList.contentY = 200
+        wait(0)
+        const viewportY = settingsList.contentY
+        const gesture = {
+            "key": 0
+        }
+        verify(SettingsNavigation.consumeRecoveryGesture(settingsList, testCase, Primitives.InputKeys, gesture, data.key,
+                                                         "press", false))
+        compare(settingsList.contentY, viewportY)
+        verify(settingsList.currentIndex > 0)
+        verify(settingsList.activeFocus)
+        const recoveredIndex = settingsList.currentIndex
+        verify(SettingsNavigation.consumeRecoveryGesture(settingsList, testCase, Primitives.InputKeys, gesture, data.key,
+                                                         "press", true))
+        verify(SettingsNavigation.consumeRecoveryGesture(settingsList, testCase, Primitives.InputKeys, gesture, data.key,
+                                                         "release", true))
+        verify(SettingsNavigation.consumeRecoveryGesture(settingsList, testCase, Primitives.InputKeys, gesture, data.key,
+                                                         "press", true))
+        compare(settingsList.currentIndex, recoveredIndex)
+        compare(settingsList.contentY, viewportY)
+        verify(SettingsNavigation.consumeRecoveryGesture(settingsList, testCase, Primitives.InputKeys, gesture, data.key,
+                                                         "release", false))
+        // A fresh physical gesture now navigates/edits from the recovered row.
+        verify(!SettingsNavigation.consumeRecoveryGesture(settingsList, testCase, Primitives.InputKeys, gesture,
+                                                          data.key, "press", false))
+    }
 }

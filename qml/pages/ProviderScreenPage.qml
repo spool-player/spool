@@ -1,55 +1,84 @@
 import QtQuick
+import QtQuick.Layouts
 import "../shell"
-import "../primitives"
 import "../theme"
+import "../primitives"
 
-// The route for a provider's sign-in or settings screen.
-ProviderSurface {
+// Login, private approval and account settings stay provider-owned.
+FocusScope {
     id: page
-
     property var shell
+    readonly property var context: shell ? shell.routeArgs.context : null
+    readonly property var installedModule: context ? Providers.modules.find(module => module.id === context.moduleId) :
+                                                     null
 
-    context: shell ? shell.routeArgs.context : null
-    property bool completing: false
-    property string completionError: ""
-    onFinished: (result, cancelled) => {
-        if (!cancelled && context && context.role === "login") {
-            completing = true
-            return
-        }
-        // Signing in lands on home through Providers.accountAdded; anything
-        // else goes back to where it was opened from.
-        if (Router.route === "providerScreen" && Router.canPop)
-            Router.pop("accounts")
+    focus: true
+
+    function routeKey(key, phase, repeat) {
+        return surface.routeKey(key, phase, repeat)
     }
-    Connections {
-        target: Providers
-        function onProblem(message) {
-            if (page.completing)
-                page.completionError = message
-        }
+    function activate() {
+        return surface.activate()
     }
+    function back() {
+        return surface.back()
+    }
+
     Rectangle {
         anchors.fill: parent
-        visible: page.completing
         color: Theme.bg
-        Column {
-            anchors.centerIn: parent
-            spacing: Metrics.scaled(20)
-            BusySpinner {
-                anchors.horizontalCenter: parent.horizontalCenter
-                width: Metrics.scaled(36)
-                height: width
-                running: page.completing && !page.completionError
-            }
+    }
+    RowLayout {
+        id: header
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.margins: Metrics.pageMarginPx
+        spacing: Metrics.scaled(14)
+        IconButton {
+            iconName: "arrow_back"
+            accessibleName: "Back"
+            onClicked: page.back()
+        }
+        ProviderIcon {
+            Layout.preferredWidth: Metrics.scaled(34)
+            Layout.preferredHeight: width
+            source: page.installedModule ? page.installedModule.iconUrl : ""
+            name: page.installedModule ? page.installedModule.name : ""
+            seed: page.context ? page.context.moduleId : ""
+        }
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: Metrics.scaled(2)
             AppText {
-                text: page.completionError || "Opening your library…"
+                Layout.fillWidth: true
+                text: page.installedModule ? page.installedModule.name : "Provider"
+                font.pixelSize: Metrics.bodySizePx + Metrics.scaled(2)
+                font.weight: Font.DemiBold
+                elide: Text.ElideRight
             }
-            ActionButton {
-                visible: page.completionError.length > 0
-                text: "Back"
-                onClicked: Router.pop("accounts")
+            SecondaryText {
+                Layout.fillWidth: true
+                text: page.installedModule ? "Installed provider version " + page.installedModule.version : ""
+                elide: Text.ElideRight
             }
+        }
+    }
+    ProviderSurface {
+        id: surface
+        anchors.top: header.bottom
+        anchors.topMargin: Metrics.scaled(12)
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        embedded: true
+        context: page.context
+        onFinished: (result, cancelled) => {
+            if (!cancelled && context && context.role === "login")
+                // Setup admission already opens its actionable profile tile.
+                return
+            if (Router.route === "providerScreen" && Router.canPop)
+                Router.pop("accounts")
         }
     }
 }

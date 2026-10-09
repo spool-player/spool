@@ -24,7 +24,7 @@ working packages must not be described as already published releases.
 
 | | |
 | --- | --- |
-| `ProviderPackage` | Reads a `.tar.zst` using the official libzstd library, validates manifest format 3 and every path, installs versions through a staging directory |
+| `ProviderPackage` | Reads `.szo` (ustar compressed with official libzstd), validates manifest format 3 and every path, stages inert files before registry admission and atomic activation |
 | `ProviderRegistry` | Every module (bundled at `qrc:/providers/<id>/`, installed under the data directory; newest wins) and every account. Starts enabled accounts, owns setup drafts, screens (`ProviderUiContext`) and `pick()` |
 | `ScriptRuntime` / `ScriptBridge` | One worker thread and QJSEngine per module; `createSource(configuration, host)` per account; host HTTP, sockets, timers, discovery, events. Only snake_case error codes cross back |
 | `PortableProvider` | One running account as a `Provider`: catalogue, search, item state, playback and artwork from its operations and URL templates |
@@ -103,12 +103,70 @@ database (`providers/accounts/2`); configuration, which holds tokens, lives in t
 store and is read off the GUI thread. Accounts in the same group (users of one server) are
 alternatives: using one sets the others aside. Accounts in different groups are shown together.
 
-Saved accounts open Home by default, combining the selected viewer on each
-independent server. A startup activation requiring a PIN remains locked without
-opening a chooser. **Profiles & servers** explicitly switches watching users;
-pending selection returns Home only after successful activation. A cancelled
-switch leaves the current viewer unchanged. Search uses these same selected
-identities, never saved alternative profiles or a union of their permissions.
+Viewers that are alternatives to one another form a **profile set**: one
+provider activation family (such as a Plex Home, which spans its servers) or,
+without one, one provider group (the users of one server). One person per set
+watches at a time; independent sets appear on Home together. Choosing a person
+in a family brings their other saved servers along, authorized by the in-memory
+family proof rather than another PIN. Providers own sign-in and any PIN; the host
+only groups what they describe and never assumes a Home API.
+
+Each set has a device-local startup choice, persisted with the account metadata.
+After adding any provider, select the watching profile, then choose **Always use
+this profile** or **Choose a profile at startup**. This includes single-user and
+account-free providers. Without a choice the last-used viewer opens. A pinned profile
+opens even when another was used later, but the provider still sees the honest
+last-used flag, so a protected profile stays locked rather than skipping its PIN.
+Only the active, authorized viewer can be pinned. When a set asks, its viewers stay
+stopped and **Who's watching?** opens at launch for those sets only; other sets
+start normally. The chooser precedes recovered routes after shell close, memory
+reclaim or a crash; Home cannot bypass an unanswered set. Startup activation never
+opens a PIN chooser.
+The preference applies to the viewer actually selected, including a previously
+saved viewer chosen instead of the newly added account; finishing clears the
+new account's onboarding marker.
+
+Installed providers are reachable from **Profiles & servers** and each profile set's
+**Provider settings** button. The provider detail page shows the installed package
+version (not a server version), recorded installation provenance and update status,
+then saved accounts identified by account ID. Account settings mount the provider's
+existing settings surface; opening this page never activates a locked viewer.
+Reconnect, profile activation and PIN approval remain explicit provider-owned flows.
+Watching-profile tiles and linked login choices carry the installed provider logo
+at bottom-left and version at bottom-right, with complete provider/version text for
+assistive technology. Compact login tiles retain their lock badge above the stamps.
+
+**Profiles & servers** shows each set with its server(s), its startup choice and
+Add profile, then one tile per person. Tiles carry one short state (Watching,
+Opening…, PIN required, Couldn't open, Sign in again, Removing…). An actionable
+failure appears once beside its profile as an accessible alert, never as a raw
+provider code or duplicated toast. A pending switch can be cancelled with Back or
+the remotely focusable Cancel button, leaving the
+current viewer unchanged. Every tile has a menu (Menu key, hold, right-click) with
+Remove, even while its activation is pending or has failed; removal cancels the
+pending activation and never requires a successful one. Selection returns Home only
+after successful activation. Search uses these same selected identities, never
+saved alternative profiles or a union of their permissions.
+Server controls wrap below their label at narrow widths. Startup preference
+buttons stay entirely visible, with Up/Down as well as Left/Right remote navigation.
+Login admission opens that profile immediately, so unfinished or failed activation
+can be cancelled, retried or removed without waiting behind a login spinner.
+An incompatible catalogue update does not block signing in to an already installed,
+validated provider; the incompatible package itself still cannot be installed.
+
+Add profile and Sign in again carry the selected server into setup; the viewer
+does not re-enter its address. `beginSetup(moduleId, accountId, purpose)` validates
+that the selected account belongs to the provider. Login QML receives only
+`arguments.setupContext` (account/server identity, public origin and purpose).
+The provider factory privately receives `setupAccount`, its own retained
+configuration, and decides whether household credentials can be reused. Reconnect
+must return the saved account/server identity. Draft `configuration` events store
+credentials privately until setup commits; they need not travel through QML.
+Removal shows its state immediately and settles locally within three seconds even
+if best-effort server sign-out never answers.
+Approving another server extends the existing login draft in place: private
+link/member selection and retained provider state survive origin approval. This
+login authority does not require the optional saved-account `originGrants` offer.
 
 Changing the browsed account set immediately removes unavailable accounts from the
 library list, Continue Watching, Next Up and Recently Added while retaining the
@@ -158,11 +216,45 @@ On first launch after upgrading, sign-ins saved by the old native Jellyfin clien
   remain unchanged; empty overrides preserve release behavior. Pin published release assets.
 - **Store**: spool-player/spool-providers lists reviewed releases; first-party ids (`spool.*`) follow
   their own releases automatically, community ones change through pull requests.
-- **Link**: a GitHub or GitLab project, a release's `.tar.zst`, or any site serving
-  `spool-provider.json`. Updated from the same feed.
+- **Link**: a GitHub or GitLab project, a release package link, or any site serving
+  `spool-provider.json`. Updated from the same feed. Future packages use `.szo`
+  (Spool Zstandard Object); existing published `.tar.zst` URLs remain valid transport names.
+- **Local file** (open builds only): inspect a bounded package without executing JS/QML,
+  loading candidate icons, starting accounts or changing the installation. Host confirmation
+  shows supplied, unverified publisher text, installed → incoming version, provenance,
+  declared capabilities/network scope and their differences, and code/credential trust.
+  Cancel invalidates consent without changing installed code or saved accounts.
 
 Every download is installed only when its SHA-256 matches the entry. Installing a newer version
 restarts that module's accounts in place.
+
+`Store.inspectFile(fileUrl)` returns a request ID and asynchronously reports
+`fileInspectionFinished(requestId, preview, error)`, also publishing `inspectedPackage`.
+The preview's opaque token binds exact validated contents and the installed-provider revision.
+`installInspected(token)` consumes that approval without rereading the pathname, and reports
+`fileInstallationFinished(token, moduleId, error)`. A changed pathname cannot swap approved bytes.
+`cancelInspection(operationId)` cancels only its matching inspection/consent/install; omitting
+the argument cancels the current operation. Still-staging cancellation prevents activation.
+Staging never mounts candidate code; the registry rechecks lifetime, per-module revision and
+consent immediately before activation. Local transfer rows carry `operationToken` and actual
+committed staging-file byte counts. Consumers retain modal input ownership until their matching
+completion, never advancing from unrelated global `problem`/`installed` signals.
+
+A matching module ID, claimed publisher or supplied digest is not distribution authentication.
+Unverified local files cannot replace native, bundled, official, community, URL or unknown
+installed identities. Only an existing file-installed provider may receive a newer local-file
+version, with renewed explicit consent every time. Saved accounts, their credentials,
+session identity and approved origins remain registry-owned; install approval is not login,
+PIN, LAN or network-origin approval. File providers are never automatically updated from
+a catalogue/feed, and installation does not change the device's update policy.
+
+`Store.classifyFiles(urls)` returns a request ID and reports
+`filesClassified(requestId, packages, media, error)` after bounded worker-thread content sniffing.
+Special files are rejected before opening; Unix nonblocking open and handle validation also
+reject a regular-file-to-FIFO substitution. Neither package decoding nor file reads run on
+the GUI thread. `isPackageCandidate(fileUrl)` is a suffix-only `.szo` naming hint, not content
+validation or trust. Malformed candidates remain inspection errors, not fallback media.
+`Store.installedProviders` exposes only module IDs and safe provenance channel names.
 
 Stremio owns its add-on setup/settings and stream/torrent-file picker. It reads
 trusted Stremio add-on catalogues and metadata; HTTP streams play directly,

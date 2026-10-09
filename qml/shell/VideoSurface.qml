@@ -9,6 +9,9 @@ FocusScope {
     property bool mediaInfoVisible: false
     property bool diagnosticsVisible: false
     readonly property bool directionRelease: true
+    readonly property bool modalInputActive: playerOverlay.subtitleSettingsVisible || playerOverlay.audioSyncVisible
+                                             || playerOverlay.queuePanelVisible || playerOverlay.browsePanelVisible
+                                             || playerOverlay.isMenuOpen()
     readonly property bool titlebarVisible: !active || playerOverlay.controlsVisible
     onTitlebarVisibleChanged: {
         if (Qt.platform.os === "osx")
@@ -57,6 +60,13 @@ FocusScope {
     function openPlaybackSettings() {
         playerOverlay.openMenu("debug")
         focusInput()
+    }
+
+    function openPlaybackSetting(key) {
+        if (!active || !playerOverlay.openPlaybackSetting(key))
+            return false
+        focusInput()
+        return true
     }
 
     function toggleOsd() {

@@ -539,6 +539,19 @@ FocusScope {
         autohide.stop()
     }
 
+    function openPlaybackSetting(key) {
+        if (key !== "settings/audioDelayMs" || !hasPlayer || !player.visible)
+            return false
+        subtitleSettingsVisible = false
+        queuePanelVisible = false
+        browsePanelVisible = false
+        chrome.closeSyncPlayMenu()
+        openAudioSync()
+        syncTarget = "audioOutput"
+        audioSyncRow = "delay"
+        return true
+    }
+
     function openSubtitleSync() {
         menuKind = ""
         syncTarget = "subtitle"
@@ -826,7 +839,7 @@ FocusScope {
         if (hasPlayer && player.backAllowed) {
             if (reason === "overlay-back")
                 playbackBackRequested(currentQueueItem)
-            player.stopWithReason(reason)
+            player.stopWithReason(reason, true)
         }
         return true
     }

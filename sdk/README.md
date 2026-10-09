@@ -41,8 +41,10 @@ assets/            icon and anything else the screens show
 - `origins` are reachable by every account; `*` allows any HTTP(S) origin. Anything else an account
   reaches is what its login screen allowed with `provider.allowOrigin(url)`.
 - `actions` appear in the item menu for the listed types and run through `runItemAction`.
-- Packages are `.tar.zst` (ustar, zstd), at most 16 MiB, 512 files, 32 MiB expanded. Paths are
-  relative, without hidden parts, of the listed types; links and native binaries are refused.
+- Packages use `.szo` (Spool Zstandard Object): unchanged ustar compressed with zstd,
+  at most 16 MiB, 512 files, 32 MiB expanded. Paths are relative, without hidden parts,
+  of the listed types; links and native binaries are refused. Published archive URLs
+  remain opaque transport names; existing `.tar.zst` releases stay valid.
 - `format: 3` is the only package schema gate. The manifest has no `api` or
   `extensions` fields; packages containing either are rejected.
 - `capabilities` is required: an array of at most 24 known names, with no
@@ -50,9 +52,9 @@ assets/            icon and anything else the screens show
   Account availability is reported separately; see [Capabilities](#capabilities).
 
 ```
-python3 sdk/spool-provider.py build path/to/provider           # dist/<id>-<version>.tar.zst
-python3 sdk/spool-provider.py validate dist/<id>-<version>.tar.zst
-python3 sdk/spool-provider.py feed dist/<id>-<version>.tar.zst --url https://…/<id>-<version>.tar.zst
+python3 sdk/spool-provider.py build path/to/provider           # dist/<id>-<version>.szo
+python3 sdk/spool-provider.py validate dist/<id>-<version>.szo
+python3 sdk/spool-provider.py feed dist/<id>-<version>.szo --url https://…/<id>-<version>.szo
 ```
 
 Building is reproducible. It needs Python 3.14, or the `zstd` command on older Pythons.
@@ -482,6 +484,20 @@ current details page with a dimmed background and returns its completed argument
 to resolution. Closing cancels the pending choice; it does not replace the details
 route. Providers can compose sections within their screens (for example, an inline
 Quick Connect code underneath password sign-in).
+
+When Add profile or Sign in again targets a saved account, login QML receives
+`provider.arguments.setupContext` with `accountId`, `serverId`, `serverName`,
+`serverOrigin` and `purpose` (`addProfile` or `reconnect`). These are nonsecret
+identity hints, not authentication or permission grants. The source factory
+privately receives `{setupContext, setupAccount}`, where `setupAccount` is that
+provider's retained account configuration. Decide inside provider logic whether
+its owner/household session can authorize selecting another viewer; never expose
+it to QML or borrow the existing viewer's media permissions. A reconnect must
+complete as the original account/server. Providers may emit `configuration` from
+a draft before completing with public account/label/group/detail metadata; the
+host commits that private configuration only after successful activation.
+`ServerLogin.setupContextOperation` can name a provider operation returning
+`{server}` to skip address entry while preserving provider-owned base paths.
 
 `remoteTargets` supplies the shared device dropdown's target, state, command
 and queue data. Set a target's `customControls` when it also needs provider-owned

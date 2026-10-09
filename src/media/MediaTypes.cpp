@@ -671,8 +671,10 @@ bool isMeaningfulResumePosition(qint64 resumeTicks, qint64 runtimeTicks)
     if (runtimeTicks <= 0)
         return true;
 
-    const qint64 remainingTicks = runtimeTicks - resumeTicks;
-    return resumeTicks < runtimeTicks && resumeTicks * 100 < runtimeTicks * 95 && remainingTicks > 30 * kTicksPerSecond;
+    // Near-end position is still progress until an explicit watched mutation.
+    // Completion percentage belongs to the player's stop policy, not to every
+    // screen's resume normalization.
+    return resumeTicks < runtimeTicks;
 }
 
 qint64 normalizedResumeTicks(qint64 resumeTicks, qint64 runtimeTicks)

@@ -45,6 +45,7 @@ function(spool_add_mobile_test_bundles)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/providers/fixtures/*"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/diagnostics/fixtures/*"
         "${CMAKE_CURRENT_SOURCE_DIR}/providers/bundled/*.tar.zst"
+        "${CMAKE_CURRENT_SOURCE_DIR}/providers/bundled/*.szo"
         "${CMAKE_CURRENT_SOURCE_DIR}/qml/fonts/*.ttf"
         "${CMAKE_CURRENT_SOURCE_DIR}/qml/fonts/*.otf")
     list(APPEND fixture_files

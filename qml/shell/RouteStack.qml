@@ -29,6 +29,7 @@ FocusScope {
     function pageKey(nextRoute) {
         switch (nextRoute) {
         case "accounts":
+        case "providerDetails":
         case "addProvider":
         case "providerScreen":
         case "libraryGrid":
@@ -58,6 +59,8 @@ FocusScope {
         switch (key) {
         case "accounts":
             return Qt.resolvedUrl("../pages/AccountsPage.qml")
+        case "providerDetails":
+            return Qt.resolvedUrl("../pages/ProviderDetailsPage.qml")
         case "addProvider":
             return Qt.resolvedUrl("../pages/AddProviderPage.qml")
         case "providerScreen":
@@ -168,6 +171,15 @@ FocusScope {
                 previous.visible = false
         }
         InputKeys.focus(item)
+        if (route === "subtitleSettings" && root.shell) {
+            const args = root.shell.routeArgs || ({})
+            if (args.advanced && !item.advancedExpanded) {
+                item.advancedExpanded = true
+                item.rebuildRows(false)
+            }
+            if (args.rowKey)
+                item.focusSetting(String(args.rowKey))
+        }
         activeRoute = route
         // A page with nothing to wait for is settled the moment it exists and
         // never emits a readiness change, so ask here as well.

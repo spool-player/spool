@@ -140,6 +140,10 @@ struct SettingSpec {
     bool requiresHdrPlayback = false;
     SettingSyncPolicy syncPolicy = SettingSyncPolicy::Never;
     const char *nativePreference = "";
+    const char *categoryId = "";
+    const char *searchKeywords = "";
+    const char *destinationKey = "";
+    const char *destination = "category";
 
     // Declaration modifiers. Each returns a copy so specs read as one
     // expression: slider(...).advanced().onDesktop().

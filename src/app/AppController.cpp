@@ -104,6 +104,8 @@ AppController::AppController(
 {
     m_playQueue = new PlayQueueController(m_playback, this);
     const auto updateReportingQueue = [this] {
+        if (m_player->localPlaylist())
+            return;
         QHash<QString, bool> audioItems;
         audioItems.reserve(m_playQueue->count());
         for (int row = 0; row < m_playQueue->count(); ++row) {
@@ -137,13 +139,55 @@ AppController::AppController(
         m_provider->setPlaybackQueue(std::move(entries), current);
     };
     connect(m_playQueue, &PlayQueueController::queueChanged, this, updateReportingQueue);
+    connect(m_player, &PlayerController::localPlaylistChanged, this, [this] {
+        if (!m_player->localPlaylist()) {
+            m_playQueue->clear();
+            return;
+        }
+        std::vector<MovieItem> items;
+        int currentIndex = -1;
+        const QVariantList entries = m_player->localPlaylistEntries();
+        items.reserve(entries.size());
+        for (const QVariant& value : entries) {
+            const QVariantMap row = value.toMap();
+            MovieItem item;
+            item.playlistItemId = row.value(QStringLiteral("id")).toString();
+            item.id = QStringLiteral("local-playlist:") + item.playlistItemId;
+            item.title = row.value(QStringLiteral("title")).toString();
+            item.itemType = QStringLiteral("Video");
+            if (row.value(QStringLiteral("current")).toBool())
+                currentIndex = static_cast<int>(items.size());
+            items.push_back(std::move(item));
+        }
+        m_playQueue->setShuffled(false);
+        if (!items.empty())
+            m_playQueue->playNow(items, std::max(0, currentIndex), true);
+        else
+            m_playQueue->clear();
+    });
+    connect(m_player, &PlayerController::localEntryEnded, this, [this](const QString&, qint64, bool) {
+        if (!m_player->errorText().isEmpty())
+            showToast(m_player->errorText());
+    });
     m_settings = new SettingsController(database, player, artwork, this);
+    const auto applyWatchedThreshold = [this] {
+        m_player->setWatchedThresholdPercent(
+            m_settings->value(QStringLiteral("playback/watchedThresholdPercent")).toInt());
+    };
+    applyWatchedThreshold();
+    connect(m_settings, &SettingsController::settingChanged, this, [applyWatchedThreshold](const QString& key) {
+        if (key == QStringLiteral("playback/watchedThresholdPercent"))
+            applyWatchedThreshold();
+    });
     m_prefetch = new LibraryPrefetchController(m_catalog, artwork, this);
     m_browse = new BrowseSessionController(m_prefetch, this);
     m_home = new HomeModelController(database, m_catalog, m_prefetch, this);
+    m_home->attachSettings(m_settings);
     m_content = new ContentModelController(m_catalog, m_prefetch, this);
     m_search = new SearchController(provider->search(), m_prefetch, this);
     m_itemState = new UserItemStateController(provider->itemState(), m_browse, m_home, m_content, m_search, this);
+    connect(m_player, &PlayerController::watchedPersistenceRequested, m_itemState,
+        &UserItemStateController::persistPlaybackWatched);
     connect(m_itemState, &UserItemStateController::playedChanged, m_playQueue, &PlayQueueController::updatePlayed);
     m_group = new GroupPlaybackController(provider, player, m_playQueue, this);
     connect(m_group, &GroupPlaybackController::errorText, this, &AppController::showToast);
@@ -298,7 +342,7 @@ AppController::AppController(
     // the next thing that plays starts where this one ended up rather than
     // dropping frames again on the way to the same conclusion.
     connect(m_player, &PlayerController::renderQualityStrained, this, [this](qint64 droppedFrames) {
-        if (!m_settings || !m_player->sessionActive() || !m_player->fileLoaded() || m_busy)
+        if (!m_settings || m_player->localPlaylist() || !m_player->sessionActive() || !m_player->fileLoaded() || m_busy)
             return;
         const QString lowered = m_settings->stepDownRenderQuality();
         if (lowered.isEmpty())
@@ -444,6 +488,7 @@ QCoro::Task<void> AppController::initializeAsync()
         qInfo() << "app: another instance holds the stored device identity; running as instance" << instanceSlot + 1;
     }
     m_settings->applyLocalValues(startupState.values);
+    m_player->setWatchedThresholdPercent(m_settings->value(QStringLiteral("playback/watchedThresholdPercent")).toInt());
     if (m_settingsSync)
         co_await m_settingsSync->loadLocalAsync();
     emit deviceIdentityReady(deviceId);
@@ -682,8 +727,41 @@ void AppController::stopPlayback()
     m_player->stop();
 }
 
+void AppController::playLocalFiles(const QList<QUrl>& urls, bool append)
+{
+    if (urls.isEmpty())
+        return;
+    if (append) {
+        if (!m_player->appendLocalFiles(urls))
+            showToast(QStringLiteral("Add to queue is available during local file playback."));
+        return;
+    }
+    // Explicit local play never routes through a selected remote target or inherits provider authorization.
+    if (inGroup()) {
+        showToast(QStringLiteral("Leave the playback group before opening local files."));
+        return;
+    }
+    m_playbackLoadGeneration.invalidate();
+    m_playQueue->cancelEpisodeSuccessors();
+    cancelEpisodicPlaybackSelection();
+    setBusy(false);
+    setPlaybackTransition(false);
+    if (m_player->sessionActive())
+        m_player->stopWithReason(QStringLiteral("local-file-switch"));
+    m_activePlaybackItem = {};
+    m_playingAccountId.clear();
+    m_playQueue->clear();
+    m_player->playLocalFiles(urls);
+    if (!m_player->sessionActive() && !m_player->errorText().isEmpty())
+        showToast(m_player->errorText());
+}
+
 void AppController::playQueueNext()
 {
+    if (m_player->localPlaylist()) {
+        m_player->stepLocalPlaylist(1);
+        return;
+    }
     if (m_remoteTargets && !m_remoteTargets->selection().targetId.isEmpty()) {
         m_remoteTargets->send({ { QStringLiteral("action"), QStringLiteral("next") } });
         return;
@@ -708,6 +786,10 @@ void AppController::playLocalQueueNext(PlayDestination destination)
 
 void AppController::playQueuePrevious()
 {
+    if (m_player->localPlaylist()) {
+        m_player->stepLocalPlaylist(-1);
+        return;
+    }
     if (m_remoteTargets && !m_remoteTargets->selection().targetId.isEmpty()) {
         m_remoteTargets->send({ { QStringLiteral("action"), QStringLiteral("previous") } });
         return;
@@ -732,6 +814,10 @@ void AppController::playLocalQueuePrevious(PlayDestination destination)
 
 void AppController::playQueueItem(int index)
 {
+    if (m_player->localPlaylist()) {
+        m_player->selectLocalPlaylistEntry(queueEntryId(index));
+        return;
+    }
     if (m_remoteTargets && !m_remoteTargets->selection().targetId.isEmpty()) {
         playFromModel(m_playQueue, index, false);
         return;
@@ -756,11 +842,15 @@ void AppController::playQueueItem(int index)
 // PlayQueue broadcast is what settles the order a moment later.
 bool AppController::previewQueueMoveRange(int from, int count, int to)
 {
+    if (m_player->localPlaylist())
+        return m_player->moveLocalPlaylistRange(from, count, to);
     return m_playQueue->moveRange(from, count, to);
 }
 
 void AppController::commitQueueMoveRange(int from, int count, int to)
 {
+    if (m_player->localPlaylist())
+        return;
     if (from == to || count <= 0 || !inGroup())
         return;
     // The preview has already laid the block down at `to`, so publish the rows
@@ -771,6 +861,10 @@ void AppController::commitQueueMoveRange(int from, int count, int to)
 
 void AppController::removeQueueItem(int index)
 {
+    if (m_player->localPlaylist()) {
+        m_player->removeLocalPlaylistEntry(queueEntryId(index));
+        return;
+    }
     if (inGroup()) {
         // No local edit: a removal is a single action with nothing to animate,
         // so let the group's broadcast be the one thing that changes the queue.
@@ -1574,15 +1668,16 @@ void AppController::selectStreamingQuality(qint64 bitrate, int height)
         "playback quality change");
 }
 
-void AppController::handlePlaybackStopped(const QString& itemId, qint64 positionTicks, bool completed)
+void AppController::handlePlaybackStopped(
+    const QString& itemId, qint64 positionTicks, bool watched, bool reachedEnd, quint64 reportId)
 {
-    qInfo() << "app: playback stopped" << itemId << positionTicks << completed;
-    const MovieItem successor = completed && itemId == m_activePlaybackItem.id
+    qInfo() << "app: playback stopped" << itemId << positionTicks << watched << reachedEnd;
+    const MovieItem successor = watched && itemId == m_activePlaybackItem.id
         ? m_playQueue->nextUnplayedEpisode(m_activePlaybackItem)
         : MovieItem {};
-    m_itemState->recordPlaybackStopped(m_activePlaybackItem, itemId, positionTicks, completed, successor);
-    m_playQueue->updateResumeTicks(itemId, completed ? 0 : positionTicks);
-    if (!completed || m_activePlaybackItem.id != itemId || inGroup()) {
+    m_itemState->recordPlaybackStopped(m_activePlaybackItem, itemId, positionTicks, watched, successor, reportId);
+    m_playQueue->updateResumeTicks(itemId, watched ? 0 : positionTicks);
+    if (!reachedEnd || m_activePlaybackItem.id != itemId || inGroup()) {
         setPlaybackTransition(false);
         return;
     }

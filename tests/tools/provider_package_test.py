@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""sdk/spool-provider.py: builds, validates and describes .tar.zst provider packages."""
+"""sdk/spool-provider.py: builds, validates and describes .szo provider packages."""
 import hashlib
 import importlib.util
 import io
@@ -106,20 +106,20 @@ class PackageTest(unittest.TestCase):
             path.write_bytes(data)
 
     def test_build_is_reproducible_and_round_trips(self):
-        first = tool.build(self.source, self.root / "a.tar.zst")
-        second = tool.build(self.source, self.root / "b.tar.zst")
+        first = tool.build(self.source, self.root / "a.szo")
+        second = tool.build(self.source, self.root / "b.szo")
         self.assertEqual(first.read_bytes(), second.read_bytes())
         manifest_value, contents = tool.read(first)
         self.assertEqual(manifest_value["version"], "0.1.0")
         self.assertEqual(contents, files(), "only manifest, licences, logic/, ui/ and assets/ are packaged")
 
     def test_default_output_name(self):
-        self.assertEqual(tool.build(self.source, None).name, "test.provider-0.1.0.tar.zst")
+        self.assertEqual(tool.build(self.source, None).name, "test.provider-0.1.0.szo")
 
     def test_symlinks_are_refused(self):
         (self.source / "logic/link.mjs").symlink_to(self.source / "logic/provider.mjs")
         with self.assertRaises(ValueError):
-            tool.build(self.source, self.root / "out.tar.zst")
+            tool.build(self.source, self.root / "out.szo")
 
     def test_links_inside_archives_are_refused(self):
         tar = io.BytesIO()
@@ -131,13 +131,13 @@ class PackageTest(unittest.TestCase):
             link = tarfile.TarInfo("logic/escape.mjs")
             link.type, link.linkname = tarfile.SYMTYPE, "/etc/passwd"
             archive.addfile(link)
-        path = self.root / "linked.tar.zst"
+        path = self.root / "linked.szo"
         path.write_bytes(tool.compress(tar.getvalue()))
         with self.assertRaises(ValueError):
             tool.read(path)
 
     def test_feed_entry_describes_the_exact_archive(self):
-        package = tool.build(self.source, self.root / "p.tar.zst")
+        package = tool.build(self.source, self.root / "p.szo")
         entry = tool.feed(package, "https://example.org/p.tar.zst")
         self.assertEqual(entry["id"], "test.provider")
         self.assertEqual(entry["format"], 3)

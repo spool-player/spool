@@ -20,7 +20,7 @@ namespace {
         static const QSet<QString> routes = { QStringLiteral("home"), QStringLiteral("libraryGrid"),
             QStringLiteral("itemDetails"), QStringLiteral("personDetails"), QStringLiteral("search"),
             QStringLiteral("settings"), QStringLiteral("settingsSync"), QStringLiteral("subtitleSettings"),
-            QStringLiteral("openSourceNotices") };
+            QStringLiteral("openSourceNotices"), QStringLiteral("providerDetails") };
         return routes.contains(route);
     }
 
@@ -30,7 +30,8 @@ namespace {
             QStringLiteral("source"), QStringLiteral("returnRoute"), QStringLiteral("focusIndex"),
             QStringLiteral("libraryId"), QStringLiteral("personId"), QStringLiteral("personName"),
             QStringLiteral("personRole"), QStringLiteral("personType"), QStringLiteral("title"),
-            QStringLiteral("seriesId"), QStringLiteral("seasonId") };
+            QStringLiteral("seriesId"), QStringLiteral("seasonId"), QStringLiteral("moduleId"),
+            QStringLiteral("rowKey"), QStringLiteral("advanced") };
         QVariantMap safe;
         for (auto it = args.cbegin(); it != args.cend(); ++it) {
             if (!keys.contains(it.key()))

@@ -969,8 +969,7 @@ QCoro::Task<void> SettingsSyncController::nativeCycle(Token token)
     for (const auto& spec : settingSpecs())
         if (spec.nativePreference[0])
             readGenerations.insert(QString::fromLatin1(spec.key), keyGeneration(QString::fromLatin1(spec.key)));
-    const auto response
-        = co_await m_registry->callSource(m_accountId, QStringLiteral("preferencesRead"), {}, Scope);
+    const auto response = co_await m_registry->callSource(m_accountId, QStringLiteral("preferencesRead"), {}, Scope);
     if (!guard || !current(token))
         co_return;
     m_nativeKnown = true;
@@ -1037,12 +1036,11 @@ QCoro::Task<void> SettingsSyncController::nativeCycle(Token token)
     }
     if (writeValues.isEmpty())
         co_return;
-    co_await m_registry->callSource(m_accountId, QStringLiteral("preferencesWrite"),
-        { { QStringLiteral("values"), writeValues } }, Scope);
+    co_await m_registry->callSource(
+        m_accountId, QStringLiteral("preferencesWrite"), { { QStringLiteral("values"), writeValues } }, Scope);
     if (!guard || !current(token))
         co_return;
-    const auto readback
-        = co_await m_registry->callSource(m_accountId, QStringLiteral("preferencesRead"), {}, Scope);
+    const auto readback = co_await m_registry->callSource(m_accountId, QStringLiteral("preferencesRead"), {}, Scope);
     if (!guard || !current(token))
         co_return;
     const auto actual = readback.value(QStringLiteral("values")).toMap();

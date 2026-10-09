@@ -7,11 +7,30 @@
 namespace Spool::ProviderCapabilityContract {
 namespace {
     constexpr const char *kCapabilities[] = {
-        "search", "userState", "reporting", "segments", "groupPlayback", "remoteControl",
-        "streamQuality", "trickplay", "speedTest", "downloads", "downloadTranscode", "discovery",
-        "artworkOwners", "suggestions", "playbackPreferences", "settingsStorage", "itemActions",
-        "collectionEditing", "playbackQueueReporting", "remoteTargets", "httpMetadata", "originGrants",
-        "lanProbe", "accountActivation",
+        "search",
+        "userState",
+        "reporting",
+        "segments",
+        "groupPlayback",
+        "remoteControl",
+        "streamQuality",
+        "trickplay",
+        "speedTest",
+        "downloads",
+        "downloadTranscode",
+        "discovery",
+        "artworkOwners",
+        "suggestions",
+        "playbackPreferences",
+        "settingsStorage",
+        "itemActions",
+        "collectionEditing",
+        "playbackQueueReporting",
+        "remoteTargets",
+        "httpMetadata",
+        "originGrants",
+        "lanProbe",
+        "accountActivation",
     };
 
     bool known(const QString& name)
@@ -53,8 +72,7 @@ QVariantMap intersect(const QVariantMap& declarations, const QVariantMap& offers
     const QVariantMap decoded = decodeOffers(offers);
     QVariantMap result;
     for (auto it = declarations.cbegin(); it != declarations.cend(); ++it) {
-        if (it.value().metaType().id() == QMetaType::Bool && it.value().toBool()
-            && decoded.value(it.key()).toBool())
+        if (it.value().metaType().id() == QMetaType::Bool && it.value().toBool() && decoded.value(it.key()).toBool())
             result.insert(it.key(), true);
     }
     return result;

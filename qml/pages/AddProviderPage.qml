@@ -71,7 +71,7 @@ FocusScope {
         if (entry.busy)
             return "busy"
         if (!entry.compatible)
-            return "incompatible"
+            return entry.installed ? "installed" : "incompatible"
         if (entry.updateAvailable)
             return "update"
         return entry.installed ? "installed" : "get"

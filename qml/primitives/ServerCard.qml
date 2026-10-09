@@ -9,6 +9,11 @@ FocusScope {
     property string title: ""
     property string serverAddress: ""
     property bool focused: activeFocus
+    property string providerName: ""
+    property string providerId: ""
+    property url providerIcon
+    property string providerVersion: ""
+    readonly property int brandingHeight: providerName.length > 0 ? Metrics.scaled(30) : 0
 
     signal accepted
 
@@ -16,8 +21,15 @@ FocusScope {
         accepted()
     }
 
-    implicitHeight: Math.max(Metrics.touchTargetPx, Metrics.scaled(64))
+    implicitHeight: Math.max(Metrics.touchTargetPx, Metrics.scaled(64)) + brandingHeight
     focusPolicy: Qt.StrongFocus
+    Accessible.role: Accessible.Button
+    Accessible.name: title
+    Accessible.description: [serverAddress, providerName.length > 0 ? providerName + (providerVersion.length > 0 ? ", installed provider version "
+                                                                                                                   + providerVersion :
+                                                                                                                   "") : ""].filter(
+        part => part.length > 0).join(". ")
+    Accessible.onPressAction: root.accepted()
 
     Rectangle {
         anchors.fill: parent
@@ -34,6 +46,7 @@ FocusScope {
         anchors.leftMargin: Metrics.scaled(16)
         anchors.rightMargin: Metrics.scaled(14)
         spacing: Metrics.scaled(14)
+        anchors.bottomMargin: root.brandingHeight
 
         MaterialIcon {
             name: "dns"
@@ -64,6 +77,33 @@ FocusScope {
                 elide: Text.ElideRight
             }
         }
+    }
+
+    ProviderIcon {
+        anchors.left: parent.left
+        anchors.bottom: parent.bottom
+        anchors.leftMargin: Metrics.scaled(12)
+        anchors.bottomMargin: Metrics.scaled(6)
+        width: Metrics.scaled(20)
+        height: width
+        visible: root.brandingHeight > 0
+        source: root.providerIcon
+        name: root.providerName
+        seed: root.providerId
+        Accessible.ignored: true
+    }
+    SecondaryText {
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        anchors.rightMargin: Metrics.scaled(14)
+        anchors.bottomMargin: Metrics.scaled(6)
+        width: Math.max(0, parent.width - Metrics.scaled(60))
+        visible: root.providerVersion.length > 0
+        text: root.providerVersion
+        horizontalAlignment: Text.AlignRight
+        font.pixelSize: Metrics.metaSizePx
+        elide: Text.ElideRight
+        Accessible.ignored: true
     }
 
     TapHandler {

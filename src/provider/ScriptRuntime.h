@@ -46,8 +46,7 @@ public:
     QCoro::Task<ProviderMediaPage> callMediaPage(
         QString sourceId, QString method, QVariantMap arguments = {}, QString scope = {}, int maximumItems = 100);
     // Details path: `{item: {...}}` decoded on the worker.
-    QCoro::Task<MovieItem> callItem(
-        QString sourceId, QString method, QVariantMap arguments = {}, QString scope = {});
+    QCoro::Task<MovieItem> callItem(QString sourceId, QString method, QVariantMap arguments = {}, QString scope = {});
     void cancelScope(const QString& sourceId, const QString& scope);
     void removeSource(const QString& sourceId);
     // A supplied false token stages the grant without authorizing traffic.

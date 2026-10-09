@@ -145,7 +145,7 @@ void AppController::handleRemoteCommand(const QString& accountId, const QVariant
     } else if (name == QStringLiteral("playPause")) {
         groupOrLocalTogglePause();
     } else if (name == QStringLiteral("stop")) {
-        m_player->stopWithReason(QStringLiteral("remote-stop"));
+        m_player->stopWithReason(QStringLiteral("remote-stop"), true);
     } else if (name == QStringLiteral("seek")) {
         inGroup() ? m_group->requestSeek(seconds()) : m_player->seek(seconds());
     } else if (name == QStringLiteral("rewind")) {

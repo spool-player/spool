@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build, check and describe Spool provider packages (.tar.zst, manifest format 3).
+"""Build, check and describe Spool provider packages (.szo, manifest format 3).
 
   spool-provider.py build DIR [--output FILE]     deterministic package from a provider checkout
   spool-provider.py validate FILE                 the same checks Spool runs before installing
@@ -172,7 +172,7 @@ def build(source: pathlib.Path, output: pathlib.Path | None) -> pathlib.Path:
             info = tarfile.TarInfo(name)
             info.size, info.mode, info.mtime = len(data), 0o644, 0
             archive.addfile(info, io.BytesIO(data))
-    output = output or source / "dist" / f"{manifest['id']}-{manifest['version']}.tar.zst"
+    output = output or source / "dist" / f"{manifest['id']}-{manifest['version']}.szo"
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_bytes(compress(tar.getvalue()))
     read(output)

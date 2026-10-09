@@ -77,6 +77,8 @@ class ProviderRegistry final : public QObject {
     Q_PROPERTY(bool restored READ restored NOTIFY restoredChanged)
     Q_PROPERTY(bool hasAccounts READ hasAccounts NOTIFY accountsChanged)
     Q_PROPERTY(QVariantMap networkConsent READ networkConsent NOTIFY networkConsentChanged)
+    // Some server's viewers wait for an explicit choice at startup.
+    Q_PROPERTY(bool startupChoicePending READ startupChoicePending NOTIFY accountsChanged)
 
 public:
     explicit ProviderRegistry(DatabaseManager *database, QObject *parent = nullptr);
@@ -113,7 +115,8 @@ public:
 
     // Replaces a module's code in place: running accounts restart on the new
     // version without the app restarting.
-    QCoro::Task<void> install(ProviderPackageContents package);
+    QCoro::Task<void> install(ProviderPackageContents package, std::function<bool()> admission = {},
+        std::function<void(qint64, qint64)> progress = {});
     QCoro::Task<void> uninstall(QString moduleId);
 
     QCoro::Task<QVariantMap> callSource(
@@ -138,7 +141,8 @@ public:
     // Mounting provider QML. beginSetup returns a context for the module's
     // login component, or null after adding an account straight away for a
     // provider that needs no sign-in.
-    Q_INVOKABLE QObject *beginSetup(const QString& moduleId);
+    Q_INVOKABLE QObject *beginSetup(
+        const QString& moduleId, const QString& accountId = {}, const QString& purpose = QStringLiteral("addProfile"));
     Q_INVOKABLE QObject *openSettings(const QString& accountId);
     Q_INVOKABLE QObject *openPicker(const QString& accountId, const QVariantMap& arguments);
     // Shows the account's picker component and waits for the viewer's
@@ -148,6 +152,17 @@ public:
     Q_INVOKABLE void useAccount(const QString& accountId);
     Q_INVOKABLE void setAccountEnabled(const QString& accountId, bool enabled);
     Q_INVOKABLE void removeAccount(const QString& accountId);
+    // Abandons a pending activation; the current viewer stays as it was.
+    Q_INVOKABLE void cancelActivation(const QString& accountId);
+    // What a profile set does at startup: "always" opens this account's
+    // (authorized, active) profile; "ask" waits for an explicit choice.
+    Q_INVOKABLE bool setStartupChoice(const QString& accountId, const QString& mode);
+    // The new-account startup question was answered elsewhere or dismissed.
+    Q_INVOKABLE void finishOnboarding(const QString& accountId);
+    bool startupChoicePending() const
+    {
+        return !m_awaitingChoice.isEmpty();
+    }
 
     // Called by ProviderUiContext.
     QCoro::Task<void> allowSetupOrigin(QString draftId, QUrl origin);
@@ -176,6 +191,8 @@ signals:
     void accountIdentityRevoked(const QString& accountId);
     void activationConfigurationChanged(const QString& accountId);
     void accountAdded(const QString& accountId);
+    // Setup admission precedes activation so its pending/failed tile stays actionable.
+    void accountSetupStarted(const QString& accountId);
     // Selection has committed or settled without changing the viewer.
     void accountSelectionFinished(const QString& accountId, bool selected);
     void problem(const QString& message);
@@ -197,6 +214,7 @@ private:
         QPointer<Provider> provider;
         QList<QUrl> origins;
         bool draft = false;
+        QVariantMap setupConfiguration;
         bool enableOnCommit = false;
         QVariantMap declaredCapabilities;
         QVariantMap capabilities;
@@ -233,6 +251,12 @@ private:
         QVariant value;
     };
     QString familyKey(const ProviderAccount& candidate) const;
+    // Viewers that are alternatives to one another: one activation family, or
+    // else one provider group (the users of one server).
+    QString profileSet(const ProviderAccount& candidate) const;
+    bool sameProfile(const ProviderAccount& a, const ProviderAccount& b) const;
+    bool startupDefault(const ProviderAccount& candidate) const;
+    void applyStartupChoices();
     void clearGrants(const QString& moduleId, const QString& family = {});
     QCoro::Task<void> startRestored(QStringList ids);
     void restartModule(const QString& moduleId);
@@ -255,6 +279,7 @@ private:
     QVariantMap m_device;
     ScriptRuntime::NetworkHooks m_hooks;
     QHash<QString, ProviderModule> m_modules;
+    QHash<QString, quint64> m_installRevisions;
     std::vector<ProviderAccount> m_accounts;
     QHash<QString, Running> m_running;
     QHash<QString, QString> m_runtimeSources;
@@ -262,10 +287,15 @@ private:
     QHash<QString, ActivationGrant> m_activationGrants;
     QHash<QString, quint64> m_familyEpochs;
     QVariantMap m_activationOptions;
+    // Device-local, by profile set: { mode: "always" | "ask", account }.
+    QVariantMap m_startupChoices;
+    QSet<QString> m_awaitingChoice;
+    QSet<QString> m_onboarding;
     QSet<QString> m_lockedAccounts;
     quint64 m_nextGeneration = 0;
     quint64 m_nextCapabilityCall = 0;
     QVariantMap m_networkConsent;
+    QSet<QString> m_removingAccounts;
     std::shared_ptr<QPromise<bool>> m_consentPromise;
     QString m_consentSource;
     QString m_consentScope;

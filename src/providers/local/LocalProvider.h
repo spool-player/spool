@@ -88,8 +88,8 @@ public:
     QCoro::Task<void> setItemPlaybackPosition(QString itemId, qint64 positionTicks) override;
     QString imageUrl(const ImageRequest& request) const override;
 
-    // What the player asks for. Everything is answered from the scan; the
-    // report calls complete without doing anything.
+    // What the player asks for. Sessions come from the scan; reports persist
+    // position without undoing played state. Watched uses the item-state sink.
     PlaybackSession playbackSession(const QString& itemId) const;
 
 private:

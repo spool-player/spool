@@ -7,6 +7,7 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 
 namespace {
 
@@ -52,6 +53,17 @@ SPOOL_TEST_MAIN("playback-failure-policy")
         "a stop near the end is still a stop");
     require(PlaybackFailurePolicy::classifyFileEnd(true, MPV_END_FILE_REASON_ERROR, 1200.0, 2640.0) == FileEnd::Failed,
         "an mpv error stays a failure");
+    require(PlaybackFailurePolicy::classifyFileEnd(false, MPV_END_FILE_REASON_EOF, 90.0, 100.0) == FileEnd::Interrupted,
+        "a synthetic EOF at the watched percentage is still interrupted, not a natural queue-advancing end");
+    require(!PlaybackFailurePolicy::watchedOnStop(false, false, true, true, 90.0, 100.0, 90),
+        "an interruption at the configured position cannot use explicit-stop completion");
+    require(!PlaybackFailurePolicy::watchedOnStop(true, false, true, true, 95.0, 0.0, 90),
+        "unknown runtime has no watched percentage");
+    require(!PlaybackFailurePolicy::watchedOnStop(
+                true, false, true, true, 95.0, std::numeric_limits<double>::quiet_NaN(), 90),
+        "a nonfinite runtime cannot invent watched completion");
+    require(!PlaybackFailurePolicy::watchedOnStop(true, true, true, true, 95.0, 100.0, 90),
+        "a loaded playback failure remains ineligible even after the threshold");
 
     require(PlaybackFailurePolicy::shouldResumeInterrupted(0.0, 1200.0),
         "an interruption after real progress resumes where it broke");

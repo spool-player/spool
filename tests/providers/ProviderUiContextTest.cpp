@@ -2,13 +2,19 @@
 #include "ProviderFixture.h"
 #include "TestMain.h"
 #include "cache/DatabaseManager.h"
+#include "diagnostics/Diagnostics.h"
+#include "platform/CredentialStore.h"
+#include "provider/Provider.h"
 #include "provider/ProviderRegistry.h"
 
 #include <QElapsedTimer>
 #include <QGuiApplication>
+#include <QJsonDocument>
 #include <QPersistentModelIndex>
 #include <QQmlComponent>
 #include <QQmlEngine>
+#include <QTcpServer>
+#include <QTcpSocket>
 #include <QTemporaryDir>
 #include <QThread>
 
@@ -58,9 +64,83 @@ SPOOL_TEST_MAIN("provider-ui-context")
     const QString source = registry.finishSetup({},
         { { "module", "fixture.test" }, { "account", "account" }, { "label", "Fixture" },
             { "configuration", QVariantMap { { "label", "<b>Untrusted title</b>" } } } });
-    registry.useAccount(source);
     waitFor([&] { return registry.sourceRunning(source); });
     QQmlEngine engine;
+    auto *privateLogin = qobject_cast<ProviderUiContext *>(registry.beginSetup("fixture.test", source));
+    require(privateLogin && !privateLogin->arguments().contains("setupAccount")
+            && privateLogin->arguments().value("setupContext").toMap().value("accountId") == source,
+        "login receives only approved nonsecret setup identity, never the retained account configuration");
+    QTcpServer loginServer;
+    require(loginServer.listen(QHostAddress::LocalHost), "login origin listener opens");
+    int originHits = 0;
+    QObject::connect(&loginServer, &QTcpServer::newConnection, &app, [&] {
+        while (auto *socket = loginServer.nextPendingConnection()) {
+            ++originHits;
+            QObject::connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
+            QObject::connect(socket, &QTcpSocket::readyRead, socket, [socket] {
+                socket->readAll();
+                socket->write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}");
+                socket->disconnectFromHost();
+            });
+        }
+    });
+    const QString loginOrigin = QStringLiteral("http://127.0.0.1:%1").arg(loginServer.serverPort());
+    bool originDenied = false;
+    try {
+        QCoro::waitFor(registry.callSource(privateLogin->sourceId(), "denied", { { "url", loginOrigin } }));
+    } catch (const std::exception&) {
+        originDenied = true;
+    }
+    require(originDenied && originHits == 0, "an unapproved login origin receives no native HTTP request");
+    require(QCoro::waitFor(registry.callSource(privateLogin->sourceId(), "bump")).value("calls").toInt() == 1,
+        "the private login closure has state before server approval");
+    QCoro::waitFor(registry.allowSetupOrigin(privateLogin->sourceId(), QUrl(loginOrigin)));
+    require(QCoro::waitFor(registry.callSource(privateLogin->sourceId(), "state")).value("calls").toInt() == 1,
+        "approving a server preserves private login state instead of recreating the source");
+    QCoro::waitFor(registry.callSource(privateLogin->sourceId(), "denied", { { "url", loginOrigin } }));
+    require(originHits == 1, "the login server becomes reachable only after native origin approval");
+    QString privateAccount;
+    QVariantMap completedLogin;
+    QStringList forwardedEvents;
+    QVariantList forwardedPayloads;
+    QObject::connect(&registry, &ProviderRegistry::accountAdded, &app, [&](const QString& id) { privateAccount = id; });
+    QObject::connect(privateLogin, &ProviderUiContext::finished, &app, [&](const QVariantMap& value, bool cancelled) {
+        require(!cancelled, "private login commits through the UI context");
+        completedLogin = value;
+    });
+    QObject::connect(&registry, &ProviderRegistry::sourceStarted, &app, [&](Provider *provider) {
+        QObject::connect(provider, &Provider::sourceEvent, &app, [&](const QString& type, const QVariantMap& value) {
+            forwardedEvents.append(type);
+            forwardedPayloads.append(value);
+        });
+    });
+    engine.globalObject().setProperty("privateLogin", engine.newQObject(privateLogin));
+    engine.evaluate(QStringLiteral(R"JS(
+        var privateLoginDone = false, publicLoginResult = '';
+        privateLogin.request('setupPrivate', {account: 'ui-linked', group: 'other-server', label: 'Private'})
+            .then(function(result) {
+                publicLoginResult = JSON.stringify(result);
+                privateLogin.complete(result);
+                privateLoginDone = true;
+            });
+    )JS"));
+    waitFor([&] {
+        return engine.globalObject().property("privateLoginDone").toBool() && !privateAccount.isEmpty()
+            && registry.sourceRunning(privateAccount);
+    });
+    waitFor([&] { return CredentialStore::load(privateAccount).contains("ui-private-token"); });
+    require(!engine.globalObject().property("publicLoginResult").toString().contains("ui-private-token")
+            && !completedLogin.contains("configuration")
+            && !QJsonDocument::fromVariant(registry.accounts()).toJson().contains("ui-private-token")
+            && !Diagnostics::supportReportPreview().contains("ui-private-token"),
+        "draft credentials persist without entering QML promises, completion, public account rows or support reports");
+    QCoro::waitFor(registry.callSource(privateAccount, "setupPrivate",
+        { { "account", "ui-linked" }, { "group", "other-server" }, { "label", "Private" },
+            { "configuration", QVariantMap { { "token", "rotated-private-token" } } } }));
+    waitFor([&] { return CredentialStore::load(privateAccount).contains("rotated-private-token"); });
+    require(!forwardedEvents.contains("configuration")
+            && !QJsonDocument::fromVariant(forwardedPayloads).toJson().contains("rotated-private-token"),
+        "live credential updates stay private instead of reaching forwarded account events");
     const auto picker = [&] { return qobject_cast<ProviderUiContext *>(registry.openPicker(source, {})); };
     ProviderUiContext *first = picker();
     ProviderUiContext *second = picker();

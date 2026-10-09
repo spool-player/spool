@@ -674,13 +674,33 @@ void LocalCommandServer::dispatch(QIODevice *socket, const QJsonObject& request)
     } else if (command == QStringLiteral("navigate") || command == QStringLiteral("home")) {
         const QString route = command == QStringLiteral("home") ? QStringLiteral("home")
                                                                 : args.value(QStringLiteral("route")).toString();
-        if (!QStringList { QStringLiteral("home"), QStringLiteral("search"), QStringLiteral("settings") }.contains(
-                route)) {
-            invalid(QStringLiteral("Navigation supports home, search or settings"));
+        if (!QStringList { QStringLiteral("home"), QStringLiteral("search"), QStringLiteral("settings"),
+                QStringLiteral("providerDetails"), QStringLiteral("subtitleSettings") }
+                .contains(route)) {
+            invalid(QStringLiteral("Navigation supports home, search, settings, providerDetails or subtitleSettings"));
             return;
         }
-        m_app->handleLocalControl(
-            { { QStringLiteral("command"), QStringLiteral("navigate") }, { QStringLiteral("to"), route } });
+        if (route == QStringLiteral("providerDetails")) {
+            const QString moduleId = args.value(QStringLiteral("moduleId")).toString();
+            if (moduleId.isEmpty()) {
+                invalid(QStringLiteral("Provider details requires an opaque module ID"));
+                return;
+            }
+            m_app->handleLocalControl({ { QStringLiteral("command"), QStringLiteral("stop") } });
+            m_router->push(route, { { QStringLiteral("moduleId"), moduleId } });
+        } else if (route == QStringLiteral("subtitleSettings")) {
+            const QString rowKey = args.value(QStringLiteral("rowKey")).toString();
+            const SettingSpec *spec = rowKey.isEmpty() ? nullptr : findSettingSpec(rowKey);
+            if (!rowKey.isEmpty() && (!spec || !rowKey.startsWith(QStringLiteral("subtitles/")))) {
+                invalid(QStringLiteral("Subtitle settings requires a stable subtitle setting key"));
+                return;
+            }
+            m_app->handleLocalControl({ { QStringLiteral("command"), QStringLiteral("stop") } });
+            m_router->push(route, { { QStringLiteral("rowKey"), rowKey } });
+        } else {
+            m_app->handleLocalControl(
+                { { QStringLiteral("command"), QStringLiteral("navigate") }, { QStringLiteral("to"), route } });
+        }
         done(state());
     } else if (command == QStringLiteral("back") || command == QStringLiteral("key")) {
         QString name = command == QStringLiteral("back") ? QStringLiteral("back")

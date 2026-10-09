@@ -25,6 +25,7 @@ extern "C" {
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileInfo>
 #include <QMetaObject>
 #include <QPointer>
 #include <QQuickWindow>
@@ -281,6 +282,8 @@ PlayerController::PlayerController(NativeAppWindow *window, PlaybackSource *api,
         Diagnostics::logEvent(QStringLiteral("player"), QStringLiteral("report_failed"),
             { { QStringLiteral("operation"), operation }, { QStringLiteral("message"), message } });
     });
+    connect(&m_reporter, &PlaybackReporter::watchedPersistenceRequested, this,
+        &PlayerController::watchedPersistenceRequested, Qt::QueuedConnection);
     if (m_api) {
         connect(m_api, &PlaybackSource::playbackNetworkProfileChanged, this,
             [this]() { discardPreparedMpvForOptionChange("network profile change"); });
@@ -637,6 +640,8 @@ void PlayerController::observeMpvProperties(mpv_handle *handle)
     mpv_observe_property(handle, 0, "track-list", MPV_FORMAT_NODE);
     mpv_observe_property(handle, 0, "chapter-list", MPV_FORMAT_NODE);
     mpv_observe_property(handle, 0, "chapter", MPV_FORMAT_INT64);
+    mpv_observe_property(handle, 0, "playlist", MPV_FORMAT_NODE);
+    mpv_observe_property(handle, 0, "idle-active", MPV_FORMAT_FLAG);
     mpv_observe_property(handle, 0, "video-params/transfer", MPV_FORMAT_STRING);
     mpv_observe_property(handle, 0, "video-target-params/transfer", MPV_FORMAT_STRING);
     mpv_observe_property(handle, 0, "hwdec-current", MPV_FORMAT_STRING);
@@ -1142,6 +1147,22 @@ void PlayerController::handleVideoRenderError(const QString& message)
 
 void PlayerController::play(const PlaybackSession& session, bool startPaused)
 {
+    playSession(session, startPaused, {});
+}
+
+void PlayerController::playLocalFiles(const QList<QUrl>& urls)
+{
+    if (urls.isEmpty())
+        return;
+    PlaybackSession session;
+    session.url = urls.first().toString(QUrl::FullyEncoded);
+    session.title = urls.first().fileName();
+    session.playMethod = QStringLiteral("DirectPlay");
+    playSession(session, false, urls);
+}
+
+void PlayerController::playSession(const PlaybackSession& session, bool startPaused, const QList<QUrl>& localFiles)
+{
     const bool needsVideoSurface = MpvOptionProfile::needsVideoSurface(session);
     const QString nextMediaKind = needsVideoSurface ? QStringLiteral("video") : QStringLiteral("audio");
     const bool embeddedVideo = needsVideoSurface && platformUsesEmbeddedVideo(session, m_directVideoOutput);
@@ -1207,6 +1228,12 @@ void PlayerController::play(const PlaybackSession& session, bool startPaused)
         return;
 
     m_session = session;
+    m_localPlaylist = !localFiles.isEmpty();
+    m_localEntryStarted = false;
+    m_localEntryId = -1;
+    m_localPlaylistEntries.clear();
+    if (m_localPlaylist)
+        emit localPlaylistChanged();
     m_timeline.setSession(session);
     m_title = session.title;
     m_mediaKind = nextMediaKind;
@@ -1297,7 +1324,8 @@ void PlayerController::play(const PlaybackSession& session, bool startPaused)
     }
 
     QByteArray urlBytes = session.url.toUtf8();
-    if (!MpvOptionProfile::applyRequestHeaders(handle, m_api ? m_api->mediaRequestHeaders() : QByteArray {})) {
+    if (!MpvOptionProfile::applyRequestHeaders(
+            handle, !m_localPlaylist && m_api ? m_api->mediaRequestHeaders() : QByteArray {})) {
         m_mpvLifecycle.cancelFileLoad();
         m_errorText = QStringLiteral("libmpv rejected the authenticated media request.");
         stopProgressReporting(true);
@@ -1309,7 +1337,7 @@ void PlayerController::play(const PlaybackSession& session, bool startPaused)
         stopProgressReporting(true);
         return;
     }
-    if (m_api && m_tlsTrust) {
+    if (!m_localPlaylist && m_api && m_tlsTrust) {
         const QSslCertificate certificate = m_tlsTrust->trustedCertificate(m_api->mediaOrigin());
         if (!certificate.isNull()) {
             const QString trustDirectory = QDir(startupCacheRoot({})).filePath(QStringLiteral("tls"));
@@ -1363,6 +1391,28 @@ void PlayerController::play(const PlaybackSession& session, bool startPaused)
         urlBytes = QByteArrayLiteral("fd://") + QByteArray::number(m_contentPlaybackFile.handle());
     }
 #endif
+    if (m_localPlaylist) {
+        if (!loadLocalFiles(localFiles)) {
+            m_errorText = QStringLiteral("mpv could not open the local playlist or files.");
+            stopProgressReporting(true);
+            scheduleMpvTeardown();
+            return;
+        }
+        int64_t playlistCount = 0;
+        if (mpv_get_property(handle, "playlist-count", MPV_FORMAT_INT64, &playlistCount) < 0 || playlistCount == 0) {
+            m_errorText = QStringLiteral("The local playlist contains no playable entries.");
+            stopProgressReporting(true);
+            scheduleMpvTeardown();
+            return;
+        }
+        const char *start[] = { "playlist-play-index", "0", nullptr };
+        if (mpv_command(handle, start) < 0) {
+            m_errorText = QStringLiteral("mpv could not start the local playlist.");
+            stopProgressReporting(true);
+            scheduleMpvTeardown();
+        }
+        return;
+    }
     const QByteArray loadFileOptions = MpvOptionProfile::loadFileOptions(session);
     const char *loadCommand[] = { "loadfile", urlBytes.constData(), "replace", "-1",
         loadFileOptions.isEmpty() ? nullptr : loadFileOptions.constData(), nullptr };
@@ -1375,6 +1425,161 @@ void PlayerController::play(const PlaybackSession& session, bool startPaused)
 #endif
         stopProgressReporting(true);
         return;
+    }
+}
+
+bool PlayerController::loadLocalFiles(const QList<QUrl>& urls)
+{
+    auto *handle = m_mpvLifecycle.handle();
+    if (!handle)
+        return false;
+    for (const QUrl& url : urls) {
+        // Preserve local/UNC paths. Playlist interpretation and expansion belong to mpv.
+        const QByteArray path = (url.isLocalFile() ? url.toLocalFile() : url.toString(QUrl::FullyEncoded)).toUtf8();
+        const QString suffix = QFileInfo(url.path()).suffix().toLower();
+        const bool playlist
+            = suffix == QStringLiteral("m3u") || suffix == QStringLiteral("m3u8") || suffix == QStringLiteral("pls");
+        const char *command[] = { playlist ? "loadlist" : "loadfile", path.constData(), "append", nullptr };
+        if (mpv_command(handle, command) < 0)
+            return false;
+    }
+    refreshLocalPlaylist();
+    return true;
+}
+
+bool PlayerController::appendLocalFiles(const QList<QUrl>& urls)
+{
+    return m_localPlaylist && m_sessionActive && loadLocalFiles(urls);
+}
+
+void PlayerController::refreshLocalPlaylist()
+{
+    auto *handle = m_mpvLifecycle.handle();
+    if (!m_localPlaylist || !handle)
+        return;
+    mpv_node node {};
+    if (mpv_get_property(handle, "playlist", MPV_FORMAT_NODE, &node) < 0)
+        return;
+    QVariantList entries;
+    if (node.format == MPV_FORMAT_NODE_ARRAY && node.u.list) {
+        for (int index = 0; index < node.u.list->num; ++index) {
+            const mpv_node& entry = node.u.list->values[index];
+            if (entry.format != MPV_FORMAT_NODE_MAP || !entry.u.list)
+                continue;
+            QVariantMap row;
+            for (int field = 0; field < entry.u.list->num; ++field) {
+                const QString key = QString::fromUtf8(entry.u.list->keys[field]);
+                const mpv_node& value = entry.u.list->values[field];
+                if (key == QStringLiteral("id") && value.format == MPV_FORMAT_INT64)
+                    row.insert(key, QString::number(value.u.int64));
+                else if ((key == QStringLiteral("filename") || key == QStringLiteral("title"))
+                    && value.format == MPV_FORMAT_STRING)
+                    row.insert(key, QString::fromUtf8(value.u.string));
+            }
+            row.insert(QStringLiteral("current"),
+                row.value(QStringLiteral("id")).toString() == QString::number(m_localEntryId));
+            if (!row.contains(QStringLiteral("title")))
+                row.insert(
+                    QStringLiteral("title"), QFileInfo(row.value(QStringLiteral("filename")).toString()).fileName());
+            entries.append(row);
+        }
+    }
+    mpv_free_node_contents(&node);
+    if (entries != m_localPlaylistEntries) {
+        m_localPlaylistEntries = entries;
+        emit localPlaylistChanged();
+    }
+}
+
+void PlayerController::beginLocalEntry(qint64 entryId)
+{
+    m_localEntryStarted = true;
+    m_localEntryId = entryId;
+    refreshLocalPlaylist();
+    m_session = {};
+    m_session.itemId = QStringLiteral("local-playlist:") + QString::number(entryId);
+    for (const QVariant& value : std::as_const(m_localPlaylistEntries)) {
+        const QVariantMap entry = value.toMap();
+        if (entry.value(QStringLiteral("id")).toString() != QString::number(entryId))
+            continue;
+        m_session.url = entry.value(QStringLiteral("filename")).toString();
+        m_title = entry.value(QStringLiteral("title")).toString();
+        break;
+    }
+    m_timeline.setSession(m_session);
+    m_positionTracker.reset(0);
+    m_fileLoaded = false;
+    m_seekDispatchReady = false;
+    m_pendingSeek = false;
+    m_pendingSeekFlags.clear();
+    m_restoreStreamSelection = false;
+    m_seeking = false;
+    m_buffering = false;
+    m_errorText.clear();
+    m_tracks.resetForPlayback();
+    m_fileAudioDelayMs = 0;
+    m_subtitleDelayMs = 0;
+    applyMpvRuntimeOption(MpvRuntimeOption::AudioDelay, MpvOptionApplyMode::Runtime, m_mpvLifecycle.handle());
+    applyMpvRuntimeOption(MpvRuntimeOption::SubtitleDelay, MpvOptionApplyMode::Runtime, m_mpvLifecycle.handle());
+    resetRenderStrain();
+    emit fileAudioDelayMsChanged();
+    emit effectiveAudioDelayMsChanged();
+    emit subtitleDelayMsChanged();
+    emit positionChanged();
+    emit tracksChanged();
+    emit chaptersChanged();
+    emit playbackStateChanged();
+}
+
+void PlayerController::selectLocalPlaylistEntry(const QString& entryId)
+{
+    if (!m_localPlaylist)
+        return;
+    refreshLocalPlaylist();
+    for (qsizetype index = 0; index < m_localPlaylistEntries.size(); ++index) {
+        if (m_localPlaylistEntries[index].toMap().value(QStringLiteral("id")).toString() == entryId) {
+            mpvCommand({ QByteArrayLiteral("playlist-play-index"), QByteArray::number(index) });
+            return;
+        }
+    }
+}
+
+void PlayerController::stepLocalPlaylist(int direction)
+{
+    if (m_localPlaylist)
+        mpvCommand({ direction > 0 ? QByteArrayLiteral("playlist-next") : QByteArrayLiteral("playlist-prev"),
+            QByteArrayLiteral("weak") });
+}
+
+bool PlayerController::moveLocalPlaylistRange(int from, int count, int to)
+{
+    if (!m_localPlaylist || count <= 0 || from < 0 || to < 0 || from + count > m_localPlaylistEntries.size()
+        || to + count > m_localPlaylistEntries.size())
+        return false;
+    auto *handle = m_mpvLifecycle.handle();
+    if (!handle)
+        return false;
+    for (int offset = 0; offset < count; ++offset) {
+        const QByteArray source = QByteArray::number(from > to ? from + offset : from);
+        const QByteArray destination = QByteArray::number(from > to ? to + offset : to + count);
+        const char *command[] = { "playlist-move", source.constData(), destination.constData(), nullptr };
+        if (mpv_command(handle, command) < 0)
+            return false;
+    }
+    refreshLocalPlaylist();
+    return true;
+}
+
+void PlayerController::removeLocalPlaylistEntry(const QString& entryId)
+{
+    if (!m_localPlaylist)
+        return;
+    refreshLocalPlaylist();
+    for (qsizetype index = 0; index < m_localPlaylistEntries.size(); ++index) {
+        if (m_localPlaylistEntries[index].toMap().value(QStringLiteral("id")).toString() == entryId) {
+            mpvCommand({ QByteArrayLiteral("playlist-remove"), QByteArray::number(index) });
+            return;
+        }
     }
 }
 
@@ -1662,6 +1867,8 @@ int PlayerController::streamIndexForUiTrack(const QString& type, int uiIndex, in
 
 void PlayerController::updateReportedStreamSelection(bool sendProgress)
 {
+    if (m_localPlaylist)
+        return;
     m_session.audioStreamIndex = streamIndexForUiTrack(QStringLiteral("Audio"), m_tracks.selectedAudioIndex(), 0);
     m_session.subtitleStreamIndex = m_tracks.subtitlesEnabled()
         ? streamIndexForUiTrack(QStringLiteral("Subtitle"), m_tracks.selectedSubtitleIndex(), 1)
@@ -1699,10 +1906,10 @@ void PlayerController::previousChapter()
 
 void PlayerController::stop()
 {
-    stopWithReason(QStringLiteral("unspecified"));
+    stopWithReason(QStringLiteral("explicit-stop"), true);
 }
 
-void PlayerController::stopWithReason(const QString& reason)
+void PlayerController::stopWithReason(const QString& reason, bool explicitStop)
 {
     Diagnostics::Task task(QStringLiteral("player_stop"),
         { { QStringLiteral("reason"), reason }, { QStringLiteral("sessionActive"), m_sessionActive } });
@@ -1712,12 +1919,17 @@ void PlayerController::stopWithReason(const QString& reason)
         return;
 
     // Drop the UI synchronously so navigation never waits for backend unload.
-    stopProgressReporting(false);
+    stopProgressReporting(false, false, explicitStop);
 
     if (auto *handle = m_mpvLifecycle.handle())
         setMpvProperty(handle, "http-header-fields", "");
     mpvCommand({ QByteArrayLiteral("stop") });
     scheduleMpvTeardown();
+}
+
+void PlayerController::setWatchedThresholdPercent(int percent)
+{
+    m_watchedThresholdPercent = std::clamp(percent, 50, 100);
 }
 
 void PlayerController::setNightModeEnabled(bool enabled)
@@ -1815,7 +2027,7 @@ void PlayerController::setVolume(int volume)
     mpvCommand({ QByteArrayLiteral("no-osd"), QByteArrayLiteral("set"), QByteArrayLiteral("volume"),
         QByteArray::number(clampedVolume) });
     emit volumeChanged();
-    if (m_sessionActive)
+    if (m_sessionActive && !m_localPlaylist)
         m_reporter.reportProgress(secondsToTicks(m_positionTracker.position()), m_paused, effectivePlaybackSpeed(),
             m_volume.load(), m_muted.load());
 }
@@ -1834,7 +2046,7 @@ void PlayerController::setMuted(bool muted)
     mpvCommand({ QByteArrayLiteral("no-osd"), QByteArrayLiteral("set"), QByteArrayLiteral("mute"),
         muted ? QByteArrayLiteral("yes") : QByteArrayLiteral("no") });
     emit volumeChanged();
-    if (m_sessionActive)
+    if (m_sessionActive && !m_localPlaylist)
         m_reporter.reportProgress(secondsToTicks(m_positionTracker.position()), m_paused, effectivePlaybackSpeed(),
             m_volume.load(), m_muted.load());
 }
@@ -1999,6 +2211,8 @@ void PlayerController::startProgressReporting()
 {
     Diagnostics::logEvent(QStringLiteral("player"), QStringLiteral("progress_reporting_start"),
         { { QStringLiteral("itemId"), m_session.itemId } });
+    if (m_localPlaylist)
+        return;
     if (m_progressTimer.isActive())
         return;
     m_progressTimer.start();
@@ -2007,10 +2221,10 @@ void PlayerController::startProgressReporting()
     m_reporter.start(m_session, effectivePlaybackSpeed(), m_volume.load(), m_muted.load());
 }
 
-void PlayerController::stopProgressReporting(bool failed, bool completed)
+void PlayerController::stopProgressReporting(bool failed, bool reachedEnd, bool explicitStop)
 {
     Diagnostics::Phase phase(QStringLiteral("player"), QStringLiteral("stop_progress_reporting"),
-        { { QStringLiteral("failed"), failed }, { QStringLiteral("completed"), completed } });
+        { { QStringLiteral("failed"), failed }, { QStringLiteral("reachedEnd"), reachedEnd } });
     if (!m_sessionActive && !m_progressTimer.isActive()) {
         qInfo() << "player: stopProgressReporting skipped sessionActive=" << m_sessionActive;
         return;
@@ -2019,15 +2233,24 @@ void PlayerController::stopProgressReporting(bool failed, bool completed)
     const bool wasVisible = m_visible;
     const bool wasSessionActive = m_sessionActive;
     qInfo() << "player: stopProgressReporting sessionActive=" << m_sessionActive << "visible=" << m_visible
-            << "failed=" << failed << "completed=" << completed;
+            << "failed=" << failed << "reachedEnd=" << reachedEnd;
     m_progressTimer.stop();
     m_uiPositionTimer.stop();
     m_seekWatchdogTimer.stop();
 
     const auto session = m_session;
+    reachedEnd = reachedEnd && !failed && m_fileLoaded;
+    const bool watched = reachedEnd
+        || PlaybackFailurePolicy::watchedOnStop(explicitStop, failed || !m_errorText.isEmpty(), m_fileLoaded,
+            m_positionTracker.hasPlaybackPosition() && !m_pendingSeek && !m_seeking, m_positionTracker.position(),
+            m_positionTracker.duration(), m_watchedThresholdPercent);
     const qint64 positionTicks
-        = completed && session.runtimeTicks > 0 ? session.runtimeTicks : secondsToTicks(m_positionTracker.position());
-    m_reporter.stop(positionTicks, failed, effectivePlaybackSpeed());
+        = reachedEnd && session.runtimeTicks > 0 ? session.runtimeTicks : secondsToTicks(m_positionTracker.position());
+    quint64 reportId = 0;
+    if (!m_localPlaylist)
+        reportId = m_reporter.stop(positionTicks, failed, effectivePlaybackSpeed(), watched);
+    else if (m_localEntryId >= 0)
+        emit localEntryEnded(QString::number(m_localEntryId), positionTicks, reachedEnd);
 
     resetPlaybackUiState();
     m_window->clearOverlay();
@@ -2040,7 +2263,14 @@ void PlayerController::stopProgressReporting(bool failed, bool completed)
         emit visibleChanged();
     if (wasSessionActive != m_sessionActive)
         emit sessionActiveChanged();
-    emit playbackStopped(session.itemId, positionTicks, completed);
+    if (!m_localPlaylist)
+        emit playbackStopped(session.itemId, positionTicks, watched, reachedEnd, reportId);
+    else {
+        m_localPlaylist = false;
+        m_localEntryStarted = false;
+        m_localPlaylistEntries.clear();
+        emit localPlaylistChanged();
+    }
 }
 
 void PlayerController::setDirectVideoOutput(bool direct)
@@ -2208,6 +2438,15 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_
         return;
 
     switch (event->event_id) {
+    case MPV_EVENT_START_FILE: {
+        const auto *start = static_cast<mpv_event_start_file *>(event->data);
+        const qint64 entryId = start ? start->playlist_entry_id : -1;
+        postMpvEvent(generation, [this, entryId] {
+            if (m_localPlaylist)
+                beginLocalEntry(entryId);
+        });
+        break;
+    }
     case MPV_EVENT_FILE_LOADED:
         // Runtime snapshots may wait for the VO. Query on this core's event
         // thread, whose captured handle lives until the event loop is joined,
@@ -2301,6 +2540,20 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_
         if (!property || !property->data)
             break;
 
+        if (strcmp(property->name, "playlist") == 0) {
+            postMpvEvent(generation, [this] { refreshLocalPlaylist(); });
+            break;
+        }
+        if (strcmp(property->name, "idle-active") == 0 && property->format == MPV_FORMAT_FLAG) {
+            const bool idle = *static_cast<int *>(property->data);
+            postMpvEvent(generation, [this, idle] {
+                if (idle && m_localPlaylist && m_localEntryStarted) {
+                    scheduleMpvTeardown();
+                    stopProgressReporting(!m_errorText.isEmpty());
+                }
+            });
+            break;
+        }
         if (strcmp(property->name, "pause") == 0 && property->format == MPV_FORMAT_FLAG) {
             const bool paused = *static_cast<int *>(property->data);
             postMpvEvent(generation, [this, paused]() {
@@ -2516,6 +2769,27 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_
         // both success and failure; otherwise a failed manifest stays stuck in
         // the preparing state forever.
         postMpvEvent(generation, [this, failed, endFileReason, endFileError]() {
+            if (m_localPlaylist) {
+                if (endFileReason != MPV_END_FILE_REASON_REDIRECT) {
+                    const bool completed = PlaybackFailurePolicy::classifyFileEnd(failed, endFileReason,
+                                               m_positionTracker.position(), m_positionTracker.duration())
+                        == PlaybackFailurePolicy::FileEnd::Completed;
+                    if (failed)
+                        m_errorText = QStringLiteral("Playback failed: %1")
+                                          .arg(QString::fromUtf8(mpv_error_string(endFileError)));
+                    emit localEntryEnded(
+                        QString::number(m_localEntryId), secondsToTicks(m_positionTracker.position()), completed);
+                }
+                m_localEntryId = -1;
+                m_fileLoaded = false;
+                m_seekDispatchReady = false;
+                m_pendingSeek = false;
+                m_seekWatchdogTimer.stop();
+                m_renderStrainTimer.stop();
+                refreshLocalPlaylist();
+                emit playbackStateChanged();
+                return;
+            }
             const bool failedBeforeLoad = failed && !m_fileLoaded;
             m_mpvLifecycle.cancelFileLoad();
             const double positionSeconds = m_positionTracker.position();

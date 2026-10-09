@@ -15,6 +15,15 @@
 
 export type Value = null | boolean | number | string | Value[] | { [key: string]: Value };
 
+/** Nonsecret host-approved identity for setup on one saved account/server. */
+export type SetupContext = {
+    accountId: string;
+    serverId: string;
+    serverName: string;
+    serverOrigin: string;
+    purpose: 'addProfile' | 'reconnect';
+};
+
 /** The complete set of current manifest and account capability names. */
 export type Capability = 'search' | 'userState' | 'reporting' | 'segments' | 'groupPlayback'
     | 'remoteControl' | 'streamQuality' | 'trickplay' | 'speedTest' | 'downloads' | 'downloadTranscode'
@@ -120,9 +129,11 @@ export interface OperationHost extends SourceHost {
 }
 
 /**
- * `configuration` is what the login screen completed with (empty while that
- * screen is being shown). Keep account state in the closure, not in module
- * globals: one module serves every account of this provider.
+ * `configuration` is the account's private saved configuration. A targeted login
+ * draft receives `{setupContext, setupAccount}` instead: the context is public
+ * identity, while setupAccount is this provider's retained private configuration.
+ * New login drafts have no saved account. Keep state in the source closure, not
+ * module globals; never return setupAccount or credentials to QML.
  */
 export type CreateSource = (configuration: Record<string, Value>, host: SourceHost) => Source;
 
@@ -433,7 +444,8 @@ export type GroupAction =
 export interface Events {
     /** Something on the server changed; `itemId` narrows it. */
     changed: { itemId?: string };
-    /** Merged into the stored configuration, e.g. a refreshed token. */
+    /** Private credential update. Drafts retain it until successful setup; live
+     * accounts persist it. Never forwarded to QML/account events or support reports. */
     configuration: Record<string, Value>;
     /** Replaces all account offers; true enables only declared flags.
      * Unknown keys or non-boolean values withdraw offers fail-closed.
@@ -482,8 +494,9 @@ export type RemoteCommand =
  */
 export interface ScreenContext {
     role: 'login' | 'settings' | 'picker';
-    /** For a picker: the `pick` object resolve or runItemAction returned. */
-    arguments: Record<string, Value>;
+    /** PickRequest arguments, or login {setupContext:{accountId,serverId,serverName,serverOrigin,purpose}}.
+     * Login hints never contain credentials; private setupAccount is factory-only. */
+    arguments: Record<string, Value> & { setupContext?: SetupContext };
     /** Login draft declarations; live account effective flags; empty when closed. */
     readonly capabilities: Capabilities;
     /** Notifying, device-local boolean options for this activation family; no credentials/grants. */
@@ -498,7 +511,8 @@ export interface ScreenContext {
     allowLanDiscovery(): Promise<void>;
     /** Cancel this draft's pending discovery/consent without closing password login. */
     cancelLanDiscovery(): void;
-    /** login: { account, label, detail?, group?, configuration }; settings: { configuration? }; picker: the choice. */
+    /** login: { account, label, detail?, group?, configuration? }; private credentials may arrive via draft configuration events.
+     * settings: { configuration? }; picker: the choice. */
     complete(result: Record<string, Value>): void;
     close(): void;
 }

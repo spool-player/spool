@@ -91,12 +91,11 @@ public:
     {
         co_await m_provider->setItemPlaybackPosition(session.itemId, position);
     }
-    QCoro::Task<void> reportPlaybackStopped(PlaybackSession session, qint64 position, bool failed, double) override
+    QCoro::Task<void> reportPlaybackStopped(PlaybackSession session, qint64 position, bool, double) override
     {
-        if (!failed && session.runtimeTicks > 0 && position >= session.runtimeTicks - 10'000'000)
-            co_await m_provider->setItemPlayed(session.itemId, true);
-        else
-            co_await m_provider->setItemPlaybackPosition(session.itemId, position);
+        // The player classifies watched versus natural end. Its item-state
+        // mutation follows this report, so never infer completion here.
+        co_await m_provider->setItemPlaybackPosition(session.itemId, position);
     }
 
 private:
