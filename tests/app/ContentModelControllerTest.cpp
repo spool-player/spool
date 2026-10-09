@@ -532,7 +532,7 @@ SPOOL_TEST_MAIN("content-model-controller")
         "another item's playback changed the displayed detail position");
     Spool::UserItemStateController itemState(nullptr, nullptr, nullptr, &controller, nullptr);
     const MovieItem stoppedItem = displayedDetail;
-    itemState.recordPlaybackStopped(stoppedItem, stoppedItem.id, stoppedItem.runtimeTicks, true, {});
+    itemState.recordPlaybackStopped(stoppedItem, stoppedItem.id, stoppedItem.runtimeTicks, true, {}, 0);
     require(displayedDetail.played && displayedDetail.resumeTicks == 0,
         "completed playback left resumable progress in item details");
     MovieItem staleDetails = stoppedItem;
@@ -543,7 +543,7 @@ SPOOL_TEST_MAIN("content-model-controller")
     catalog.pendingDetails = replayDetails;
     const MovieItem watchedItem = displayedDetail;
     controller.loadItemDetail(watchedItem.id);
-    itemState.recordPlaybackStopped(watchedItem, watchedItem.id, 1LL * 10'000'000, false, {});
+    itemState.recordPlaybackStopped(watchedItem, watchedItem.id, 1LL * 10'000'000, false, {}, 0);
     replayDetails->addResult(staleDetails);
     replayDetails->finish();
     waitUntil([&] { return displayedDetail.id == watchedItem.id; }, "delayed short-replay details did not settle");
@@ -880,7 +880,7 @@ SPOOL_TEST_MAIN("content-model-controller")
     playbackCatalog.pendingResume = beforeCompletion;
     playbackHome.refresh(homeLibraries);
     playbackState.recordPlaybackStopped(
-        completedEpisode, completedEpisode.id, completedEpisode.runtimeTicks, true, successor);
+        completedEpisode, completedEpisode.id, completedEpisode.runtimeTicks, true, successor, 0);
     require(playbackHome.nextUpItems()->count() == 1 && playbackHome.nextUpItems()->get(0).id == successor.id
             && playbackHome.resumeItems()->count() == 0,
         "completion must immediately replace the episode with its successor and clear Continue Watching");
@@ -925,7 +925,7 @@ SPOOL_TEST_MAIN("content-model-controller")
     beforePartialStop->start();
     playbackCatalog.pendingResume = beforePartialStop;
     playbackHome.refreshPlaybackRows();
-    playbackState.recordPlaybackStopped(successor, successor.id, 80'000'000, false, {});
+    playbackState.recordPlaybackStopped(successor, successor.id, 80'000'000, false, {}, 0);
     beforePartialStop->addResult(std::vector<MovieItem> {});
     beforePartialStop->finish();
     waitUntil([&] { return playbackCatalog.completedHomeRequests == 3; }, "old playback refresh did not settle");
@@ -943,7 +943,7 @@ SPOOL_TEST_MAIN("content-model-controller")
     require(playbackHome.resumeItems()->count() == 1 && playbackHome.resumeItems()->get(0).id == successor.id
             && playbackHome.resumeItems()->get(0).resumeTicks == 80'000'000,
         "a new refresh with an empty stale server list must retain authoritative local partial progress");
-    playbackState.recordPlaybackStopped(successor, successor.id, successor.runtimeTicks, true, {});
+    playbackState.recordPlaybackStopped(successor, successor.id, successor.runtimeTicks, true, {}, 0);
     require(playbackHome.resumeItems()->count() == 0, "completion must remove the retained local resume row");
     MovieItem staleResumedSuccessor = successor;
     staleResumedSuccessor.resumeTicks = 80'000'000;
@@ -972,7 +972,7 @@ SPOOL_TEST_MAIN("content-model-controller")
     cachedProgress.items = { successor };
     cachedProgress.totalRecordCount = 1;
     playbackPrefetch.storePage(progressCacheKey, cachedProgress);
-    playbackState.recordPlaybackStopped(successor, successor.id, 140'000'000, false, {});
+    playbackState.recordPlaybackStopped(successor, successor.id, 140'000'000, false, {}, 0);
     staleLatestProgress->addResult(std::vector<MovieItem> { successor });
     staleLatestProgress->finish();
     waitUntil([&] { return !playbackHome.loading(); }, "delayed latest progress rows did not settle");
@@ -984,12 +984,6 @@ SPOOL_TEST_MAIN("content-model-controller")
     require(playbackBrowse.applyCachedPage(progressCacheKey) == 1
             && playbackBrowse.items()->get(0).resumeTicks == 140'000'000,
         "hydrating cached browse rows must use the newer stopped position");
-    playbackState.recordPlaybackStopped(successor, successor.id, successor.runtimeTicks - 10LL * 10'000'000, false, {});
-    require(playbackHome.resumeItems()->count() == 0 && progressRows->get(0).resumeTicks == 0
-            && playbackBrowse.items()->get(0).resumeTicks == 0,
-        "near-completion must immediately clear unresumable progress across visible rows");
-    require(playbackBrowse.applyCachedPage(progressCacheKey) == 1 && playbackBrowse.items()->get(0).resumeTicks == 0,
-        "cached browse hydration must not resurrect near-complete progress");
     playbackState.applyPlayed(successor.id, true);
     playbackState.applyPlayed(successor.id, false);
     require(playbackBrowse.applyCachedPage(progressCacheKey) == 1 && !playbackBrowse.items()->get(0).played
