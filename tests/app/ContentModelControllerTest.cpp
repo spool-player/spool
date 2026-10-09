@@ -931,6 +931,32 @@ SPOOL_TEST_MAIN("content-model-controller")
     require(playbackHome.resumeItems()->get(0).id == successor.id
             && playbackHome.resumeItems()->get(0).resumeTicks == 80'000'000,
         "a refresh predating a partial stop cannot erase the newly recorded Continue Watching item");
+    auto emptyAfterStop = std::make_shared<QPromise<std::vector<MovieItem>>>();
+    emptyAfterStop->start();
+    playbackCatalog.pendingResume = emptyAfterStop;
+    playbackHome.refreshPlaybackRows();
+    emptyAfterStop->addResult(std::vector<MovieItem> {});
+    emptyAfterStop->finish();
+    waitUntil([&] { return playbackCatalog.completedHomeRequests == 4; },
+        "post-stop stale empty resume response did not settle");
+    require(playbackHome.resumeItems()->count() == 1 && playbackHome.resumeItems()->get(0).id == successor.id
+            && playbackHome.resumeItems()->get(0).resumeTicks == 80'000'000,
+        "a new refresh with an empty stale server list must retain authoritative local partial progress");
+    playbackState.recordPlaybackStopped(successor, successor.id, successor.runtimeTicks, true, {});
+    require(playbackHome.resumeItems()->count() == 0, "completion must remove the retained local resume row");
+    MovieItem staleResumedSuccessor = successor;
+    staleResumedSuccessor.resumeTicks = 80'000'000;
+    auto staleAfterCompletion = std::make_shared<QPromise<std::vector<MovieItem>>>();
+    staleAfterCompletion->start();
+    playbackCatalog.pendingResume = staleAfterCompletion;
+    playbackHome.refreshPlaybackRows();
+    staleAfterCompletion->addResult(std::vector<MovieItem> { staleResumedSuccessor });
+    staleAfterCompletion->finish();
+    waitUntil([&] { return playbackCatalog.completedHomeRequests == 5; },
+        "post-completion stale resume response did not settle");
+    require(playbackHome.resumeItems()->count() == 0,
+        "an explicit completion must prevent retained local rows or stale server progress from resurrecting the "
+        "episode");
 
     const LibraryItem progressLibrary
         = makeLibrary(QStringLiteral("progress-library"), QStringLiteral("Progress library"), QStringLiteral("movies"));

@@ -144,6 +144,7 @@ AppController::AppController(
     m_content = new ContentModelController(m_catalog, m_prefetch, this);
     m_search = new SearchController(provider->search(), m_prefetch, this);
     m_itemState = new UserItemStateController(provider->itemState(), m_browse, m_home, m_content, m_search, this);
+    connect(m_itemState, &UserItemStateController::playedChanged, m_playQueue, &PlayQueueController::updatePlayed);
     m_group = new GroupPlaybackController(provider, player, m_playQueue, this);
     connect(m_group, &GroupPlaybackController::errorText, this, &AppController::showToast);
     connect(provider, &SourceHub::accountEvent, this,

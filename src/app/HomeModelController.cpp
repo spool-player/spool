@@ -511,6 +511,38 @@ void HomeModelController::reconcilePlaybackRows(std::vector<MovieItem>& resume, 
             ++kept;
         }
         resume.erase(kept, resume.end());
+        // A fresh request can still omit a just-stopped item while the
+        // provider catches up. Reuse only current rows with authoritative,
+        // still-resumable local state; completion/reset cannot resurrect them.
+        std::vector<MovieItem> missingLocal;
+        for (const MovieItem& current : m_resumeItems.movies()) {
+            if (std::any_of(resume.cbegin(), resume.cend(),
+                    [&current](const MovieItem& item) { return item.id == current.id; }))
+                continue;
+            MovieItem state;
+            state.id = current.id;
+            state.runtimeTicks = current.runtimeTicks;
+            state.resumeTicks = current.resumeTicks;
+            state.played = current.played;
+            if (!m_api->applyLocalPlaybackState(state)
+                || !isMeaningfulResumePosition(state.resumeTicks, state.runtimeTicks))
+                continue;
+            if (missingLocal.empty())
+                missingLocal.reserve(24);
+            MovieItem& retained = missingLocal.emplace_back(current);
+            retained.resumeTicks = state.resumeTicks;
+            retained.played = state.played;
+            if (missingLocal.size() == 24)
+                break;
+        }
+        if (!missingLocal.empty()) {
+            for (MovieItem& item : resume) {
+                if (missingLocal.size() == 24)
+                    break;
+                missingLocal.push_back(std::move(item));
+            }
+            resume = std::move(missingLocal);
+        }
     }
     const auto playedLocally = [this](const MovieItem& item) { return m_locallyPlayed.contains(item.id); };
     std::erase_if(resume, playedLocally);

@@ -100,6 +100,7 @@ namespace {
             { QStringLiteral("genericEpisodeTitle"), isGenericEpisodeTitle(item) },
             { QStringLiteral("playable"), isPlayableItem(item) },
             { QStringLiteral("resumeTicks"), item.resumeTicks },
+            { QStringLiteral("played"), item.played },
             { QStringLiteral("runtimeTicks"), item.runtimeTicks },
         };
     }
@@ -266,6 +267,24 @@ bool PlayQueueController::updateResumeTicks(const QString& itemId, qint64 resume
         updated = true;
         // The queue is a visible list now, so a silent write leaves stale
         // progress on screen until something else rebuilds the delegates.
+        const QModelIndex changed = index(row);
+        emit dataChanged(changed, changed, { ItemRole, ProgressRole });
+    }
+    return updated;
+}
+
+bool PlayQueueController::updatePlayed(const QString& itemId, bool played)
+{
+    if (itemId.isEmpty())
+        return false;
+    bool updated = false;
+    for (int row = 0; row < rowCount(); ++row) {
+        MovieItem& item = m_entries[static_cast<size_t>(row)];
+        if (item.id != itemId || (item.played == played && item.resumeTicks == 0))
+            continue;
+        item.played = played;
+        item.resumeTicks = 0;
+        updated = true;
         const QModelIndex changed = index(row);
         emit dataChanged(changed, changed, { ItemRole, ProgressRole });
     }
