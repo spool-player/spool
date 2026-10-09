@@ -487,6 +487,11 @@ bool MovieItem::isPlayable() const
     return isPlayableItem(*this);
 }
 
+QString MovieItem::playActionLabel() const
+{
+    return normalizedResumeTicks(resumeTicks, runtimeTicks) > 0 ? QStringLiteral("Resume") : QStringLiteral("Play");
+}
+
 QString MovieItem::subtitle() const
 {
     return itemSubtitle(*this);
