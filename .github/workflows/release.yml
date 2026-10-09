@@ -169,6 +169,8 @@ jobs:
               echo 'The macOS DMG is **not Developer ID signed or notarized**.'
             fi
             echo
+            echo 'Release CI requires the complete Linux traditional and real OpenGL/Vulkan GUI suites, Windows OpenGL tests, and the Android phone journey. Full macOS, tvOS simulator, and Android TV native suites remain available manually but do not gate this release; their platform builds and package audits are retained.'
+            echo
             echo 'The Apple TV IPA is **unsigned**: it has no Apple signing identity or provisioning profile, and tvOS will not install it as downloaded. It is not distributed through the App Store or TestFlight and has not been reviewed by Apple.'
             echo "Build and sign from source with your own Apple Account, or use your own tvOS re-signing setup. See [Apple TV build and signing directions](https://github.com/$REPO/tree/$TAG#apple-tv)."
           } >release-notes.md
