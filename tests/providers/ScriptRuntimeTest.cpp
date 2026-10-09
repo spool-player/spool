@@ -11,6 +11,7 @@
 #include <QUrlQuery>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <functional>
 #include <iostream>
@@ -130,7 +131,26 @@ SPOOL_TEST_MAIN("script-runtime")
                     require(bytes > 0 && bytes <= 4 * 1024 * 1024, "benchmark requests bounded samples");
                     speedSizes.append(bytes);
                     const QString nonce = query.queryItemValue(QStringLiteral("nonce"));
-                    require(!nonce.isEmpty() && !speedNonces.contains(nonce), "every benchmark sample bypasses caches");
+                    const auto requireNonce = [&](bool condition, const char *message) {
+                        if (condition)
+                            return;
+                        const QString path = target.path();
+                        const int fixtureCase = path == QStringLiteral("/speed") ? 1
+                            : path == QStringLiteral("/speed-error")             ? 2
+                            : path == QStringLiteral("/speed-redirect")          ? 3
+                            : path == QStringLiteral("/speed-truncated")         ? 4
+                            : path == QStringLiteral("/speed-oversized")         ? 5
+                            : path == QStringLiteral("/speed-peer-error")        ? 6
+                            : path == QStringLiteral("/speed-slow")              ? 7
+                                                                                 : 0;
+                        char failure[192];
+                        std::snprintf(failure, sizeof failure,
+                            "%s fixtureNumericCase=%d sampleBytes=%d requestOrdinal=%lld", message, fixtureCase, bytes,
+                            static_cast<long long>(speedSizes.size()));
+                        require(false, failure);
+                    };
+                    requireNonce(!nonce.isEmpty(), "benchmark cache-busting nonce is empty");
+                    requireNonce(!speedNonces.contains(nonce), "benchmark cache-busting nonce is duplicated");
                     speedNonces.insert(nonce);
                     require(!request.contains("Cookie:"), "benchmark does not load shared cookies");
                     require(request.contains("Accept-Encoding: identity"), "benchmark requests uncompressed bytes");
