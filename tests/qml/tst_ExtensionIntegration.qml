@@ -85,7 +85,7 @@ TestCase {
     }
     function test_endToEnd() {
         tryVerify(() => testCase.Window.window.active && Qt.application.state === Qt.ApplicationActive, 10000,
-                  "Provider integration requires a natively active application window")
+        "Provider integration requires a natively active application window")
         tryVerify(() => Integration.running(Integration.first) && Integration.running(Integration.second), 10000)
         tryVerify(() => Integration.cycles > 0 && !SettingsSync.busy, 10000)
         compare(SettingsSync.accountId, Integration.first)
@@ -207,7 +207,34 @@ TestCase {
         subtitlePage.visible = false
         remotePage.visible = true
         RemoteTargets.setChooserVisible(true)
-        tryVerify(() => !RemoteTargets.busy && RemoteTargets.targets.length >= 3, 10000)
+        try {
+            tryVerify(() => !RemoteTargets.busy && RemoteTargets.targets.length >= 3, 10000)
+        } finally {
+            if (RemoteTargets.busy || RemoteTargets.targets.length < 3) {
+                // Numeric, fixed-fixture evidence only; never print target/account payloads.
+                console.warn("remote discovery receipt: " + JSON.stringify({
+                                                                               busy: RemoteTargets.busy,
+                                                                               targetsCount:
+                                                                               RemoteTargets.targets.length,
+                                                                               chooserVisible:
+                                                                               RemoteTargets.chooserVisible,
+                                                                               available: RemoteTargets.available,
+                                                                               windowActive:
+                                                                               testCase.Window.window.active,
+                                                                               appState: Qt.application.state,
+                                                                               firstRunning: Integration.running(
+                                                                                                 Integration.first),
+                                                                               secondRunning: Integration.running(
+                                                                                                  Integration.second),
+                                                                               firstRequests: Integration.stats(
+                                                                                                  "first").remoteTargetRequests
+                                                                                              || 0,
+                                                                               secondRequests: Integration.stats(
+                                                                                                   "second").remoteTargetRequests
+                                                                                               || 0
+                                                                           }))
+            }
+        }
         const target = RemoteTargets.targets.find(row => row.accountId === Integration.first && !row.isLocal)
         verify(target)
         remotePage.focusedKey = remotePage.rows.find(row => row.targetId === target.id).key

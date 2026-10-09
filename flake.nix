@@ -54,7 +54,7 @@
             };
             sdkExtraArgs = androidSdkArgs;
             androidEmulatorFlags =
-              "-no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader";
+              "-no-window -no-audio -no-boot-anim -no-snapshot -gpu swangle";
           };
           tvEmulator = pkgs.androidenv.emulateApp {
             name = "spool-android-tv-emulator";
@@ -76,7 +76,7 @@
             };
             sdkExtraArgs = androidSdkArgs;
             androidEmulatorFlags =
-              "-no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader -cores 2";
+              "-no-window -no-audio -no-boot-anim -no-snapshot -gpu swangle -cores 2";
           };
         in {
           sdk = composition.androidsdk;
@@ -815,7 +815,7 @@
             pkg-config
             python3
             yasm
-          ];
+          ] ++ lib.optionals stdenv.hostPlatform.isLinux [ util-linux ];
           ANDROID_HOME = "${android.sdk}/libexec/android-sdk";
           ANDROID_SDK_ROOT = "${android.sdk}/libexec/android-sdk";
           ANDROID_NDK_ROOT = "${android.sdk}/libexec/android-sdk/ndk/${androidToolchain.android.ndkVersion}";

@@ -188,7 +188,10 @@ def ips_timestamp(value):
         stamp = datetime.fromisoformat(value)
         return stamp.timestamp() if stamp.tzinfo is not None else None
     except ValueError:
-        return None
+        try:
+            return datetime.strptime(value, "%Y-%m-%d %H:%M:%S.%f %z").timestamp()
+        except ValueError:
+            return None
 
 
 def matching_simulator_report(path, launch):
@@ -218,11 +221,28 @@ def matching_simulator_report(path, launch):
     proc_path = payload.get("procPath")
     if not isinstance(proc_path, str):
         return None
-    parts = proc_path.lower().split("/")
-    if launch["device"].lower() not in parts:
-        return None
-    if not proc_path.startswith(launch["appPath"] + "/"):
-        return None
+    app = Path(launch["appPath"])
+    executable = launch.get("executable")
+    if proc_path.startswith(launch["appPath"] + "/"):
+        if launch["device"].lower() not in proc_path.lower().split("/"):
+            return None
+    else:
+        # macOS replaces private procPath components with placeholders in IPS
+        # reports. Bind that path to the installed Mach-O, not a basename alone.
+        # https://developer.apple.com/documentation/xcode/interpreting-the-json-format-of-a-crash-report
+        if (not any(part in ("USER", "*", "...", "<private>") for part in proc_path.split("/"))
+                or payload.get("coalitionName") != "com.apple.CoreSimulator.SimDevice." + launch["device"]
+                or not isinstance(executable, str)
+                or not proc_path.endswith("/" + app.name + "/" + executable)):
+            return None
+        images = payload.get("usedImages")
+        identities = launch.get("binaryIdentities", [])
+        if (not isinstance(images, list) or not identities
+                or not any(isinstance(image, dict) and image.get("source") == "P"
+                           and image.get("name") == executable
+                           and [str(image.get("uuid", "")).lower(), image.get("arch")] in identities
+                           for image in images)):
+            return None
     captured = ips_timestamp(payload.get("captureTime"))
     if captured is None or not launch["started"] <= captured <= launch["finished"]:
         return None
@@ -375,6 +395,14 @@ class TvOS:
                 not isinstance(self.executable, str) or
                 not re.fullmatch(r"[a-zA-Z0-9_-]+", self.executable)):
             raise RuntimeError("installed simulator selector bundle identity is invalid")
+        binary = command(["xcrun", "dwarfdump", "--uuid", str(Path(self.app_path) / self.executable)]).stdout
+        self.binary_identities = [
+            [str(uuid.UUID(identifier)), arch]
+            for identifier, arch in re.findall(
+                r"^UUID: ([0-9a-fA-F-]{36}) \((arm64|arm64e|x86_64|x86_64h)\) ", binary, re.MULTILINE)
+        ]
+        if not self.binary_identities:
+            raise RuntimeError("installed simulator selector binary identity is unavailable")
         self.launch = None
         self.console = ""
 
@@ -386,6 +414,7 @@ class TvOS:
 
     def execute(self, arguments, timeout):
         self.launch = {"bundle": self.bundle, "device": self.device, "appPath": self.app_path,
+                       "executable": self.executable, "binaryIdentities": self.binary_identities,
                        "started": time.time(), "pid": None,
                        "selector": arguments[1] if len(arguments) >= 2 and arguments[0] == "--child" else None,
                        "nonce": arguments[-1]}
@@ -437,17 +466,17 @@ class TvOS:
             # Delayed OS report publication is bounded independently of the
             # selector timeout. No retries/relaunches, and no cleanup-generated
             # crash can match the pre-cleanup captureTime window.
-            reports = Path.home() / "Library/Logs/DiagnosticReports"
+            reports = (Path.home() / "Library/Logs/DiagnosticReports", Path("/Library/Logs/DiagnosticReports"))
             deadline = time.monotonic() + 5
             examined = set()
             parsed = 0
             while time.monotonic() < deadline and parsed < 128:
-                for path in reports.glob(self.executable + "*.ips"):
+                for path in (path for root in reports for path in root.glob(self.executable + "*.ips")):
                     if time.monotonic() >= deadline or parsed >= 128:
                         break
                     try:
                         stat = path.stat()
-                        identity = (path.name, stat.st_mtime_ns, stat.st_size)
+                        identity = (path, stat.st_mtime_ns, stat.st_size)
                         if identity in examined or stat.st_mtime < self.launch["started"]:
                             continue
                         examined.add(identity)

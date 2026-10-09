@@ -646,7 +646,7 @@ while media is active. Account secrets use device-only Keychain records.
 Database/artwork/log storage is purgeable on tvOS; local filesystem browsing
 and self-updating are not enabled.
 
-### Simulator proof and CI artifacts
+### Manual simulator checks and CI build artifacts
 
 ```sh
 nix develop .#native -c env DEPLOY_APP=0 bash tools/build-macos.sh
@@ -654,7 +654,7 @@ APPLE_SDK=appletvsimulator APPLE_ARCH=arm64 bash tools/build-tvos.sh
 bash tools/apple/smoke-tvos.sh build/tvos/appletvsimulator-arm64/install/Spool.app
 ```
 
-The isolated simulator runs every native traditional selector before the GUI
+The manual isolated simulator helper runs every native traditional selector before the GUI
 selectors, retaining failures and crashes from both phases. GPU consumers check
 video orientation and OSD pixels, AudioUnit playback-time advancement and
 exclusive-session behavior. The real Keychain/sandbox consumer still requires
@@ -671,8 +671,11 @@ existing duplicate-build policy; manual dispatch can select `build_tvos`. Reusab
 release builds always include both. Dependency caches are exact-keyed to source
 pins, patches, build policy, SDK, architecture, and compiler/build-tool identity;
 PRs restore without publishing caches. Only `spool-tvos-device-arm64` is a public
-release artifact. Simulator apps and smoke results use
-`internal-tvos-simulator-arm64` and are never offered as installable downloads.
+release artifact. CI retains simulator builds as `internal-tvos-simulator-arm64`,
+not native test proof, and never offers them as installable downloads. Native
+simulator checks remain manual: hosted simulator teardown crashes prevent treating
+this lane as release-CI runtime coverage. The strict selectors and helper remain
+available unchanged.
 Qt owns the GLES framebuffer renderer's external-command bracket; the renderer
 does not nest another RHI scope. Context changes restore the provided FBO after
 resetting shared OpenGL state, and drawing resets state before Qt resumes.
@@ -710,10 +713,14 @@ The Android toolchain is pinned to SDK 36, Build Tools 36.0.0 and NDK
 `tools/manifests/toolchain.json`, which every platform reads. `nixpkgs` tracks `nixos-unstable`; the
 headless emulator and its Google APIs x86_64 system image come from that
 channel rather than nixpkgs master.
-Phone and actual Android TV lanes select the SDK's current `-gpu swiftshader`
-CPU GLES driver, not the deprecated `swiftshader_indirect` route or Qt Quick's
-software scenegraph. Resolution, density and the real OS form factor are not
-changed to mask rendering or input failures. See the [official GPU-mode contract](https://developer.android.com/studio/run/emulator-acceleration#configure-graphics-acceleration-from-the-command-line).
+Phone and actual Android TV lanes use the emulator's supported `-gpu swangle`
+host ANGLE/SwiftShader backend and the image's built-in guest ANGLE for the
+traditional, GUI and production Spool packages. The isolated launcher restores
+previous guest-driver settings before shutdown. This avoids the guest GLES
+translator's rejected GLES 3.1 SSBO operations without patching Qt or consuming
+GL errors. Qt Quick's software scenegraph, resolution/density changes and GPU
+exclusions are not used; any guest-driver rendering failure still fails the lane.
+See the [official GPU-mode contract](https://developer.android.com/studio/run/emulator-acceleration#configure-graphics-acceleration-from-the-command-line).
 
 
 Build the emulator ABI locally, in one command:
@@ -749,6 +756,10 @@ Enabled builds activate mobile player interactions only on non-TV devices:
 Back exits playback immediately, and tapping the video outside the controls
 toggles the OSD. Android TV retains remote-oriented navigation. Future mobile
 targets can enable the same option without Android-specific QML.
+Android TV's paired press/release hold protocol applies only to direction keys.
+Select/Return activates on its normal release, including rapid repeated Select
+and Select immediately after a direction hold; it never inherits the direction
+release-grace delay.
 
 Music continues in the background through an Android media-playback foreground
 service, with system/lock-screen controls for play, pause, seek, queue navigation
@@ -807,9 +818,12 @@ release download: the separately built `spool-x86_64.apk` stays nondebuggable.
 After native GUI selectors, the same host e2e binary drives the actual emulator
 app and checks device screenshots. The lifecycle then uninstalls the developer
 app, installs the exact signed release `spool-x86_64.apk`, and checks **both**
-launcher categories on that shipped artifact. CI runs separate phone and actual
-Android TV system images, serially, retaining both failures. TV mode is derived
-from the emulator OS's leanback feature, not fabricated through an app override.
+launcher categories on that shipped artifact. Release CI runs only the phone image,
+requiring every traditional selector, GUI selector, and the full real-app journey.
+Android TV checks remain manual because the guest ANGLE driver faults on the TV
+image; they are not release-CI runtime proof. The TV command above retains all
+strict assertions. TV mode is derived from the emulator OS's leanback feature,
+not fabricated through an app override.
 Phone/TV receipts and screenshots live in distinct `build/android/launch-test/`
 subdirectories. Private AVD storage is removed when its owned emulator exits.
 
@@ -825,6 +839,14 @@ public remote branch. Foreign-repository checks clear Git's hook-exported
 repository selectors in a scoped subshell, so linked worktrees validate the
 submodule rather than accidentally querying the superproject's object store;
 this does not bypass the lineage check.
+
+Release CI requires the complete Linux traditional and real GUI suite, retains
+the Windows supported-OpenGL test gate, and separately requires real ASan/UBSan
+consumer checks. Android phone runtime coverage includes all traditional and GUI
+selectors and the full actual-app journey. macOS native, tvOS simulator native,
+and Android TV checks remain available manually with unchanged strict assertions,
+but are not automatic release-CI proof. All platform builds and package audits
+remain required; successful Apple/TV artifacts do not imply native tests passed.
 
 Build and run the same complete host suite as CI with `nix run .#tests`, or run
 already-built targets with:
@@ -849,7 +871,7 @@ crash; ordinary resume runs it again while retaining the interrupted attempt.
 Explicit retry also permits failed, timed-out and start-failed cases, never
 known crashes.
 Use `--config Release` for Xcode or another multi-configuration CMake generator.
-Host CI always retains the phase journals, selector-attempt logs and journey
+Linux and Windows host CI always retain the phase journals, selector-attempt logs and journey
 screenshots in one-day `internal-*-unified-tests` artifacts, even after test
 failure. It does not export the journey's credential files, control descriptors,
 isolated settings or raw product logs. The provider resource has one shared
@@ -914,14 +936,17 @@ pacing, change the compositor clock, or replace normal desktop drivers.
 See `tools/patches/mesa-wayland-fifo-presentation-clock.patch` for the exact
 upstream source, introducing commit and protocol references.
 
-macOS uses its real graphics device and bundled/Nix MoltenVK, not a software
-scenegraph. Hosted Apple paravirtualized GPUs use MoltenVK's documented
+Manual macOS tests use the real graphics device and bundled/Nix MoltenVK, not a
+software scenegraph. Hosted Apple paravirtualized GPUs use MoltenVK's documented
 `MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS=0` discrete-binding configuration, avoiding
 an unsupported Metal argument-encoder probe while retaining every real Vulkan
 selector. This is the [upstream-recommended VM configuration](https://github.com/KhronosGroup/MoltenVK/issues/2373),
 not a Metal implementation fork or a change to users' default graphics backend.
 CI also selects documented `MVK_CONFIG_USE_MTLHEAP=0` direct Metal buffers;
 placement-heap-dependent image-view aliases are unavailable in that mode.
+These settings do not establish native-suite support on the hosted GPU: macOS
+release CI retains compilation, package audits, signing, and notarization behavior,
+but does not invoke the native suite or publish native phase receipts.
 The bounded Qt Cocoa patch retains explicit window-state requests during
 AppKit fullscreen entry and replays only the latest request after did-enter.
 Native titlebar entry is unchanged when no explicit request is pending.
@@ -996,13 +1021,13 @@ forward/reverse mappings. A private nonce-bound capability file lets the
 controller request those operations; adapter cleanup still runs if the controller
 crashes or times out, without relying on C++ destructors or removing unrelated
 device resources. Request framing has an absolute deadline, including before
-authentication. CI enables `SPOOL_TEST_DEVICE_CLEANUP_REGRESSIONS=1` to inject
+authentication. Android phone CI enables `SPOOL_TEST_DEVICE_CLEANUP_REGRESSIONS=1` to inject
 real controller timeout/crash after public `spoolet` readiness, test an
 unauthenticated slow client, verify process/mapping retirement, and exercise
 another actual consumer. The inner controller fault remains crashed/timed-out;
 only the independent cleanup assertion can pass.
 
-Mobile attempts receive their own `SPOOL_E2E_ARTIFACT_DIR`. CI uploads only the
+Mobile attempts receive their own `SPOOL_E2E_ARTIFACT_DIR`. Android phone CI uploads only the
 adapter's `safe-export` subtree: schema-generated native/controller results,
 sanitized journals and attempt diagnostics, and named screenshots. Capability
 files, control descriptors, credentials, raw product logs and isolated data roots
@@ -1016,6 +1041,14 @@ breadcrumbs from an exact PID/bundle/device/time-matched OS report. Collection
 is bounded to five seconds, 128 candidates, 1 MiB per report and 64 frames per
 stack. Raw reports, arbitrary symbols and paths are never exported; unavailable
 evidence does not change the failed/crashed outcome.
+The collector searches both the user and system `Library/Logs/DiagnosticReports`
+roots. macOS [privacy-redacts executable paths in `.ips` reports](https://developer.apple.com/documentation/xcode/interpreting-the-json-format-of-a-crash-report);
+such reports additionally require the exact simulator coalition, application and
+executable names, and an architecture/UUID match to the installed Mach-O binary.
+PID, bundle and launch-window checks remain mandatory; redacted paths never
+permit basename-only matching. Raw native logs and report strings stay private.
+Both ISO timestamps and Apple's space-separated UTC-offset `captureTime` format
+are parsed without widening the exact launch window.
 
 Device phases run serially because one installed activity/application cannot
 host parallel native processes safely. Native traditional coverage includes
