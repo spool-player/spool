@@ -893,8 +893,10 @@
             if pkgs.stdenv.hostPlatform.isDarwin
             then "$(sysctl -n hw.ncpu)"
             else "$(nproc)";
+          nativeEnvironmentScrub = ''PATH=$(printf %s "$PATH" | tr ":" "\n" | grep -v webos-sdk | paste -sd:); export PATH; unset WEBOS_SDK_ROOT QT_PLUGIN_PATH QML2_IMPORT_PATH QML_IMPORT_PATH'';
           testScript = pkgs.writeShellScript "spool-tests" ''
             set -euo pipefail
+            ${nativeEnvironmentScrub}
             cd "$1"
             shift
             workers="${testJobs}"
@@ -998,7 +1000,7 @@
 
             # Strip webOS cross state so native Linux builds do not pick up the
             # old SDK wayland-scanner/cross toolchain.
-            scrub='PATH=$(printf %s "$PATH" | tr ":" "\n" | grep -v webos-sdk | paste -sd:); export PATH; unset WEBOS_SDK_ROOT QT_PLUGIN_PATH QML2_IMPORT_PATH QML_IMPORT_PATH'
+            scrub='${nativeEnvironmentScrub}'
 
             if ${if buildBeforeRun then "true" else "false"}; then
               if ${if localProviders then "false" else "true"} && [ -x "$BIN" ] && [ -f "$BUILD_STAMP" ] && [ "$(cat "$BUILD_STAMP")" = "${stagedSourceId}" ]; then
@@ -1020,7 +1022,7 @@
             fi
 
             if ${if runTests then "true" else "false"}; then
-              exec nix develop "$REPO_ROOT#native" -c bash -c "$scrub"'; exec "$@"' _ ${testScript} "$REPO_ROOT" "$@"
+              exec nix develop "$REPO_ROOT#native" -c ${testScript} "$REPO_ROOT" "$@"
             fi
 
             if ${if buildOnly then "true" else "false"}; then
