@@ -2,6 +2,7 @@
 #include "app/BrowseSessionController.h"
 #include "app/HomeModelController.h"
 #include "app/LibraryPrefetchController.h"
+#include "app/LibraryQuery.h"
 #include "app/SearchController.h"
 #include "app/UserItemStateController.h"
 #include "common/AsyncTask.h"
@@ -960,6 +961,7 @@ SPOOL_TEST_MAIN("content-model-controller")
 
     const LibraryItem progressLibrary
         = makeLibrary(QStringLiteral("progress-library"), QStringLiteral("Progress library"), QStringLiteral("movies"));
+    const QString progressCacheKey = Spool::libraryCacheKey(progressLibrary);
     auto staleLatestProgress = std::make_shared<QPromise<std::vector<MovieItem>>>();
     staleLatestProgress->start();
     playbackCatalog.pendingResume.reset();
@@ -969,7 +971,7 @@ SPOOL_TEST_MAIN("content-model-controller")
     PagedMovieItems cachedProgress;
     cachedProgress.items = { successor };
     cachedProgress.totalRecordCount = 1;
-    playbackPrefetch.storePage(QStringLiteral("progress-page"), cachedProgress);
+    playbackPrefetch.storePage(progressCacheKey, cachedProgress);
     playbackState.recordPlaybackStopped(successor, successor.id, 140'000'000, false, {});
     staleLatestProgress->addResult(std::vector<MovieItem> { successor });
     staleLatestProgress->finish();
@@ -979,25 +981,24 @@ SPOOL_TEST_MAIN("content-model-controller")
         playbackHome.latestLibraryRows().front().toMap().value(QStringLiteral("model")).value<QObject *>());
     require(progressRows && progressRows->get(0).resumeTicks == 140'000'000,
         "a delayed latest row must not revert the newer stopped position");
-    require(playbackBrowse.applyCachedPage(QStringLiteral("progress-page")) == 1
+    require(playbackBrowse.applyCachedPage(progressCacheKey) == 1
             && playbackBrowse.items()->get(0).resumeTicks == 140'000'000,
         "hydrating cached browse rows must use the newer stopped position");
     playbackState.recordPlaybackStopped(successor, successor.id, successor.runtimeTicks - 10LL * 10'000'000, false, {});
     require(playbackHome.resumeItems()->count() == 0 && progressRows->get(0).resumeTicks == 0
             && playbackBrowse.items()->get(0).resumeTicks == 0,
         "near-completion must immediately clear unresumable progress across visible rows");
-    require(playbackBrowse.applyCachedPage(QStringLiteral("progress-page")) == 1
-            && playbackBrowse.items()->get(0).resumeTicks == 0,
+    require(playbackBrowse.applyCachedPage(progressCacheKey) == 1 && playbackBrowse.items()->get(0).resumeTicks == 0,
         "cached browse hydration must not resurrect near-complete progress");
     playbackState.applyPlayed(successor.id, true);
     playbackState.applyPlayed(successor.id, false);
-    require(playbackBrowse.applyCachedPage(QStringLiteral("progress-page")) == 1
-            && !playbackBrowse.items()->get(0).played && playbackBrowse.items()->get(0).resumeTicks == 0,
+    require(playbackBrowse.applyCachedPage(progressCacheKey) == 1 && !playbackBrowse.items()->get(0).played
+            && playbackBrowse.items()->get(0).resumeTicks == 0,
         "marking an episode unwatched must clear cached progress without marking it played");
     cachedProgress.items.front().resumeTicks = 160'000'000;
-    playbackPrefetch.storePage(QStringLiteral("progress-page"), cachedProgress);
+    playbackPrefetch.storePage(progressCacheKey, cachedProgress);
     playbackContent.reset();
-    require(playbackBrowse.applyCachedPage(QStringLiteral("progress-page")) == 1
+    require(playbackBrowse.applyCachedPage(progressCacheKey) == 1
             && playbackBrowse.items()->get(0).resumeTicks == 160'000'000,
         "session reset must discard old local precedence and accept the new server state");
 
