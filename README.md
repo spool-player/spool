@@ -452,6 +452,13 @@ the player; it does not close Spool. `stop` also returns to the application.
 Bindings which manipulate volume, mute or speed update the corresponding Spool
 controls. Closing Spool continues to use its normal application shutdown path.
 
+Stopping a provider item immediately updates its progress and watched state in
+details, Home, related rows and the queue. Delayed server responses and cached
+browse pages cannot overwrite the latest local stop during the current watching
+session. Resume uses that position; Start from beginning and explicitly supplied
+remote positions still take precedence. Completed episodes leave Continue
+Watching and update Next Up without a short replay silently marking them unwatched.
+
 ## Performance benchmarks
 
 GitHub Actions reports performance regressions as warnings, not build failures:
