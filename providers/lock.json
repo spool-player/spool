@@ -4,16 +4,16 @@
     {
       "id": "spool.jellyfin",
       "appleAppStore": true,
-      "version": "0.2.12",
-      "archive": "bundled/spool.jellyfin-0.2.12.tar.zst",
-      "sha256": "b2e36c7dead82a59766d8337cdf931c0aac3542d45378e62534923ec84bc88be"
+      "version": "0.2.13",
+      "archive": "bundled/spool.jellyfin-0.2.13.szo",
+      "sha256": "4f1331f17657dd6ff1ffb1c396149ac00c4393ac02dea44a185901111f07a897"
     },
     {
       "id": "spool.emby",
       "appleAppStore": true,
-      "version": "0.1.7",
-      "archive": "bundled/spool.emby-0.1.7.tar.zst",
-      "sha256": "bc48161d27382fc2c58dcd69e220015743bdefb5efa50da765ef1d4ca70f0d02"
+      "version": "0.1.8",
+      "archive": "bundled/spool.emby-0.1.8.szo",
+      "sha256": "14f9a36a8e7317b2cf51ed1ebcea3d74e346f2897ac18cec6e8eddf7aa290ea8"
     },
     {
       "id": "spool.plex",
