@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Layouts
 import "../theme"
 
 SettingRow {
@@ -25,18 +26,22 @@ SettingRow {
 
     onClicked: opened()
 
-    Rectangle {
+    trailing: Rectangle {
         readonly property int sidePadding: Metrics.scaled(16)
 
-        anchors.right: parent.right
-        anchors.rightMargin: Metrics.scaled(14)
-        anchors.verticalCenter: parent.verticalCenter
+        Layout.alignment: Qt.AlignVCenter
         // Hug the value instead of always reserving the widest pill: short
-        // answers like "Blue" should not sit in a field of empty chrome.
-        width: Math.max(Metrics.scaled(120), Math.min(valueLabel.implicitWidth + dropdownIcon.width + sidePadding * 2
-                                                      + Metrics.scaled(10), Math.max(Metrics.scaled(180), root.width
-                                                                                     * 0.46)))
-        height: Math.max(Metrics.scaled(40), Metrics.controlHeightPx)
+        // answers like "Blue" should not sit in a field of empty chrome. The
+        // row layout reserves this space so long labels cannot run under it.
+        Layout.preferredWidth: Math.min(root.availableWidth * 0.5, Math.max(Metrics.scaled(120), Math.min(valueLabel.implicitWidth
+                                                                                                          + dropdownIcon.width
+                                                                                                          + sidePadding
+                                                                                                          * 2 + Metrics.scaled(
+                                                                                                              10), Math.max(
+                                                                                                              Metrics.scaled(
+                                                                                                                  180), root.width
+                                                                                                              * 0.46))))
+        Layout.preferredHeight: Math.max(Metrics.scaled(40), Metrics.controlHeightPx)
         radius: Theme.radiusMedium
         color: root.rowFocus ? Theme.accentPanel : Theme.bgRaised
         border.width: root.rowFocus ? Theme.focusBorderWidth : Theme.hoverBorderWidth
