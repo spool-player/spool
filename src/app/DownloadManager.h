@@ -29,6 +29,8 @@ public:
     DownloadManager(
         SourceHub *sources, QString dataRoot, TlsTrustController *trust = nullptr, QObject *parent = nullptr);
     ~DownloadManager() override;
+    // Inventory rows are a snapshot of the last change: constructed once per
+    // change (not per progress-driven status read) and shared implicitly.
     QVariantList jobs() const;
     QString destination() const
     {
@@ -97,6 +99,10 @@ private:
     AndroidDownloadStorage *m_androidStorage;
     QHash<QString, std::shared_ptr<Job>> m_jobs;
     QStringList m_order;
+    mutable QVariantList m_jobsSnapshot;
+    mutable QVariantList m_libraryFilesSnapshot;
+    mutable bool m_jobsSnapshotValid = false;
+    mutable bool m_libraryFilesSnapshotValid = false;
 #if defined(SPOOL_WEBOS)
     bool m_enabled = false;
 #else

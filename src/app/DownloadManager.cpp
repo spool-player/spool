@@ -114,6 +114,12 @@ DownloadManager::DownloadManager(SourceHub *sources, QString dataRoot, TlsTrustC
         trust->attachNetworkAccessManager(m_network, QStringLiteral("Download"));
     m_destination = defaultDestination();
     restore();
+    // First connection wins: snapshots are stale before any QML dependent
+    // re-reads the inventory on this notification.
+    connect(this, &DownloadManager::changed, this, [this] {
+        m_jobsSnapshotValid = false;
+        m_libraryFilesSnapshotValid = false;
+    });
     connect(m_androidStorage, &AndroidDownloadStorage::folderSelected, this, &DownloadManager::setDestination);
     connect(m_androidStorage, &AndroidDownloadStorage::problem, this, [this](const QString& problem) {
         m_problem = problem;
@@ -158,6 +164,8 @@ DownloadManager::~DownloadManager()
 }
 QVariantList DownloadManager::jobs() const
 {
+    if (m_jobsSnapshotValid)
+        return m_jobsSnapshot;
     QVariantList rows;
     rows.reserve(m_order.size());
     for (const auto& id : m_order) {
@@ -168,11 +176,15 @@ QVariantList DownloadManager::jobs() const
             { QStringLiteral("total"), job->total },
             { QStringLiteral("quality"), job->option.value(QStringLiteral("label")) } });
     }
+    m_jobsSnapshot = rows;
+    m_jobsSnapshotValid = true;
     return rows;
 }
 
 QVariantList DownloadManager::libraryFiles() const
 {
+    if (m_libraryFilesSnapshotValid)
+        return m_libraryFilesSnapshot;
     QVariantList files;
     for (const auto& id : m_order) {
         const auto job = m_jobs.value(id);
@@ -180,6 +192,8 @@ QVariantList DownloadManager::libraryFiles() const
             files.push_back(QVariantMap { { QStringLiteral("path"), job->path },
                 { QStringLiteral("metadata"), job->metadata }, { QStringLiteral("size"), job->received } });
     }
+    m_libraryFilesSnapshot = files;
+    m_libraryFilesSnapshotValid = true;
     return files;
 }
 void DownloadManager::setEnabled(bool enabled)
