@@ -158,6 +158,10 @@ FocusScope {
                         "action": "repeat",
                         "label": "Repeat",
                         "enabled": !syncPlayActive
+                    }, {
+                        "action": "sleep",
+                        "label": "Sleep timer",
+                        "enabled": !syncPlayActive
                     })
         if (!audioOnly)
             values.push({
@@ -206,6 +210,41 @@ FocusScope {
                         {
                             "label": "Repeat current item",
                             "mode": "RepeatOne"
+                        }
+                    ]
+        if (menuKind === "sleep")
+            return [
+                        {
+                            "label": "Off",
+                            "minutes": 0
+                        },
+                        {
+                            "label": "After current item",
+                            "minutes": -1
+                        },
+                        {
+                            "label": "15 minutes",
+                            "minutes": 15
+                        },
+                        {
+                            "label": "30 minutes",
+                            "minutes": 30
+                        },
+                        {
+                            "label": "45 minutes",
+                            "minutes": 45
+                        },
+                        {
+                            "label": "60 minutes",
+                            "minutes": 60
+                        },
+                        {
+                            "label": "90 minutes",
+                            "minutes": 90
+                        },
+                        {
+                            "label": "120 minutes",
+                            "minutes": 120
                         }
                     ]
         return []
@@ -429,6 +468,8 @@ FocusScope {
             return "Quality"
         if (menuKind === "repeat")
             return "Repeat"
+        if (menuKind === "sleep")
+            return "Sleep timer"
         return "Playback settings"
     }
 
@@ -438,7 +479,7 @@ FocusScope {
     }
 
     function menuLabel(item) {
-        if (menuKind === "quality" || menuKind === "debug" || menuKind === "repeat")
+        if (menuKind === "quality" || menuKind === "debug" || menuKind === "repeat" || menuKind === "sleep")
             return String(item && item.label || "")
         return String(item)
     }
@@ -458,6 +499,15 @@ FocusScope {
         if (action === "repeat")
             return playQueue.repeatMode === "RepeatAll" ? "Queue" : playQueue.repeatMode === "RepeatOne"
                                                           ? "Current item" : "Off"
+        if (action === "sleep") {
+            if (syncPlayActive)
+                return "Unavailable in SyncPlay"
+            if (App.sleepTimerMode === "afterCurrent")
+                return "After current item"
+            if (App.sleepTimerMode === "timed")
+                return formatClock(App.sleepTimerRemainingSeconds) + " remaining"
+            return "Off"
+        }
         return ""
     }
 
@@ -466,6 +516,10 @@ FocusScope {
             return Boolean(qualityOptions[index] && qualityOptions[index].selected)
         if (menuKind === "repeat")
             return Boolean(menuOptions[index] && menuOptions[index].mode === playQueue.repeatMode)
+        if (menuKind === "sleep") {
+            const minutes = App.sleepTimerMode === "afterCurrent" ? -1 : App.sleepTimerMinutes
+            return Boolean(menuOptions[index] && menuOptions[index].minutes === minutes)
+        }
         if (!hasPlayer)
             return false
         if (menuKind === "subtitles")
@@ -525,6 +579,14 @@ FocusScope {
             const option = menuOptions[index]
             if (option && !syncPlayActive)
                 App.setRepeatMode(option.mode)
+        } else if (kind === "sleep") {
+            const option = menuOptions[index]
+            if (!option || syncPlayActive)
+                return
+            if (option.minutes === -1)
+                App.stopAfterCurrentItem()
+            else
+                App.setSleepTimerMinutes(option.minutes)
         } else if (kind === "quality") {
             const option = qualityOptions[index]
             if (!option)
@@ -540,9 +602,9 @@ FocusScope {
                 openMenu("quality")
                 return
             }
-            if (action === "repeat") {
+            if (action === "repeat" || action === "sleep") {
                 if (!syncPlayActive)
-                    openMenu("repeat")
+                    openMenu(action)
                 return
             }
             if (action === "subtitleSettings") {
@@ -1020,6 +1082,15 @@ FocusScope {
     }
     onScrubbingChanged: if (!scrubbing)
                             maybeRestartAutohide()
+
+    Connections {
+        target: syncPlay
+
+        function onGroupChanged() {
+            if (syncPlay.enabled && (overlay.menuKind === "repeat" || overlay.menuKind === "sleep"))
+                overlay.closeMenu()
+        }
+    }
 
     Connections {
         target: player

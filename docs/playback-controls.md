@@ -24,3 +24,33 @@ not claim to change the group's repeat mode. Native playlist playback keeps its
 own player-side traversal and ignores queue repeat.
 
 The queue model owns the single repeat state and the wrap decisions.
+
+## Sleep timer
+
+Open **Playback settings → Sleep timer** during local audio or video playback.
+Choose **After current item** or **15, 30, 45, 60, 90, or 120 minutes**. Choose
+**Off** to cancel. The playback settings row shows the remaining duration.
+
+- A duration counts elapsed time from when it is selected. Pausing, buffering,
+  changing items, and restarting a stream for quality or codec changes do not
+  restart the countdown. Selecting another duration starts a new countdown.
+- After current item stops once when that item completes, before repeat or
+  automatic queue/episode advance. Quality and codec restarts of the same item
+  keep it armed. Starting a different item cancels it.
+- Only one request can be active. Selecting after-current replaces a duration,
+  and selecting a duration replaces after-current.
+- Stopping playback explicitly clears the request, including stop actions from
+  the player overlay, a remote controller, or platform media controls. A stop
+  also invalidates pending item, album, episode, and stream negotiations, so
+  their responses cannot resume stopped playback.
+- Joining a playback group, changing profile, logging out, and quitting clear
+  the request. The local timer is unavailable in a group and is never sent to a
+  remote target.
+
+The request is owned by the application, so navigating away from or rebuilding
+the player overlay does not discard it. It is held only for the current process
+and uses a monotonic elapsed clock, independent of playback position and wall
+clock adjustments. It does not shut down or suspend the device. If the app event
+loop is delayed, playback stops on the first callback that observes the elapsed
+deadline, including a stream negotiation callback; device suspension and process
+termination remain platform lifecycle behavior.

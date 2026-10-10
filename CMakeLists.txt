@@ -267,6 +267,7 @@ set(SPOOL_SHELL_SOURCES
     src/app/LibraryQuery.h
     src/app/MemoryBudget.cpp
     src/app/MemoryBudget.h
+    src/app/PlaybackStopPolicy.h
     src/app/RouterController.cpp
     src/app/RouterController.h
     src/app/SettingsController.cpp

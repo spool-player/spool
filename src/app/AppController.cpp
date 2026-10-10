@@ -187,6 +187,12 @@ AppController::AppController(
     m_content = new ContentModelController(m_catalog, m_prefetch, this);
     m_search = new SearchController(provider->search(), m_prefetch, this);
     m_itemState = new UserItemStateController(provider->itemState(), m_browse, m_home, m_content, m_search, this);
+    m_sleepTimerClock.start();
+    m_sleepTimer.setInterval(1000);
+    connect(&m_sleepTimer, &QTimer::timeout, this, [this]() {
+        if (!stopIfSleepTimerExpired())
+            emit sleepTimerChanged();
+    });
     connect(m_player, &PlayerController::watchedPersistenceRequested, m_itemState,
         &UserItemStateController::persistPlaybackWatched);
     connect(m_itemState, &UserItemStateController::playedChanged, m_playQueue, &PlayQueueController::updatePlayed);
@@ -234,8 +240,10 @@ AppController::AppController(
     });
     connect(m_group, &GroupPlaybackController::groupChanged, this, [this]() {
         // The server owns group repetition; local modes must not leak out of it.
-        if (inGroup())
+        if (inGroup()) {
+            cancelSleepTimer();
             m_playQueue->setRepeatMode(QStringLiteral("RepeatNone"));
+        }
         m_player->setQueueState(
             m_playQueue->nowPlayingQueue(), inGroup() ? QString() : m_playQueue->repeatMode(), m_playQueue->shuffled());
     });
@@ -313,6 +321,7 @@ AppController::AppController(
         // owns the new handoff. Other Stops must retire every pending lookup.
         if (reason == QStringLiteral("syncplay-group-switch"))
             return;
+        cancelSleepTimer();
         cancelPendingPlaybackRequests(true);
     });
     connect(m_player, &PlayerController::playbackStopped, this, &AppController::handlePlaybackStopped);
@@ -518,6 +527,7 @@ QCoro::Task<void> AppController::initializeAsync()
 
 void AppController::resetApplicationState()
 {
+    cancelSleepTimer();
     m_playQueue->setRepeatMode(QStringLiteral("RepeatNone"));
     cancelPendingPlaybackRequests(true);
     resetVisibleModels();
@@ -903,6 +913,69 @@ void AppController::setRepeatMode(const QString& mode)
 {
     if (!inGroup())
         m_playQueue->setRepeatMode(mode);
+}
+
+QString AppController::sleepTimerMode() const
+{
+    switch (m_playbackStopPolicy.mode()) {
+    case PlaybackStopPolicy::Mode::AfterCurrent:
+        return QStringLiteral("afterCurrent");
+    case PlaybackStopPolicy::Mode::Timed:
+        return QStringLiteral("timed");
+    case PlaybackStopPolicy::Mode::Off:
+        return QStringLiteral("off");
+    }
+    return QStringLiteral("off");
+}
+
+int AppController::sleepTimerRemainingSeconds() const
+{
+    return m_playbackStopPolicy.remainingSeconds(m_sleepTimerClock.elapsed());
+}
+
+void AppController::setSleepTimerMinutes(int minutes)
+{
+    if (minutes == 0) {
+        cancelSleepTimer();
+        return;
+    }
+    if (minutes < 0) {
+        stopAfterCurrentItem();
+        return;
+    }
+    if (inGroup() || !m_player->sessionActive()
+        || !m_playbackStopPolicy.setDuration(minutes, m_sleepTimerClock.elapsed()))
+        return;
+    m_sleepTimer.start();
+    emit sleepTimerChanged();
+}
+
+void AppController::stopAfterCurrentItem()
+{
+    if (inGroup() || !m_player->sessionActive()
+        || !m_playbackStopPolicy.setAfterCurrent(m_activePlaybackItem.id.toStdString()))
+        return;
+    m_sleepTimer.stop();
+    emit sleepTimerChanged();
+}
+
+void AppController::cancelSleepTimer()
+{
+    if (!m_playbackStopPolicy.cancel())
+        return;
+    m_sleepTimer.stop();
+    emit sleepTimerChanged();
+}
+
+bool AppController::stopIfSleepTimerExpired()
+{
+    if (!m_playbackStopPolicy.takeExpired(m_sleepTimerClock.elapsed()))
+        return false;
+    m_sleepTimer.stop();
+    emit sleepTimerChanged();
+    stopPlayback();
+    showToast(QStringLiteral("Sleep timer finished."));
+    return true;
 }
 
 // Previewed locally even in a group. Waiting on a round trip per step would
@@ -1311,6 +1384,9 @@ void AppController::playQueueCurrent(bool fromStart, std::optional<qint64> expli
 QCoro::Task<void> AppController::startPlayback(MovieItem playItem, bool startPaused, bool forceTranscode,
     int audioStreamIndex, int subtitleStreamIndex, bool restartActive)
 {
+    if (m_shuttingDown || stopIfSleepTimerExpired())
+        co_return;
+    m_playQueue->cancelEpisodeSuccessors();
     Diagnostics::Task task(QStringLiteral("playback_negotiate"),
         { { QStringLiteral("itemId"), playItem.id }, { QStringLiteral("title"), playItem.title },
             { QStringLiteral("type"), playItem.itemType } });
@@ -1398,6 +1474,11 @@ QCoro::Task<void> AppController::startPlayback(MovieItem playItem, bool startPau
     m_activePlayMethod = session.playMethod;
     const int fileAudioDelayMs = restartActive ? m_player->fileAudioDelayMs() : 0;
     const int subtitleDelayMs = restartActive ? m_player->subtitleDelayMs() : 0;
+    // Network replies may run before the timer event after a blocked loop.
+    if (!guard || !m_playbackLoadGeneration.isCurrent(generation) || stopIfSleepTimerExpired())
+        co_return;
+    if (m_playbackStopPolicy.playbackStarting(playItem.id.toStdString()))
+        emit sleepTimerChanged();
     setBusy(false);
     if (!guard || !m_playbackLoadGeneration.isCurrent(generation))
         co_return;
@@ -1452,6 +1533,7 @@ void AppController::shutdown()
         return;
     m_shuttingDown = true;
     qInfo() << "app: shutdown requested";
+    cancelSleepTimer();
     m_player->prepareForShutdown();
     m_prefetch->stop();
     m_provider->shutdown();
@@ -1782,6 +1864,13 @@ void AppController::handlePlaybackStopped(
     m_playQueue->updateResumeTicks(itemId, watched ? 0 : positionTicks);
     if (!reachedEnd || m_activePlaybackItem.id != itemId || m_playbackLookupPending || inGroup()) {
         setPlaybackTransition(false);
+        return;
+    }
+    if (stopIfSleepTimerExpired())
+        return;
+    if (m_playbackStopPolicy.takeCompleted(m_activePlaybackItem.id.toStdString())) {
+        emit sleepTimerChanged();
+        stopPlayback();
         return;
     }
     const bool continueQueue = m_playQueue->advanceAfterCompletion();
