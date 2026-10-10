@@ -882,15 +882,13 @@ FocusScope {
     function toggleFavorite() {
         if (!item.movieId)
             return
-        favoriteState = !favoriteState
-        ItemState.setFavorite(item.movieId, favoriteState)
+        ItemState.setFavorite(item.movieId, !favoriteState)
     }
 
     function togglePlayed() {
         if (!item.movieId)
             return
-        playedState = !playedState
-        ItemState.setPlayed(item.movieId, playedState)
+        ItemState.setPlayed(item.movieId, !playedState)
     }
 
     function overflowOptions() {

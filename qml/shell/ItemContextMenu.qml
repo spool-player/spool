@@ -403,17 +403,13 @@ FocusScope {
         } else if (action === "addQueue") {
             App.addToQueueFromItem(item)
         } else if (action === "played") {
-            playedState = !playedState
-            ItemState.setPlayed(itemId, playedState)
+            ItemState.setPlayed(itemId, !playedState)
         } else if (action === "unwatched") {
-            playedState = false
             ItemState.clearProgress(itemId)
         } else if (action === "clear") {
-            playedState = false
             ItemState.clearProgress(itemId)
         } else if (action === "favorite") {
-            favoriteState = !favoriteState
-            ItemState.setFavorite(itemId, favoriteState)
+            ItemState.setFavorite(itemId, !favoriteState)
         } else if (action === "download") {
             shell.openDownloads(itemId, anchorItem)
         } else if (action === "collectionEditor") {

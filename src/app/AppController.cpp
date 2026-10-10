@@ -513,6 +513,7 @@ void AppController::resetVisibleModels()
     m_home->reset();
     m_content->reset();
     m_search->reset();
+    m_itemState->reset();
     m_libraryLoadGeneration.invalidate();
     m_libraryListGeneration.invalidate();
     m_browse->reset();

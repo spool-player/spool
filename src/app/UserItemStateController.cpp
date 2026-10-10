@@ -70,6 +70,11 @@ void UserItemStateController::applyPlayed(const QString& itemId, bool played)
 void UserItemStateController::recordPlaybackStopped(const MovieItem& item, const QString& itemId, qint64 positionTicks,
     bool watched, const MovieItem& successor, quint64 reportId)
 {
+    // An older manual write may still finish, but its acknowledgement must
+    // not erase progress or completion observed after the user requested it.
+    const auto pending = m_pendingWrites.find(itemId);
+    if (pending != m_pendingWrites.end())
+        pending->playbackRevision.invalidate();
     if (!watched) {
         applyResumeTicks(itemId, positionTicks);
         if (m_home && item.id == itemId)
@@ -91,58 +96,98 @@ void UserItemStateController::persistPlaybackWatched(const QString& itemId, quin
     if (pending == m_pendingPlaybackWatched.cend() || pending.value() != reportId)
         return;
     m_pendingPlaybackWatched.remove(itemId);
-    if (!m_api || !m_api->signedIn())
-        return;
-    Async::runScoped(
-        this, m_api->setItemPlayed(itemId, true),
-        [this]() {
-            if (m_home)
-                m_home->refreshPlaybackRows();
-        },
-        [this](const std::exception_ptr& error) { emit errorOccurred(exceptionMessage(error)); });
+    // Models already reflect the observed completion; only the server write
+    // remains, serialized behind any earlier manual writes for this item.
+    enqueueWrite(itemId, WriteKind::Played, true, false);
+}
+
+void UserItemStateController::reset()
+{
+    m_writeGeneration.invalidate();
+    m_pendingWrites.clear();
+    m_pendingPlaybackWatched.clear();
 }
 
 void UserItemStateController::setFavorite(const QString& itemId, bool favorite)
 {
-    if (itemId.isEmpty() || !m_api || !m_api->signedIn())
-        return;
-    applyFavorite(itemId, favorite);
-    Async::runScoped(
-        this, m_api->setItemFavorite(itemId, favorite), []() {},
-        [this, itemId, favorite](const std::exception_ptr& error) {
-            applyFavorite(itemId, !favorite);
-            emit errorOccurred(exceptionMessage(error));
-        });
+    enqueueWrite(itemId, WriteKind::Favorite, favorite);
 }
 
 void UserItemStateController::setPlayed(const QString& itemId, bool played)
 {
-    if (itemId.isEmpty() || !m_api || !m_api->signedIn())
-        return;
     m_pendingPlaybackWatched.remove(itemId);
-    applyPlayed(itemId, played);
-    Async::runScoped(
-        this, m_api->setItemPlayed(itemId, played),
-        [this]() {
-            if (m_home)
-                m_home->refreshPlaybackRows();
-        },
-        [this, itemId, played](const std::exception_ptr& error) {
-            applyPlayed(itemId, !played);
-            emit errorOccurred(exceptionMessage(error));
-        });
+    enqueueWrite(itemId, WriteKind::Played, played);
 }
 
 void UserItemStateController::clearProgress(const QString& itemId)
 {
+    m_pendingPlaybackWatched.remove(itemId);
+    enqueueWrite(itemId, WriteKind::ClearProgress, false);
+}
+
+void UserItemStateController::enqueueWrite(const QString& itemId, WriteKind kind, bool value, bool publish)
+{
     if (itemId.isEmpty() || !m_api || !m_api->signedIn())
         return;
-    m_pendingPlaybackWatched.remove(itemId);
-    applyResumeTicks(itemId, 0);
-    applyPlayed(itemId, false);
-    Async::runScoped(
-        this, m_api->setItemPlaybackPosition(itemId, 0), []() {},
-        [this](const std::exception_ptr& error) { emit errorOccurred(exceptionMessage(error)); });
+
+    // Serialize writes for an item so the server sees the same order as the
+    // client. Manual edits become visible only after the server accepts them;
+    // a failed edit therefore cannot lose resume rows or invent a prior value.
+    auto& pending = m_pendingWrites[itemId];
+    pending.requests.enqueue({ kind, value, publish, pending.playbackRevision.current() });
+    if (pending.requests.size() == 1)
+        startNextWrite(itemId);
+}
+
+void UserItemStateController::startNextWrite(const QString& itemId)
+{
+    const auto pending = m_pendingWrites.constFind(itemId);
+    if (pending == m_pendingWrites.cend() || pending->requests.isEmpty())
+        return;
+    const PendingWrite write = pending->requests.head();
+    const auto generation = m_writeGeneration.current();
+    QCoro::Task<void> task = write.kind == WriteKind::Favorite ? m_api->setItemFavorite(itemId, write.value)
+        : write.kind == WriteKind::Played                      ? m_api->setItemPlayed(itemId, write.value)
+                                                               : m_api->setItemPlaybackPosition(itemId, 0);
+    Async::runLatest(
+        this, std::move(task), m_writeGeneration, generation,
+        [this, itemId, write, generation]() { finishWrite(itemId, write, generation); },
+        [this, itemId, write, generation](
+            const std::exception_ptr& error) { finishWrite(itemId, write, generation, error); },
+        "item state write");
+}
+
+void UserItemStateController::finishWrite(const QString& itemId, const PendingWrite& write,
+    RequestGeneration::Token generation, const std::exception_ptr& error)
+{
+    auto pending = m_pendingWrites.find(itemId);
+    if (pending == m_pendingWrites.end())
+        return;
+    const bool publish = write.publish
+        && (write.kind == WriteKind::Favorite || pending->playbackRevision.isCurrent(write.playbackRevision));
+    pending->requests.dequeue();
+    const bool more = !pending->requests.isEmpty();
+    if (!more)
+        m_pendingWrites.erase(pending);
+
+    QPointer<UserItemStateController> guard(this);
+    if (error) {
+        emit errorOccurred(exceptionMessage(error));
+    } else if (publish) {
+        if (write.kind == WriteKind::Favorite) {
+            applyFavorite(itemId, write.value);
+        } else if (write.kind == WriteKind::ClearProgress) {
+            applyResumeTicks(itemId, 0);
+            applyPlayed(itemId, false);
+        } else {
+            applyPlayed(itemId, write.value);
+        }
+    }
+    if (!error && m_home && write.kind != WriteKind::Favorite)
+        m_home->refreshPlaybackRows();
+    // Model and error signals can reset the account or destroy the controller.
+    if (guard && m_writeGeneration.isCurrent(generation) && more)
+        startNextWrite(itemId);
 }
 
 } // namespace Spool
