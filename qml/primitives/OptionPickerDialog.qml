@@ -69,6 +69,9 @@ FocusScope {
         if (deficit > 1 && !spaceRequested) {
             spaceRequested = true
             spaceBelowRequired(deficit)
+            // A host may scroll to make room, but hosts without a scroll
+            // handler still need the clamped/above-anchor placement below.
+            Qt.callLater(completePresentation)
             return false
         }
 
