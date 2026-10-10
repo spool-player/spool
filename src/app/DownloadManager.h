@@ -80,7 +80,9 @@ signals:
 private:
     struct Job;
     QCoro::Task<void> prepare(std::shared_ptr<Job> job);
-    QCoro::Task<void> release(DownloadPlan plan);
+    // Releasing an acquired plan must not depend on the manager's lifetime:
+    // the provider hub owns the acquisition and its normal release path.
+    static QCoro::Task<void> release(SourceHub *sources, DownloadPlan plan);
     void transfer(const std::shared_ptr<Job>& job, DownloadPlan plan);
     void consume(const std::shared_ptr<Job>& job);
     void finish(const std::shared_ptr<Job>& job, const QString& error = {});

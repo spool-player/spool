@@ -133,6 +133,9 @@ DownloadManager::~DownloadManager()
 {
     disconnect(m_sources, nullptr, this, nullptr);
     for (const auto& job : m_jobs) {
+        // An acquired plan releases exactly once: moving it here empties it
+        // for any later completion path, and only the provider cleans up.
+        release(m_sources, std::move(job->plan)).then([] { });
         if (job->stopped)
             continue;
         job->stopped = true;
@@ -288,10 +291,13 @@ QCoro::Task<void> DownloadManager::prepare(std::shared_ptr<Job> job)
     if (item.mediaSources.size() == 1)
         request.variantId = item.mediaSources.front().id;
     DownloadPlan plan = co_await m_sources->negotiateDownload(request, job->id);
-    if (!guard)
+    if (!guard) {
+        // The manager died while negotiating; the plan is still acquired.
+        release(m_sources, std::move(plan)).then([] { });
         co_return;
+    }
     if (job->stopped) {
-        co_await release(std::move(plan));
+        co_await release(m_sources, std::move(plan));
         co_return;
     }
     // Only known local-playable file containers can be committed to the library.
@@ -330,11 +336,11 @@ QCoro::Task<void> DownloadManager::prepare(std::shared_ptr<Job> job)
     }
     transfer(job, std::move(plan));
 }
-QCoro::Task<void> DownloadManager::release(DownloadPlan plan)
+QCoro::Task<void> DownloadManager::release(SourceHub *sources, DownloadPlan plan)
 {
     try {
-        if (!plan.cleanup.isEmpty())
-            co_await m_sources->releaseDownload(std::move(plan.cleanup));
+        if (sources && !plan.cleanup.isEmpty())
+            co_await sources->releaseDownload(std::move(plan.cleanup));
     } catch (const std::exception&) {
         // Cleanup cannot change an already committed file or expose provider errors.
     }
@@ -483,7 +489,7 @@ void DownloadManager::finish(const std::shared_ptr<Job>& job, const QString& err
         job->temporary.clear();
     }
     job->state = job->error.isEmpty() ? QStringLiteral("complete") : QStringLiteral("failed");
-    release(std::move(job->plan)).then([] { });
+    release(m_sources, std::move(job->plan)).then([] { });
     if (!persist() && job->state == QStringLiteral("complete")) {
         if (job->path.startsWith(QStringLiteral("content://")))
             AndroidDownloadStorage::removeFile(QUrl(job->path));
