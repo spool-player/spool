@@ -85,17 +85,22 @@ def validate(files: dict[str, bytes]) -> dict:
         fail("manifest.id must look like publisher.name")
     if not VERSION.fullmatch(manifest["version"]):
         fail("manifest.version must be semantic (1.2.3 or 1.2.3-beta.1)")
-    if len(manifest["name"]) > 64 or len(manifest.get("summary", "")) > 120:
+    summary = manifest.get("summary", "")
+    if not isinstance(summary, str):
+        fail("manifest.summary must be a string")
+    if len(manifest["name"]) > 64 or len(summary) > 120:
         fail("name is limited to 64 characters and summary to 120")
     if not manifest["entry"].endswith(".mjs") or manifest["entry"] not in files:
         fail("manifest.entry must name a packaged .mjs module")
+    if "icon" in manifest and not isinstance(manifest["icon"], str):
+        fail("manifest.icon must be a string")
     if manifest.get("icon") and manifest["icon"] not in files:
         fail("manifest.icon names a missing file")
     ui = manifest.get("ui", {})
     if not isinstance(ui, dict) or not set(ui) <= UI_ROLES:
         fail(f"manifest.ui roles are {sorted(UI_ROLES)}")
     for role, path in ui.items():
-        if path not in files or not path.endswith(".qml"):
+        if not isinstance(path, str) or path not in files or not path.endswith(".qml"):
             fail(f"manifest.ui.{role} names a missing QML file")
     capabilities = manifest.get("capabilities")
     if not isinstance(capabilities, list) or len(capabilities) > len(CAPABILITIES):
@@ -107,8 +112,11 @@ def validate(files: dict[str, bytes]) -> dict:
         if capability in declared:
             fail(f"duplicate capability: {capability}")
         declared.add(capability)
-    for origin in manifest.get("origins", []):
-        if origin != "*" and not re.fullmatch(r"https?://[^/\s]+", origin):
+    origins = manifest.get("origins", [])
+    if not isinstance(origins, list):
+        fail("manifest.origins must be an array of strings")
+    for origin in origins:
+        if not isinstance(origin, str) or (origin != "*" and not re.fullmatch(r"https?://[^/\s]+", origin)):
             fail(f"origins are scheme://host[:port] or *: {origin}")
     for name, data in files.items():
         if name.endswith(".qml"):
