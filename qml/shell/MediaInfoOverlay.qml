@@ -26,14 +26,14 @@ OverlayDialog {
     onDismissed: closeOverlay()
 
     onVisibleChanged: if (visible) {
-        currentActionIndex = closeActionIndex
-        Qt.callLater(ensureFocus)
-        Qt.callLater(refreshItemDetail)
-    }
+                          currentActionIndex = closeActionIndex
+                          Qt.callLater(ensureFocus)
+                          Qt.callLater(refreshItemDetail)
+                      }
     onItemChanged: if (visible)
-    Qt.callLater(refreshItemDetail)
+                       Qt.callLater(refreshItemDetail)
     onActiveFocusChanged: if (visible && !activeFocus)
-    InputKeys.focus(root)
+                              InputKeys.focus(root)
 
     component Pair: ColumnLayout {
         property string label: ""
@@ -104,7 +104,7 @@ OverlayDialog {
         const units = ["B", "KB", "MB", "GB", "TB"]
         let unit = 0
         while (value >= 1024 && unit < units.length - 1) {
-            value /= 1024
+            value /= 1024;
             ++unit
         }
         return value.toFixed(unit >= 3 ? 2 : unit === 0 ? 0 : 1) + " " + units[unit]
@@ -225,17 +225,36 @@ OverlayDialog {
     function activateCurrent() {
         closeOverlay()
     }
+    function scrollInfo(delta) {
+        infoWheel.stopScrolling()
+        infoFlick.cancelFlick()
+        const first = infoFlick.originY
+        const last = first + Math.max(0, infoFlick.contentHeight - infoFlick.height)
+        infoFlick.contentY = Math.max(first, Math.min(last, infoFlick.contentY + delta))
+    }
     function routeKey(key, phase, repeat) {
         if (phase === "release" && key === Qt.Key_I) {
             closeOverlay()
             return true
         }
-        if (key === Qt.Key_Up || key === Qt.Key_Left) {
-            focusAction(currentActionIndex - 1)
+        const scrollKey = InputKeys.isVertical(key) || key === Qt.Key_PageUp || key === Qt.Key_PageDown || key
+              === Qt.Key_Home || key === Qt.Key_End
+        if (phase === "release")
+            return scrollKey || InputKeys.isHorizontal(key)
+        if (scrollKey) {
+            const step = Math.max(Metrics.controlHeightPx, Math.round(infoFlick.height * 0.15))
+            const page = Math.round(infoFlick.height * 0.85)
+            const delta = key === Qt.Key_Up ? -step : key === Qt.Key_Down ? step : key === Qt.Key_PageUp ? -page : key
+                                                                                                           === Qt.Key_PageDown
+                                                                                                           ? page : key
+                                                                                                             === Qt.Key_Home
+                                                                                                             ? -infoFlick.contentHeight :
+                                                                                                               infoFlick.contentHeight
+            scrollInfo(delta)
             return true
         }
-        if (key === Qt.Key_Down || key === Qt.Key_Right) {
-            focusAction(currentActionIndex + 1)
+        if (InputKeys.isHorizontal(key)) {
+            focusAction(closeActionIndex)
             return true
         }
         return false
@@ -277,12 +296,13 @@ OverlayDialog {
             focus: root.currentActionIndex === root.closeActionIndex
             onClicked: root.closeOverlay()
             onActiveFocusChanged: if (activeFocus)
-            root.currentActionIndex = root.closeActionIndex
+                                      root.currentActionIndex = root.closeActionIndex
         }
     }
 
     Flickable {
         id: infoFlick
+        objectName: "mediaInfoScrollView"
 
         Layout.fillWidth: true
         Layout.fillHeight: true
@@ -291,12 +311,23 @@ OverlayDialog {
         boundsBehavior: Flickable.StopAtBounds
         clip: true
         FastWheelHandler {
+            id: infoWheel
             flickable: infoFlick
+        }
+
+        ListScrollBar {
+            id: infoScrollBar
+            parent: infoFlick
+            flickable: infoFlick
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            anchors.right: parent.right
+            z: 1
         }
 
         ColumnLayout {
             id: infoColumn
-            width: parent.width
+            width: Math.max(0, infoFlick.width - (infoScrollBar.visible ? infoScrollBar.width + Metrics.scaled(8) : 0))
             spacing: 18
 
             EmptyPlaceholder {
