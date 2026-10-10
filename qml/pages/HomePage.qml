@@ -12,10 +12,12 @@ FocusScope {
 
     property var shell
     property var uiTransitionToken: 0
+    readonly property bool directionRelease: rows.directionRelease
     // An all-hidden library row has management controls instead of cards.
     readonly property bool contentReady: rows.firstRowReady || !Providers.hasAccounts || (homeLibraries.length === 0 &&
                                                                                           !Home.loading)
     property bool providerChooserOpen: false
+    readonly property bool modalVisible: providerChooserOpen
     property int libraryRevision: 0
     readonly property var providerChoices: Home.providerChoices
     readonly property var selectedProvider: providerChoices.find(choice => String(choice.id) === Home.providerId) || {

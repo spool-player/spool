@@ -11,6 +11,7 @@ FocusScope {
     id: root
 
     property var shell
+    readonly property bool directionRelease: results.directionRelease
     readonly property var search: Search
     readonly property string query: search ? search.query : ""
     readonly property int resultCount: search ? search.resultCount : 0
@@ -101,6 +102,13 @@ FocusScope {
     }
 
     function routeKey(key, phase, repeat) {
+        if (phase === "release" && InputKeys.isDirection(key)) {
+            if (results.activeFocus)
+                results.routeKey(key, phase, repeat)
+            else if (suggestionsRow.activeFocus)
+                suggestionsRow.routeKey(key, phase, repeat)
+            return true
+        }
         if (suggestionsRow.activeFocus) {
             if (key === Qt.Key_Up) {
                 field.focusField()

@@ -59,8 +59,32 @@ profile through that provider's sign-in screen. A switch stays on the profile
 page while it connects or asks for a PIN; cancellation or failure keeps the
 previous viewer and offers retry/reconnect instead of pretending the switch
 succeeded. Protected profiles that need interaction stay locked on startup.
-Search uses only the viewers selected for Home, never the combined permissions
-of an adult and child profile saved on the same server.
+Search uses all enabled, authorized watching profiles regardless of the Home
+provider filter, never the combined permissions of an adult and child profile
+saved on the same server.
+
+### Settings and navigation
+
+Settings opens a category index with common controls and a direct **Zoom**
+shortcut. Search matches setting names, descriptions and aliases; choosing a
+result opens its category and surrounding controls without changing values.
+Back restores the query, selection and scroll position. **Ctrl+F** searches
+Settings when that page owns input; text composition and modal editors keep
+their existing ownership.
+
+Mouse scrolling and keyboard navigation can coexist. If the selected card is
+offscreen, the first direction selects the top-left usable visible card without
+scrolling back. That complete held gesture is consumed until physical release;
+the next press navigates normally. **Move** is explicit in the library menu:
+moving keeps the library selected and the viewport stable until **Done**.
+
+Home's provider chooser switches between **All providers** and one provider
+without changing enabled accounts, watching profiles or global search. The
+choice is saved on this device. Installed-provider pages show version,
+installation source, update controls and provider-owned settings. Jellyfin and
+Emby account settings expose server-backed audio/subtitle preferences where
+the current user is allowed to change them; failed writes retain the draft.
+Watching-profile choosers show the provider's logo and installed version.
 
 ### Desktop file drops
 
@@ -81,7 +105,8 @@ shows identity, versions, declared capabilities, network origins and changes;
 self-supplied publisher names and byte digests are not authentication.
 Multiple packages require individual consent. Mixed package/media drops ask
 which operation to perform before installing or playing anything. Drops wait
-while another editor or approval dialog owns input.
+while another editor or approval dialog owns input. **Ctrl+O** also respects
+those dialogs instead of opening a second picker.
 
 ### Offline downloads
 
@@ -874,6 +899,10 @@ strict assertions, but are not automatic release-CI proof. Hosted Windows OCR
 has rejected a visibly rendered Resume control. All platform builds, package
 audits and signing checks remain required; successful artifacts do not imply
 those platforms' native tests passed.
+
+Native incremental builds validate referenced immutable Nix store items rather
+than treating CMake's generated object-path suffixes as missing dependencies.
+Real garbage-collected dependencies still invalidate the cached build.
 
 Build and run the same complete host suite as CI with `nix run .#tests`, or run
 already-built targets with:

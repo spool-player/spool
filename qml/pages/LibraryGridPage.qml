@@ -76,10 +76,15 @@ FocusScope {
     property bool navigationFocusVisible: true
     property bool pointerNavigationPending: false
     property var pendingScrollController: null
+    property var recoveryGesture: ({
+                                       "key": 0
+                                   })
     Component.onCompleted: if (activeFocus)
                                InputKeys.focus(grid)
     onActiveFocusChanged: {
         clearPendingPointerNavigation()
+        if (!activeFocus)
+            recoveryGesture.key = 0
         if (activeFocus)
             InputKeys.focus(grid)
     }
@@ -808,10 +813,18 @@ FocusScope {
     }
 
     function routeKey(key, phase, repeat) {
-        if (phase === "release" && InputKeys.isDirection(key))
+        if (phase === "release" && InputKeys.isDirection(key)) {
+            InputKeys.consumeRecoveryGesture(recoveryGesture, key, phase, repeat, false)
             return grid.routeKey(key, phase, repeat)
-        if (phase !== "release" && InputKeys.isDirection(key) && grid.activeFocus && pointerNavigationPending)
-            return applyPendingPointerNavigation()
+        }
+        if (InputKeys.isDirection(key) && grid.activeFocus) {
+            if (InputKeys.consumeRecoveryGesture(recoveryGesture, key, phase, repeat, false))
+                return true
+            if (pointerNavigationPending || !InputKeys.selectionVisiblyUsable(grid, root)) {
+                InputKeys.consumeRecoveryGesture(recoveryGesture, key, phase, repeat, true)
+                return applyPendingPointerNavigation()
+            }
+        }
         if (libraryList && libraryList.activeFocus)
             return libraryList.routeKey(key, phase, repeat)
         if (sortList && sortList.activeFocus)
