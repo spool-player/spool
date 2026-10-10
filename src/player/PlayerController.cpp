@@ -2563,9 +2563,12 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_
         });
         break;
     case MPV_EVENT_PLAYBACK_RESTART:
-        logColorDiagnostics(handle);
         postMpvEvent(generation, [this]() {
             qInfo() << "player: playback restart";
+            // The first restart has the final output parameters. Ordinary
+            // seek completions do not need another synchronous property sweep.
+            if (!m_seekDispatchReady)
+                logColorDiagnostics(m_mpvLifecycle.handle());
             const bool hadPendingSeek = m_pendingSeek;
             m_seekDispatchReady = true;
             if (hadPendingSeek) {
