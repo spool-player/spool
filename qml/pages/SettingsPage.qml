@@ -819,7 +819,12 @@ FocusScope {
 
     function back() {
         if (diagnosticsExportVisible) {
-            diagnosticsExportLoader.item.back()
+            if (diagnosticsExportLoader.item)
+                diagnosticsExportLoader.item.back()
+            else {
+                diagnosticsExportVisible = false
+                InputKeys.focus(settingsList)
+            }
             return true
         }
         if (certificateManagerVisible) {
@@ -992,7 +997,8 @@ FocusScope {
 
     function activate() {
         if (diagnosticsExportVisible) {
-            diagnosticsExportLoader.item.activate()
+            if (diagnosticsExportLoader.item)
+                diagnosticsExportLoader.item.activate()
             return
         }
         if (mpvFolderDialogVisible)
