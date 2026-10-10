@@ -13,6 +13,8 @@ Item {
     readonly property var syncPlay: ProviderCapabilities.groupPlayback ? Group : null
     readonly property bool syncPlayActive: syncPlay ? syncPlay.enabled : false
 
+    Component.onCompleted: SystemPerformance.observe(root)
+
     function formatBytes(bytes) {
         const value = Math.max(0, Number(bytes || 0))
         if (value >= 1024 * 1024 * 1024)
