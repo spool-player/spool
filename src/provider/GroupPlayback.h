@@ -37,6 +37,9 @@ public:
     virtual QCoro::Task<void> publishQueue(QStringList itemIds, int playingIndex, qint64 startPositionTicks) = 0;
     virtual void requestUnpauseWhenReady() = 0;
     virtual void cancelPendingUnpause() = 0;
+    // An explicit Stop retires work already accepted for this playback, while
+    // keeping group membership available for a later group play request.
+    virtual void cancelPendingPlayback() = 0;
     virtual void joinGroup(const QString& groupId) = 0;
     virtual void leaveGroup() = 0;
 

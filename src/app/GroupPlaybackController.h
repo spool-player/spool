@@ -195,6 +195,7 @@ public:
     void requestPlayItem(const QString& entryId) override;
     void requestUnpauseWhenReady() override;
     void cancelPendingUnpause() override;
+    void cancelPendingPlayback() override;
     QCoro::Task<void> publishQueue(QStringList itemIds, int playingIndex, qint64 startPositionTicks) override;
 
     // A `group` event from the account hosting the group.
@@ -257,6 +258,9 @@ private:
     qint64 m_lastQueueUpdateMs = 0;
     double m_playbackDiffMs = 0.0;
     quint64 m_queueGeneration = 0;
+    // Queue hydration can refresh without canceling an in-flight seek or
+    // unpause. Only Stop or leaving the group retires those callbacks.
+    quint64 m_playbackCancellationGeneration = 0;
     int m_greedyTimeSyncRemaining = 0;
     GroupQueueHandoff m_queueHandoff;
     GroupSeekResume m_seekResume;

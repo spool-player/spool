@@ -7,6 +7,7 @@
 
 #include <QDateTime>
 #include <QDebug>
+#include <QPointer>
 
 #include <algorithm>
 #include <cmath>
@@ -241,6 +242,46 @@ void GroupPlaybackController::cancelPendingUnpause()
     setWaitingForGroupPlayback(false);
 }
 
+void GroupPlaybackController::cancelPendingPlayback()
+{
+    const QPointer<GroupPlaybackController> self(this);
+    const quint64 generation = ++m_queueGeneration;
+    ++m_playbackCancellationGeneration;
+    m_queueLoading = false;
+    m_waitingForPlaybackStart = false;
+    m_queueHandoff.cancel();
+    m_seekResume.cancel();
+    m_unpauseRequestPending = false;
+    m_commandTimer.stop();
+    m_commandDue = false;
+    m_lastCommandKey.clear();
+    m_scheduledCommand.clear();
+    m_scheduledEntryId.clear();
+    m_scheduledPositionTicks = 0;
+    m_scheduledServerTimeMs = 0;
+    m_bufferingDebounceTimer.stop();
+    m_playerStateKnown = false;
+    m_suppressSeekBufferingUntilMs = 0;
+    m_speedCorrectionTimer.stop();
+    const bool wasCorrectingSpeed = m_speedCorrectionActive;
+    m_speedCorrectionActive = false;
+    m_syncCorrectionAttempts = 0;
+    m_lastCorrectionAtMs = 0;
+
+    // Clear the complete stopped state before notifying observers: a status
+    // listener may immediately request another group item.
+    const bool statusChanged
+        = m_waitingForGroupPlayback || m_playbackDiffValid || m_syncMethod != QStringLiteral("None");
+    m_waitingForGroupPlayback = false;
+    m_playbackDiffValid = false;
+    m_playbackDiffMs = 0.0;
+    m_syncMethod = QStringLiteral("None");
+    if (wasCorrectingSpeed && m_player)
+        m_player->clearSyncPlaybackSpeed();
+    if (self && generation == m_queueGeneration && statusChanged)
+        emit syncStatusChanged();
+}
+
 void GroupPlaybackController::requestTogglePause()
 {
     if (!enabled() || !m_player->sessionActive())
@@ -258,11 +299,22 @@ void GroupPlaybackController::requestSeek(double positionSeconds)
 {
     if (!enabled() || !std::isfinite(positionSeconds))
         return;
+    if (m_account.isEmpty())
+        return;
     m_seekResume.arm(!m_player->paused());
-    send(QStringLiteral("seek"),
-        { { QStringLiteral("positionTicks"),
-            QString::number(qint64(std::max(0.0, positionSeconds) * kTicksPerSecond)) } },
-        "Seek");
+    const quint64 generation = m_playbackCancellationGeneration;
+    QVariantMap arguments { { QStringLiteral("action"), QStringLiteral("seek") },
+        { QStringLiteral("positionTicks"),
+            QString::number(qint64(std::max(0.0, positionSeconds) * kTicksPerSecond)) } };
+    Async::runScoped(
+        this, m_hub->call(m_account, QStringLiteral("groupSend"), arguments), [](QVariantMap) {},
+        [this, generation](const std::exception_ptr& error) {
+            if (generation != m_playbackCancellationGeneration)
+                return;
+            m_seekResume.cancel();
+            emit errorText(QStringLiteral("Seek: %1").arg(exceptionMessage(error)));
+        },
+        "group seek");
 }
 
 void GroupPlaybackController::requestRelativeSeek(double deltaSeconds)
@@ -438,35 +490,38 @@ void GroupPlaybackController::applyQueue(const QVariantMap& event)
 
     // A long queue can take seconds to fill in; start the selected item
     // first, since reporting ready does not wait for the rest.
-    const auto hydrate = [this, generation, itemIds, entryIds, playingIndex] {
-        Async::runScoped(
-            this, m_hub->fetchItemsByIds(itemIds),
-            [this, generation, itemIds, entryIds, playingIndex](const std::vector<MovieItem>& fetched) {
-                if (generation != m_queueGeneration)
-                    return;
-                std::vector<MovieItem> ordered;
-                int resolvedIndex = -1;
-                for (int i = 0; i < itemIds.size(); ++i) {
-                    const auto found = std::find_if(fetched.begin(), fetched.end(),
-                        [&](const MovieItem& item) { return item.id == itemIds.at(i); });
-                    if (found == fetched.end())
-                        continue;
-                    MovieItem item = *found;
-                    item.playlistItemId = entryIds.at(i);
-                    if (i == playingIndex)
-                        resolvedIndex = static_cast<int>(ordered.size());
-                    ordered.push_back(std::move(item));
-                }
-                // Usually the echo of an edit made here: rebuilding would tear
-                // down every row the queue panel is showing.
-                if (m_playQueue->matchesQueue(ordered, resolvedIndex))
-                    return;
-                m_playQueue->setShuffled(false);
-                if (resolvedIndex >= 0)
-                    m_playQueue->playNow(ordered, resolvedIndex);
-            },
-            [](const std::exception_ptr&) {}, "group queue");
-    };
+    const auto hydrate
+        = [this, self = QPointer<GroupPlaybackController>(this), generation, itemIds, entryIds, playingIndex] {
+              Async::runScoped(
+                  this, m_hub->fetchItemsByIds(itemIds),
+                  [this, self, generation, itemIds, entryIds, playingIndex](const std::vector<MovieItem>& fetched) {
+                      if (generation != m_queueGeneration)
+                          return;
+                      std::vector<MovieItem> ordered;
+                      int resolvedIndex = -1;
+                      for (int i = 0; i < itemIds.size(); ++i) {
+                          const auto found = std::find_if(fetched.begin(), fetched.end(),
+                              [&](const MovieItem& item) { return item.id == itemIds.at(i); });
+                          if (found == fetched.end())
+                              continue;
+                          MovieItem item = *found;
+                          item.playlistItemId = entryIds.at(i);
+                          if (i == playingIndex)
+                              resolvedIndex = static_cast<int>(ordered.size());
+                          ordered.push_back(std::move(item));
+                      }
+                      // Usually the echo of an edit made here: rebuilding would tear
+                      // down every row the queue panel is showing.
+                      if (m_playQueue->matchesQueue(ordered, resolvedIndex))
+                          return;
+                      m_playQueue->setShuffled(false);
+                      if (!self || generation != m_queueGeneration)
+                          return;
+                      if (resolvedIndex >= 0)
+                          m_playQueue->playNow(ordered, resolvedIndex);
+                  },
+                  [](const std::exception_ptr&) {}, "group queue");
+          };
 
     if (m_player->sessionActive() && m_playQueue->currentItem().id == selectedItemId) {
         m_queueLoading = false;
@@ -479,8 +534,8 @@ void GroupPlaybackController::applyQueue(const QVariantMap& event)
     setWaitingForGroupPlayback(true);
     Async::runScoped(
         this, m_hub->fetchItemsByIds({ selectedItemId }),
-        [this, generation, selectedItemId, entry = m_entryId, requestedTicks, hydrate](
-            const std::vector<MovieItem>& fetched) {
+        [this, self = QPointer<GroupPlaybackController>(this), generation, selectedItemId, entry = m_entryId,
+            requestedTicks, hydrate](const std::vector<MovieItem>& fetched) {
             if (generation != m_queueGeneration)
                 return;
             m_queueLoading = false;
@@ -489,7 +544,12 @@ void GroupPlaybackController::applyQueue(const QVariantMap& event)
             MovieItem item = selected == fetched.cend() ? MovieItem {} : *selected;
             item.playlistItemId = entry;
             m_playQueue->setShuffled(false);
-            if (item.id.isEmpty() || !m_playQueue->playNow(item)) {
+            if (!self || generation != m_queueGeneration)
+                return;
+            const bool queued = !item.id.isEmpty() && m_playQueue->playNow(item);
+            if (!self || generation != m_queueGeneration)
+                return;
+            if (!queued) {
                 setWaitingForGroupPlayback(false);
                 emit errorText(QStringLiteral("The group's current item isn't available here."));
                 return;
@@ -501,6 +561,8 @@ void GroupPlaybackController::applyQueue(const QVariantMap& event)
                     { QStringLiteral("positionTicks"), QString::number(std::max<qint64>(0, requestedTicks)) },
                     { QStringLiteral("entryId"), m_entryId }, { QStringLiteral("at"), serverNowMs() } });
             emit queuePlaybackRequested(requestedTicks);
+            if (!self || generation != m_queueGeneration)
+                return;
             hydrate();
         },
         [this, generation](const std::exception_ptr& error) {
@@ -537,6 +599,7 @@ void GroupPlaybackController::clearGroup()
     m_queueHandoff.cancel();
     m_seekResume.cancel();
     ++m_queueGeneration;
+    ++m_playbackCancellationGeneration;
     m_queueLoading = false;
     m_waitingForPlaybackStart = false;
     m_commandDue = false;
@@ -600,7 +663,11 @@ void GroupPlaybackController::executeScheduledCommand()
         finishSpeedCorrection();
         m_player->setPaused(true);
         m_player->seek(targetSeconds);
-        QTimer::singleShot(250, this, [this] { sendPlayerBufferingState(true); });
+        const quint64 generation = m_playbackCancellationGeneration;
+        QTimer::singleShot(250, this, [this, generation] {
+            if (generation == m_playbackCancellationGeneration)
+                sendPlayerBufferingState(true);
+        });
     } else if (command == QStringLiteral("stop")) {
         m_seekResume.cancel();
         finishSpeedCorrection();
@@ -723,14 +790,21 @@ void GroupPlaybackController::requestGroupUnpause()
 {
     if (!enabled() || m_unpauseRequestPending)
         return;
+
+    const QPointer<GroupPlaybackController> self(this);
+    const quint64 generation = m_playbackCancellationGeneration;
     m_unpauseRequestPending = true;
     setWaitingForGroupPlayback(true);
+    if (!self || generation != m_playbackCancellationGeneration || !m_unpauseRequestPending)
+        return;
     Async::runScoped(
         this,
         m_hub->call(
             m_account, QStringLiteral("groupSend"), { { QStringLiteral("action"), QStringLiteral("unpause") } }),
         [](QVariantMap) {},
-        [this](const std::exception_ptr& error) {
+        [this, generation](const std::exception_ptr& error) {
+            if (generation != m_playbackCancellationGeneration)
+                return;
             m_unpauseRequestPending = false;
             setWaitingForGroupPlayback(false);
             emit errorText(exceptionMessage(error));
