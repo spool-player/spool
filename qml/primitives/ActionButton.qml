@@ -18,6 +18,9 @@ T.Control {
     focusPolicy: Metrics.keyboardFocusActive ? Qt.StrongFocus : Qt.NoFocus
     Accessible.role: Accessible.Button
     Accessible.name: text
+    Accessible.focusable: enabled
+    Accessible.focused: activeFocus
+    Accessible.pressed: tap.pressed
     Accessible.onPressAction: if (enabled)
                                   clicked()
 
@@ -51,20 +54,29 @@ T.Control {
 
     contentItem: Item {
         clip: true
-        Row {
+        Item {
             id: buttonContent
             anchors.centerIn: parent
-            spacing: Metrics.scaled(8)
+            implicitWidth: buttonLabel.implicitWidth + (buttonIcon.visible ? buttonIcon.width + Metrics.scaled(8) : 0)
+            width: Math.min(implicitWidth, Math.max(0, parent.width - Metrics.scaled(34)))
+            height: Math.max(buttonLabel.implicitHeight, buttonIcon.visible ? buttonIcon.height : 0)
 
             MaterialIcon {
+                id: buttonIcon
+                anchors.left: parent.left
                 anchors.verticalCenter: parent.verticalCenter
                 visible: root.iconName.length > 0
                 name: root.iconName
                 iconSize: Metrics.bodySizePx + 6
                 iconColor: root.foreground
+                Accessible.ignored: true
             }
 
             AppText {
+                id: buttonLabel
+                anchors.left: buttonIcon.visible ? buttonIcon.right : parent.left
+                anchors.leftMargin: buttonIcon.visible ? Metrics.scaled(8) : 0
+                anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
                 text: root.text
                 color: root.foreground
@@ -74,6 +86,7 @@ T.Control {
                                                                                                          Font.Medium
                 elide: Text.ElideRight
                 maximumLineCount: 1
+                Accessible.ignored: true
             }
         }
     }
