@@ -92,7 +92,8 @@ FocusScope {
         if (!fullDetailItem.movieId || !mediaInfoAvailable)
             return null
         const smart = String(Settings.values["audio/trackMode"] || "Default") === "Smart"
-        return Content.detailMediaInfo(smart ? String(Settings.values["subtitles/language"] || "") : "")
+        const language = Settings.values["audio/language"] || Settings.values["subtitles/language"] || ""
+        return Content.detailMediaInfo(smart ? String(language) : "")
     }
     readonly property real copyWidth: showSideArt ? Math.min(width * 0.56, Metrics.scaled(940)) : width - contentMargin
                                                     * 2

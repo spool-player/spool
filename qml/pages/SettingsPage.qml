@@ -526,16 +526,18 @@ FocusScope {
 
     // Choice labels may carry a "%1" placeholder for the user's preferred
     // language, e.g. "Smart (English when available)".
-    function preferredLanguageWord() {
+    function preferredLanguageWord(audio) {
         const labels = Settings.subtitleLanguageOptions
-        const index = Settings.subtitleLanguageIndex
+        // An empty audio preference follows the subtitle language, as the player does.
+        const index = audio && Settings.audioLanguageIndex > 0 ? Settings.audioLanguageIndex :
+                                                                 Settings.subtitleLanguageIndex
         if (index <= 0 || index >= labels.length)
             return "your language"
-        return String(labels[index]).split(" ")[0]
+        return String(labels[index])
     }
 
-    function substitutedLabels(labels) {
-        const word = preferredLanguageWord()
+    function substitutedLabels(labels, audio) {
+        const word = preferredLanguageWord(audio)
         const result = []
         for (let index = 0; index < labels.length; ++index)
             result.push(String(labels[index]).replace("%1", word))
@@ -588,10 +590,17 @@ FocusScope {
                 result.push(I18n.displayNameFor(I18n.availableLocales[index]))
             return result
         }
-        if (row.key === "subtitles/language" || row.key === "audio/language")
+        if (row.key === "subtitles/language")
             return Settings.subtitleLanguageOptions
+        if (row.key === "audio/language") {
+            const languages = Settings.subtitleLanguageOptions
+            const result = []
+            for (let index = 0; index < languages.length; ++index)
+                result.push(index === 0 ? "Use subtitle language" : languages[index])
+            return result
+        }
         if (row.key === "subtitles/mode" || row.key === "audio/trackMode")
-            return substitutedLabels(row.choiceLabels || [])
+            return substitutedLabels(row.choiceLabels || [], row.key === "audio/trackMode")
         return row.choiceLabels || []
     }
 

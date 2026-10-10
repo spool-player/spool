@@ -734,7 +734,8 @@ FocusScope {
         if (grid.currentIndex < 0 || grid.count <= 0)
             return null
         const smart = String(Settings.values["audio/trackMode"] || "Default") === "Smart"
-        return Browse.mediaInfoFor(grid.currentIndex, smart ? String(Settings.values["subtitles/language"] || "") : "")
+        const language = Settings.values["audio/language"] || Settings.values["subtitles/language"] || ""
+        return Browse.mediaInfoFor(grid.currentIndex, smart ? String(language) : "")
     }
 
     Connections {
