@@ -239,40 +239,64 @@ void AppController::playRemoteItems(const QString& accountId, const QVariantMap&
     QStringList itemIds;
     for (const QVariant& id : command.value(QStringLiteral("itemIds")).toList())
         itemIds.append(m_provider->scoped(accountId, id.toString()));
-    itemIds.removeAll(QString());
-    if (itemIds.isEmpty())
+    // A broken list must not play a wrong subset.
+    if (itemIds.isEmpty() || itemIds.contains(QString()))
         return;
     const QString mode = command.value(QStringLiteral("mode"), QStringLiteral("now")).toString();
+    const bool replacesPlayback = mode != QStringLiteral("next") && mode != QStringLiteral("last");
     const int requestedIndex = command.value(QStringLiteral("index")).toInt();
     const qint64 startTicks = command.value(QStringLiteral("positionTicks")).toLongLong();
-    const RequestGeneration::Token generation = m_remotePlaybackRequestGeneration.next();
-    setBusy(true, QStringLiteral("Starting playback…"));
-    Async::runScoped(
-        this, m_catalog->fetchItemsByIds(itemIds),
-        [this, generation, mode, requestedIndex, startTicks](std::vector<MovieItem> items) {
+    cancelPendingPlaybackRequests();
+    if (replacesPlayback)
+        m_playbackLookupPending = true;
+    const RequestGeneration::Token generation = m_remotePlaybackRequestGeneration.current();
+    if (replacesPlayback)
+        setBusy(true, QStringLiteral("Starting playback…"));
+    Async::runLatest(
+        this, m_catalog->fetchItemsByIds(itemIds), m_remotePlaybackRequestGeneration, generation,
+        [this, generation, itemIds, mode, requestedIndex, startTicks, replacesPlayback](std::vector<MovieItem> items) {
             if (!m_remotePlaybackRequestGeneration.isCurrent(generation))
                 return;
-            setBusy(false);
-            if (items.empty()) {
+            if (replacesPlayback)
+                m_playbackLookupPending = false;
+            // Preserve the requested order and the identity of the requested
+            // row even when some items could not be fetched.
+            std::vector<MovieItem> ordered;
+            int resolvedIndex = -1;
+            for (qsizetype i = 0; i < itemIds.size(); ++i) {
+                const auto found = std::find_if(
+                    items.begin(), items.end(), [&](const MovieItem& item) { return item.id == itemIds.at(i); });
+                if (found == items.end())
+                    continue;
+                if (i == requestedIndex)
+                    resolvedIndex = static_cast<int>(ordered.size());
+                ordered.push_back(*found);
+            }
+            if (ordered.empty() || (replacesPlayback && resolvedIndex < 0)) {
+                if (replacesPlayback)
+                    setBusy(false);
                 showToast(QStringLiteral("That item isn't available here."));
                 return;
             }
-            if (mode == QStringLiteral("next") || mode == QStringLiteral("last")) {
-                m_playQueue->addToQueue(items, mode == QStringLiteral("next"));
+            if (!replacesPlayback) {
+                m_playQueue->addToQueue(ordered, mode == QStringLiteral("next"));
                 return;
             }
-            const int index = std::clamp(requestedIndex, 0, static_cast<int>(items.size()) - 1);
-            items[size_t(index)].resumeTicks = std::max<qint64>(0, startTicks);
-            if (!m_playQueue->playNow(items, index))
+            setBusy(false);
+            ordered[size_t(resolvedIndex)].resumeTicks = std::max<qint64>(0, startTicks);
+            if (!m_playQueue->playNow(ordered, resolvedIndex))
                 return;
             if (mode == QStringLiteral("shuffle"))
                 m_playQueue->setShuffled(true);
             startQueuedPlayback(startTicks <= 0, std::max<qint64>(0, startTicks));
         },
-        [this, generation](const std::exception_ptr& error) {
+        [this, generation, replacesPlayback](const std::exception_ptr& error) {
             if (!m_remotePlaybackRequestGeneration.isCurrent(generation))
                 return;
-            setBusy(false);
+            if (replacesPlayback) {
+                m_playbackLookupPending = false;
+                setBusy(false);
+            }
             showToast(exceptionMessage(error));
         },
         "remote playback");
