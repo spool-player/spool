@@ -22,6 +22,9 @@ public:
     void start(const PlaybackSession& session, double playbackRate, int volume, bool muted);
     bool setStreamIndexes(int audioStreamIndex, int subtitleStreamIndex);
     void reportProgress(qint64 positionTicks, bool paused, double playbackRate, int volume, bool muted);
+    // Queue, repeat and shuffle stay truthful across progress reports; group
+    // playback reports an empty repeat mode.
+    bool setQueue(const std::vector<PlaybackQueueItem>& queue, const QString& repeatMode, bool shuffled);
     quint64 stop(qint64 positionTicks, bool failed, double playbackRate = 1.0, bool watched = false);
 
 signals:

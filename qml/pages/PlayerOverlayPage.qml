@@ -154,6 +154,11 @@ FocusScope {
                             "action": "quality",
                             "label": "Quality"
                         })
+        values.push({
+                        "action": "repeat",
+                        "label": "Repeat",
+                        "enabled": !syncPlayActive
+                    })
         if (!audioOnly)
             values.push({
                             "action": "subtitleSettings",
@@ -188,6 +193,21 @@ FocusScope {
             return qualityOptions
         if (menuKind === "debug")
             return debugOptions
+        if (menuKind === "repeat")
+            return [
+                        {
+                            "label": "Off",
+                            "mode": "RepeatNone"
+                        },
+                        {
+                            "label": "Repeat queue",
+                            "mode": "RepeatAll"
+                        },
+                        {
+                            "label": "Repeat current item",
+                            "mode": "RepeatOne"
+                        }
+                    ]
         return []
     }
 
@@ -407,6 +427,8 @@ FocusScope {
             return "Audio"
         if (menuKind === "quality")
             return "Quality"
+        if (menuKind === "repeat")
+            return "Repeat"
         return "Playback settings"
     }
 
@@ -416,7 +438,7 @@ FocusScope {
     }
 
     function menuLabel(item) {
-        if (menuKind === "quality" || menuKind === "debug")
+        if (menuKind === "quality" || menuKind === "debug" || menuKind === "repeat")
             return String(item && item.label || "")
         return String(item)
     }
@@ -428,13 +450,22 @@ FocusScope {
     function menuDetail(index) {
         if (menuKind === "quality")
             return String(qualityOptions[index] && qualityOptions[index].detail || "")
-        // Playback speed is the one row a SyncPlay group takes away.
-        return debugAction(index) === "speed" && syncPlayActive ? "Disabled by SyncPlay" : ""
+        const action = debugAction(index)
+        // Playback speed is the one row a SyncPlay group takes away; repeat
+        // belongs to the group's queue policy as well.
+        if ((action === "speed" || action === "repeat") && syncPlayActive)
+            return "Disabled by SyncPlay"
+        if (action === "repeat")
+            return playQueue.repeatMode === "RepeatAll" ? "Queue" : playQueue.repeatMode === "RepeatOne"
+                                                          ? "Current item" : "Off"
+        return ""
     }
 
     function menuItemSelected(index) {
         if (menuKind === "quality")
             return Boolean(qualityOptions[index] && qualityOptions[index].selected)
+        if (menuKind === "repeat")
+            return Boolean(menuOptions[index] && menuOptions[index].mode === playQueue.repeatMode)
         if (!hasPlayer)
             return false
         if (menuKind === "subtitles")
@@ -490,7 +521,11 @@ FocusScope {
             player.selectSubtitle(index)
         else if (kind === "audio" && hasPlayer && player.audioTracks.length > 0)
             player.selectAudio(index)
-        else if (kind === "quality") {
+        else if (kind === "repeat") {
+            const option = menuOptions[index]
+            if (option && !syncPlayActive)
+                App.setRepeatMode(option.mode)
+        } else if (kind === "quality") {
             const option = qualityOptions[index]
             if (!option)
                 return
@@ -503,6 +538,11 @@ FocusScope {
             menuKind = ""
             if (action === "quality") {
                 openMenu("quality")
+                return
+            }
+            if (action === "repeat") {
+                if (!syncPlayActive)
+                    openMenu("repeat")
                 return
             }
             if (action === "subtitleSettings") {

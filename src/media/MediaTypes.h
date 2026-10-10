@@ -422,6 +422,9 @@ struct PlaybackSession {
     int subtitleStreamIndex = -1;
     bool codecFallback = false;
     bool restoreStreamSelection = false;
+    // Empty when the server owns group queue policy; do not report a local mode.
+    QString repeatMode = QStringLiteral("RepeatNone");
+    bool shuffled = false;
 };
 
 QString exceptionMessage(const std::exception_ptr& exception);

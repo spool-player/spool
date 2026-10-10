@@ -133,6 +133,7 @@ public:
     Q_INVOKABLE void playQueueNext();
     Q_INVOKABLE void playQueuePrevious();
     Q_INVOKABLE void playQueueItem(int index);
+    Q_INVOKABLE void setRepeatMode(const QString& mode);
     // The queue panel edits through these rather than reaching for the
     // PlayQueue singleton, so a SyncPlay group cannot be desynchronised by a
     // drag that never passed a guard. A reorder gesture previews locally on
@@ -287,7 +288,6 @@ private:
     bool m_initialized = false;
     QString m_busyText;
     QString m_errorText;
-    QString m_repeatMode = QStringLiteral("RepeatNone");
     RequestGeneration m_libraryLoadGeneration;
     RequestGeneration m_libraryListGeneration;
     RequestGeneration m_playbackLoadGeneration;

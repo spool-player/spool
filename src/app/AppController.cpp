@@ -228,6 +228,17 @@ AppController::AppController(
         }
         playQueueCurrent(false);
     });
+    connect(m_playQueue, &PlayQueueController::queueChanged, this, [this]() {
+        m_player->setQueueState(
+            m_playQueue->nowPlayingQueue(), inGroup() ? QString() : m_playQueue->repeatMode(), m_playQueue->shuffled());
+    });
+    connect(m_group, &GroupPlaybackController::groupChanged, this, [this]() {
+        // The server owns group repetition; local modes must not leak out of it.
+        if (inGroup())
+            m_playQueue->setRepeatMode(QStringLiteral("RepeatNone"));
+        m_player->setQueueState(
+            m_playQueue->nowPlayingQueue(), inGroup() ? QString() : m_playQueue->repeatMode(), m_playQueue->shuffled());
+    });
     connect(m_browse, &BrowseSessionController::reloadRequested, this, [this]() { beginBrowse(); });
     connect(m_browse, &BrowseSessionController::moreItemsRequested, this, &AppController::loadMoreCurrentItems);
     connect(m_database, &DatabaseManager::recoveryNotice, this, &AppController::showToast);
@@ -507,6 +518,7 @@ QCoro::Task<void> AppController::initializeAsync()
 
 void AppController::resetApplicationState()
 {
+    m_playQueue->setRepeatMode(QStringLiteral("RepeatNone"));
     cancelPendingPlaybackRequests(true);
     resetVisibleModels();
     m_playQueue->clear();
@@ -885,6 +897,12 @@ void AppController::playQueueItem(int index)
         return;
     cancelPendingPlaybackRequests();
     playQueueCurrent(false);
+}
+
+void AppController::setRepeatMode(const QString& mode)
+{
+    if (!inGroup())
+        m_playQueue->setRepeatMode(mode);
 }
 
 // Previewed locally even in a group. Waiting on a round trip per step would
@@ -1371,6 +1389,8 @@ QCoro::Task<void> AppController::startPlayback(MovieItem playItem, bool startPau
             co_return;
     }
     m_activePlaybackStreams = session.mediaStreams;
+    session.repeatMode = inGroup() ? QString() : m_playQueue->repeatMode();
+    session.shuffled = m_playQueue->shuffled();
     m_activeMediaSourceId = session.mediaSourceId;
     m_activeSourceBitrate = session.sourceBitrate;
     m_activeSourceHeight = session.sourceHeight;
@@ -1764,19 +1784,12 @@ void AppController::handlePlaybackStopped(
         setPlaybackTransition(false);
         return;
     }
-    bool continueQueue = false;
-    if (m_repeatMode == QStringLiteral("RepeatOne")) {
-        continueQueue = m_playQueue->currentIndex() >= 0;
-    } else {
-        continueQueue = m_playQueue->next();
-        if (!continueQueue && m_repeatMode == QStringLiteral("RepeatAll") && m_playQueue->rowCount() > 0)
-            continueQueue = m_playQueue->playAt(0);
-    }
+    const bool continueQueue = m_playQueue->advanceAfterCompletion();
     if (continueQueue) {
         // Hold the surface across the gap while the next (or repeated) item is
         // negotiated and decoded.
         setPlaybackTransition(true);
-        playQueueCurrent(m_repeatMode == QStringLiteral("RepeatOne"));
+        playQueueCurrent(m_playQueue->repeatMode() == QStringLiteral("RepeatOne"));
     } else {
         setPlaybackTransition(true);
         m_playQueue->enqueueEpisodeSuccessors(m_activePlaybackItem);

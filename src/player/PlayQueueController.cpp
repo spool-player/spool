@@ -316,7 +316,7 @@ bool PlayQueueController::next()
 {
     if (!canGoNext())
         return false;
-    setCurrentOrderIndex(m_orderIndex + 1);
+    setCurrentOrderIndex((m_orderIndex + 1) % static_cast<int>(m_order.size()));
     return true;
 }
 
@@ -324,8 +324,27 @@ bool PlayQueueController::previous()
 {
     if (!canGoPrevious())
         return false;
-    setCurrentOrderIndex(m_orderIndex - 1);
+    setCurrentOrderIndex(m_orderIndex > 0 ? m_orderIndex - 1 : static_cast<int>(m_order.size()) - 1);
     return true;
+}
+
+bool PlayQueueController::advanceAfterCompletion()
+{
+    if (m_repeatMode == QStringLiteral("RepeatOne"))
+        return currentIndex() >= 0;
+    return next();
+}
+
+void PlayQueueController::setRepeatMode(const QString& mode)
+{
+    if (mode == m_repeatMode
+        || (mode != QStringLiteral("RepeatNone") && mode != QStringLiteral("RepeatAll")
+            && mode != QStringLiteral("RepeatOne")))
+        return;
+    m_repeatMode = mode;
+    // Wrapping changes the availability of Next/Previous without moving the
+    // cursor; queueChanged reevaluates those bindings.
+    emit queueChanged();
 }
 
 bool PlayQueueController::playAt(int index)
@@ -406,6 +425,7 @@ bool PlayQueueController::removeItem(int index)
 void PlayQueueController::clear()
 {
     cancelEpisodeSuccessors();
+    setRepeatMode(QStringLiteral("RepeatNone"));
     if (m_entries.empty())
         return;
     const int previousCurrent = currentIndex();

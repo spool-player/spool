@@ -1931,6 +1931,12 @@ void PlayerController::updateReportedStreamSelection(bool sendProgress)
             m_volume.load(), m_muted.load());
 }
 
+void PlayerController::setQueueState(
+    const std::vector<PlaybackQueueItem>& queue, const QString& repeatMode, bool shuffled)
+{
+    m_reporter.setQueue(queue, repeatMode, shuffled);
+}
+
 void PlayerController::stepChapter(int delta)
 {
     if (!m_tracks.hasChapters())

@@ -19,6 +19,9 @@ class PlayQueueController final : public QAbstractListModel {
     Q_PROPERTY(int count READ count NOTIFY queueChanged)
     Q_PROPERTY(int currentIndex READ currentIndex NOTIFY currentIndexChanged)
     Q_PROPERTY(bool shuffled READ shuffled WRITE setShuffled NOTIFY queueChanged)
+    // Repeat policy for this local queue: RepeatNone, RepeatAll or RepeatOne.
+    // The queue owns one repeat state; a SyncPlay group takes it over.
+    Q_PROPERTY(QString repeatMode READ repeatMode WRITE setRepeatMode NOTIFY queueChanged)
     Q_PROPERTY(bool canGoNext READ canGoNext NOTIFY queueChanged)
     Q_PROPERTY(bool canGoPrevious READ canGoPrevious NOTIFY queueChanged)
     // What is playing, as the same snapshot get() hands out. A queue can be
@@ -90,13 +93,23 @@ public:
     {
         return m_shuffled;
     }
+    QString repeatMode() const
+    {
+        return m_repeatMode;
+    }
+    Q_INVOKABLE void setRepeatMode(const QString& mode);
+    // RepeatOne replays the current row; otherwise traversal advances, and
+    // RepeatAll wraps through the playback order at the end.
+    bool advanceAfterCompletion();
     bool canGoNext() const
     {
-        return m_orderIndex >= 0 && m_orderIndex + 1 < static_cast<int>(m_order.size());
+        return m_orderIndex >= 0
+            && (m_orderIndex + 1 < static_cast<int>(m_order.size()) || m_repeatMode == QStringLiteral("RepeatAll"));
     }
     bool canGoPrevious() const
     {
-        return m_orderIndex > 0;
+        return m_orderIndex > 0
+            || (m_orderIndex == 0 && !m_order.empty() && m_repeatMode == QStringLiteral("RepeatAll"));
     }
     MovieItem itemAt(int index) const
     {
@@ -169,6 +182,7 @@ private:
     std::vector<int> m_order;
     int m_orderIndex = -1;
     bool m_shuffled = false;
+    QString m_repeatMode = QStringLiteral("RepeatNone");
     quint64 m_successorGeneration = 0;
     QString m_successorItemId;
 };

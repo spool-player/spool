@@ -51,6 +51,16 @@ bool PlaybackReporter::setStreamIndexes(int audioStreamIndex, int subtitleStream
     return true;
 }
 
+bool PlaybackReporter::setQueue(const std::vector<PlaybackQueueItem>& queue, const QString& repeatMode, bool shuffled)
+{
+    if (!m_report || !m_report->active)
+        return false;
+    m_report->session.nowPlayingQueue = queue;
+    m_report->session.repeatMode = repeatMode;
+    m_report->session.shuffled = shuffled;
+    return true;
+}
+
 void PlaybackReporter::reportProgress(qint64 positionTicks, bool paused, double playbackRate, int volume, bool muted)
 {
     if (!m_report || !m_report->active || !m_api)
