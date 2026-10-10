@@ -19,8 +19,8 @@ class PlayQueueController final : public QAbstractListModel {
     Q_PROPERTY(int count READ count NOTIFY queueChanged)
     Q_PROPERTY(int currentIndex READ currentIndex NOTIFY currentIndexChanged)
     Q_PROPERTY(bool shuffled READ shuffled WRITE setShuffled NOTIFY queueChanged)
-    Q_PROPERTY(bool canGoNext READ canGoNext NOTIFY currentIndexChanged)
-    Q_PROPERTY(bool canGoPrevious READ canGoPrevious NOTIFY currentIndexChanged)
+    Q_PROPERTY(bool canGoNext READ canGoNext NOTIFY queueChanged)
+    Q_PROPERTY(bool canGoPrevious READ canGoPrevious NOTIFY queueChanged)
     // What is playing, as the same snapshot get() hands out. A queue can be
     // replaced under an unchanged index -- one item swapped for another at the
     // same position, which is what starting a second thing in a row does -- so
