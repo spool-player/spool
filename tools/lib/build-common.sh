@@ -402,7 +402,9 @@ import re
 import sys
 
 content = pathlib.Path(sys.argv[1]).read_text(errors="replace")
-paths = set(re.findall(r"/nix/store/[a-z0-9]{32}-[^\s$\"',;:]+", content))
+# Store items are immutable. CMake object names embed source paths followed by
+# ".o"; those are not files in the store and must not invalidate a valid cache.
+paths = set(re.findall(r"/nix/store/[a-z0-9]{32}-[^/\s$\"',;:=]+", content))
 for path in sorted(candidate.rstrip("\\)]}") for candidate in paths):
     if not pathlib.Path(path).exists():
         print(path)
