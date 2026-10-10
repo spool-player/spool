@@ -7,6 +7,7 @@
 
 #include <QDateTime>
 #include <QDebug>
+#include <QHash>
 #include <QPointer>
 
 #include <algorithm>
@@ -499,12 +500,17 @@ void GroupPlaybackController::applyQueue(const QVariantMap& event)
                           return;
                       std::vector<MovieItem> ordered;
                       int resolvedIndex = -1;
+                      QHash<QString, const MovieItem *> itemsById;
+                      itemsById.reserve(static_cast<qsizetype>(fetched.size()));
+                      for (const MovieItem& item : fetched) {
+                          if (!itemsById.contains(item.id))
+                              itemsById.insert(item.id, &item);
+                      }
                       for (int i = 0; i < itemIds.size(); ++i) {
-                          const auto found = std::find_if(fetched.begin(), fetched.end(),
-                              [&](const MovieItem& item) { return item.id == itemIds.at(i); });
-                          if (found == fetched.end())
+                          const auto found = itemsById.constFind(itemIds.at(i));
+                          if (found == itemsById.cend())
                               continue;
-                          MovieItem item = *found;
+                          MovieItem item = **found;
                           item.playlistItemId = entryIds.at(i);
                           if (i == playingIndex)
                               resolvedIndex = static_cast<int>(ordered.size());
