@@ -14,9 +14,10 @@ FocusScope {
 
     function routeKey(key, phase, repeat) {
         if (root.inputKeys.isBack(key, false, false)) {
-            if (phase === "press" && !repeat)
+            // Back claims both phases; only the release dismisses.
+            if (phase === "release")
                 dismissed()
-            return phase === "press"
+            return true
         }
         if (!root.inputKeys.isDirection(key))
             return true

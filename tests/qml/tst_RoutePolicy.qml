@@ -106,8 +106,13 @@ TestCase {
                                        movieId: "only"
                                    }
                                ])
-        compare(RoutePolicy.modelIndexForItemId(model, "missing", 9), 0)
+        // A route's identity never falls back to a different row: a missing
+        // item stays missing. Only a route without an id uses the clamped
+        // fallback index.
+        compare(RoutePolicy.modelIndexForItemId(model, "missing", 9), -1)
         compare(RoutePolicy.modelIndexForItemId(modelFor([]), "missing", 9), -1)
+        compare(RoutePolicy.modelIndexForItemId(model, "", 9), 0)
+        compare(RoutePolicy.modelIndexForItemId(model, "", -5), 0)
     }
 
     function test_detailsNavigationMode_data() {

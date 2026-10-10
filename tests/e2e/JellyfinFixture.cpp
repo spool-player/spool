@@ -353,7 +353,9 @@ void JellyfinFixture::handle(QTcpSocket *socket, const QByteArray& header, const
         && (path == "/Users/" + userId + "/Items/Resume" || path == "/Shows/NextUp"
             || path == "/MediaSegments/" + movieId || path == "/MediaSegments/" + episodeId
             || path == "/Videos/journey-source/AdditionalParts" || path == "/Items/" + movieId + "/Similar"
-            || path == "/Items/" + episodeId + "/Similar")) {
+            || path == "/Items/" + episodeId + "/Similar" || path == "/Items/" + movieId + "/LocalTrailers"
+            || path == "/Items/" + movieId + "/SpecialFeatures" || path == "/Items/" + episodeId + "/LocalTrailers"
+            || path == "/Items/" + episodeId + "/SpecialFeatures")) {
         json(QJsonObject { { "Items", QJsonArray {} }, { "TotalRecordCount", 0 } });
     } else if (method == "GET" && path == "/Items/Filters") {
         json(QJsonObject { { "Genres", QJsonArray {} }, { "Years", QJsonArray {} } });
