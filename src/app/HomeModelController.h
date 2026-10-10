@@ -128,10 +128,12 @@ private:
     std::vector<LatestLibrarySection> m_latestLibrarySections;
     RequestGeneration m_generation;
     RequestGeneration m_playbackRowsGeneration;
+    RequestGeneration m_cacheGeneration;
     QSet<QString> m_locallyPlayed;
     QHash<QString, MovieItem> m_optimisticNextUp;
     bool m_refreshInFlight = false;
     bool m_loaded = false;
+    bool m_networkResultsPublished = false;
     QStringList m_recentLibraryIds;
 };
 

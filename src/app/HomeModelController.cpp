@@ -10,6 +10,7 @@
 #include <QDebug>
 #include <QHash>
 #include <QJsonArray>
+#include <QPointer>
 #include <QQmlEngine>
 #include <QSet>
 #include <QStringList>
@@ -321,9 +322,13 @@ QCoro::Task<void> HomeModelController::loadCachedPayloadAsync()
         co_return;
     const RequestGeneration::Token generation = m_generation.current();
     const auto playbackGeneration = m_playbackRowsGeneration.current();
+    const auto cacheGeneration = m_cacheGeneration.current();
     const QJsonObject payload = co_await m_database->loadHomePayloadAsync(key, kHomePayloadSchemaVersion);
+    // A warm payload must never replace published network results, and a
+    // scope change retires reads started under the old account.
     if (!m_generation.isCurrent(generation) || !m_playbackRowsGeneration.isCurrent(playbackGeneration)
-        || key != payloadCacheKey() || m_loaded)
+        || !m_cacheGeneration.isCurrent(cacheGeneration) || m_networkResultsPublished || key != payloadCacheKey()
+        || m_loaded)
         co_return;
     if (applyCachedPayload(payload))
         qInfo() << "home: warm payload cache applied" << key;
@@ -383,6 +388,7 @@ void HomeModelController::refresh(const std::vector<LibraryItem>& libraries)
 QCoro::Task<void> HomeModelController::refreshAsync(
     std::vector<LibraryItem> libraries, RequestGeneration::Token generation)
 {
+    const QPointer<HomeModelController> guard(this);
     const auto playbackGeneration = m_playbackRowsGeneration.current();
     std::vector<LibraryItem> latestLibraries;
     latestLibraries.reserve(libraries.size());
@@ -398,51 +404,89 @@ QCoro::Task<void> HomeModelController::refreshAsync(
     for (const LibraryItem& library : latestLibraries)
         latestTasks.push_back(fetchLatestLibraryItems(library));
 
+    bool complete = true;
+    bool resumeLoaded = false;
     std::vector<MovieItem> resumeItems;
     try {
         resumeItems = co_await resumeTask;
+        resumeLoaded = true;
         qInfo() << "home: resume items" << resumeItems.size();
     } catch (const std::exception&) {
+        complete = false;
         qWarning() << "home: resume fetch failed";
     }
-    if (!m_generation.isCurrent(generation))
+    if (!guard || !m_generation.isCurrent(generation))
         co_return;
 
+    bool nextUpLoaded = false;
     std::vector<MovieItem> nextUpItems;
     try {
         nextUpItems = co_await nextUpTask;
+        nextUpLoaded = true;
         qInfo() << "home: next-up items" << nextUpItems.size();
     } catch (const std::exception&) {
+        complete = false;
         qWarning() << "home: next-up fetch failed";
     }
-    if (!m_generation.isCurrent(generation))
+    if (!guard || !m_generation.isCurrent(generation))
         co_return;
 
+    if (resumeLoaded || nextUpLoaded) {
+        m_networkResultsPublished = true;
+        m_cacheGeneration.invalidate();
+    }
+    // A failed shelf is not an empty shelf: retain its warm rows.
+    if (!resumeLoaded)
+        resumeItems = m_resumeItems.movies();
+    if (!nextUpLoaded)
+        nextUpItems = m_nextUpItems.movies();
     if (m_playbackRowsGeneration.isCurrent(playbackGeneration)) {
         reconcilePlaybackRows(resumeItems, nextUpItems);
-        m_resumeItems.setMovies(resumeItems);
-        m_nextUpItems.setMovies(nextUpItems);
+        if (resumeLoaded)
+            m_resumeItems.setMovies(resumeItems);
+        if (nextUpLoaded)
+            m_nextUpItems.setMovies(nextUpItems);
     }
 
     std::vector<PendingLatestLibrarySection> latestSections;
     latestSections.reserve(latestLibraries.size());
+    std::vector<int> failedLatestOrders;
     for (int order = 0; order < static_cast<int>(latestLibraries.size()); ++order) {
         const LibraryItem& library = latestLibraries[static_cast<size_t>(order)];
         try {
             std::vector<MovieItem> items = co_await latestTasks[static_cast<size_t>(order)];
+            if (!guard || !m_generation.isCurrent(generation))
+                co_return;
+            m_networkResultsPublished = true;
+            m_cacheGeneration.invalidate();
             qInfo() << "home: latest items" << items.size();
             if (!items.empty())
                 latestSections.push_back({ order, library, std::move(items) });
         } catch (const std::exception&) {
+            complete = false;
             qWarning() << "home: latest fetch failed";
+            failedLatestOrders.push_back(order);
         }
-        if (!m_generation.isCurrent(generation))
+        if (!guard || !m_generation.isCurrent(generation))
             co_return;
     }
 
+    // A pending disk read can finish between failed shelf requests. Resolve
+    // fallbacks only after all awaits so those newly available rows survive.
+    for (int order : failedLatestOrders) {
+        const LibraryItem& library = latestLibraries[static_cast<size_t>(order)];
+        const auto cached = std::find_if(m_latestLibrarySections.cbegin(), m_latestLibrarySections.cend(),
+            [&library](const LatestLibrarySection& section) { return section.library.id == library.id; });
+        if (cached != m_latestLibrarySections.cend() && cached->model && !cached->model->movies().empty())
+            latestSections.push_back({ order, library, cached->model->movies() });
+    }
+
     m_refreshInFlight = false;
-    m_loaded = true;
-    saveCachedPayload(payloadFromSections(m_resumeItems.movies(), m_nextUpItems.movies(), latestSections));
+    // A failed shelf must remain retryable and must not persist a partial
+    // result as durable truth.
+    m_loaded = complete;
+    if (complete)
+        saveCachedPayload(payloadFromSections(m_resumeItems.movies(), m_nextUpItems.movies(), latestSections));
     const bool latestRowsChanged = updateLatestLibraryRows(std::move(latestSections));
     emit loadingChanged();
 
@@ -463,6 +507,7 @@ QCoro::Task<void> HomeModelController::refreshAsync(
 
 QCoro::Task<std::vector<MovieItem>> HomeModelController::fetchLatestLibraryItems(LibraryItem library)
 {
+    const QPointer<HomeModelController> guard(this);
     constexpr int kTargetItems = 20;
     constexpr int kMaximumRawItems = 200;
     constexpr int kInitialTvRawItems = 120;
@@ -470,7 +515,7 @@ QCoro::Task<std::vector<MovieItem>> HomeModelController::fetchLatestLibraryItems
     int limit = library.collectionType == QStringLiteral("tvshows") ? kInitialTvRawItems : kTargetItems;
     while (limit <= kMaximumRawItems) {
         std::vector<MovieItem> rawItems = co_await m_api->fetchLatestItems(library.id, limit);
-        if (!includesItem(library.id))
+        if (!guard || !includesItem(library.id))
             co_return std::vector<MovieItem> {};
         std::erase_if(rawItems, [this](const MovieItem& item) { return !includesItem(item.id); });
         const int rawCount = static_cast<int>(rawItems.size());
@@ -677,6 +722,8 @@ QCoro::Task<void> HomeModelController::refreshPlaybackRowsAsync(RequestGeneratio
     auto nextUp = co_await nextUpTask;
     if (!m_playbackRowsGeneration.isCurrent(generation))
         co_return;
+    m_networkResultsPublished = true;
+    m_cacheGeneration.invalidate();
     reconcilePlaybackRows(resume, nextUp);
     m_resumeItems.setMovies(std::move(resume));
     m_nextUpItems.setMovies(std::move(nextUp));
@@ -694,7 +741,9 @@ void HomeModelController::invalidate(const std::function<bool(const QString&)>& 
     m_playbackRowsGeneration.invalidate();
     m_refreshInFlight = false;
     m_loaded = false;
-    m_prefetch->stop();
+    m_networkResultsPublished = false;
+    m_cacheGeneration.invalidate();
+    m_prefetch->reset();
     if (isAvailable) {
         m_locallyPlayed.removeIf([&isAvailable](const QString& id) { return !isAvailable(id); });
         for (auto it = m_optimisticNextUp.begin(); it != m_optimisticNextUp.end();) {
@@ -738,7 +787,9 @@ void HomeModelController::reset()
     m_optimisticNextUp.clear();
     m_refreshInFlight = false;
     m_loaded = false;
-    m_prefetch->stop();
+    m_networkResultsPublished = false;
+    m_cacheGeneration.invalidate();
+    m_prefetch->reset();
     m_resumeItems.clear();
     m_nextUpItems.clear();
     m_recentLibraryIds.clear();

@@ -26,6 +26,7 @@ public:
     LibraryPrefetchController(Catalog *catalog, ArtworkPrefetcher *artwork = nullptr, QObject *parent = nullptr);
 
     void stop();
+    void reset();
     void schedule(const std::vector<LibraryItem>& libraries, const QStringList& recentLibraryIds);
     std::optional<PagedMovieItems> cachedPage(const QString& cacheKey) const;
     void storePage(const QString& cacheKey, const PagedMovieItems& page);
