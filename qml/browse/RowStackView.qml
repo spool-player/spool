@@ -17,12 +17,16 @@ import "../primitives/ModelAccess.js" as ModelAccess
 //
 // Sections are plain descriptors, so a caller can build them from anything:
 //   { key, title, model, kind, useSeriesPoster, preferEpisodeTitle,
-//     contextSource, moveItem, contextMenu, headerAction, headerActionText }
+//     contextSource, moveItem, contextMenu, headerAction, headerActionText,
+//     reserveWhenEmpty, reserveWhileLoading }
 FocusScope {
     id: root
 
     property var shell
     property var sections: []
+    // Loading changes row reservation without replacing the section model,
+    // which would discard every row's delegates and horizontal position.
+    property bool loading: false
     property string contextReturnRoute: ""
     property bool navigationFocusVisible: true
     // Set on the first row so the shell can time the first frame it draws.
@@ -350,7 +354,8 @@ FocusScope {
             useSeriesPoster: Boolean(sectionDescriptor.useSeriesPoster)
             preferEpisodeTitle: Boolean(sectionDescriptor.preferEpisodeTitle)
             enabledRow: sectionDescriptor.enabled === undefined ? true : Boolean(sectionDescriptor.enabled)
-            reserveWhenEmpty: Boolean(sectionDescriptor.reserveWhenEmpty)
+            reserveWhenEmpty: Boolean(sectionDescriptor.reserveWhenEmpty) || (root.loading && Boolean(
+                                                                                  sectionDescriptor.reserveWhileLoading))
             loading: Boolean(sectionDescriptor.loading)
             emptyText: String(sectionDescriptor.emptyText || "")
             headerBadge: sectionDescriptor.headerBadge || null

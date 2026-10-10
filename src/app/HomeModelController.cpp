@@ -501,7 +501,7 @@ QCoro::Task<void> HomeModelController::refreshAsync(
                 : LibraryPrefetchController::ImageKind::Poster);
     }
     m_prefetch->schedule(libraries, m_recentLibraryIds);
-    if (latestRowsChanged || !m_latestLibrarySections.empty())
+    if (latestRowsChanged)
         emit latestLibraryRowsChanged();
 }
 

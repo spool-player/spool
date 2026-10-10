@@ -25,6 +25,17 @@ function rowAvailable(row, platform, hdrPlayback, valueForKey) {
     return true
 }
 
+function rowsDependOnSetting(rowsByKey, key) {
+    if (!key)
+        return false
+    for (const rowKey in rowsByKey) {
+        const row = rowsByKey[rowKey]
+        if (row && row.dependsOnKey === key)
+            return true
+    }
+    return false
+}
+
 // Flatten hand-authored sections into a MenuListView model. resolve(key)
 // returns the spec to show for a key, or a falsy value to leave it out; a
 // section whose rows all drop out takes its header with it. Header entries are
