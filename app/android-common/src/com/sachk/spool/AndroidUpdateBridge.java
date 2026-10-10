@@ -36,7 +36,7 @@ public final class AndroidUpdateBridge {
             return false;
         Intent intent
             = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + context.getPackageName()));
-        return startResolvedActivity(context, intent);
+        return startActivity(context, intent);
     }
 
     public static boolean installApk(Context context, String path)
@@ -52,7 +52,7 @@ public final class AndroidUpdateBridge {
             intent.setDataAndType(uri, APK_MIME_TYPE);
             intent.setClipData(ClipData.newRawUri("Spool update", uri));
             intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            return startResolvedActivity(context, intent);
+            return startActivity(context, intent);
         } catch (RuntimeException exception) {
             Log.e(TAG, "Could not launch APK installer", exception);
             return false;
@@ -82,9 +82,7 @@ public final class AndroidUpdateBridge {
             intent.putExtra(Intent.EXTRA_SUBJECT, "Spool diagnostics");
             intent.setClipData(ClipData.newRawUri("Spool diagnostics", uri));
             intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            if (intent.resolveActivity(context.getPackageManager()) == null)
-                return false;
-            return startResolvedActivity(context, Intent.createChooser(intent, "Share diagnostics"));
+            return startActivity(context, Intent.createChooser(intent, "Share diagnostics"));
         } catch (IOException | RuntimeException exception) {
             Log.e(TAG, "Could not share diagnostics", exception);
             return false;
@@ -125,11 +123,11 @@ public final class AndroidUpdateBridge {
         }
     }
 
-    private static boolean startResolvedActivity(Context context, Intent intent)
+    private static boolean startActivity(Context context, Intent intent)
     {
         try {
-            if (intent.resolveActivity(context.getPackageManager()) == null)
-                return false;
+            // Package visibility can hide a valid handler from resolveActivity.
+            // Attempt the launch and let Android report whether it is available.
             if (!(context instanceof Activity))
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             context.startActivity(intent);
