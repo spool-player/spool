@@ -598,29 +598,14 @@ FocusScope {
 
     function selectTypeAheadMatch(query, includeCurrent) {
         const count = Browse.items ? Browse.items.count : 0
-        if (count <= 0 || query.length <= 0)
+        const index = LibraryNavigation.typeAheadIndex(count, grid.currentIndex, query, includeCurrent,
+                                                       root.typeAheadTitle)
+        if (index < 0)
             return false
-        const start = Math.max(0, grid.currentIndex)
-        const firstOffset = includeCurrent ? 0 : 1
-        for (let offset = firstOffset; offset < firstOffset + count; ++offset) {
-            const index = (start + offset) % count
-            if (typeAheadTitle(index).indexOf(query) === 0) {
-                grid.currentIndex = index
-                grid.ensureCurrentVisible()
-                grid.requestMoreIfNeeded()
-                return true
-            }
-        }
-        for (let offset = firstOffset; offset < firstOffset + count; ++offset) {
-            const index = (start + offset) % count
-            if (typeAheadTitle(index).indexOf(query) >= 0) {
-                grid.currentIndex = index
-                grid.ensureCurrentVisible()
-                grid.requestMoreIfNeeded()
-                return true
-            }
-        }
-        return false
+        grid.currentIndex = index
+        grid.ensureCurrentVisible()
+        grid.requestMoreIfNeeded()
+        return true
     }
 
     function typeAhead(text) {
