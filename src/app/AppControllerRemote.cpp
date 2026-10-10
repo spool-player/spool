@@ -11,6 +11,7 @@
 #include <QCoreApplication>
 #include <QDebug>
 #include <QGuiApplication>
+#include <QHash>
 #include <QInputMethodEvent>
 #include <QKeyEvent>
 #include <QWindow>
@@ -261,16 +262,21 @@ void AppController::playRemoteItems(const QString& accountId, const QVariantMap&
                 m_playbackLookupPending = false;
             // Preserve the requested order and the identity of the requested
             // row even when some items could not be fetched.
+            QHash<QString, const MovieItem *> itemsById;
+            itemsById.reserve(static_cast<qsizetype>(items.size()));
+            for (const MovieItem& item : items) {
+                if (!itemsById.contains(item.id))
+                    itemsById.insert(item.id, &item);
+            }
             std::vector<MovieItem> ordered;
             int resolvedIndex = -1;
             for (qsizetype i = 0; i < itemIds.size(); ++i) {
-                const auto found = std::find_if(
-                    items.begin(), items.end(), [&](const MovieItem& item) { return item.id == itemIds.at(i); });
-                if (found == items.end())
+                const auto found = itemsById.constFind(itemIds.at(i));
+                if (found == itemsById.cend())
                     continue;
                 if (i == requestedIndex)
                     resolvedIndex = static_cast<int>(ordered.size());
-                ordered.push_back(*found);
+                ordered.push_back(**found);
             }
             if (ordered.empty() || (replacesPlayback && resolvedIndex < 0)) {
                 if (replacesPlayback)
