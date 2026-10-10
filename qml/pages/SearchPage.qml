@@ -19,6 +19,7 @@ FocusScope {
     readonly property bool searchBusy: search ? search.busy : false
     readonly property bool suggestionsBusy: search ? search.suggestionsBusy : false
     readonly property bool showSuggestions: query.length < 2 && suggestionCount > 0
+    readonly property bool showSearchFailure: query.length >= 2 && Boolean(search && search.failed) && !searchBusy
     readonly property var resultSections: [
         {
             "key": "movies",
@@ -102,6 +103,11 @@ FocusScope {
     }
 
     function routeKey(key, phase, repeat) {
+        if (retryButton.activeFocus) {
+            if (key === Qt.Key_Up && phase !== "release")
+                field.focusField()
+            return InputKeys.isDirection(key)
+        }
         if (phase === "release" && InputKeys.isDirection(key)) {
             if (results.activeFocus)
                 results.routeKey(key, phase, repeat)
@@ -129,6 +135,10 @@ FocusScope {
         }
         if (key !== Qt.Key_Down || !(field.activeFocus || field.editing))
             return false
+        if (showSearchFailure) {
+            InputKeys.focus(retryButton)
+            return true
+        }
         if (query.length >= 2)
             return results.focusPreferred(preferredKind)
         return showSuggestions && suggestionsRow.focusList()
@@ -145,6 +155,10 @@ FocusScope {
     }
 
     function activate() {
+        if (retryButton.activeFocus) {
+            retrySearch()
+            return
+        }
         if (field.activeFocus && !field.editing) {
             field.activate()
             return
@@ -167,10 +181,16 @@ FocusScope {
     }
 
     function back() {
-        if (!suggestionsRow.activeFocus && !results.activeFocus)
+        if (!suggestionsRow.activeFocus && !results.activeFocus && !retryButton.activeFocus)
             return false
         field.focusField()
         return true
+    }
+
+    function retrySearch() {
+        field.focusField()
+        if (search)
+            search.submit()
     }
 
     readonly property real keyboardInset: {
@@ -256,7 +276,7 @@ FocusScope {
 
             Layout.fillWidth: true
             Layout.fillHeight: true
-            visible: root.query.length >= 2
+            visible: root.query.length >= 2 && !root.showSearchFailure
             sections: root.resultSections
             shell: root.shell
             contextReturnRoute: "search"
@@ -284,6 +304,46 @@ FocusScope {
                     font.pixelSize: Metrics.bodySizePx + Metrics.scaled(10)
                     font.weight: Font.DemiBold
                 }
+            }
+        }
+
+        ColumnLayout {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            visible: root.showSearchFailure
+            spacing: Metrics.scaled(14)
+
+            Item {
+                Layout.fillHeight: true
+            }
+
+            AppText {
+                Layout.fillWidth: true
+                text: "Couldn't search"
+                font.pixelSize: Metrics.titleSizePx
+                font.weight: Font.DemiBold
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.Wrap
+            }
+
+            SecondaryText {
+                Layout.fillWidth: true
+                text: "Check your connection to the server, then try again."
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.Wrap
+            }
+
+            ActionButton {
+                id: retryButton
+                Layout.alignment: Qt.AlignHCenter
+                Layout.maximumWidth: parent.width
+                text: "Try again"
+                iconName: "refresh"
+                onClicked: root.retrySearch()
+            }
+
+            Item {
+                Layout.fillHeight: true
             }
         }
     }

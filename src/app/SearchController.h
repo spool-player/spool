@@ -17,6 +17,9 @@ class SearchController final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString query READ query NOTIFY queryChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
+    // Query-owned failure state: it survives page eviction and debounce, and
+    // clears when the next query starts.
+    Q_PROPERTY(bool failed READ failed NOTIFY failedChanged)
     Q_PROPERTY(Spool::MovieGridModel *movieResults READ movieResults CONSTANT)
     Q_PROPERTY(Spool::MovieGridModel *seriesResults READ seriesResults CONSTANT)
     Q_PROPERTY(Spool::MovieGridModel *episodeResults READ episodeResults CONSTANT)
@@ -35,6 +38,10 @@ public:
     bool busy() const
     {
         return m_busy;
+    }
+    bool failed() const
+    {
+        return m_failed;
     }
     bool suggestionsBusy() const
     {
@@ -79,6 +86,7 @@ public:
 signals:
     void queryChanged();
     void busyChanged();
+    void failedChanged();
     void resultsChanged();
     void suggestionsChanged();
     void errorOccurred(const QString& message);
@@ -99,6 +107,7 @@ private:
     MovieGridModel m_suggestions;
     QString m_query;
     bool m_busy = false;
+    bool m_failed = false;
     bool m_suggestionsBusy = false;
     bool m_suggestionsLoaded = false;
     RequestGeneration m_searchGeneration;

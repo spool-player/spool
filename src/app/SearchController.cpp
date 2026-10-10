@@ -59,6 +59,10 @@ void SearchController::submit()
 
     const RequestGeneration::Token generation = m_searchGeneration.next();
     setBusy(true);
+    if (m_failed) {
+        m_failed = false;
+        emit failedChanged();
+    }
 
     // Results show as each source answers; busy lasts until the last one.
     auto answered = std::make_shared<bool>(false);
@@ -84,6 +88,10 @@ void SearchController::submit()
         [this](const std::exception_ptr& error) {
             clearResults();
             setBusy(false);
+            if (!m_failed) {
+                m_failed = true;
+                emit failedChanged();
+            }
             emit resultsChanged();
             emit errorOccurred(exceptionMessage(error));
         });
@@ -109,6 +117,10 @@ void SearchController::clear()
         emit queryChanged();
     }
     setBusy(false);
+    if (m_failed) {
+        m_failed = false;
+        emit failedChanged();
+    }
     clearResults();
     emit resultsChanged();
 }
