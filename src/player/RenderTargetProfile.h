@@ -5,7 +5,7 @@
 
 #include <vector>
 
-namespace JellyfinNative {
+namespace Spool {
 
 struct MpvOption;
 
@@ -66,6 +66,9 @@ struct RenderTargetProfile {
 // window can present. Filled from the live swapchain, never assumed.
 struct DisplayOutputCapabilities {
     bool surfaceReady = false;
+    // The OS/compositor is currently driving this output in HDR, not merely
+    // advertising an HDR-capable monitor or accepting an FP16 surface.
+    bool desktopHdrEnabled = false;
     // Whether the swapchain in front of us is presenting HDR right now, which
     // is not the same question as whether it could. Qt fixes a window's
     // swapchain format when the window is created, so a backend that supports
@@ -125,10 +128,10 @@ public:
     // setting changes and read back on the next launch.
     //
     // Returns what to put in the window's "_qt_sg_hdr_format" property, or an
-    // empty array to leave the window SDR. Qt ignores a format the display or
-    // backend cannot present and falls back to SDR on its own, so asking is
-    // safe even where it cannot be granted.
-    static QByteArray startupSwapChainRequest(bool automaticHdr = false);
+    // empty array to leave the window SDR. An SDR or unknown desktop mode is
+    // a hard boundary, including for Always. automaticHdr says whether this
+    // platform enables HDR without an explicit viewer preference.
+    static QByteArray startupSwapChainRequest(bool desktopHdrEnabled, bool automaticHdr);
     // Records the choice for the next launch. Takes effect when the window is
     // next created, which is why the setting says as much.
     static void rememberPreference(HdrOutputPreference preference);
@@ -161,4 +164,4 @@ public:
     static std::vector<MpvOption> targetOptions(const RenderTargetProfile& profile);
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

@@ -17,7 +17,7 @@ import "../primitives/ModelAccess.js" as ModelAccess
 //
 // Sections are plain descriptors, so a caller can build them from anything:
 //   { key, title, model, kind, useSeriesPoster, preferEpisodeTitle,
-//     contextSource }
+//     contextSource, moveItem, contextMenu, headerAction, headerActionText }
 FocusScope {
     id: root
 
@@ -70,9 +70,10 @@ FocusScope {
     function isPopulated(index) {
         const row = rowAt(index)
         if (row)
-            return row.count > 0
+            return row.rowVisible && (row.count > 0 || row.hasHeaderAction)
         const section = sectionAt(index)
-        return Boolean(section) && ModelAccess.count(section.model) > 0
+        return Boolean(section) && section.enabled !== false && (ModelAccess.count(section.model) > 0 || typeof section.headerAction
+                                                                 === "function")
     }
 
     function nextPopulated(start, direction) {
@@ -218,6 +219,8 @@ FocusScope {
         const row = currentRow()
         if (!row)
             return false
+        if (row.moveMode)
+            return row.routeKey(key, phase, repeat)
         if (key === Qt.Key_Up || key === Qt.Key_Down)
             return moveSection(key === Qt.Key_Down ? 1 : -1)
         return row.routeKey(key, phase, repeat)
@@ -225,8 +228,8 @@ FocusScope {
 
     function activate() {
         const row = currentRow()
-        if (row && row.currentIndex >= 0)
-            root.activated(sectionAt(currentSection), row.currentIndex, currentItem())
+        if (row)
+            row.activate()
     }
 
     function longPress() {
@@ -267,7 +270,7 @@ FocusScope {
         }
 
         onDraggingChanged: if (dragging)
-        root.beginPointerNavigation(null)
+                               root.beginPointerNavigation(null)
 
         delegate: MediaRow {
             id: mediaRow
@@ -286,7 +289,15 @@ FocusScope {
             reserveWhenEmpty: Boolean(modelData.reserveWhenEmpty)
             loading: Boolean(modelData.loading)
             emptyText: String(modelData.emptyText || "")
+            headerBadge: modelData.headerBadge || null
+            cardBadge: modelData.cardBadge || null
             focusVisible: root.navigationFocusVisible
+            moveItem: modelData.moveItem || null
+            contextMenu: modelData.contextMenu || null
+            headerAction: modelData.headerAction || null
+            headerActionText: String(modelData.headerActionText || "")
+            onCountChanged: Qt.callLater(root.repair)
+            onHasHeaderActionChanged: Qt.callLater(root.repair)
             // This view is already inset by its host; use its usable width.
             cardWidth: Math.round(Metrics.rowCardWidth(root.width) * (cardKind === "poster" || cardKind === "square"
                                                                       ? 1 : Metrics.landscapeCardRatio))
@@ -303,7 +314,7 @@ FocusScope {
                 root.currentSection = index
             }
             onDelegatesPresentedChanged: if (root.measureFirstRow && index === 0 && delegatesPresented)
-            root.firstRowReady = true
+                                             root.firstRowReady = true
             onActivated: (itemIndex, item) => {
                 root.currentSection = index
                 root.activated(modelData, itemIndex, item)

@@ -2,6 +2,7 @@
 #include "player/PlayQueueController.h"
 
 #include "TestMain.h"
+#include "TestRequire.h"
 
 #include <QCoreApplication>
 
@@ -9,17 +10,11 @@
 #include <iostream>
 #include <vector>
 
-using namespace JellyfinNative;
+using namespace Spool;
 
 namespace {
 
-void require(bool condition, const char *message)
-{
-    if (condition)
-        return;
-    std::cerr << message << '\n';
-    std::exit(EXIT_FAILURE);
-}
+using SpoolTests::require;
 
 MovieItem episode(const QString& seriesId, int season, int number)
 {
@@ -75,7 +70,7 @@ int countAt(const PlayQueueOutlineModel& outline, int row)
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("play-queue-outline-model")
+SPOOL_TEST_MAIN("play-queue-outline-model")
 {
     QCoreApplication app(argc, argv);
 

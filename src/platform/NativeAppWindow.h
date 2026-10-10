@@ -3,11 +3,13 @@
 #include <QImage>
 #include <QMutex>
 #include <QQuickImageProvider>
+#include <QQuickItem>
 #include <QQuickView>
+#include <QVariantMap>
 
 #include <memory>
 
-namespace JellyfinNative {
+namespace Spool {
 
 class InputLatencyMonitor;
 class NativeAppWindow final : public QQuickView {
@@ -103,6 +105,52 @@ public:
     void clearOverlay();
     QQuickImageProvider *createOverlayImageProvider();
     QImage copyOverlayImage() const;
+    // Fixed public visual-state allowlist, not an arbitrary QObject/QML inspector.
+    QVariantMap automationVisualState() const
+    {
+        QVariantMap result;
+        int remaining = 4096;
+        const auto visit = [&result, &remaining](auto&& self, QQuickItem *item, int depth) -> void {
+            if (!item || depth > 128 || --remaining < 0)
+                return;
+            const QString name = item->objectName();
+            const bool preview = name == QStringLiteral("playerTrickplayPreview");
+            const bool texture = name == QStringLiteral("playerTrickplayTexture");
+            const bool seekBar = name == QStringLiteral("playerSeekBar");
+            const bool libraryRow = name == QStringLiteral("libraryMediaRow");
+            const bool libraryMenu = name == QStringLiteral("libraryContextMenuPanel");
+            const bool showHidden = name == QStringLiteral("showHiddenLibrariesButton");
+            if ((preview || texture || seekBar || libraryRow || libraryMenu || showHidden) && item->isVisible()) {
+                const QRectF geometry = item->mapRectToScene(item->boundingRect());
+                QVariantMap state { { QStringLiteral("x"), geometry.x() }, { QStringLiteral("y"), geometry.y() },
+                    { QStringLiteral("width"), geometry.width() }, { QStringLiteral("height"), geometry.height() } };
+                if (preview) {
+                    state.insert(QStringLiteral("active"), item->property("active").toBool());
+                    state.insert(QStringLiteral("seconds"), item->property("previewSeconds").toDouble());
+                    state.insert(QStringLiteral("selectionPending"), item->property("selectionPending").toBool());
+                }
+                if (texture)
+                    state.insert(QStringLiteral("ready"), item->property("ready").toBool());
+                if (libraryRow) {
+                    state.insert(QStringLiteral("moveMode"), item->property("moveMode").toBool());
+                    state.insert(QStringLiteral("currentIndex"), item->property("currentIndex").toInt());
+                    state.insert(QStringLiteral("contentX"), item->property("contentX").toDouble());
+                }
+                const QString key = preview ? QStringLiteral("preview")
+                    : texture               ? QStringLiteral("previewTexture")
+                    : libraryRow            ? QStringLiteral("libraryRow")
+                    : libraryMenu           ? QStringLiteral("libraryMenu")
+                    : showHidden            ? QStringLiteral("showHiddenLibraries")
+                                            : QStringLiteral("seekBar");
+                result.insert(key, state);
+            }
+            const auto children = item->childItems();
+            for (QQuickItem *child : children)
+                self(self, child, depth + 1);
+        };
+        visit(visit, rootObject(), 0);
+        return result;
+    }
 
 signals:
     void closeRequested();
@@ -168,4 +216,4 @@ private:
     bool m_immersive = false;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

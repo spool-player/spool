@@ -28,8 +28,8 @@ clang_format="${CLANG_FORMAT:-$(command -v clang-format || true)}"
 qml_format="${QMLFORMAT:-$(command -v qmlformat || true)}"
 if { (( ${#cpp_files[@]} > 0 )) && [[ -z "$clang_format" ]]; } \
     || { (( ${#qml_files[@]} > 0 )) && [[ -z "$qml_format" ]]; }; then
-  if [[ "${JELLYFIN_FORMAT_HOOK_IN_NIX:-0}" != "1" ]] && command -v nix >/dev/null 2>&1; then
-    exec nix develop .#native -c env JELLYFIN_FORMAT_HOOK_IN_NIX=1 "$0"
+  if [[ "${SPOOL_FORMAT_HOOK_IN_NIX:-0}" != "1" ]] && command -v nix >/dev/null 2>&1; then
+    exec nix develop .#native -c env SPOOL_FORMAT_HOOK_IN_NIX=1 "$0"
   fi
   [[ ${#cpp_files[@]} == 0 || -n "$clang_format" ]] \
     || { echo "error: clang-format is required to commit C++ changes" >&2; exit 1; }

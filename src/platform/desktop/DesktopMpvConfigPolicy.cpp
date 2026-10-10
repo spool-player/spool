@@ -4,10 +4,17 @@
 #include <QFileInfo>
 #include <QUrl>
 
-namespace JellyfinNative {
+namespace Spool {
 
 MpvConfigPolicy validatedPlatformMpvConfigPolicy(const QString& mode, const QString& directory)
 {
+#if defined(SPOOL_APPLE_MOBILE)
+    if (mode.compare(QStringLiteral("off"), Qt::CaseInsensitive) != 0 && !mode.isEmpty())
+        return { MpvConfigPolicy::Mode::Disabled, {}, false,
+            QStringLiteral("App Store builds do not load external mpv configuration or scripts.") };
+    Q_UNUSED(directory)
+    return {};
+#else
     if (mode.compare(QStringLiteral("standard"), Qt::CaseInsensitive) == 0)
         return { MpvConfigPolicy::Mode::Standard, {}, true, {} };
     if (mode.compare(QStringLiteral("custom"), Qt::CaseInsensitive) != 0)
@@ -31,6 +38,7 @@ MpvConfigPolicy validatedPlatformMpvConfigPolicy(const QString& mode, const QStr
             QStringLiteral("The custom mpv configuration directory cannot be resolved.") };
     }
     return { MpvConfigPolicy::Mode::Custom, canonical, true, {} };
+#endif
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

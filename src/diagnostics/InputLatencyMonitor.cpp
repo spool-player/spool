@@ -18,7 +18,7 @@
 #include <cmath>
 #include <ctime>
 
-namespace JellyfinNative::Detail {
+namespace Spool::Detail {
 
 namespace {
 
@@ -576,9 +576,9 @@ quint64 InputLatencyTimeline::epoch() const
     return m_epoch.load(std::memory_order_acquire);
 }
 
-} // namespace JellyfinNative::Detail
+} // namespace Spool::Detail
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
     constexpr auto kEnabledSetting = "diagnostics/inputLatencyGuard";
@@ -619,7 +619,7 @@ InputLatencyMonitor::InputLatencyMonitor(QObject *parent)
 
     const bool persistedEnabled = QSettings().value(QLatin1String(kEnabledSetting), false).toBool();
     m_overlayEnabled = QSettings().value(QLatin1String(kOverlayEnabledSetting), true).toBool();
-    const bool environmentEnabled = qEnvironmentVariable("JELLYFIN_INPUT_LATENCY_DIAGNOSTICS") == QLatin1String("1");
+    const bool environmentEnabled = qEnvironmentVariable("SPOOL_INPUT_LATENCY_DIAGNOSTICS") == QLatin1String("1");
     m_timeline.setEnabled(persistedEnabled || environmentEnabled);
 }
 
@@ -1157,4 +1157,4 @@ bool InputLatencyMonitor::canCaptureInput() const
     return true;
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

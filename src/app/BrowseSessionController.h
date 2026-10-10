@@ -1,29 +1,30 @@
 #pragma once
 
-#include "../common/JellyfinTypes.h"
+#include "../media/MediaTypes.h"
 #include "../models/MovieGridModel.h"
 
 #include <QHash>
 #include <QObject>
+#include <QSet>
 #include <QString>
 #include <QVariantMap>
 
 #include <vector>
 
-namespace JellyfinNative {
+namespace Spool {
 
 class LibraryPrefetchController;
 
 class BrowseSessionController final : public QObject {
     Q_OBJECT
-    Q_PROPERTY(JellyfinNative::MovieGridModel *items READ items CONSTANT)
+    Q_PROPERTY(Spool::MovieGridModel *items READ items CONSTANT)
     Q_PROPERTY(bool loadingMore READ loadingMore NOTIFY pagingChanged)
     Q_PROPERTY(bool hasMore READ hasMore NOTIFY pagingChanged)
     Q_PROPERTY(int totalCount READ totalCount NOTIFY pagingChanged)
     Q_PROPERTY(QString libraryId READ libraryId NOTIFY changed)
+    Q_PROPERTY(QString containerId READ containerId NOTIFY changed)
     Q_PROPERTY(QString libraryCollectionType READ libraryCollectionType NOTIFY changed)
     Q_PROPERTY(QString title READ title NOTIFY changed)
-    Q_PROPERTY(QString contentLabel READ contentLabel NOTIFY changed)
     Q_PROPERTY(QString viewKind READ viewKind NOTIFY changed)
     Q_PROPERTY(QVariantMap query READ query NOTIFY changed)
     Q_PROPERTY(QVariantMap filterOptions READ filterOptions NOTIFY changed)
@@ -56,6 +57,10 @@ public:
     {
         return m_nextStartIndex;
     }
+    std::optional<QString> nextCursor() const
+    {
+        return m_nextCursor;
+    }
     int rowCount() const
     {
         return m_items.rowCount();
@@ -64,6 +69,11 @@ public:
     {
         return m_libraryId;
     }
+    QString containerId() const
+    {
+        return m_descriptor.kind == BrowseKind::Playlist || m_descriptor.kind == BrowseKind::BoxSet ? m_descriptor.id
+                                                                                                    : QString();
+    }
     QString libraryCollectionType() const
     {
         return m_libraryCollectionType;
@@ -71,10 +81,6 @@ public:
     QString title() const
     {
         return m_title;
-    }
-    QString contentLabel() const
-    {
-        return m_contentLabel;
     }
     QString viewKind() const
     {
@@ -111,7 +117,6 @@ public:
     void resetPaging(const QString& cacheKey = {});
     void setPage(const PagedMovieItems& page, const QString& cacheKey, bool append);
     void setLoadingMore(bool loading);
-    void setWarmCachePaging(int cachedCount, int pageSize);
     Q_INVOKABLE void prefetchVisibleRange(int firstIndex, int lastIndex);
     Q_INVOKABLE void prefetchPageForIndex(int lastIndex);
     Q_INVOKABLE void prefetchNextPage();
@@ -120,7 +125,7 @@ public:
     void updateFavorite(const QString& itemId, bool favorite);
     void updatePlayed(const QString& itemId, bool played);
 
-    void enterLibrary(const LibraryItem& library, const QString& contentLabel, const QVariantMap& defaultQuery);
+    void enterLibrary(const LibraryItem& library, const QVariantMap& defaultQuery);
     bool enterItem(const MovieItem& item);
     void enterNamedCollection(const QString& viewKind, const QString& name, const QString& collectionType = {});
     Q_INVOKABLE void setSort(const QString& sortBy, const QString& sortOrder);
@@ -149,11 +154,12 @@ private:
     int m_totalCount = 0;
     int m_nextStartIndex = 0;
     int m_pageSize = 0;
+    std::optional<QString> m_nextCursor;
+    QSet<QString> m_seenCursors;
 
     QString m_libraryId;
     QString m_libraryCollectionType;
     QString m_title;
-    QString m_contentLabel = QStringLiteral("Movies");
     QString m_viewKind;
     QString m_seriesId;
     QString m_seasonId;
@@ -163,4 +169,4 @@ private:
     QVariantMap m_filterOptions;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

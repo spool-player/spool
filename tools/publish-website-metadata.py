@@ -18,7 +18,8 @@ GITHUB_HOST_KEY = "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0Sd
 MANIFEST_PATH = "data/release.json"
 
 
-def release_version(manifest: bytes) -> tuple[int, int, int]:
+def release_header(manifest: bytes) -> tuple[dict, tuple[int, int, int]]:
+    """Read ordering metadata without imposing today's download inventory on history."""
     try:
         document = json.loads(manifest)
         release = document["release"]
@@ -30,14 +31,23 @@ def release_version(manifest: bytes) -> tuple[int, int, int]:
             and re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", version)
             and release["tag"] == f"v{version}"
             and release["releaseUrl"] == f"https://github.com/spool-player/spool/releases/tag/v{version}"
-            and [platform["id"] for platform in release["platforms"]]
-            == ["webos", "android", "windows", "macos", "linux"]
         )
     except (ValueError, KeyError, TypeError):
         raise ValueError("invalid release snapshot") from None
     if not valid:
         raise ValueError("invalid release snapshot")
-    return tuple(int(component) for component in version.split("."))
+    return document, tuple(int(component) for component in version.split("."))
+
+
+def release_version(manifest: bytes) -> tuple[int, int, int]:
+    document, version = release_header(manifest)
+    try:
+        platforms = [platform["id"] for platform in document["release"]["platforms"]]
+    except (KeyError, TypeError):
+        raise ValueError("invalid release snapshot") from None
+    if platforms != ["webos", "android", "windows", "macos", "linux", "tvos"]:
+        raise ValueError("invalid release snapshot: expected all six release platforms")
+    return version
 
 
 def git(repository: Path, env: dict, *args: str, data: bytes | None = None) -> bytes:
@@ -76,7 +86,7 @@ def update_repository(repository: Path, env: dict, manifest: bytes, tag: str) ->
         if previous == manifest:
             print("Website already contains the exact public release snapshot; unchanged")
             return
-        current = release_version(previous)
+        current = release_header(previous)[1]
         if current > incoming:
             print("Website already contains a newer release; unchanged")
             return

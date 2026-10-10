@@ -2,7 +2,7 @@
 
 #include <QElapsedTimer>
 
-namespace JellyfinNative {
+namespace Spool {
 
 // Where playback is, and what a new seek gesture should be measured from.
 //
@@ -23,6 +23,8 @@ public:
     double position() const;
     double estimatedPosition(double playbackSpeed, bool advancing) const;
     double duration() const;
+    // A settled sample from mpv, rather than the resume seed or seek target.
+    bool hasPlaybackPosition() const;
     void setDuration(double seconds);
     double clamp(double seconds) const;
 
@@ -57,4 +59,4 @@ private:
     QElapsedTimer m_positionClock;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

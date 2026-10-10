@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../common/JellyfinTypes.h"
+#include "../media/MediaTypes.h"
 // Full definition, not a forward declaration: moc needs the pointed-to type
 // of a Q_PROPERTY to be complete. The outline only forward-declares this
 // controller in turn, so there is no cycle.
@@ -11,8 +11,8 @@
 
 #include <vector>
 
-namespace JellyfinNative {
-class JellyfinApiFacade;
+namespace Spool {
+class PlaybackSource;
 
 class PlayQueueController final : public QAbstractListModel {
     Q_OBJECT
@@ -34,7 +34,7 @@ class PlayQueueController final : public QAbstractListModel {
     Q_PROPERTY(bool hasPlaylistItems READ hasPlaylistItems NOTIFY queueChanged)
     // The same queue with its automatically filled runs folded up, which is
     // what the panel lists. Owned here so there is one outline per queue.
-    Q_PROPERTY(JellyfinNative::PlayQueueOutlineModel *outline READ outline CONSTANT)
+    Q_PROPERTY(Spool::PlayQueueOutlineModel *outline READ outline CONSTANT)
 
 public:
     enum Roles {
@@ -65,7 +65,7 @@ public:
         UserQueuedRole,
     };
 
-    explicit PlayQueueController(JellyfinApiFacade *api = nullptr, QObject *parent = nullptr);
+    explicit PlayQueueController(PlaybackSource *api = nullptr, QObject *parent = nullptr);
 
     PlayQueueOutlineModel *outline() const
     {
@@ -141,14 +141,17 @@ public:
     // Queue a whole season or series in one go, either next or at the end.
     bool addToQueue(const std::vector<MovieItem>& items, bool next);
     void enqueueEpisodeSuccessors(const MovieItem& episode);
+    void cancelEpisodeSuccessors();
+    MovieItem nextUnplayedEpisode(const MovieItem& episode) const;
     bool updateResumeTicks(const QString& itemId, qint64 resumeTicks);
+    bool updatePlayed(const QString& itemId, bool played);
     bool updatePeople(const QString& itemId, const QList<PersonItem>& people);
 
 signals:
     void queueChanged();
     void currentIndexChanged();
 
-    void successorPlaybackReady();
+    void successorLookupFinished(bool ready);
 
 private:
     static bool isQueueable(const MovieItem& item);
@@ -157,7 +160,7 @@ private:
     void setCurrentOrderIndex(int orderIndex);
     void emitQueueStateChanged(int previousCurrentIndex);
 
-    JellyfinApiFacade *m_api = nullptr;
+    PlaybackSource *m_api = nullptr;
     PlayQueueOutlineModel *m_outline = nullptr;
     std::vector<MovieItem> m_entries;
     // Parallel to m_entries. Provenance belongs to this queue, not to the
@@ -166,6 +169,8 @@ private:
     std::vector<int> m_order;
     int m_orderIndex = -1;
     bool m_shuffled = false;
+    quint64 m_successorGeneration = 0;
+    QString m_successorItemId;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

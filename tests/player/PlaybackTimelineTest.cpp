@@ -7,9 +7,9 @@
 
 #include <cmath>
 
-using JellyfinNative::MediaSegment;
-using JellyfinNative::PlaybackSession;
-using JellyfinNative::PlaybackTimeline;
+using Spool::MediaSegment;
+using Spool::PlaybackSession;
+using Spool::PlaybackTimeline;
 
 namespace {
 
@@ -42,39 +42,31 @@ void testSegments()
     expect(timeline.activeSegmentType().isEmpty(), "segment clears near its end");
 }
 
-void testTrickplay()
+void testStreamOrigin()
 {
     PlaybackSession session;
-    session.trickplay.width = 320;
-    session.trickplay.height = 180;
-    session.trickplay.tileWidth = 4;
-    session.trickplay.tileHeight = 3;
-    session.trickplay.thumbnailCount = 25;
-    session.trickplay.intervalMs = 10000;
-
+    session.timelineOriginTicks = 437'000'000;
+    session.runtimeTicks = 100 * 10'000'000LL;
     PlaybackTimeline timeline;
     timeline.setSession(session);
-    expect(timeline.trickplayAvailable(), "valid trickplay metadata is available");
-    expect(timeline.trickplaySheetCount() == 3, "sheet count rounds up");
-
-    const auto first = timeline.trickplayFrameAt(-1.0);
-    expect(first.available && first.sheetIndex == 0 && first.offsetX == 0 && first.offsetY == 0,
-        "negative positions clamp to the first frame");
-
-    const auto secondSheet = timeline.trickplayFrameAt(130.0);
-    expect(secondSheet.available && secondSheet.sheetIndex == 1, "frame selects the correct sheet");
-    expect(secondSheet.offsetX == -320 && secondSheet.offsetY == 0, "frame exposes sprite offsets");
-    expect(secondSheet.sheetWidth == 1280 && secondSheet.sheetHeight == 540, "frame exposes sheet dimensions");
-
-    expect(!timeline.trickplayFrameAt(250.0).available, "positions beyond the manifest are unavailable");
+    expect(std::abs(timeline.streamSeconds(43.7)) < 0.001, "server-resumed media needs no second resume seek");
+    expect(std::abs(timeline.sourceSeconds(2.0) - 45.7) < 0.001, "media samples report absolute source positions");
+    expect(std::abs(timeline.streamSeconds(60.0) - 16.3) < 0.001, "absolute seeks subtract the server origin");
+    expect(timeline.sourceDuration(56.3) == 100.0, "a resumed stream retains the full source runtime");
+    expect(!timeline.containsPosition(30.0) && timeline.containsPosition(43.7),
+        "a backwards seek outside a clipped stream must resolve again");
+    timeline.clear();
+    expect(timeline.sourceSeconds(2.0) == 2.0 && timeline.streamSeconds(60.0) == 60.0
+            && timeline.sourceDuration(100.0) == 100.0 && timeline.containsPosition(0.0),
+        "direct/full-timeline sessions and reset preserve ordinary media coordinates");
 }
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("playback-timeline")
+SPOOL_TEST_MAIN("playback-timeline")
 {
     QCoreApplication application(argc, argv);
     testSegments();
-    testTrickplay();
+    testStreamOrigin();
     return failures == 0 ? 0 : 1;
 }

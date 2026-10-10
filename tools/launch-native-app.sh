@@ -5,7 +5,7 @@ APP_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 usage() {
   cat <<EOF
-usage: $(basename "$0") [path-to-jellyfin-native-or-app-bundle]
+usage: $(basename "$0") [path-to-spool-or-app-bundle]
 
 Runs the native app launch test in an isolated environment and requires a rendered frame.
 
@@ -21,7 +21,7 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
 fi
 
 bundled_app=0
-candidate="${1:-$APP_ROOT/build/linux-release/install/bin/jellyfin-native}"
+candidate="${1:-$APP_ROOT/build/linux-release/install/bin/spool}"
 if [[ -d "$candidate" && "$candidate" == *.app ]]; then
   bundled_app=1
   candidate="$candidate/Contents/MacOS/Spool"
@@ -30,6 +30,13 @@ fi
 if [[ ! -x "$candidate" ]]; then
   echo "error: executable not found: $candidate" >&2
   exit 1
+fi
+
+# Linux must have a private compositor with real GL/Vulkan CPU drivers. The
+# explicit benchmark host-session opt-in below remains a manual-only path.
+if [[ "$(uname -s)" == Linux && "${SPOOL_E2E_ISOLATED_DISPLAY:-0}" != 1 &&
+      "${SPOOL_BENCH_HOST_SESSION:-0}" != 1 ]]; then
+  exec bash "$APP_ROOT/tools/test-gpu-session.sh" bash "${BASH_SOURCE[0]}" "$@"
 fi
 
 work="$(mktemp -d)"
@@ -85,7 +92,7 @@ qt_version_subdirs_from_roots() {
 }
 
 configure_isolated_qt_paths() {
-  [[ "${JELLYFIN_LAUNCH_TEST_INHERIT_QT_PATHS:-0}" != "1" ]] || return 0
+  [[ "${SPOOL_LAUNCH_TEST_INHERIT_QT_PATHS:-0}" != "1" ]] || return 0
   command -v qtpaths6 >/dev/null 2>&1 || return 0
 
   local qt_version qt_plugins qt_qml
@@ -141,19 +148,17 @@ else
   export XDG_CACHE_HOME="$work/cache"
   export XDG_CONFIG_HOME="$work/config"
   export XDG_DATA_HOME="$work/data"
-  export XDG_RUNTIME_DIR="$work/runtime"
+  if [[ "${SPOOL_E2E_ISOLATED_DISPLAY:-0}" != 1 ]]; then
+    export XDG_RUNTIME_DIR="$work/runtime"
+  fi
 fi
-export JELLYFIN_DIAGNOSTICS_DIR="$work/diagnostics"
-export QT_QPA_PLATFORM="${JELLYFIN_LAUNCH_TEST_QPA_PLATFORM:-offscreen}"
-# Software rasterisation is the default because it is the only thing a headless
-# CI runner can do, and the launch test only needs a frame to exist. Measuring
-# what a page costs to paint needs a real GPU, so an explicitly set value wins
-# here -- including an empty one, which is how Qt is asked for its default RHI
-# backend. Hence +x rather than :-, which cannot tell empty from unset.
-if [[ -z "${QT_QUICK_BACKEND+x}" ]]; then
-  QT_QUICK_BACKEND=software
+export SPOOL_DIAGNOSTICS_DIR="$work/diagnostics"
+export QT_QPA_PLATFORM="${SPOOL_LAUNCH_TEST_QPA_PLATFORM:-${QT_QPA_PLATFORM:-cocoa}}"
+if [[ "${QT_QUICK_BACKEND:-}" == software || "$QT_QPA_PLATFORM" == offscreen ]]; then
+  echo 'error: native GUI launch requires a real graphics surface, not a software/offscreen bypass' >&2
+  exit 1
 fi
-export QT_QUICK_BACKEND
+export QT_QUICK_BACKEND="${QT_QUICK_BACKEND:-}"
 export QSG_RHI_BACKEND="${QSG_RHI_BACKEND:-opengl}"
 if [[ "$bundled_app" == "1" ]]; then
   unset QT_PLUGIN_PATH QML_IMPORT_PATH QML2_IMPORT_PATH NIXPKGS_QT6_QML_IMPORT_PATH QMAKEPATH
@@ -163,9 +168,7 @@ else
 fi
 export LC_NUMERIC=C
 
-# Benchmark mode reuses this script's isolation wholesale -- same offscreen
-# platform, same throwaway home -- because a measurement taken in a different
-# environment from the launch test is not comparable to it.
+# Benchmark mode reuses the launch test's isolated real graphics display.
 app_args=(--launch-test)
 if [[ -n "${SPOOL_BENCH:-}" ]]; then
   app_args=()
@@ -185,7 +188,7 @@ if [[ "$bundled_app" == "1" ]]; then
     XDG_CONFIG_HOME="$XDG_CONFIG_HOME" \
     XDG_DATA_HOME="$XDG_DATA_HOME" \
     XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
-    JELLYFIN_DIAGNOSTICS_DIR="$JELLYFIN_DIAGNOSTICS_DIR" \
+    SPOOL_DIAGNOSTICS_DIR="$SPOOL_DIAGNOSTICS_DIR" \
     QT_QPA_PLATFORM="$QT_QPA_PLATFORM" \
     QT_QUICK_BACKEND="$QT_QUICK_BACKEND" \
     QSG_RHI_BACKEND="$QSG_RHI_BACKEND" \

@@ -1,0 +1,40 @@
+{
+  "format": 2,
+  "providers": [
+    {
+      "id": "spool.jellyfin",
+      "appleAppStore": true,
+      "version": "0.2.13",
+      "archive": "bundled/spool.jellyfin-0.2.13.szo",
+      "sha256": "4f1331f17657dd6ff1ffb1c396149ac00c4393ac02dea44a185901111f07a897"
+    },
+    {
+      "id": "spool.emby",
+      "appleAppStore": true,
+      "version": "0.1.8",
+      "archive": "bundled/spool.emby-0.1.8.szo",
+      "sha256": "14f9a36a8e7317b2cf51ed1ebcea3d74e346f2897ac18cec6e8eddf7aa290ea8"
+    },
+    {
+      "id": "spool.plex",
+      "appleAppStore": true,
+      "version": "0.1.9",
+      "archive": "bundled/spool.plex-0.1.9.tar.zst",
+      "sha256": "d7d4b8412d45b3ae04151ec1c6e32680736c6443783ce4d8de168ad9dc89679a"
+    },
+    {
+      "id": "spool.stremio",
+      "appleAppStore": false,
+      "version": "0.1.2",
+      "archive": "bundled/spool.stremio-0.1.2.tar.zst",
+      "sha256": "b403491c4cd9129fbaef1a4f381a87357bdac98edb5c4d04087365dd13e7d05c"
+    },
+    {
+      "id": "example.open-movies",
+      "appleAppStore": true,
+      "version": "1.1.1",
+      "archive": "bundled/example.open-movies-1.1.1.tar.zst",
+      "sha256": "20fe53ea93eeea93b87ca324f4e04464301267e48d3cf717ed59e92586586ab8"
+    }
+  ]
+}

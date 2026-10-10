@@ -11,7 +11,7 @@ $stage = if ($StageDirectory) { [IO.Path]::GetFullPath($StageDirectory) } else {
 }
 $output = if ($OutputDirectory) { [IO.Path]::GetFullPath($OutputDirectory) } else { Join-Path $root 'dist' }
 
-foreach ($relative in @('jellyfin-native.exe', 'mpv-2.dll', 'imageformats\qwebp.dll')) {
+foreach ($relative in @('spool.exe', 'mpv-2.dll', 'imageformats\qwebp.dll')) {
     if (-not (Test-Path -LiteralPath (Join-Path $stage $relative))) {
         throw "The staged Windows payload is incomplete: $relative"
     }
@@ -50,8 +50,8 @@ if (-not $MakeNsis -or -not (Test-Path -LiteralPath $MakeNsis)) {
 }
 
 New-Item -ItemType Directory -Force $output | Out-Null
-$portable = Join-Path $output "Spool-for-Jellyfin-$version-Windows-x64-Portable.exe"
-$installer = Join-Path $output "Spool-for-Jellyfin-$version-Windows-x64-Setup.exe"
+$portable = Join-Path $output "Spool-$version-Windows-x64-Portable.exe"
+$installer = Join-Path $output "Spool-$version-Windows-x64-Setup.exe"
 Remove-Item -LiteralPath $portable, $installer -Force -ErrorAction SilentlyContinue
 
 function Invoke-NsisPackage {

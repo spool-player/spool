@@ -2,30 +2,29 @@
 
 #include "AndroidLocalMediaSession.h"
 
-#include "app/AppController.h"
 #include "player/PlayerController.h"
 
 #include <QGuiApplication>
 #include <QJniObject>
 
-namespace JellyfinNative {
+namespace Spool {
 
 struct PlatformApplicationServices::PlatformData {
-    explicit PlatformData(AppController& controller)
-        : controller(&controller)
-        , player(controller.player())
-        , mediaSession(controller)
+    explicit PlatformData(ApplicationHooks& applicationHooks)
+        : hooks(&applicationHooks)
+        , player(applicationHooks.player)
+        , mediaSession(applicationHooks)
     {
     }
 
-    AppController *controller = nullptr;
+    ApplicationHooks *hooks = nullptr;
     PlayerController *player = nullptr;
     AndroidLocalMediaSession mediaSession;
 };
 
 PlatformApplicationServices::PlatformApplicationServices(
-    QGuiApplication&, NativeAppWindow&, AppController& controller, RouterController&)
-    : m_platform(std::make_unique<PlatformData>(controller))
+    QGuiApplication&, NativeAppWindow&, ApplicationHooks& hooks, RouterController&)
+    : m_platform(std::make_unique<PlatformData>(hooks))
 {
 }
 
@@ -51,15 +50,15 @@ void PlatformApplicationServices::start()
         });
 
     QObject::connect(
-        platform->controller, &AppController::diagnosticsReportSaved, qGuiApp, [platform](const QString& reportPath) {
+        platform->hooks, &ApplicationHooks::diagnosticsReportSaved, qGuiApp, [platform](const QString& reportPath) {
             const QJniObject context = QNativeInterface::QAndroidApplication::context();
             const QJniObject path = QJniObject::fromString(reportPath);
             const jboolean opened = QJniObject::callStaticMethod<jboolean>("com/sachk/spool/AndroidUpdateBridge",
                 "shareDiagnostics", "(Landroid/content/Context;Ljava/lang/String;)Z", context.object<jobject>(),
                 path.object<jstring>());
             if (!opened)
-                emit platform->controller->toastMessage(QStringLiteral("Could not open Android’s share menu."));
+                emit platform->hooks->toastRequested(QStringLiteral("Could not open Android’s share menu."));
         });
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

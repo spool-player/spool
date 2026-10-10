@@ -7,7 +7,7 @@
 #include <QObject>
 #include <QtGlobal>
 
-namespace JellyfinNative {
+namespace Spool {
 namespace {
     QMetaObject::Connection g_renderErrorConnection;
 }
@@ -34,7 +34,11 @@ bool platformUsesEmbeddedVideo(const PlaybackSession&, bool)
 }
 QString platformPlaybackBackendName(bool)
 {
+#if defined(SPOOL_APPLE_MOBILE)
+    return QStringLiteral("apple-mobile");
+#else
     return QStringLiteral("desktop");
+#endif
 }
 
 bool configurePlatformMpvSurface(mpv_handle *, NativeAppWindow&, bool, bool, QString&)
@@ -90,9 +94,13 @@ bool applyPlatformSubtitlePreload(mpv_handle *, const PlaybackSession&, const QS
 }
 bool platformUsesBackgroundPlaybackPolicy()
 {
+#if defined(SPOOL_APPLE_MOBILE)
+    return true;
+#else
     return false;
+#endif
 }
 void platformAudioTrackChanged(int) { }
 void platformVideoSizeChanged(int, int) { }
 
-} // namespace JellyfinNative
+} // namespace Spool

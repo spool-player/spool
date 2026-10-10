@@ -1,0 +1,71 @@
+--- a/src/plugins/platforms/ios/qiosapplicationdelegate.mm
++++ b/src/plugins/platforms/ios/qiosapplicationdelegate.mm
+@@ -84,6 +84,7 @@
+     self.window = [window autorelease];
+ }
+ 
++#ifndef Q_OS_TVOS
+ - (void)windowScene:(UIWindowScene *)windowScene
+         didUpdateCoordinateSpace:(id<UICoordinateSpace>)previousCoordinateSpace
+         interfaceOrientation:(UIInterfaceOrientation)previousInterfaceOrientation
+@@ -97,6 +98,7 @@
+     auto *viewController = static_cast<QIOSViewController*>(self.window.rootViewController);
+     [viewController updatePlatformScreen];
+ }
++#endif
+ 
+ - (void)sceneDidDisconnect:(UIScene *)scene
+ {
+--- a/src/plugins/platforms/ios/qiosviewcontroller.mm
++++ b/src/plugins/platforms/ios/qiosviewcontroller.mm
+@@ -381,6 +381,7 @@
+ 
+ // -------------------------------------------------------------------------
+ 
++#ifndef Q_OS_TVOS
+ - (void)willRotateToInterfaceOrientation:(UIInterfaceOrientation)orientation duration:(NSTimeInterval)duration
+ {
+     self.changingOrientation = YES;
+@@ -394,8 +395,9 @@
+ 
+     [super didRotateFromInterfaceOrientation:orientation];
+ }
++#endif
+ 
+-#if !defined(Q_OS_VISIONOS)
++#if !defined(Q_OS_VISIONOS) && !defined(Q_OS_TVOS)
+ - (void)willChangeStatusBarFrame:(NSNotification*)notification
+ {
+     Q_UNUSED(notification);
+@@ -447,6 +449,10 @@
+ {
+     if (!QCoreApplication::instance())
+         return;
++#ifdef Q_OS_TVOS
++    // TV scenes do not rotate. Their view layout is the coordinate-change hook.
++    [self updatePlatformScreen];
++#endif
+ 
+     // Make sure the screen properties are up to date before layout.
+     // We need this here, even if we also react to status bar orientation
+--- a/src/plugins/platforms/ios/qiosscreen.mm
++++ b/src/plugins/platforms/ios/qiosscreen.mm
+@@ -422,6 +422,10 @@
+ 
+ Qt::ScreenOrientation QIOSScreen::orientation() const
+ {
++#ifdef Q_OS_TVOS
++    // Apple TV has no rotatable interface; report the actual display geometry.
++    return m_geometry.width() >= m_geometry.height() ? Qt::LandscapeOrientation : Qt::PortraitOrientation;
++#else
+     // We don't report UIDevice.currentDevice.orientation here,
+     // as that would report the actual orientation of the device,
+     // even if the orientation of the UI was locked to a subset
+@@ -453,6 +457,7 @@
+         return m_geometry.width() >= m_geometry.height() ?
+             Qt::LandscapeOrientation : Qt::PortraitOrientation;
+     }
++#endif
+ }
+ 
+ QPixmap QIOSScreen::grabWindow(WId window, int x, int y, int width, int height) const

@@ -7,7 +7,7 @@
 
 #include <functional>
 
-namespace JellyfinNative {
+namespace Spool {
 
 class SystemPerformanceMonitor final : public QObject {
     Q_OBJECT
@@ -137,4 +137,4 @@ private:
     qint64 m_systemTotalBytes = 0;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

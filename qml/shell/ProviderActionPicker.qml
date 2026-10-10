@@ -1,0 +1,304 @@
+pragma ComponentBehavior: Bound
+import QtQuick
+import QtQuick.Layouts
+import Spool
+
+FocusScope {
+    id: root
+    property var provider
+    property Component remoteControls: null
+    property string pinLabel: "Account PIN"
+    property string pinExplanation: "Cancelling keeps your current account active."
+    property var sortChoices: []
+    readonly property string kind: provider ? String(provider.arguments.kind || "") : ""
+    readonly property bool choosing: kind === "playlist" || kind === "collection"
+    readonly property bool naming: choosing || kind === "rename" || kind === "renameCollection"
+    readonly property var downloadVariants: kind === "download" && provider ? provider.arguments.variants || [] : []
+    property bool busy: false
+    property bool exhausted: true
+    property string cursor: ""
+    property string error: ""
+    function loadTargets(append) {
+        if (busy)
+            return
+        busy = true
+        provider.requestList("targets", {
+                                 kind: kind,
+                                 itemId: provider.arguments.itemId,
+                                 playlistType: provider.arguments.playlistType || "video",
+                                 cursor: append ? cursor : undefined
+                             }, append).then(result => {
+                                 cursor = String(result.cursor || "")
+                                 exhausted = result.exhausted !== false
+                                 busy = false
+                             }, () => {
+                                 busy = false
+                                 error = "Couldn't load destinations. Check your connection and permissions."
+                             })
+    }
+    function submitPin() {
+        const value = pin.text
+        pin.text = ""
+        provider.complete({
+                              pin: value
+                          })
+    }
+    function recoverListFocus(view) {
+        const candidate = InputKeys.topLeftVisibleCandidate(view, view)
+        const selected = InputKeys.topLeftVisibleCandidate({
+                                                               count: view.currentItem ? 1 : 0,
+                                                               width: view.width,
+                                                               height: view.height,
+                                                               itemAtIndex: index => view.currentItem,
+                                                               mapToItem: (clip, x, y, width, height) => view.mapToItem(
+                                                                                                             clip, x, y,
+                                                                                                             width, height)
+                                                           }, view)
+        if (view.activeFocus && selected && (selected.fullyVisible || selected.visibleFraction
+                                             >= InputKeys.focusRecoveryVisibleThreshold))
+            return false
+        if (candidate)
+            InputKeys.focusIndexWithoutScrolling(view, candidate.index)
+        return true
+    }
+
+    function activate() {
+        const item = Window.activeFocusItem
+        if (InputKeys.isTextInputItem(item) || (item && !root.activeFocus))
+            return
+        const view = kind === "download" ? downloadList : choosing ? list : null
+        if (view && (view.activeFocus || !item || item === root)) {
+            if (!recoverListFocus(view))
+                view.activate()
+            return
+        }
+        if (item && typeof item.activate === "function")
+            item.activate()
+        else if (item && typeof item.clicked === "function")
+            item.clicked()
+    }
+    function routeKey(key, phase, repeat) {
+        const item = Window.activeFocusItem
+        if (InputKeys.isTextInputItem(item) || (item && !root.activeFocus))
+            return false
+        if (kind !== "download" && !choosing)
+            return false
+        if (InputKeys.isBack(key, false, false)) {
+            if (phase === "release")
+                provider.close()
+            return true
+        }
+        const view = kind === "download" ? downloadList : list
+        if (InputKeys.isAccept(key))
+            return true
+        if (!InputKeys.isDirection(key))
+            return false
+        if (choosing && item && item !== root && !view.activeFocus)
+            return false
+        if (phase === "press") {
+            if (recoverListFocus(view))
+                return true
+            if (key === Qt.Key_Up || key === Qt.Key_Down) {
+                const next = view.currentIndex + (key === Qt.Key_Down ? 1 : -1)
+                if (next >= 0 && next < view.count) {
+                    view.currentIndex = next
+                    view.positionViewAtIndex(next, ListView.Contain)
+                } else {
+                    InputKeys.focus(cancelButton)
+                }
+            }
+        }
+        return true
+    }
+    Component.onCompleted: {
+        if (choosing)
+            loadTargets(false)
+        if (kind === "rename" || kind === "renameCollection")
+            name.text = String(provider.arguments.title || "")
+        Qt.callLater(() => {
+            if (kind === "homePin")
+                pin.focusRow()
+            else if (kind === "download")
+                InputKeys.focus(downloadList.count > 0 ? downloadList : cancelButton)
+            else if (choosing)
+                InputKeys.focus(list)
+            else if (naming)
+                name.focusRow()
+            else if (kind === "collectionSort" && sortButtons.count)
+                InputKeys.focus(sortButtons.itemAt(0))
+            else if (kind === "remoteControls" && remoteLoader.item)
+                InputKeys.focus(remoteLoader.item)
+            else
+                InputKeys.focus(cancelButton)
+        })
+    }
+    ColumnLayout {
+        anchors.fill: root.kind === "homePin" ? undefined : parent
+        anchors.centerIn: root.kind === "homePin" ? parent : undefined
+        anchors.margins: root.kind === "homePin" ? 0 : Metrics.pageMarginPx
+        width: Math.min(parent.width - Metrics.pageMarginPx * 2, Metrics.scaled(520))
+        height: root.kind === "homePin" ? implicitHeight : parent.height - Metrics.pageMarginPx * 2
+        spacing: Metrics.scaled(12)
+        AppText {
+            Layout.fillWidth: true
+            text: ({
+                       download: "Choose version",
+                       playlist: "Add to playlist",
+                       collection: "Add to collection",
+                       rename: "Rename",
+                       renameCollection: "Rename collection",
+                       collectionSort: "Collection order",
+                       confirm: "Delete from the server?",
+                       remoteControls: "Device controls",
+                       homePin: "Unlock " + String(root.provider.arguments.title || "account")
+                   })[root.kind] || ""
+            font.pixelSize: Metrics.titleSizePx
+            font.weight: Font.DemiBold
+            wrapMode: Text.WordWrap
+        }
+        SecondaryText {
+            Layout.fillWidth: true
+            visible: !!root.error
+            text: root.error
+            color: Theme.errorText
+            wrapMode: Text.WordWrap
+        }
+        Loader {
+            id: remoteLoader
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            visible: active
+            active: root.kind === "remoteControls"
+            sourceComponent: root.remoteControls
+        }
+        TextFieldRow {
+            id: pin
+            Layout.fillWidth: true
+            visible: root.kind === "homePin"
+            label: root.pinLabel
+            echoMode: TextInput.Password
+            inputMethodHints: Qt.ImhDigitsOnly | Qt.ImhNoPredictiveText
+            onAccepted: root.submitPin()
+        }
+        SecondaryText {
+            Layout.fillWidth: true
+            visible: root.kind === "homePin"
+            text: root.pinExplanation
+            wrapMode: Text.WordWrap
+        }
+        ListView {
+            id: list
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            visible: root.choosing
+            clip: true
+            model: root.provider ? root.provider.rows : null
+            keyNavigationEnabled: true
+            delegate: MenuRow {
+                required property var record
+                required property int index
+                width: ListView.view.width
+                label: record.title
+                iconName: root.kind === "collection" ? "video_library" : "playlist_play"
+                highlighted: ListView.isCurrentItem && list.activeFocus
+                onActivated: {
+                    list.currentIndex = index
+                    InputKeys.focus(list)
+                    root.provider.complete({
+                                               targetId: record.id,
+                                               targetName: record.title
+                                           })
+                }
+            }
+            function activate() {
+                if (currentItem)
+                    currentItem.activated()
+            }
+        }
+        ListView {
+            id: downloadList
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            visible: root.kind === "download"
+            clip: true
+            model: root.downloadVariants
+            keyNavigationEnabled: true
+            delegate: MenuRow {
+                required property var modelData
+                required property int index
+                width: downloadList.width
+                label: String(modelData.label || "")
+                detail: String(modelData.detail || "")
+                iconName: "download"
+                highlighted: ListView.isCurrentItem && downloadList.activeFocus
+                onActivated: {
+                    downloadList.currentIndex = index
+                    InputKeys.focus(downloadList)
+                    root.provider.complete({
+                                               variantId: modelData.id
+                                           })
+                }
+            }
+            function activate() {
+                if (currentItem)
+                    currentItem.activated()
+            }
+        }
+        ActionButton {
+            visible: root.choosing && !root.exhausted
+            enabled: !root.busy
+            text: root.busy ? "Loading…" : "Load more"
+            onClicked: root.loadTargets(true)
+        }
+        Repeater {
+            id: sortButtons
+            model: root.kind === "collectionSort" ? root.sortChoices : []
+            delegate: ActionButton {
+                required property var modelData
+                text: modelData.label
+                onClicked: root.provider.complete({
+                                                      sort: modelData.value
+                                                  })
+            }
+        }
+        TextFieldRow {
+            id: name
+            Layout.fillWidth: true
+            visible: root.naming
+            label: root.choosing ? "New " + root.kind : "Name"
+            onAccepted: {
+                if (text.trim())
+                    root.provider.complete({
+                                               newName: text.trim()
+                                           })
+            }
+        }
+        RowLayout {
+            Layout.alignment: Qt.AlignRight
+            ActionButton {
+                id: cancelButton
+                text: root.kind === "remoteControls" ? "Close" : "Cancel"
+                kind: "flat"
+                onClicked: root.provider.close()
+            }
+            ActionButton {
+                visible: root.kind === "homePin"
+                text: "Unlock"
+                kind: "primary"
+                onClicked: root.submitPin()
+            }
+            ActionButton {
+                id: confirm
+                visible: root.kind === "confirm" || root.naming && !!name.text.trim()
+                enabled: !root.busy
+                text: root.kind === "confirm" ? "Delete" : root.choosing ? "Create" : "Save"
+                kind: root.kind === "confirm" ? "danger" : "primary"
+                onClicked: root.provider.complete(root.kind === "confirm" ? {
+                                                                                confirmed: true
+                                                                            } : {
+                                                      newName: name.text.trim()
+                                                  })
+            }
+        }
+    }
+}

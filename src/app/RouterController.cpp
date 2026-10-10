@@ -6,7 +6,7 @@
 #include <QSet>
 #include <QSettings>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
 
@@ -19,7 +19,8 @@ namespace {
     {
         static const QSet<QString> routes = { QStringLiteral("home"), QStringLiteral("libraryGrid"),
             QStringLiteral("itemDetails"), QStringLiteral("personDetails"), QStringLiteral("search"),
-            QStringLiteral("settings"), QStringLiteral("subtitleSettings"), QStringLiteral("openSourceNotices") };
+            QStringLiteral("settings"), QStringLiteral("settingsSync"), QStringLiteral("subtitleSettings"),
+            QStringLiteral("openSourceNotices"), QStringLiteral("providerDetails") };
         return routes.contains(route);
     }
 
@@ -29,7 +30,8 @@ namespace {
             QStringLiteral("source"), QStringLiteral("returnRoute"), QStringLiteral("focusIndex"),
             QStringLiteral("libraryId"), QStringLiteral("personId"), QStringLiteral("personName"),
             QStringLiteral("personRole"), QStringLiteral("personType"), QStringLiteral("title"),
-            QStringLiteral("seriesId"), QStringLiteral("seasonId") };
+            QStringLiteral("seriesId"), QStringLiteral("seasonId"), QStringLiteral("moduleId"),
+            QStringLiteral("rowKey"), QStringLiteral("advanced") };
         QVariantMap safe;
         for (auto it = args.cbegin(); it != args.cend(); ++it) {
             if (!keys.contains(it.key()))
@@ -56,6 +58,12 @@ namespace {
 
 RouterController::RouterController(QObject *parent)
     : QObject(parent)
+{
+}
+
+RouterController::RouterController(const QString& startRoute, QObject *parent)
+    : QObject(parent)
+    , m_route(startRoute)
 {
 }
 
@@ -279,4 +287,4 @@ bool RouterController::restoreSnapshot()
     return true;
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

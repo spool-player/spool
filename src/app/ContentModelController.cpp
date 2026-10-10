@@ -1,6 +1,5 @@
 #include "ContentModelController.h"
 
-#include "../api/JellyfinApiFacade.h"
 #include "../common/AsyncTask.h"
 #include "LibraryPrefetchController.h"
 
@@ -11,12 +10,11 @@
 #include <algorithm>
 #include <utility>
 
-namespace JellyfinNative {
+namespace Spool {
 
-ContentModelController::ContentModelController(
-    JellyfinApiFacade *api, LibraryPrefetchController *prefetch, QObject *parent)
+ContentModelController::ContentModelController(Catalog *catalog, LibraryPrefetchController *prefetch, QObject *parent)
     : QObject(parent)
-    , m_api(api)
+    , m_api(catalog)
     , m_prefetch(prefetch)
 {
 }
@@ -48,11 +46,12 @@ void ContentModelController::loadDetailRows(
     const RequestGeneration::Token generation = m_detailRowsGeneration.next();
     m_detailRowsPending = 0;
     m_detailRowsBusy = false;
+    m_detailContextInitialIndex = 0;
     m_detailSeasons.clear();
     m_detailSeasonOptions.clear();
     m_detailSimilarItems.clear();
 
-    if (itemId.isEmpty() || !m_api || m_api->session().accessToken.isEmpty()) {
+    if (itemId.isEmpty() || !m_api || !m_api->signedIn()) {
         emit detailRowsChanged();
         return;
     }
@@ -92,10 +91,27 @@ void ContentModelController::loadDetailRows(
     } else if (loadEpisodes) {
         Async::runLatest(
             this, m_api->fetchEpisodes(seriesId, seasonId), m_detailRowsGeneration, generation,
-            [this, generation, seriesId](const std::vector<MovieItem>& episodes) {
+            [this, generation, seriesId, itemId, itemType](std::vector<MovieItem> episodes) {
+                for (MovieItem& episode : episodes)
+                    m_api->applyLocalPlaybackState(episode);
                 qInfo() << "detail rows: episodes loaded" << seriesId << episodes.size();
-                m_detailSeasons.setMovies(episodes);
-                m_prefetch->prefetchPosters(episodes);
+                int initialIndex = episodicPlaybackStartIndex(episodes);
+                if (initialIndex < 0) {
+                    initialIndex = 0;
+                    for (int index = 0; index < static_cast<int>(episodes.size()); ++index) {
+                        if (episodes[static_cast<size_t>(index)].played)
+                            initialIndex = index;
+                    }
+                }
+                if (itemType == QStringLiteral("Episode")) {
+                    const auto current = std::find_if(episodes.cbegin(), episodes.cend(),
+                        [&itemId](const MovieItem& episode) { return episode.id == itemId; });
+                    if (current != episodes.cend())
+                        initialIndex = static_cast<int>(std::distance(episodes.cbegin(), current));
+                }
+                m_detailContextInitialIndex = initialIndex;
+                m_detailSeasons.setMovies(std::move(episodes));
+                m_prefetch->prefetchPosters(m_detailSeasons.movies());
                 emit detailRowsChanged();
                 finishDetailRowLoad(generation);
             },
@@ -105,7 +121,8 @@ void ContentModelController::loadDetailRows(
             });
     } else if (loadBoxSet) {
         Async::runLatest(
-            this, m_api->fetchBrowsePage(BrowseDescriptor::boxSet(itemId), 0, 200), m_detailRowsGeneration, generation,
+            this, m_api->fetchBrowsePage(BrowseDescriptor::boxSet(itemId), 0, 200, {}, std::nullopt),
+            m_detailRowsGeneration, generation,
             [this, generation, itemId](const PagedMovieItems& page) {
                 qInfo() << "detail rows: box set children loaded" << itemId << page.items.size();
                 m_detailSeasons.setMovies(page.items);
@@ -119,8 +136,8 @@ void ContentModelController::loadDetailRows(
             });
     } else if (loadAlbum) {
         Async::runLatest(
-            this, m_api->fetchBrowsePage(BrowseDescriptor::folderChildren(itemId), 0, 200), m_detailRowsGeneration,
-            generation,
+            this, m_api->fetchBrowsePage(BrowseDescriptor::folderChildren(itemId), 0, 200, {}, std::nullopt),
+            m_detailRowsGeneration, generation,
             [this, generation, itemId](const PagedMovieItems& page) {
                 qInfo() << "detail rows: album tracks loaded" << itemId << page.items.size();
                 m_detailSeasons.setMovies(page.items);
@@ -169,7 +186,7 @@ void ContentModelController::loadItemDetail(const QString& itemId)
     const RequestGeneration::Token generation = m_detailItemGeneration.next();
     m_detailItem = {};
 
-    if (itemId.isEmpty() || !m_api || m_api->session().accessToken.isEmpty()) {
+    if (itemId.isEmpty() || !m_api || !m_api->signedIn()) {
         emit detailItemChanged();
         return;
     }
@@ -178,8 +195,9 @@ void ContentModelController::loadItemDetail(const QString& itemId)
 
     Async::runLatest(
         this, m_api->fetchItemDetails(itemId), m_detailItemGeneration, generation,
-        [this](const MovieItem& item) {
-            m_detailItem = item;
+        [this](MovieItem item) {
+            m_api->applyLocalPlaybackState(item);
+            m_detailItem = std::move(item);
             emit detailItemChanged();
         },
         [this](const std::exception_ptr& error) {
@@ -193,7 +211,7 @@ void ContentModelController::loadPersonItems(const QString& personId)
 {
     const RequestGeneration::Token generation = m_personItemsGeneration.next();
     clearPersonItems();
-    if (personId.isEmpty() || !m_api || m_api->session().accessToken.isEmpty()) {
+    if (personId.isEmpty() || !m_api || !m_api->signedIn()) {
         m_personItemsBusy = false;
         emit personItemsChanged();
         return;
@@ -341,7 +359,11 @@ void ContentModelController::prepareLinkedItem(const QString& itemId, const QStr
 
 void ContentModelController::updateResumeTicks(const QString& itemId, qint64 positionTicks)
 {
-    if (!itemId.isEmpty() && m_detailItem.id == itemId) {
+    if (itemId.isEmpty() || positionTicks < 0)
+        return;
+    if (m_api)
+        m_api->recordLocalResumeTicks(itemId, positionTicks);
+    if (m_detailItem.id == itemId) {
         const qint64 ticks = normalizedResumeTicks(positionTicks, m_detailItem.runtimeTicks);
         if (m_detailItem.resumeTicks != ticks) {
             m_detailItem.resumeTicks = ticks;
@@ -372,8 +394,11 @@ void ContentModelController::updateFavorite(const QString& itemId, bool favorite
 
 void ContentModelController::updatePlayed(const QString& itemId, bool played)
 {
-    if (!itemId.isEmpty() && m_detailItem.id == itemId
-        && (m_detailItem.played != played || m_detailItem.resumeTicks != 0)) {
+    if (itemId.isEmpty())
+        return;
+    if (m_api)
+        m_api->recordLocalPlayed(itemId, played);
+    if (m_detailItem.id == itemId && (m_detailItem.played != played || m_detailItem.resumeTicks != 0)) {
         m_detailItem.played = played;
         m_detailItem.resumeTicks = 0;
         emit detailItemChanged();
@@ -397,8 +422,11 @@ void ContentModelController::reset()
     m_detailSimilarItems.clear();
     clearPersonItems();
     m_linkedItems.clear();
+    if (m_api)
+        m_api->clearLocalPlaybackState();
     m_detailItem = {};
     m_detailRowsBusy = false;
+    m_detailContextInitialIndex = 0;
     m_detailRowsPending = 0;
     m_personItemsBusy = false;
 
@@ -420,4 +448,4 @@ void ContentModelController::finishDetailRowLoad(RequestGeneration::Token genera
     }
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

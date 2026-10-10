@@ -3,14 +3,14 @@
   <id>com.sachk.spool</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MPL-2.0</project_license>
-  <name>Spool for Jellyfin</name>
-  <summary>Fast Jellyfin client for TVs and desktop</summary>
+  <name>Spool</name>
+  <summary>Fast media player for TVs and desktop</summary>
   <description>
-    <p>Browse and play media from a Jellyfin server with a native mpv playback pipeline.</p>
+    <p>Browse and play media from Jellyfin, Emby, Plex and more with a native mpv playback pipeline.</p>
   </description>
   <launchable type="desktop-id">com.sachk.spool.desktop</launchable>
   <provides>
-    <binary>jellyfin-native</binary>
+    <binary>spool</binary>
   </provides>
   <categories>
     <category>AudioVideo</category>
@@ -21,6 +21,17 @@
     <name>Spool</name>
   </developer>
   <releases>
+    <release version="0.9.0" date="2026-10-07">
+      <description><p>Add a Stremio add-on provider with its own stream and torrent-file chooser using an external streaming server. Download original or server-converted media for offline playback, with platform-appropriate destination selection. Simplify settings sync to a recommended preset with one status and recovery screen. Add a global seek-preview switch and filtered provider logging. Remove synchronous mpv render waits from desktop fullscreen transitions. Bundle compatible Jellyfin, Emby, Plex, Stremio and Open Movies providers, with explicit Apple App Store inclusion policy. Retain automatic episode continuation, full-resolution GPU-scaled seek previews, Home watching-profile selection and native spoolet controls.</p></description>
+    </release>
+    <release version="0.8.11" date="2026-10-01">
+      <description><p>Rearrange homepage libraries by dragging or with TV-remote move controls. Improve PIN, password and Quick Connect screens. Show clearer server labels and source icons, and deduplicate search results across servers. Bundle updated Jellyfin, Emby and Plex providers, which remain independently upgradable. Update FFmpeg to its security-fixed bugfix release.</p></description>
+    </release>
+    <release version="0.8.3" date="2026-09-29">
+      <description><p>Install and update providers from the startup chooser with download progress, and enable optional provider features.</p></description>
+    </release>
+    <release version="0.8.1" date="2026-09-23" type="development"/>
+    <release version="0.8.0" date="2026-09-22" type="development"/>
     <release version="0.7.18" date="2026-09-19" type="development"/>
     <release version="0.7.17" date="2026-09-19" type="development"/>
     <release version="0.7.16" date="2026-09-19" type="development"/>

@@ -3,7 +3,7 @@
 #include <QCoreApplication>
 #include <QJniObject>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
     constexpr auto kJavaBridge = "com/sachk/spool/AndroidUpdateBridge";
@@ -31,4 +31,4 @@ bool AndroidUpdateInstaller::openInstallSettings()
         kJavaBridge, "openInstallSettings", "(Landroid/content/Context;)Z", context.object<jobject>());
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

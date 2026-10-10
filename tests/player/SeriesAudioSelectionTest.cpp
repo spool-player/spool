@@ -1,21 +1,16 @@
 #include "common/SeriesAudioSelection.h"
 
 #include "TestMain.h"
+#include "TestRequire.h"
 
 #include <cstdlib>
 #include <iostream>
 
-using namespace JellyfinNative;
+using namespace Spool;
 
 namespace {
 
-void require(bool condition, const char *message)
-{
-    if (condition)
-        return;
-    std::cerr << message << '\n';
-    std::exit(EXIT_FAILURE);
-}
+using SpoolTests::require;
 
 MediaStreamInfo stream(int index, QString language, bool isDefault = false)
 {
@@ -29,7 +24,7 @@ MediaStreamInfo stream(int index, QString language, bool isDefault = false)
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("series-audio-selection")
+SPOOL_TEST_MAIN("series-audio-selection")
 {
     MediaStreamInfo video;
     video.index = 0;

@@ -4,7 +4,7 @@
 #include <QVariantList>
 #include <QVector>
 
-namespace JellyfinNative {
+namespace Spool {
 
 enum class SettingType {
     Action,
@@ -28,10 +28,15 @@ enum class SettingPlatform {
     Android,
 };
 
+enum class SettingSyncPolicy { Never, PortableDefault, DeviceOptIn };
+
 enum class SettingTarget {
     External,
+    Locale,
+    LatencyGuard,
+    LatencyOverlay,
+    AudioLanguage,
     NightMode,
-    CastButtonEnabled,
     RemoteControlTargetEnabled,
     ToneMappingVisualization,
     MaxStreamingHeight,
@@ -133,6 +138,12 @@ struct SettingSpec {
     const char *dependsOnValue = "";
     bool persisted = true;
     bool requiresHdrPlayback = false;
+    SettingSyncPolicy syncPolicy = SettingSyncPolicy::Never;
+    const char *nativePreference = "";
+    const char *categoryId = "";
+    const char *searchKeywords = "";
+    const char *destinationKey = "";
+    const char *destination = "category";
 
     // Declaration modifiers. Each returns a copy so specs read as one
     // expression: slider(...).advanced().onDesktop().
@@ -149,7 +160,14 @@ const QVector<SettingSpec>& settingSpecs();
 const SettingSpec *findSettingSpec(const QString& key);
 QVariant settingDefaultValue(const SettingSpec& spec);
 QVariant normalizedSettingValue(const SettingSpec& spec, const QVariant& value);
+SettingSyncPolicy settingSyncPolicy(const SettingSpec& spec, const QVariant& value);
+bool settingSupportedOnPlatform(const SettingSpec& spec);
+// Reject unsupported types and values rather than silently normalizing them to
+// a clamped value or fallback. Transport admission is a separate policy.
+bool settingAcceptsValue(const SettingSpec& spec, const QVariant& value);
+// Cross-device writes additionally require persisted, syncable platform settings.
+bool settingAcceptsRemoteValue(const SettingSpec& spec, const QVariant& value);
 QString serializedSettingValue(const SettingSpec& spec, const QVariant& value);
 QVariantList settingSchemaModel();
 
-} // namespace JellyfinNative
+} // namespace Spool

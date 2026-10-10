@@ -1,11 +1,11 @@
 # Lifecycle Diagnostics
 
-Build with `-DJELLYFIN_DIAGNOSTICS=ON` to enable debug-only evidence for stale process and slow relaunch issues.
+Build with `-DSPOOL_DIAGNOSTICS=ON` to enable debug-only evidence for stale process and slow relaunch issues.
 
 Optional flags:
 
-- `-DJELLYFIN_DIAGNOSTICS_STACKDUMP=ON` requests `gdb` stack dumps when available.
-- `-DJELLYFIN_DIAGNOSTICS_ABORT_ON_HANG=ON` aborts after watchdog evidence is written.
+- `-DSPOOL_DIAGNOSTICS_STACKDUMP=ON` requests `gdb` stack dumps when available.
+- `-DSPOOL_DIAGNOSTICS_ABORT_ON_HANG=ON` aborts after watchdog evidence is written.
 
 Generated files:
 
@@ -24,9 +24,9 @@ webOS helpers:
 
 Simulation knobs:
 
-- `JELLYFIN_DIAGNOSTICS_DIR=/tmp/com.sachk.spool-diagnostics` overrides the output directory.
-- `JELLYFIN_DIAGNOSTICS_BLOCK_GUI_MS=8000` blocks the GUI thread after startup to test watchdog capture.
-- `JELLYFIN_DIAGNOSTICS_SHUTDOWN_HANG_MS=8000` blocks shutdown to test shutdown-stall capture.
+- `SPOOL_DIAGNOSTICS_DIR=/tmp/com.sachk.spool-diagnostics` overrides the output directory.
+- `SPOOL_DIAGNOSTICS_BLOCK_GUI_MS=8000` blocks the GUI thread after startup to test watchdog capture.
+- `SPOOL_DIAGNOSTICS_SHUTDOWN_HANG_MS=8000` blocks shutdown to test shutdown-stall capture.
 
 Typical stale-process flow:
 
@@ -34,3 +34,42 @@ Typical stale-process flow:
 2. Launch, wait for home, close, then relaunch after the slow/no-op symptom.
 3. Run `tools/webos/collect-diagnostics-bundle.sh root@tv.local`.
 4. Inspect `stale-processes.json`, `current-instance.json`, `lifecycle.jsonl`, and `watchdog/watchdog.jsonl` first.
+
+## Desktop Wayland fullscreen
+
+Native fullscreen requests must not synchronously set mpv's `fullscreen`
+property on the GUI thread. Qt's threaded scene graph depends on that thread
+for synchronization and queued video updates; mpv may wait for the scene graph
+to render or report a swap. The resulting circular wait ends at mpv's VO timeout,
+not when the compositor configures the window. Queue the property change and
+renew its observation after the latest reply so stale echoes cannot reverse a
+newer window request. Custom mpv fullscreen bindings still control the native
+window. No timer, forced redraw loop, SDR fallback, or surface recreation is
+needed.
+
+Runtime color-diagnostic snapshots have the same dependency and are collected
+on the existing mpv event thread, using that event loop's lifetime-owned handle.
+They read no GUI state and retain the same color/HDR properties; a playback
+restart can no longer hold up a simultaneous window resize to collect them.
+
+The `mpv-video-item-fullscreen` and `mpv-video-item-fullscreen-vulkan` consumer
+tests exercise native enter/exit while idle, playing, paused, and stopped, plus
+rapid requests and custom mpv bindings. Each transition prints the synchronous
+call time and time to a resized swapped frame. They require a real graphics
+surface and run in the unified GUI e2e phase on an isolated Weston/Xvfb display
+with Mesa CPU GL/Vulkan drivers; `offscreen` alone does not verify compositor
+configure/presentation behavior.
+
+To measure without opening a window on the user's desktop, use the same private
+compositor wrapper as CI:
+
+```sh
+nix develop .#native -c bash tools/test-gpu-session.sh \
+  build/linux-dev/app/spool-e2e-tests --child mpv-video-item-fullscreen
+nix develop .#native -c bash tools/test-gpu-session.sh \
+  build/linux-dev/app/spool-e2e-tests --child mpv-video-item-fullscreen-vulkan
+```
+
+A headless compositor exercises actual Wayland configuration, swapchain resize,
+and embedded video rendering, but not the user's compositor animations, physical
+display presentation, or HDR output. Those require a separate hardware check.

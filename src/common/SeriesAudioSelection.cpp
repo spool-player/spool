@@ -1,7 +1,7 @@
 #include "SeriesAudioSelection.h"
 #include <algorithm>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
 
@@ -87,4 +87,4 @@ int matchingSeriesAudioStreamIndex(const QList<MediaStreamInfo>& streams, const 
     return -1;
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

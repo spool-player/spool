@@ -1,6 +1,7 @@
 #include "common/TlsTrust.h"
 
 #include "TestMain.h"
+#include "TestRequire.h"
 
 #include <QCoreApplication>
 #include <QEventLoop>
@@ -18,21 +19,15 @@
 #include <cstdlib>
 #include <iostream>
 
-using JellyfinNative::TlsTrustController;
+using Spool::TlsTrustController;
 
 namespace {
 
-void require(bool condition, const char *message)
-{
-    if (condition)
-        return;
-    std::cerr << message << '\n';
-    std::exit(EXIT_FAILURE);
-}
+using SpoolTests::require;
 
 QByteArray fixture(const char *name)
 {
-    QFile file(QStringLiteral(TEST_SOURCE_DIR "/tests/fixtures/") + QString::fromLatin1(name));
+    QFile file(SpoolTests::fixturePath("tests/fixtures/") + QString::fromLatin1(name));
     require(file.open(QIODevice::ReadOnly), "TLS fixture could not be opened");
     return file.readAll();
 }
@@ -104,10 +99,10 @@ RequestResult request(QNetworkAccessManager& manager, const QUrl& url, const cha
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("tls-trust")
+SPOOL_TEST_MAIN("tls-trust")
 {
     QCoreApplication app(argc, argv);
-    QCoreApplication::setOrganizationName(QStringLiteral("JellyfinNativeTests"));
+    QCoreApplication::setOrganizationName(QStringLiteral("SpoolTests"));
     QCoreApplication::setApplicationName(QStringLiteral("TlsTrustTest"));
 
     QTemporaryDir settingsDirectory;

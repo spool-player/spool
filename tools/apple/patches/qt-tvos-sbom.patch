@@ -1,0 +1,18 @@
+--- a/cmake/QtPublicSbomFileHelpers.cmake
++++ b/cmake/QtPublicSbomFileHelpers.cmake
+@@ -1019,8 +1019,13 @@
+ 
+     set(${out_var}_name "${output_name}")
+     set(${out_var}_dir_name "${${out_var}_name}.app")
+-    set(${out_var}_contents_dir "${${out_var}_dir_name}/Contents")
+-    set(${out_var}_contents_binary_dir "${${out_var}_contents_dir}/MacOS")
++    if(UIKIT)
++        set(${out_var}_contents_dir "${${out_var}_dir_name}")
++        set(${out_var}_contents_binary_dir "${${out_var}_dir_name}")
++    else()
++        set(${out_var}_contents_dir "${${out_var}_dir_name}/Contents")
++        set(${out_var}_contents_binary_dir "${${out_var}_contents_dir}/MacOS")
++    endif()
+ 
+     set(${out_var}_name "${${out_var}_name}" PARENT_SCOPE)
+     set(${out_var}_dir_name "${${out_var}_dir_name}" PARENT_SCOPE)

@@ -5,7 +5,7 @@
 #include <QFileInfo>
 #include <QString>
 
-namespace JellyfinNative {
+namespace Spool {
 
 // mkdir -p for the directory portion of a log path. The log directory lives
 // under /tmp on webOS and is wiped every boot, so every writer must be able
@@ -18,7 +18,7 @@ inline void ensureParentDirectoryExists(const char *path)
 
 inline void makeWebOSSupportLogsReadable(const QString& current)
 {
-#ifdef JELLYFIN_NATIVE_WEBOS
+#ifdef SPOOL_WEBOS
     const QFileInfo info(current);
     QFile::setPermissions(info.absolutePath(),
         QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner | QFileDevice::ReadGroup
@@ -52,4 +52,4 @@ inline void rotateLogFile(const char *path)
     makeWebOSSupportLogsReadable(current);
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

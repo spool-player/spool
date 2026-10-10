@@ -1,6 +1,7 @@
 #include "platform/PlatformSystemProbes.h"
 
 #include "TestMain.h"
+#include "TestRequire.h"
 
 #include <QtGlobal>
 
@@ -8,19 +9,13 @@
 #include <iostream>
 #include <limits>
 
-using namespace JellyfinNative;
+using namespace Spool;
 
 namespace {
-void require(bool condition, const char *message)
-{
-    if (condition)
-        return;
-    std::cerr << message << '\n';
-    std::exit(EXIT_FAILURE);
-}
+using SpoolTests::require;
 }
 
-JELLYFIN_TEST_MAIN("linux-memory-policy")
+SPOOL_TEST_MAIN("linux-memory-policy")
 {
 #ifdef Q_OS_LINUX
     constexpr qint64 mib = 1024LL * 1024LL;

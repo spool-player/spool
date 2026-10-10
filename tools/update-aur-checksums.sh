@@ -52,4 +52,4 @@ arch_container_runuser env -C "$work" HOME=/home/builder makepkg --printsrcinfo 
 grep -Fqx "	sha256sums = $checksum" "$SRCINFO"
 grep -Fqx "	pkgver = $APP_VERSION" "$SRCINFO"
 arch_container_restore_owner "$APP_ROOT" "$PKGBUILD" "$SRCINFO"
-printf 'recorded %s for Spool-for-Jellyfin-%s-linux-x86_64.tar.zst\n' "$checksum" "$APP_VERSION"
+printf 'recorded %s for Spool-%s-linux-x86_64.tar.zst\n' "$checksum" "$APP_VERSION"

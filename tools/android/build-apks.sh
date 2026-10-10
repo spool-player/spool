@@ -8,6 +8,13 @@ ABI="${ANDROID_ABI:-x86_64}"
 QT_VERSION="${QT_VERSION:-$(toolchain_field "$ROOT" qt.version)}"
 DEPS_PREFIX="${ANDROID_DEPS_PREFIX:-$ROOT/build/android/deps/$ABI}"
 JOBS="${ANDROID_BUILD_JOBS:-$(nproc)}"
+# Emulator CI opts in to actual native test APKs; release packaging stays app-only.
+ANDROID_BUILD_TESTS="${SPOOL_ANDROID_BUILD_TESTS:-OFF}"
+case "${ANDROID_BUILD_TESTS^^}" in
+  ON|TRUE|1) ANDROID_BUILD_TESTS=ON ;;
+  OFF|FALSE|0) ANDROID_BUILD_TESTS=OFF ;;
+  *) echo "error: SPOOL_ANDROID_BUILD_TESTS must be ON or OFF" >&2; exit 1 ;;
+esac
 # RCC embeds source mtimes, including generated files and cached Qt resources.
 # Give every ABI the same timestamp without weakening the universal input check.
 export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "$ROOT" log -1 --format=%ct)}"
@@ -83,7 +90,14 @@ build_qcoro() {
 }
 
 build_app() {
+  local developer="${1:-OFF}"
+  local deployment=Release
   local build="$ROOT/build/android/app-$ABI"
+  if [[ "$developer" == ON ]]; then
+    deployment=Debug
+  elif [[ "$ANDROID_BUILD_TESTS" == ON ]]; then
+    build="$ROOT/build/android/app-$ABI-release"
+  fi
   rm -rf "$build"
   "$QT_PREFIX/bin/qt-cmake" -S "$ROOT" -B "$build" -GNinja \
     -DQt6_DIR="$QT_PREFIX/lib/cmake/Qt6" \
@@ -101,8 +115,10 @@ build_app() {
     -DQT_HOST_PATH_CMAKE_DIR="${SPOOL_ANDROID_QT_HOST:-}/lib/cmake" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_SYSTEM_PREFIX_PATH="$NDK_PREFIX_PATH" \
-    -DBUILD_TESTING=OFF \
-    -DJELLYFIN_NATIVE_WEBOS=OFF \
+    -DBUILD_TESTING="$developer" \
+    -DSPOOL_DEV_BUILD="$developer" \
+    -DQT_ANDROID_DEPLOYMENT_TYPE="$deployment" \
+    -DSPOOL_WEBOS=OFF \
     -DANDROID_ABI="$ABI" \
     -DANDROID_PLATFORM=android-28 \
     -DANDROID_DEPS_PREFIX="$DEPS_PREFIX" \
@@ -111,7 +127,13 @@ build_app() {
   # QT_QML_IMPORT_SCANNER_EXTRA_ARGS. A cache miss leaves Qt's sources under
   # build/, so scanning the repository deploys imports from Qt's own tests.
   # Restrict its scan to application QML; generated resources remain in qrcFiles.
-  python3 - "$build/android-jellyfin-native-deployment-settings.json" "$ROOT/qml" <<'PY'
+  local targets=(spool)
+  if [[ "$developer" == ON ]]; then
+    targets+=(spool-tests spool-e2e-tests)
+  fi
+  local target
+  for target in "${targets[@]}"; do
+    python3 - "$build/android-${target}-deployment-settings.json" "$ROOT/qml" <<'PY'
 import json
 import pathlib
 import sys
@@ -121,15 +143,35 @@ settings = json.loads(path.read_text())
 settings["qml-root-path"] = [sys.argv[2]]
 path.write_text(json.dumps(settings, indent=2) + "\n")
 PY
-  cmake --build "$build" --target jellyfin-native_make_apk --parallel "$JOBS"
+  done
+  cmake --build "$build" --target spool_make_apk --parallel "$JOBS"
 
-  local apk="$build/android-build/jellyfin-native.apk"
+  local app_package="$build/android-build"
+  if [[ "$developer" == ON ]]; then
+    app_package="$build/android-build-spool"
+  fi
+  local apk="$app_package/spool.apk"
   [[ -f "$apk" ]] || {
     echo "error: APK was not generated at $apk" >&2
     exit 1
   }
   mkdir -p "$ROOT/dist/android"
-  cp -f "$apk" "$ROOT/dist/android/spool-${ABI}.apk"
+  if [[ "$developer" == ON ]]; then
+    # Same production app and ID, packaged by Qt's standard developer mode.
+    # Never replace the signed non-debuggable release/universal inputs.
+    cp -f "$apk" "$ROOT/dist/android/spool-e2e-app-${ABI}.apk"
+    for target in spool-tests spool-e2e-tests; do
+      cmake --build "$build" --target "${target}_make_apk" --parallel "$JOBS"
+      apk="$build/android-build-${target}/${target}.apk"
+      [[ -f "$apk" ]] || {
+        echo "error: test APK was not generated at $apk" >&2
+        exit 1
+      }
+      cp -f "$apk" "$ROOT/dist/android/${target}-${ABI}.apk"
+    done
+  else
+    cp -f "$apk" "$ROOT/dist/android/spool-${ABI}.apk"
+  fi
 }
 
 # The universal APK is built from these, not spliced out of the per-ABI APKs:
@@ -143,6 +185,9 @@ PY
 # out of this ABI's APK instead.
 stage_universal_inputs() {
   local build="$ROOT/build/android/app-$ABI/android-build"
+  if [[ "$ANDROID_BUILD_TESTS" == ON ]]; then
+    build="$ROOT/build/android/app-$ABI-release/android-build"
+  fi
   local staged="$ROOT/dist/android/universal-inputs/$ABI"
   rm -rf "$staged"
   mkdir -p "$staged/libs"
@@ -162,6 +207,9 @@ build_qcoro
 # One package serves televisions and handsets. What used to be two builds per
 # ABI differing only in a manifest is now one; the form factor is asked of the
 # system at runtime and the launch screen comes from a resource qualifier.
-build_app
+build_app OFF
 stage_universal_inputs
+if [[ "$ANDROID_BUILD_TESTS" == ON ]]; then
+  build_app ON
+fi
 printf 'Android APK:\n  %s\n' "$ROOT/dist/android/spool-${ABI}.apk"

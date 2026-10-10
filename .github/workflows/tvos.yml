@@ -1,0 +1,69 @@
+name: tvOS source build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/tvos]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tvos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  simulator:
+    name: Qt mpv tvOS ${{ matrix.sdk }} build (simulator tests; device artifact audit only)
+    runs-on: macos-15
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        sdk: [appletvsimulator, appletvos]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Install native build tools
+        run: brew install cmake ninja meson pkg-config bash python imagemagick gpatch
+      - name: Install pinned macOS Qt host tools
+        run: |
+          python3 -m venv "$RUNNER_TEMP/aqt"
+          "$RUNNER_TEMP/aqt/bin/pip" install aqtinstall
+          version="$(python3 -c 'import json;print(json.load(open("tools/manifests/toolchain.json"))["qt"]["version"])')"
+          "$RUNNER_TEMP/aqt/bin/aqt" install-qt mac desktop "$version" clang_64 \
+            -O "$RUNNER_TEMP/Qt" -m qtshadertools qtwebsockets qtimageformats qttasktree
+          echo "QT_HOST_PATH=$RUNNER_TEMP/Qt/$version/macos" >> "$GITHUB_ENV"
+      - name: Build Qt and media libraries for Apple TV
+        env:
+          APPLE_SDK: ${{ matrix.sdk }}
+          APPLE_ARCH: arm64
+          JOBS: 3
+          BUILD_JOBS: 3
+        run: bash tools/build-tvos.sh
+      - uses: ./.github/actions/install-nix
+        if: matrix.sdk == 'appletvsimulator'
+        with:
+          nix_conf: |
+            experimental-features = nix-command flakes
+      - uses: cachix/cachix-action@3ba601ff5bbb07c7220846facfa2cd81eeee15a1
+        if: matrix.sdk == 'appletvsimulator'
+        with:
+          name: spool
+          skipPush: true
+      - name: Build same-binary host controller for the actual mobile app journey
+        if: matrix.sdk == 'appletvsimulator'
+        run: nix develop .#native -c env DEPLOY_APP=0 bash tools/build-macos.sh
+      - name: Run traditional then real GPU GUI tests in isolated Apple TV simulator
+        if: matrix.sdk == 'appletvsimulator'
+        run: bash tools/apple/smoke-tvos.sh build/tvos/appletvsimulator-arm64/install/Spool.app
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: internal-tvos-${{ matrix.sdk }}-arm64
+          path: |
+            build/tvos/${{ matrix.sdk }}-arm64/install
+            build/tvos/smoke/*.png
+            build/tvos/smoke/*.json

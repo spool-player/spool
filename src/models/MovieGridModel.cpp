@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <utility>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
 
@@ -13,11 +13,6 @@ namespace {
         if (resumeTicks <= 0 || movie.runtimeTicks <= 0)
             return 0.0;
         return std::clamp(static_cast<double>(resumeTicks) / static_cast<double>(movie.runtimeTicks), 0.0, 1.0);
-    }
-
-    qint64 displayResumeTicks(const MovieItem& movie)
-    {
-        return normalizedResumeTicks(movie.resumeTicks, movie.runtimeTicks);
     }
 
     QString displayTitle(const MovieItem& movie)
@@ -62,7 +57,7 @@ QVariant MovieGridModel::data(const QModelIndex& index, int role) const
     case ProgressRole:
         return playbackProgress(movie);
     case PlayActionLabelRole:
-        return displayResumeTicks(movie) > 0 ? QStringLiteral("Resume") : QStringLiteral("Play");
+        return movie.playActionLabel();
     default:
         return {};
     }
@@ -242,4 +237,4 @@ bool MovieGridModel::removeUnresumable()
     return removed;
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

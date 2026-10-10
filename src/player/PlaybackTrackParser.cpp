@@ -11,7 +11,7 @@ extern "C" {
 #include <cstdint>
 #include <cstring>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
 
@@ -216,4 +216,4 @@ QVariantList PlaybackTrackParser::parseChapters(const mpv_node *node)
     return chapters;
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

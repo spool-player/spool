@@ -1,6 +1,7 @@
 #include "app/ArtworkService.h"
 #include "platform/PlatformSettingsPolicy.h"
 
+#include "RecordingArtworkSource.h"
 #include "TestMain.h"
 
 #include <QCoreApplication>
@@ -9,8 +10,9 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <memory>
 
-using namespace JellyfinNative;
+using namespace Spool;
 
 namespace {
 
@@ -41,10 +43,12 @@ QString parameter(const QString& url, const QString& name)
     return QUrlQuery(QUrl(url).query()).queryItemValue(name);
 }
 
+Spool::Testing::RecordingArtworkSource g_source;
+
 std::unique_ptr<ArtworkService> service()
 {
     auto artwork = std::make_unique<ArtworkService>(QString(), 0, 1024, 1, nullptr);
-    artwork->setServerUrl(QStringLiteral("https://example.test"));
+    artwork->setSource(&g_source);
     return artwork;
 }
 
@@ -142,7 +146,7 @@ void unknownFormatFallsBackToThePlatformDefault()
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("artwork-url")
+SPOOL_TEST_MAIN("artwork-url")
 {
     QCoreApplication app(argc, argv);
     defaultsReproduceTheShippedQualities();

@@ -1,21 +1,27 @@
 import QtQuick
 import "../theme"
 
-// A saved account in the picker: initial-avatar tile, name, and the server it
-// belongs to. Everything it draws is derived from the account itself, so the
-// picker only has to hand it the profile fields.
+// A person: initial-avatar tile, name and one line of detail. An optional
+// badge marks a state the viewer must act on; busy shows work in progress.
 FocusScope {
     id: root
 
     property int tileSize: Metrics.scaled(152)
     property string username: ""
-    property string serverName: ""
-    property string serverAddress: ""
-    property bool needsSignIn: false
+    property string detail: ""
+    property string errorText: ""
+    property string providerName: ""
+    property string providerId: ""
+    property url providerIcon
+    property string providerVersion: ""
+    property color detailColor: Theme.textMuted
+    property string badgeIcon: ""
+    property bool badgeAlert: false
+    property bool busy: false
     property bool addTile: false
     property bool focused: activeFocus
 
-    readonly property int labelHeight: Metrics.scaled(addTile ? 34 : 66)
+    readonly property int labelHeight: Metrics.scaled(addTile || detail.length === 0 ? 34 : 52)
 
     readonly property string initial: {
         const name = String(username).trim()
@@ -36,9 +42,17 @@ FocusScope {
     signal contextRequested
 
     width: tileSize
-    height: tileSize + labelHeight
+    height: tileSize + labelHeight + (errorText.length > 0 ? errorLabel.implicitHeight + Metrics.scaled(8) : 0)
     focus: true
     focusPolicy: Qt.StrongFocus
+    Accessible.role: Accessible.Button
+    Accessible.name: detail.length > 0 ? username + ", " + detail : username
+    Accessible.description: addTile ? "" : [providerName.length > 0 ? providerName + (providerVersion.length > 0
+                                                                                      ? ", installed provider version "
+                                                                                        + providerVersion : "") : "",
+                                            errorText, "Press Menu or hold for options"].filter(part => part.length
+                                                                                                        > 0).join(". ")
+    Accessible.onPressAction: root.accepted()
 
     Rectangle {
         id: avatar
@@ -48,7 +62,8 @@ FocusScope {
         height: root.tileSize
         radius: Theme.radiusLarge
         color: root.addTile ? Theme.bgRaised : root.avatarColor
-        border.width: root.focused ? Theme.focusBorderWidth : root.addTile || (hover.hovered && Metrics.pointerActive)
+        border.width: root.focused ? Theme.focusBorderWidth : (root.addTile || (hover.hovered
+                                                                                && Metrics.pointerActive))
                                      ? Theme.hoverBorderWidth : 0
         border.color: root.focused ? Theme.accent : Theme.border
         antialiasing: true
@@ -63,7 +78,7 @@ FocusScope {
 
         AppText {
             anchors.centerIn: parent
-            visible: !root.addTile
+            visible: !root.addTile && !root.busy
             text: root.initial
             font.pixelSize: Math.round(root.tileSize * 0.4)
             font.weight: Font.DemiBold
@@ -76,16 +91,63 @@ FocusScope {
             width: Metrics.scaled(28)
             height: width
             radius: width / 2
-            visible: root.needsSignIn
-            color: Theme.errorPanel
+            visible: root.badgeIcon.length > 0
+            color: root.badgeAlert ? Theme.errorPanel : Theme.bgPanel
             border.width: Theme.hoverBorderWidth
-            border.color: Theme.errorText
+            border.color: root.badgeAlert ? Theme.errorText : Theme.borderStrong
 
             MaterialIcon {
                 anchors.centerIn: parent
-                name: "lock"
+                name: root.badgeIcon
                 iconSize: Metrics.scaled(16)
-                iconColor: Theme.errorText
+                iconColor: root.badgeAlert ? Theme.errorText : Theme.textSecondary
+            }
+        }
+
+        BusySpinner {
+            anchors.centerIn: parent
+            width: Math.round(root.tileSize * 0.5)
+            height: width
+            running: root.busy
+            visible: root.busy
+        }
+
+        ProviderIcon {
+            id: providerStamp
+            anchors.left: parent.left
+            anchors.bottom: parent.bottom
+            anchors.margins: Metrics.scaled(6)
+            width: Math.min(Metrics.scaled(28), Math.round(root.tileSize * 0.24))
+            height: width
+            visible: !root.addTile && root.providerName.length > 0
+            source: root.providerIcon
+            name: root.providerName
+            seed: root.providerId
+            Accessible.ignored: true
+        }
+
+        Rectangle {
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            anchors.margins: Metrics.scaled(6)
+            width: Math.min(versionLabel.implicitWidth + Metrics.scaled(8), root.tileSize - providerStamp.width
+                            - Metrics.scaled(20))
+            height: versionLabel.implicitHeight + Metrics.scaled(4)
+            radius: Metrics.scaled(4)
+            color: Theme.bgPanel
+            visible: !root.addTile && root.providerVersion.length > 0
+
+            AppText {
+                id: versionLabel
+                anchors.fill: parent
+                anchors.margins: Metrics.scaled(2)
+                text: root.providerVersion
+                font.pixelSize: Metrics.scaled(root.tileSize < Metrics.scaled(96) ? 10 : 12)
+                minimumPixelSize: Metrics.scaled(8)
+                fontSizeMode: Text.Fit
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+                Accessible.ignored: true
             }
         }
     }
@@ -131,24 +193,25 @@ FocusScope {
 
         SecondaryText {
             width: parent.width
-            visible: !root.addTile && root.serverName.length > 0
-            text: root.serverName
-            color: Theme.textMuted
+            visible: !root.addTile && root.detail.length > 0
+            text: root.detail
+            color: root.detailColor
             font.pixelSize: Metrics.scaled(13)
             horizontalAlignment: Text.AlignHCenter
             maximumLineCount: 1
             elide: Text.ElideRight
         }
-
-        SecondaryText {
+        AppText {
+            id: errorLabel
             width: parent.width
-            visible: !root.addTile && root.serverAddress.length > 0
-            text: root.serverAddress
-            color: Theme.textDisabled
-            font.pixelSize: Metrics.scaled(12)
+            visible: root.errorText.length > 0
+            text: root.errorText
+            color: Theme.errorText
+            font.pixelSize: Metrics.scaled(13)
             horizontalAlignment: Text.AlignHCenter
-            maximumLineCount: 1
-            elide: Text.ElideRight
+            wrapMode: Text.WordWrap
+            Accessible.role: Accessible.AlertMessage
+            Accessible.name: text
         }
     }
 

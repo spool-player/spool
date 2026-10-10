@@ -7,6 +7,7 @@ import "../primitives"
 
 Item {
     id: root
+    objectName: "playerSeekBar"
 
     required property var overlay
     readonly property double ratio: overlay.hasPlayer && overlay.player.durationSeconds > 0 ? Math.max(0, Math.min(1,

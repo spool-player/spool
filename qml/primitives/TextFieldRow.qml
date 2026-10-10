@@ -10,13 +10,22 @@ T.Control {
 
     property alias text: field.text
     property alias placeholderText: field.placeholderText
-    property alias inputMethodHints: field.inputMethodHints
-    property alias echoMode: field.echoMode
+    property int inputMethodHints: Qt.ImhNone
+    property int echoMode: TextInput.Normal
+    property bool secretVisible: false
+    readonly property bool secret: echoMode === TextInput.Password || echoMode === TextInput.PasswordEchoOnEdit
     property int enterKeyType: Qt.EnterKeyDefault
     property string label: ""
     property string accessibleName: label.length > 0 ? label : placeholderText
     readonly property bool editing: field.activeFocus
-    readonly property bool masked: field.echoMode === TextInput.Password
+    readonly property bool masked: secret && !secretVisible
+
+    onTextChanged: if (!text.length)
+                       secretVisible = false
+    onVisibleChanged: if (!visible)
+                          secretVisible = false
+    onEchoModeChanged: secretVisible = false
+    KeyNavigation.right: secret && !focusEntersField ? reveal : null
 
     // Where there is no on-screen keyboard to defer, the row is a waypoint
     // rather than a stop: anything that focuses it — Tab, D-pad navigation, a
@@ -91,10 +100,13 @@ T.Control {
     T.TextField {
         id: field
         Accessible.name: row.accessibleName
+        echoMode: row.secret ? (row.secretVisible ? TextInput.Normal : TextInput.Password) : row.echoMode
+        inputMethodHints: row.inputMethodHints | (row.secret ? Qt.ImhHiddenText | Qt.ImhSensitiveData
+                                                               | Qt.ImhNoPredictiveText | Qt.ImhNoAutoUppercase : 0)
         EnterKey.type: row.enterKeyType
         anchors.fill: parent
         anchors.leftMargin: Metrics.scaled(15)
-        anchors.rightMargin: Metrics.scaled(15)
+        anchors.rightMargin: reveal.visible ? reveal.width + Metrics.scaled(16) : Metrics.scaled(15)
         anchors.topMargin: row.label.length > 0 ? Metrics.scaled(22) : Metrics.scaled(9)
         anchors.bottomMargin: Metrics.scaled(9)
         background: Item {}
@@ -119,6 +131,34 @@ T.Control {
         onTextEdited: row.textEdited(text)
         onAccepted: row.accepted()
 
+        // Qt's own caret is one pixel wide, which vanishes on a television
+        // and is easy to lose on a dense screen. It holds steady while typing
+        // and blinks once the text is left alone.
+        cursorDelegate: Rectangle {
+            id: caret
+            property bool lit: true
+            width: Math.max(2, Metrics.scaled(2))
+            color: Theme.accent
+            visible: field.activeFocus && field.selectionStart === field.selectionEnd && lit
+
+            Timer {
+                id: blink
+                interval: 530
+                repeat: true
+                running: field.activeFocus
+                onRunningChanged: caret.lit = true
+                onTriggered: caret.lit = !caret.lit
+            }
+
+            Connections {
+                target: field
+                function onCursorPositionChanged() {
+                    caret.lit = true
+                    blink.restart()
+                }
+            }
+        }
+
         // Templates carry the placeholder text but draw nothing for it, and a
         // hint is the difference between a labelled box and a guess.
         SecondaryText {
@@ -137,5 +177,30 @@ T.Control {
         enabled: !row.focusEntersField
         onClicked: row.focusField()
         propagateComposedEvents: true
+    }
+
+    IconButton {
+        id: reveal
+        anchors.right: parent.right
+        anchors.rightMargin: Metrics.scaled(8)
+        anchors.verticalCenter: parent.verticalCenter
+        visible: row.secret
+        focusOnClick: false
+        focusPolicy: Qt.TabFocus
+        iconName: row.secretVisible ? "visibility_off" : "visibility"
+        accessibleName: (row.secretVisible ? "Hide " : "Show ") + (row.accessibleName || "password")
+        Accessible.role: Accessible.Button
+        Accessible.name: accessibleName
+        Accessible.checkable: true
+        Accessible.checked: row.secretVisible
+        onClicked: row.secretVisible = !row.secretVisible
+        Accessible.onPressAction: clicked()
+        KeyNavigation.left: row.focusEntersField ? field : row
+        Keys.onPressed: event => {
+            if (InputKeys.isAccept(event.key)) {
+                clicked()
+                event.accepted = true
+            }
+        }
     }
 }

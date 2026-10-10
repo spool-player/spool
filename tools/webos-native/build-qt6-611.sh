@@ -224,12 +224,28 @@ download_submodule() {
     "$tarball"
 }
 
+qt_module_patch_hash() {
+  local patch
+  for patch in "$PATCH_DIR/$1-$QT_SERIES-"*.patch; do
+    [[ -f "$patch" ]] || continue
+    sha256sum "$patch" || return
+  done | sha256sum
+}
+
 extract_if_needed() {
   local tarball="$1"
   local src_dir="$2"
   local module expected
   module="$(basename "$tarball" "-everywhere-src-$QT_VERSION.tar.xz")"
   expected="$(manifest_qt_module_sha256 "$QT_MANIFEST" "$module")"
+  # Patches may change without a Qt version bump. Start from pristine source
+  # rather than applying a renamed/revised patch on top of its old contents.
+  local patch_hash patch_marker
+  patch_hash="$(qt_module_patch_hash "$module")"
+  patch_marker="$src_dir/.spool-patches-sha256"
+  if [[ ! -f "$patch_marker" ]] || [[ "$(<"$patch_marker")" != "$patch_hash" ]]; then
+    rm -f "$src_dir/.jellyfin-source-sha256"
+  fi
   extract_verified_source "$tarball" "$expected" "$src_dir"
 }
 
@@ -307,6 +323,14 @@ fetch_sources() {
   extract_if_needed "$QTSVG_TARBALL" "$QTSVG_SRC"
 
   apply_local_patches
+  local src module patch_hash
+  for src in "$QTBASE_SRC" "$QTSHADERTOOLS_SRC" "$QTTOOLS_SRC" \
+      "$QTDECLARATIVE_SRC" "$QTWEBSOCKETS_SRC" "$QTWAYLAND_SRC" \
+      "$QTIMAGEFORMATS_SRC" "$QTSVG_SRC"; do
+    module="$(basename "$src" "-everywhere-src-$QT_VERSION")"
+    patch_hash="$(qt_module_patch_hash "$module")"
+    printf '%s\n' "$patch_hash" >"$src/.spool-patches-sha256"
+  done
 }
 
 host_qtbase_up_to_date() {
@@ -619,6 +643,8 @@ target_qtbase_up_to_date() {
   grep -Fqx '#define QT_FEATURE_ssl 1' "$TARGET_STAGING/include/QtNetwork/qtnetwork-config.h" || return 1
   grep -Fqx '#define QT_FEATURE_openssl_linked 1' "$TARGET_STAGING/include/QtCore/qconfig.h" || return 1
   [[ -d "$TARGET_STAGING/lib/cmake/Qt6WaylandClient" ]] || return 1
+  grep -aqF 'SPOOL_QT_NO_CURSOR_SURFACE' \
+    "$TARGET_STAGING/$(target_lib_marker Qt6WaylandClient)" || return 1
   return 0
 }
 

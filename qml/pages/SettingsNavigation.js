@@ -3,7 +3,7 @@
 // `platform` is the Platform singleton. It is passed whole rather than as a
 // growing list of booleans, because every caller has it and each new
 // form-factor question would otherwise add another positional argument.
-function rowAvailable(row, platform, hdrPlayback, valueForKey) {
+function platformSupported(row, platform) {
     if (!row)
         return false
     if (row.platform === "desktop" && platform.isTV)
@@ -11,6 +11,12 @@ function rowAvailable(row, platform, hdrPlayback, valueForKey) {
     if (row.platform === "webos" && !platform.isWebOS)
         return false
     if (row.platform === "android" && !platform.isAndroid)
+        return false
+    return true
+}
+
+function rowAvailable(row, platform, hdrPlayback, valueForKey) {
+    if (!platformSupported(row, platform))
         return false
     if (row.requiresHdrPlayback && !hdrPlayback)
         return false
@@ -135,4 +141,121 @@ function reconcileRows(model, nextRows) {
             model.set(index, rowAt(nextRows, index))
         }
     }
+}
+
+function valueRoute(mode, action, editsValue) {
+    if (action === "up" || action === "down")
+        return { "mode": "row", "effect": action === "up" ? "move-up" : "move-down" }
+    if (mode === "value-editing") {
+        if (action === "activate" || action === "back")
+            return { "mode": "row", "effect": "end-edit" }
+        return { "mode": mode, "effect": action === "left" || action === "right" ? "value" : "none" }
+    }
+    if (action === "activate")
+        return editsValue ? { "mode": "value-editing", "effect": "begin-edit" }
+                          : { "mode": "row", "effect": "activate" }
+    if (action === "back")
+        return { "mode": "row", "effect": "back" }
+    return { "mode": "row", "effect": action === "left" || action === "right" ? "value" : "none" }
+}
+
+var categories = [
+    { "id": "appearance", "title": "Appearance" },
+    { "id": "playback", "title": "Playback" },
+    { "id": "subtitles", "title": "Subtitles" },
+    { "id": "streaming", "title": "Streaming" },
+    { "id": "sources", "title": "Sources" },
+    { "id": "downloads", "title": "Downloads" },
+    { "id": "diagnostics", "title": "Diagnostics & About" }
+]
+
+function categoryTitle(id) {
+    for (let index = 0; index < categories.length; ++index)
+        if (categories[index].id === id)
+            return categories[index].title
+    return "Settings"
+}
+
+function matchesSearch(row, query, choices) {
+    const terms = String(query || "").toLocaleLowerCase().trim().split(/\s+/)
+    const text = [row.title, row.description, row.key, row.searchKeywords, categoryTitle(row.categoryId)]
+          .concat(row.choiceValues || [], choices || row.choiceLabels || []).join(" ").toLocaleLowerCase()
+    for (let index = 0; index < terms.length; ++index)
+        if (text.indexOf(terms[index]) < 0)
+            return false
+    return true
+}
+
+// Recover in the viewport that the pointer left behind, never scroll back to
+// an old anchor. InputKeys owns candidate preference and visibility threshold.
+function recoverVisibleSelection(view, clipItem, inputKeys) {
+    const selected = view.itemAtIndex(view.currentIndex)
+    const candidate = inputKeys.topLeftVisibleCandidate(view, clipItem)
+    if (view.activeFocus && selected) {
+        const rect = selected.mapToItem(clipItem, 0, 0, selected.width, selected.height)
+        const viewport = view.mapToItem(clipItem, 0, 0, view.width, view.height)
+        const width = Math.max(0, Math.min(rect.x + rect.width, viewport.x + viewport.width, clipItem.width)
+                               - Math.max(rect.x, viewport.x, 0))
+        const height = Math.max(0, Math.min(rect.y + rect.height, viewport.y + viewport.height, clipItem.height)
+                                - Math.max(rect.y, viewport.y, 0))
+        if (width * height / Math.max(1, rect.width * rect.height) >= inputKeys.focusRecoveryVisibleThreshold)
+            return false
+        // At large zoom a row may exceed the whole viewport. InputKeys' partial
+        // candidate fallback still makes the visible part of that row usable.
+        if (candidate && candidate.index === view.currentIndex && rect.height > view.height && height > 0)
+            return false
+    }
+    if (candidate)
+        inputKeys.focusIndexWithoutScrolling(view, candidate.index)
+    return true
+}
+
+// A recovery press is not an edit gesture. Qt may send synthetic releases
+// between repeats; only the physical release permits the next action.
+function consumeRecoveryGesture(view, clipItem, inputKeys, gesture, key, phase, repeat) {
+    if (phase === "release") {
+        if (!repeat && gesture.key === key)
+            gesture.key = 0
+        return true
+    }
+    if (gesture.key === key)
+        return true
+    if (!recoverVisibleSelection(view, clipItem, inputKeys))
+        return false
+    gesture.key = key
+    return true
+}
+
+var subtitleSections = [
+    { "title": "Size and position", "keys": ["subtitles/scalePercent", "subtitles/verticalPositionPercent",
+        "subtitles/alwaysOverridePositionAndSize", "subtitles/allowInBlackBars"] },
+    { "title": "Colour", "keys": ["subtitles/overrideTextColor", "subtitles/textColor"] },
+    { "title": "Which subtitles", "keys": ["subtitles/language", "subtitles/mode"] }
+]
+var subtitleAdvancedSections = [
+    { "title": "Text style", "keys": ["subtitles/styling", "subtitles/textWeight", "subtitles/font",
+        "subtitles/dropShadow", "subtitles/textBackground"] },
+    { "title": "Image subtitles", "keys": ["subtitles/recolorImageSubtitles", "subtitles/bitmapSharpnessPercent",
+        "subtitles/bitmapShadowEnabled"] },
+    { "title": "Image subtitle shadow", "keys": ["subtitles/bitmapShadowCoreSize", "subtitles/bitmapShadowCoreGrow",
+        "subtitles/bitmapShadowCoreOpacityPercent", "subtitles/bitmapShadowSpreadEnabled",
+        "subtitles/bitmapShadowSpreadSize", "subtitles/bitmapShadowSpreadGrow", "subtitles/bitmapShadowSpreadX",
+        "subtitles/bitmapShadowSpreadY", "subtitles/bitmapShadowSpreadOpacityPercent", "subtitles/bitmapShadowDither"] },
+    { "title": "HDR", "keys": ["subtitles/hdrBrightnessPercent"] },
+    { "title": "Start over", "keys": ["action/resetSubtitleAppearance"] }
+]
+
+function subtitleReachableKeys(schema, platform, hdrPlayback, valueForKey) {
+    const keys = {}
+    const sections = subtitleSections.concat(subtitleAdvancedSections)
+    for (let s = 0; s < sections.length; ++s)
+        for (let k = 0; k < sections[s].keys.length; ++k)
+            keys[sections[s].keys[k]] = true
+    const result = []
+    for (let index = 0; index < schema.length; ++index) {
+        const row = schema[index]
+        if (keys[row.key] && rowAvailable(row, platform, hdrPlayback, valueForKey))
+            result.push(row.key)
+    }
+    return result
 }

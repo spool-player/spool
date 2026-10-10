@@ -14,6 +14,7 @@ Item {
     property string fallbackIcon: ""
     property color fallbackTint: "transparent"
     property bool focused: false
+    property bool moving: false
     property bool showSubtitle: true
     property bool emphasizedTitle: false
     property bool useSeriesPoster: false
@@ -21,6 +22,9 @@ Item {
     property real progress: -1
     property bool artworkVisible: true
     property bool artworkEnabled: true
+    // Where the item comes from, shown over its artwork when set.
+    property url badgeIcon
+    property string badgeText: ""
 
     readonly property bool posterKind: kind === "poster"
     readonly property bool squareKind: kind === "square"
@@ -120,6 +124,46 @@ Item {
         height: Metrics.scaled(4)
         visible: !root.posterKind && root.effectiveProgress > 0
         color: Theme.accent
+    }
+
+    SourceBadge {
+        anchors.left: art.left
+        anchors.top: art.top
+        anchors.margins: Metrics.scaled(8)
+        overlay: true
+        maximumWidth: Math.max(0, art.width - Metrics.scaled(16))
+        iconUrl: root.badgeIcon
+        text: root.badgeText
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        anchors.bottomMargin: root.height - root.focusOutlineHeight
+        visible: root.moving
+        color: "transparent"
+        radius: Theme.radiusMedium
+        border.width: Theme.focusBorderWidth
+        border.color: Theme.accent
+    }
+
+    Rectangle {
+        anchors.right: art.right
+        anchors.bottom: art.bottom
+        anchors.margins: Metrics.scaled(8)
+        width: moveLabel.implicitWidth + Metrics.scaled(16)
+        height: moveLabel.implicitHeight + Metrics.scaled(8)
+        radius: Theme.radiusSmall
+        color: Theme.bgPanel
+        visible: root.moving
+
+        AppText {
+            id: moveLabel
+            anchors.centerIn: parent
+            text: "↔ Move"
+            color: Theme.accent
+            font.pixelSize: Metrics.metaSizePx
+            font.weight: Font.DemiBold
+        }
     }
 
     AppText {

@@ -16,6 +16,138 @@ FocusScope {
     property var allSettingsRows: []
     property var expandedGroups: ({})
     property bool reconcilingSettingsRows: false
+    readonly property bool directionRelease: true
+    property var recoveryGesture: ({
+                                       "key": 0
+                                   })
+    property string pageMode: "index"
+    property string categoryId: ""
+    property string searchQuery: ""
+    property var priorSearchLocation: null
+    property var searchResultLocation: null
+    property var categoryLocations: ({})
+    property string revealedRowKey: ""
+    readonly property string pageTitle: pageMode === "search" ? "Search settings" : pageMode === "category"
+                                                                ? SettingsNavigation.categoryTitle(categoryId) :
+                                                                  "Settings"
+    readonly property bool modalVisible: certificateManagerVisible || choiceDialogVisible || diagnosticsExportVisible
+                                         || mpvFolderDialogVisible
+    property bool mpvFolderDialogVisible: false
+    onModalVisibleChanged: if (!modalVisible && rowsBuilt)
+                               Qt.callLater(function () {
+                                   refreshSettingsFilter(false)
+                               })
+
+    function inputCompositionActive() {
+        const focused = root.Window.window ? root.Window.window.activeFocusItem : null
+        return Boolean(focused && focused.inputMethodComposing)
+    }
+
+    function location() {
+        return {
+            "mode": pageMode,
+            "categoryId": categoryId,
+            "rowKey": selectedRowKey,
+            "scrollOffset": settingsList.contentY - settingsList.originY,
+            "query": searchQuery,
+            "expanded": expandedGroups,
+            "revealedRowKey": revealedRowKey
+        }
+    }
+
+    function restoreLocation(saved) {
+        if (!saved)
+            return
+        finishRowEdit()
+        navigationMode = "row"
+        pageMode = saved.mode
+        categoryId = saved.categoryId
+        searchQuery = saved.query
+        expandedGroups = saved.expanded
+        revealedRowKey = saved.revealedRowKey
+        reconcileSettingsRows(rebuildVisibleRows(), saved.rowKey, true)
+        // Incremental reconciliation can move ListView's content origin while
+        // retaining the result delegate. Raw contentY belongs to the old model.
+        settingsList.contentY = settingsList.originY + saved.scrollOffset
+    }
+
+    function openSearch() {
+        if (modalVisible || editingKey.length || inputCompositionActive())
+            return false
+        if (pageMode !== "search")
+            priorSearchLocation = location()
+        searchResultLocation = null
+        pageMode = "search"
+        refreshSettingsFilter(true)
+        Qt.callLater(searchField.focusField)
+        return true
+    }
+
+    function openCategory(id, rowKey) {
+        finishRowEdit()
+        navigationMode = "row"
+        if (pageMode === "category")
+            categoryLocations[categoryId] = location()
+        if (!rowKey && categoryLocations[id]) {
+            restoreLocation(categoryLocations[id])
+            return
+        }
+        categoryId = id
+        pageMode = "category"
+        revealedRowKey = rowKey || ""
+        const row = rowsByKey[rowKey]
+        if (row && SettingsNavigation.detailLevel(row) > 0) {
+            const next = Object.assign({}, expandedGroups)
+            next[id] = true
+            expandedGroups = next
+        }
+        const nextRows = rebuildVisibleRows()
+        reconcileSettingsRows(nextRows, rowKey || (nextRows.length ? nextRows[0].rowKey : ""), true)
+        if (rowKey) {
+            const index = SettingsNavigation.indexForRowKey(settingsRows, rowKey)
+            // Put the preceding neighbour on screen before containing the target.
+            if (index > 0)
+                settingsList.positionViewAtIndex(index - 1, ListView.Beginning)
+            if (index >= 0)
+                settingsList.positionViewAtIndex(index, ListView.Contain)
+        } else {
+            settingsList.positionViewAtBeginning()
+        }
+    }
+
+    function availabilityReason(row) {
+        if (!SettingsNavigation.platformSupported(row, Platform))
+            return "Unavailable on this device (" + row.platform + " only)"
+        if (row.requiresHdrPlayback && !Player.hdrPlayback)
+            return "Available during HDR playback"
+        if (row.destination === "player" && !Player.sessionActive)
+            return "Available in the player during playback"
+        if (row.dependsOnKey && String(settingsValue(rowsByKey[row.dependsOnKey] || {
+                                                         "key": row.dependsOnKey
+                                                     })) !== String(row.dependsOnValue)) {
+            const prerequisite = rowsByKey[row.dependsOnKey]
+            return "Requires " + (prerequisite ? prerequisite.title : row.dependsOnKey) + ": " + row.dependsOnValue
+                    + ". Open that setting to change it."
+        }
+        if (!rowAvailable(row))
+            return row.categoryId === "downloads"
+                    ? "Available when downloads and folder selection are supported and enabled" :
+                      "Not supported by the active providers"
+        return ""
+    }
+
+    function openSearchResult(row) {
+        searchResultLocation = location()
+        openCategory(row.categoryId, row.key)
+    }
+
+    function unhandledKey(key, phase, repeat, modifiers) {
+        const focused = root.Window.window ? root.Window.window.activeFocusItem : null
+        if (key !== Qt.Key_F || !(modifiers & Qt.ControlModifier) || InputKeys.isTextInputItem(focused) || modalVisible
+                || editingKey.length || inputCompositionActive())
+            return false
+        return phase !== "press" || repeat || openSearch()
+    }
     property bool choiceDialogVisible: false
     property var choiceDialogRow: null
     property Item choiceDialogAnchor: null
@@ -34,12 +166,46 @@ FocusScope {
     property bool diagnosticsExportVisible: false
     property string diagnosticsExportPreview: ""
     property bool pendingCustomMpvMode: false
+    property string navigationMode: "row"
+    property string editingKey: ""
+    property var editingInitialValue
+    onEditingKeyChanged: if (!editingKey.length && rowsBuilt)
+                             Qt.callLater(function () {
+                                 refreshSettingsFilter(false)
+                             })
+    function beginRowEdit(row) {
+        if (!row || editingKey === row.key)
+            return
+        finishRowEdit()
+        editingKey = row.key
+        editingInitialValue = Settings.values[row.key]
+        SettingsSync.beginEdit(row.key)
+    }
+
+    function finishRowEdit() {
+        if (!editingKey.length)
+            return
+        const key = editingKey
+        editingKey = ""
+        SettingsSync.endEdit(key, Settings.values[key] !== editingInitialValue)
+    }
 
     ListModel {
         id: settingsRows
     }
 
+    readonly property bool downloadsAvailable: Downloads.supported && (Downloads.enabled || Downloads.jobs.length > 0)
+    onDownloadsAvailableChanged: refreshSettingsFilter(false)
+
     function rowAvailable(row) {
+        if (row.key === "action/connectionSpeed" && !ProviderCapabilities.speedTest)
+            return false
+        if (row.key === "action/downloads")
+            return downloadsAvailable
+        if (row.key === "action/downloadDestination")
+            return Downloads.supported && Downloads.enabled && !Downloads.mobile && Downloads.canChooseFolder
+        if (row.key === "action/mobileDownloadDestination")
+            return Downloads.supported && Downloads.enabled && Downloads.mobile && Downloads.canChooseFolder
         return SettingsNavigation.rowAvailable(row, Platform, Player.hdrPlayback, function (key) {
             return settingsValue({
                                      "key": key,
@@ -62,7 +228,7 @@ FocusScope {
         for (let index = 0; index < entries.length; ++index) {
             const entry = entries[index]
             const row = rowsByKey[entry.rowKey]
-            if (!rowAvailable(row))
+            if (!rowAvailable(row) && entry.rowKey !== revealedRowKey)
                 continue
             if (entry.detailLevel === 0)
                 essential.push(entry)
@@ -104,49 +270,100 @@ FocusScope {
 
     function rebuildVisibleRows() {
         const visibleRows = []
-        let group = ""
-        let groupEntries = []
+        function descriptor(key, sourceIndex, header, advanced) {
+            return {
+                "rowKey": key,
+                "sourceIndex": sourceIndex,
+                "showHeader": Boolean(header),
+                "advanced": Boolean(advanced)
+            }
+        }
+        if (pageMode === "index") {
+            visibleRows.push(descriptor("action/searchSettings", -2, false, false))
+            visibleRows.push(descriptor("action/zoom", -1, false, false))
+            for (let index = 0; index < SettingsNavigation.categories.length; ++index)
+                visibleRows.push(descriptor("action/category/" + SettingsNavigation.categories[index].id, index, false,
+                                            false))
+            return visibleRows
+        }
+        const entries = []
         for (let index = 0; index < allSettingsRows.length; ++index) {
             const entry = allSettingsRows[index]
-            if (group.length > 0 && entry.group !== group) {
-                appendVisibleGroup(visibleRows, group, groupEntries)
-                groupEntries = []
+            const row = rowsByKey[entry.rowKey]
+            if (pageMode === "search") {
+                if (SettingsNavigation.matchesSearch(row, searchQuery, rowOptions(row)))
+                    visibleRows.push(descriptor(row.key, entry.sourceIndex, false, false))
+            } else if (entry.group === categoryId && (!row.destination || row.destination === "category" || row.key
+                                                      === revealedRowKey)) {
+                entries.push(entry)
             }
-            group = entry.group
-            groupEntries.push(entry)
         }
-        if (group.length > 0)
-            appendVisibleGroup(visibleRows, group, groupEntries)
+        if (pageMode === "category")
+            appendVisibleGroup(visibleRows, categoryId, entries)
         return visibleRows
     }
 
-    // Player-only controls live over active playback, where their changes are
-    // visible or audible. Keep them out of the global settings page.
+    // Search includes panel/player destinations, but category browsing retains
+    // their existing editor entry points rather than duplicating controls.
     function buildSettingsRowsSource() {
         const schema = Settings.settingsSchema
         const rowMap = {}
         const sourceRows = []
+        rowMap["action/settingsSync"] = {
+            "key": "action/settingsSync",
+            "categoryId": "sources",
+            "group": "Sources",
+            "title": "Settings sync",
+            "description": "",
+            "type": "action",
+            "destination": "category"
+        }
+        rowMap["action/searchSettings"] = {
+            "key": "action/searchSettings",
+            "title": "Search settings",
+            "description": "Find any setting by name, value or keyword",
+            "type": "index"
+        }
+        rowMap["action/zoom"] = {
+            "key": "action/zoom",
+            "title": "Interface scale (Zoom)",
+            "description": "Appearance · Change text and control size",
+            "type": "index"
+        }
+        for (let index = 0; index < SettingsNavigation.categories.length; ++index) {
+            const category = SettingsNavigation.categories[index]
+            rowMap["action/category/" + category.id] = {
+                "key": "action/category/" + category.id,
+                "title": category.title,
+                "categoryId": category.id,
+                "description": "",
+                "type": "index"
+            }
+            rowMap[disclosureKey(category.id)] = {
+                "key": disclosureKey(category.id),
+                "group": category.title,
+                "categoryId": category.id,
+                "title": "Advanced",
+                "description": "More " + category.title.toLocaleLowerCase() + " settings",
+                "type": "submenu"
+            }
+        }
         for (let index = 0; index < schema.length; ++index) {
             const row = schema[index]
-            if (row.group === "Subtitle Appearance" || row.key === "settings/audioDelayMs")
-                continue
             rowMap[row.key] = row
             sourceRows.push({
                                 "rowKey": row.key,
                                 "detailLevel": SettingsNavigation.detailLevel(row),
-                                "group": row.group,
+                                "group": row.categoryId,
                                 "sourceIndex": index * 2
                             })
-            const key = disclosureKey(row.group)
-            if (!rowMap[key]) {
-                rowMap[key] = {
-                    "key": key,
-                    "group": row.group,
-                    "title": "Advanced",
-                    "description": "",
-                    "type": "submenu"
-                }
-            }
+            if (row.key === "action/accounts")
+                sourceRows.push({
+                                    "rowKey": "action/settingsSync",
+                                    "detailLevel": 0,
+                                    "group": "sources",
+                                    "sourceIndex": index * 2 + 1
+                                })
         }
         rowsByKey = rowMap
         allSettingsRows = sourceRows
@@ -154,17 +371,25 @@ FocusScope {
     }
 
     function reconcileSettingsRows(nextRows, targetKey, takeFocus) {
+        const previousY = settingsList.contentY
+        const selectionRetained = selectedRowKey === targetKey
         settingsList.autoPositionCurrentItem = false
         reconcilingSettingsRows = true
         SettingsNavigation.reconcileRows(settingsRows, nextRows)
         const target = SettingsNavigation.indexForRowKey(settingsRows, targetKey)
+        if (selectedRowKey !== targetKey) {
+            finishRowEdit()
+            navigationMode = "row"
+        }
         currentIndex = target
         selectedRowKey = target >= 0 ? targetKey : ""
         settingsList.currentIndex = target
         settingsList.forceLayout()
         reconcilingSettingsRows = false
         settingsList.autoPositionCurrentItem = true
-        if (target >= 0)
+        if (takeFocus === false && selectionRetained)
+            settingsList.contentY = previousY
+        else if (target >= 0)
             settingsList.positionViewAtIndex(target, ListView.Contain)
         if (takeFocus !== false)
             InputKeys.focus(settingsList)
@@ -172,6 +397,8 @@ FocusScope {
     }
 
     function refreshSettingsFilter(resetSelection) {
+        if (!resetSelection && (modalVisible || editingKey.length))
+            return
         const selectedDescriptorIndex = SettingsNavigation.indexForRowKey(settingsRows, selectedRowKey)
         const selectedDescriptor = selectedDescriptorIndex >= 0 ? settingsRows.get(selectedDescriptorIndex) : null
         const selectedSourceIndex = selectedDescriptor ? Number(selectedDescriptor.sourceIndex) : 0
@@ -179,7 +406,7 @@ FocusScope {
         const nextRows = rebuildVisibleRows()
         let targetKey = resetSelection ? "" : selectedRowKey
         if (SettingsNavigation.indexForRowKey(nextRows, targetKey) < 0 && !resetSelection && selectedRow) {
-            const groupDisclosure = disclosureKey(selectedRow.group)
+            const groupDisclosure = disclosureKey(selectedRow.categoryId)
             if (SettingsNavigation.indexForRowKey(nextRows, groupDisclosure) >= 0)
                 targetKey = groupDisclosure
         }
@@ -201,6 +428,13 @@ FocusScope {
     }
 
     function selectRow(index, takeFocus) {
+        if (index !== currentIndex) {
+            const focused = root.Window.window ? root.Window.window.activeFocusItem : null
+            if (editingKey.length && InputKeys.isTextInputItem(focused))
+                InputKeys.focus(settingsList)
+            finishRowEdit()
+            navigationMode = "row"
+        }
         const target = SettingsNavigation.clampIndex(index, settingsRows.count)
         if (target < 0) {
             currentIndex = -1
@@ -220,12 +454,19 @@ FocusScope {
     }
 
     function focusEntry() {
+        if (modalVisible || editingKey.length || searchField.editing)
+            return
         if (settingsRows.count <= 0) {
             selectRow(-1, true)
             return
         }
         const selectedIndex = SettingsNavigation.indexForRowKey(settingsRows, selectedRowKey)
-        selectRow(selectedIndex >= 0 ? selectedIndex : Math.max(0, currentIndex), true)
+        const previousY = settingsList.contentY
+        settingsList.autoPositionCurrentItem = false
+        selectRow(selectedIndex >= 0 ? selectedIndex : Math.max(0, currentIndex), false)
+        settingsList.autoPositionCurrentItem = true
+        InputKeys.focus(settingsList)
+        settingsList.contentY = previousY
     }
 
     function rowControlAt(index) {
@@ -235,28 +476,10 @@ FocusScope {
 
     function settingsValue(row) {
         switch (row.key) {
-        case "i18n/locale":
-            return I18n.useSystemLocale ? "system" : I18n.currentLocale
-        case "theme/accent":
-            return Theme.accentIndex
-        case "theme/railLabels":
-            return Theme.sideRailLabels
-        case "theme/reducedMotion":
-            return Theme.reducedMotion
-        case "theme/renderMode":
-            return Theme.normalTextRenderType
-        case "theme/antialiasedText":
-            return Theme.antialiasedText
-        case "theme/technicalMetadata":
-            return Theme.technicalMetadataMode
-        case "shell/diagnostics":
-            return shell ? shell.diagnosticsVisible : false
-        case "shell/latencyGuard":
-            return InputLatency.enabled
-        case "shell/latencyOverlay":
-            return InputLatency.overlayEnabled
         case "subtitles/language":
             return Settings.subtitleLanguageIndex
+        case "audio/language":
+            return Settings.audioLanguageIndex
         default:
             const value = Settings.values[row.key]
             return value === undefined ? row.defaultValue : value
@@ -264,8 +487,33 @@ FocusScope {
     }
 
     function rowDescription(row) {
-        if (row.key === "session/account")
-            return Session.serverUrl
+        if (pageMode === "search")
+            return SettingsNavigation.categoryTitle(row.categoryId) + " · " + row.group + (availabilityReason(
+                                                                                               row).length ? " · "
+                                                                                                             + availabilityReason(
+                                                                                                                 row) : "")
+        const reason = availabilityReason(row)
+        if (reason.length)
+            return (row.description ? row.description + " · " : "") + reason
+        if (row.destination === "subtitleSettings")
+            return "Open in Subtitle appearance · " + (row.description || "")
+        if (row.destination === "player")
+            return "Open in the playback audio sync panel"
+        if (row.key === "action/settingsSync")
+            return SettingsSync.summary
+        if (row.key === "action/connectionSpeed")
+            return App.connectionSpeedDescription
+        if (row.key === "action/downloads")
+            return Downloads.jobs.length ? Downloads.jobs.length + " downloads · Play saved files offline" :
+                                           "Manage downloads and play saved files offline"
+        if (row.key === "action/downloadDestination" || row.key === "action/mobileDownloadDestination")
+            return Downloads.destination + " · Applies only to new downloads"
+        if (row.key === "action/accounts") {
+            const count = Providers.accounts.length
+            return count === 1 ? "1 account" : count + " accounts"
+        }
+        if (row.key === "action/providers" && Store.updates.length > 0)
+            return Store.updates.length === 1 ? "1 update" : Store.updates.length + " updates"
         if (row.key === "subtitles/mode" || row.key === "audio/trackMode") {
             const index = rowCurrentIndex(row)
             const labels = rowOptions(row)
@@ -293,17 +541,33 @@ FocusScope {
     }
 
     function rowValueText(row) {
-        if (row.key === "action/switchUser")
-            return "Choose"
-        if (row.key === "action/logout")
-            return "Sign out"
+        if (row.type === "toggle")
+            return Boolean(settingsValue(row)) ? "On" : "Off"
+        if (row.type === "slider")
+            return String(settingsValue(row)) + (row.unitText || "")
+        if (row.type === "select") {
+            const labels = rowOptions(row)
+            const index = rowCurrentIndex(row)
+            return index >= 0 && index < labels.length ? labels[index] : String(settingsValue(row) || "")
+        }
+        if (row.type === "text")
+            return String(settingsValue(row) || "")
+        if (row.key === "action/settingsSync")
+            return "Manage"
+        if (row.key === "action/connectionSpeed")
+            return "Measure again"
+        if (row.key === "action/downloads")
+            return "Manage"
+        if (row.key === "action/downloadDestination" || row.key === "action/mobileDownloadDestination")
+            return "Change…"
+        if (row.key === "action/accounts" || row.key === "action/providers")
+            return "Manage"
         if (row.key === "action/openSourceNotices" || row.key === "action/exportDiagnostics" || row.key
                 === "action/subtitleSettings" || row.key === "action/manageCertificates")
             return "Open"
         if (row.key === "action/clearLatencyStatistics" || row.key === "action/clearLogs")
             return "Clear"
-        if (row.key === "session/account")
-            return Session.activeProfileLabel.length > 0 ? Session.activeProfileLabel : "Offline"
+
         if (row.key === "about/version")
             return "v" + Qt.application.version
         if (row.key === "about/locale")
@@ -312,13 +576,17 @@ FocusScope {
     }
 
     function rowOptions(row) {
+        if (row.key === "home/providerId")
+            return Home.providerChoices.map(function (choice) {
+                return choice.name + (choice.version ? " · " + choice.version : "")
+            })
         if (row.key === "i18n/locale") {
             const result = []
             for (let index = 0; index < I18n.availableLocales.length; ++index)
                 result.push(I18n.displayNameFor(I18n.availableLocales[index]))
             return result
         }
-        if (row.key === "subtitles/language")
+        if (row.key === "subtitles/language" || row.key === "audio/language")
             return Settings.subtitleLanguageOptions
         if (row.key === "subtitles/mode" || row.key === "audio/trackMode")
             return substitutedLabels(row.choiceLabels || [])
@@ -326,9 +594,13 @@ FocusScope {
     }
 
     function rowChoiceValues(row) {
+        if (row.key === "home/providerId")
+            return Home.providerChoices.map(function (choice) {
+                return choice.id
+            })
         if (row.key === "i18n/locale")
             return I18n.availableLocales
-        if (row.key === "subtitles/language")
+        if (row.key === "subtitles/language" || row.key === "audio/language")
             return Settings.subtitleLanguageOptions
         return row.choiceValues || []
     }
@@ -343,44 +615,18 @@ FocusScope {
     function rowCurrentIndex(row) {
         if (row.key === "subtitles/language")
             return Settings.subtitleLanguageIndex
+        if (row.key === "audio/language")
+            return Settings.audioLanguageIndex
         return valueIndex(rowChoiceValues(row), settingsValue(row))
     }
 
     function setRowValue(row, value, index) {
         switch (row.key) {
-        case "i18n/locale":
-            I18n.setLocale(value)
-            break
-        case "theme/accent":
-            Theme.accentIndex = Number(value)
-            break
-        case "theme/railLabels":
-            Theme.sideRailLabels = value
-            break
-        case "theme/reducedMotion":
-            Theme.reducedMotion = value
-            break
-        case "theme/renderMode":
-            Theme.normalTextRenderType = Number(value)
-            break
-        case "theme/antialiasedText":
-            Theme.antialiasedText = value
-            break
-        case "theme/technicalMetadata":
-            Theme.technicalMetadataMode = value
-            break
-        case "shell/diagnostics":
-            if (shell)
-                shell.diagnosticsVisible = value
-            break
-        case "shell/latencyGuard":
-            InputLatency.enabled = value
-            break
-        case "shell/latencyOverlay":
-            InputLatency.overlayEnabled = value
-            break
         case "subtitles/language":
             Settings.setSubtitleLanguageIndex(index)
+            break
+        case "audio/language":
+            Settings.setAudioLanguageIndex(index)
             break
         default:
             Settings.setValue(row.key, value)
@@ -392,9 +638,9 @@ FocusScope {
         if (index < 0 || index >= values.length)
             return
         if (row.key === "playback/mpvConfigMode" && values[index] === "custom" && !String(
-                    Settings.values["playback/mpvConfigDirectory"] || "").length && mpvFolderDialog) {
+                    Settings.values["playback/mpvConfigDirectory"] || "").length && !Platform.isTV) {
             pendingCustomMpvMode = true
-            mpvFolderDialog.open()
+            openMpvFolderDialog()
             return
         }
         setRowValue(row, values[index], index)
@@ -431,21 +677,63 @@ FocusScope {
         if (!row)
             return
         selectRow(index, false)
+        if (row.type === "index") {
+            if (row.key === "action/searchSettings")
+                openSearch()
+            else if (row.key === "action/zoom")
+                openCategory("appearance", "appearance/uiScalePercent")
+            else
+                openCategory(row.categoryId, "")
+            return
+        }
+        if (pageMode === "search") {
+            openSearchResult(row)
+            return
+        }
+        if (availabilityReason(row).length) {
+            if (row.dependsOnKey) {
+                const prerequisite = rowsByKey[row.dependsOnKey]
+                if (prerequisite)
+                    openCategory(prerequisite.categoryId, prerequisite.key)
+            }
+            return
+        }
+        if (row.destination === "subtitleSettings" && shell) {
+            shell.pushRoute("subtitleSettings", {
+                                "rowKey": row.destinationKey,
+                                "advanced": SettingsNavigation.detailLevel(row) > 0
+                            })
+            return
+        }
+        if (row.destination === "player" && shell) {
+            shell.openPlaybackSetting(row.destinationKey)
+            return
+        }
         if (row.type === "submenu") {
-            toggleAdvancedGroup(row.group, index)
+            toggleAdvancedGroup(row.categoryId, index)
             return
         }
         if (row.type === "action") {
-            if (row.key === "action/switchUser" && shell)
-                shell.switchUser()
-            else if (row.key === "action/logout")
-                App.logout()
+            if (row.key === "action/settingsSync" && shell)
+                shell.pushRoute("settingsSync")
+            else if (row.key === "action/accounts" && shell)
+                shell.pushRoute("accounts")
+            else if (row.key === "action/providers" && shell)
+                shell.pushRoute("addProvider")
+            else if (row.key === "action/downloads" && shell)
+                shell.openDownloads("", settingsList)
+            else if ((row.key === "action/downloadDestination" || row.key === "action/mobileDownloadDestination")
+                     && shell)
+
+                shell.openDownloads("", settingsList, true)
             else if (row.key === "action/manageCertificates")
                 certificateManagerVisible = true
             else if (row.key === "action/clearLatencyStatistics")
                 InputLatency.clearStatistics()
             else if (row.key === "action/clearLogs")
                 App.clearLogs()
+            else if (row.key === "action/connectionSpeed")
+                App.refreshConnectionSpeed()
             else if (row.key === "action/exportDiagnostics") {
                 diagnosticsExportPreview = App.diagnosticsPreview()
                 diagnosticsExportVisible = true
@@ -456,11 +744,15 @@ FocusScope {
         } else if (row.type === "toggle") {
             setRowValue(row, !Boolean(settingsValue(row)), -1)
         } else if (row.type === "select") {
+            if (!rowOptions(row).length)
+                return
+            beginRowEdit(row)
             settingsList.positionViewAtIndex(index, ListView.Contain)
             Qt.callLater(function () {
                 const anchor = rowControlAt(index)
                 if (!anchor)
                     return
+                navigationMode = "row"
                 choiceDialogRow = row
                 choiceDialogAnchor = anchor
                 choiceDialogVisible = true
@@ -499,6 +791,7 @@ FocusScope {
 
     function closeChoiceDialog() {
         choiceDialogVisible = false
+        finishRowEdit()
         choiceDialogAnchor = null
         choiceDialogRow = null
         Qt.callLater(function () {
@@ -514,55 +807,185 @@ FocusScope {
     }
 
     function back() {
+        if (diagnosticsExportVisible) {
+            diagnosticsExportLoader.item.back()
+            return true
+        }
         if (certificateManagerVisible) {
-            certificateManagerVisible = false
-            InputKeys.focus(settingsList)
+            certificateManagerLoader.item.back()
             return true
         }
         if (choiceDialogVisible) {
             closeChoiceDialog()
             return true
         }
-        const selected = currentRow()
-        if (selected && groupExpanded(selected.group)) {
-            toggleAdvancedGroup(selected.group, currentIndex)
+        if (mpvFolderDialogVisible)
+            return true
+        if (navigationMode !== "row")
+            return routeAction("back")
+        if (searchField.editing) {
+            Qt.inputMethod.hide()
+            InputKeys.focus(settingsList)
             return true
         }
-        const seenGroups = {}
-        for (let index = 0; index < allSettingsRows.length; ++index) {
-            const group = allSettingsRows[index].group
-            if (seenGroups[group])
-                continue
-            seenGroups[group] = true
-            if (groupExpanded(group)) {
-                toggleAdvancedGroup(group, currentIndex)
-                return true
-            }
+        if (inputCompositionActive())
+            return true
+        if (searchResultLocation) {
+            const saved = searchResultLocation
+            searchResultLocation = null
+            restoreLocation(saved)
+            return true
+        }
+        if (pageMode === "search") {
+            const saved = priorSearchLocation
+            priorSearchLocation = null
+            restoreLocation(saved)
+            return true
+        }
+        if (pageMode === "category") {
+            categoryLocations[categoryId] = location()
+            const previousCategory = categoryId
+            pageMode = "index"
+            revealedRowKey = ""
+            reconcileSettingsRows(rebuildVisibleRows(), "action/category/" + previousCategory, true)
+            return true
         }
         return false
     }
 
-    function routeKey(key, phase, repeat) {
-        if (certificateManagerVisible)
-            return certificateManagerLoader.item.routeKey(key, phase, repeat)
-        if (choiceDialogVisible)
-            return choiceDialog.routeKey(key, phase, repeat)
-        if (phase === "release" && InputKeys.isDirection(key))
-            return true
-        const row = currentRow()
-        if (InputKeys.isHorizontal(key) && adjustRow(row, key === Qt.Key_Right ? 1 : -1))
-            return true
-        if (InputKeys.isVertical(key) && !settingsList.activeFocus)
-            InputKeys.focus(settingsList)
-        if (key === Qt.Key_Up && settingsList.currentIndex <= 0) {
-            if (shell)
+    function routeAction(action, key, phase, repeat) {
+        const focused = root.Window.window ? root.Window.window.activeFocusItem : null
+        if (inputCompositionActive())
+            return false
+        if (searchButton.activeFocus || backButton.activeFocus) {
+            if (action === "activate")
+                return searchButton.activeFocus ? openSearch() : back()
+            if (action === "down") {
+                InputKeys.focus(settingsList)
+                return true
+            }
+            if (action === "left" && backButton.visible) {
+                InputKeys.focus(backButton)
+                return true
+            }
+            if (action === "right") {
+                InputKeys.focus(searchButton)
+                return true
+            }
+            if (action === "up" && shell) {
                 shell.focusNavBar()
+                return true
+            }
+            return false
+        }
+        if (pageMode === "search" && (searchField.activeFocus || searchField.editing)) {
+            if (action === "down" || action === "activate") {
+                Qt.inputMethod.hide()
+                InputKeys.focus(settingsList)
+                return true
+            }
+            return false
+        }
+        if (InputKeys.isTextInputItem(focused) && navigationMode !== "value-editing")
+            return false
+        if (navigationMode === "row") {
+            if (key !== undefined && SettingsNavigation.consumeRecoveryGesture(settingsList, root, InputKeys,
+                                                                               recoveryGesture, key, phase, repeat))
+                return true
+            if (action === "activate" && SettingsNavigation.recoverVisibleSelection(settingsList, root, InputKeys))
+                return true
+        }
+        const row = currentRow()
+        const previousMode = navigationMode
+        const route = SettingsNavigation.valueRoute(navigationMode, action, Boolean(pageMode === "category" && row && !availabilityReason(
+                                                                                        row).length && (
+                                                                                        !row.destination
+                                                                                        || row.destination
+                                                                                        === "category") && (row.type
+                                                                                                            === "slider"
+                                                                                                            || row.type
+                                                                                                            === "text")))
+        navigationMode = route.mode
+        if (previousMode === "value-editing" && route.mode !== "value-editing") {
+            const control = rowControlAt(currentIndex)
+            if (row && row.type === "text" && control && control.finishEditing)
+                control.finishEditing(action === "activate")
+            // Numeric fields commit on blur. End the sync edit only after that
+            // commit, so a deferred remote value cannot replace typed intent.
+            InputKeys.focus(settingsList)
+            finishRowEdit()
+        }
+        switch (route.effect) {
+        case "begin-edit":
+            beginRowEdit(row)
+            if (row && row.type === "text") {
+                const control = rowControlAt(currentIndex)
+                if (control && control.activate)
+                    control.activate()
+            }
+            return true
+        case "end-edit":
+            return true
+        case "activate":
+            activateRow(row, currentIndex)
+            return true
+        case "value":
+            // A focused text field owns its caret; the page must not turn a
+            // horizontal key into a sync action or another focus target.
+            const focused = root.Window.window ? root.Window.window.activeFocusItem : null
+            if (previousMode === "value-editing" && (InputKeys.isTextInputItem(focused) || (row && row.type
+                                                                                            === "text")))
+                return false
+            if (pageMode !== "category" || !row || availabilityReason(row).length || (row.destination
+                                                                                      && row.destination
+                                                                                      !== "category"))
+                return true
+            return adjustRow(row, action === "right" ? 1 : -1)
+        case "move-up":
+        case "move-down":
+            InputKeys.focus(settingsList)
+            return settingsList.moveSelection(route.effect === "move-up" ? -1 : 1)
+        case "back":
+            return false
+        default:
             return true
         }
-        return settingsList.routeKey(key, phase, repeat)
+    }
+
+    function routeKey(key, phase, repeat) {
+        if (phase === "release" && InputKeys.isDirection(key))
+            SettingsNavigation.consumeRecoveryGesture(settingsList, root, InputKeys, recoveryGesture, key, phase,
+                                                      repeat)
+        if (certificateManagerVisible)
+            return certificateManagerLoader.item.routeKey(key, phase, repeat)
+        if (diagnosticsExportVisible)
+            return diagnosticsExportLoader.item.routeKey(key, phase, repeat)
+        if (mpvFolderDialogVisible)
+            return true
+        if (choiceDialogVisible)
+            return choiceDialog ? choiceDialog.routeKey(key, phase, repeat) : true
+        if (inputCompositionActive())
+            return false
+        if (phase === "release" && InputKeys.isDirection(key))
+            return true
+        if (key === Qt.Key_Right)
+            return routeAction("right", key, phase, repeat)
+        if (key === Qt.Key_Left)
+            return routeAction("left", key, phase, repeat)
+        if (key === Qt.Key_Up)
+            return routeAction("up", key, phase, repeat)
+        if (key === Qt.Key_Down)
+            return routeAction("down", key, phase, repeat)
+        return false
     }
 
     function activate() {
+        if (diagnosticsExportVisible) {
+            diagnosticsExportLoader.item.activate()
+            return
+        }
+        if (mpvFolderDialogVisible)
+            return
         if (certificateManagerVisible) {
             certificateManagerLoader.item.activate()
             return
@@ -570,17 +993,23 @@ FocusScope {
         if (choiceDialogVisible)
             choiceDialog.activate()
         else
-            activateRow(currentRow(), settingsList.currentIndex)
+            routeAction("activate")
     }
 
     focus: true
     onActiveFocusChanged: if (activeFocus)
-    focusEntry()
+                              focusEntry()
     onVisibleChanged: {
-        if (visible)
-        ensureRowsBuilt()
+        if (visible) {
+            ensureRowsBuilt()
+            SettingsSync.refresh()
+        } else {
+            recoveryGesture.key = 0
+            finishRowEdit()
+            navigationMode = "row"
+        }
         if (visible && activeFocus)
-        Qt.callLater(focusEntry)
+            Qt.callLater(focusEntry)
     }
 
     property bool rowsBuilt: false
@@ -595,8 +1024,9 @@ FocusScope {
     // Only take focus if the page is actually active: the route host
     // prewarms an invisible instance, which must not steal focus.
     Component.onCompleted: Qt.callLater(function () {
-        Settings.loadRemote()
         ensureRowsBuilt()
+        if (visible)
+            SettingsSync.refresh()
         if (activeFocus)
             focusEntry()
     })
@@ -625,9 +1055,79 @@ FocusScope {
         }
     }
     Connections {
+        target: ProviderCapabilities
+        function onChanged() {
+            root.refreshSettingsFilter(false)
+        }
+    }
+    Connections {
+        target: Downloads
+        function onEnabledChanged() {
+            root.refreshSettingsFilter(false)
+        }
+    }
+    Connections {
         target: Player
         function onHdrPlaybackChanged() {
-            root.refreshSettingsFilter(true)
+            root.refreshSettingsFilter(false)
+        }
+    }
+
+    Column {
+        id: settingsHeader
+        anchors.top: parent.top
+        anchors.topMargin: Metrics.pageMarginPx
+        anchors.horizontalCenter: parent.horizontalCenter
+        width: settingsList.width
+        spacing: Metrics.scaled(10)
+        AppText {
+            width: parent.width
+            text: root.pageTitle
+            font.pixelSize: Metrics.titleSizePx
+            wrapMode: Text.Wrap
+            Accessible.name: text
+            Accessible.role: Accessible.Heading
+        }
+        Row {
+            width: parent.width
+            spacing: Metrics.scaled(12)
+            ActionButton {
+                id: backButton
+                text: "Back"
+                visible: root.pageMode !== "index"
+                width: Math.min(Metrics.scaled(100), Math.max(0, (parent.width - parent.spacing) / 2))
+                onClicked: root.back()
+            }
+            ActionButton {
+                id: searchButton
+                text: "Search"
+                width: Math.min(Metrics.scaled(120), Math.max(0, (parent.width - parent.spacing) / 2))
+                onClicked: root.openSearch()
+            }
+        }
+        TextFieldRow {
+            id: searchField
+            width: parent.width
+            visible: root.pageMode === "search"
+            label: "Search settings"
+            placeholderText: "Name, value or keyword (for example zoom)"
+            text: root.searchQuery
+            onTextEdited: text => {
+                root.searchQuery = text
+                root.refreshSettingsFilter(true)
+            }
+            onAccepted: {
+                Qt.inputMethod.hide()
+                InputKeys.focus(settingsList)
+            }
+        }
+        SecondaryText {
+            visible: root.pageMode === "search"
+            width: parent.width
+            text: settingsRows.count ? settingsRows.count + " results · Open a result to see it in context" :
+                                       "No matching settings"
+            wrapMode: Text.Wrap
+            Accessible.name: text
         }
     }
 
@@ -635,10 +1135,10 @@ FocusScope {
         id: settingsList
         readonly property real pageInset: Metrics.pageMarginPx
         width: Math.min(Math.max(0, parent.width - pageInset * 2), Metrics.scaled(1280))
-        anchors.top: parent.top
+        anchors.top: settingsHeader.bottom
         anchors.bottom: parent.bottom
         anchors.horizontalCenter: parent.horizontalCenter
-        anchors.topMargin: pageInset
+        anchors.topMargin: Metrics.scaled(12)
         anchors.bottomMargin: pageInset
         bottomMargin: root.choiceDialogVisible && root.choiceDialog ? root.choiceDialog.panelHeight + Metrics.scaled(16) :
                                                                       0
@@ -646,23 +1146,34 @@ FocusScope {
         dismissOnBack: false
         dismissOnHorizontal: false
         spacing: Metrics.scaled(10)
+        // Settings rows are costly composites. Do not construct an extra
+        // viewport of hidden controls while opening the page.
+        cacheBuffer: 0
         onCurrentIndexChanged: {
             if (root.reconcilingSettingsRows)
-            return
+                return
+            if (root.currentIndex !== currentIndex) {
+                root.finishRowEdit()
+                root.navigationMode = "row"
+            }
             root.currentIndex = currentIndex
             root.selectedRowKey = currentIndex >= 0 && currentIndex < settingsRows.count ? settingsRows.get(
                                                                                                currentIndex).rowKey : ""
         }
-        onAccepted: index => root.activateRow(root.rowAtVisibleIndex(index), index)
-        onEdgeUp: if (root.shell)
-        root.shell.focusNavBar()
+        onAccepted: index => root.routeAction("activate")
+        onEdgeUp: {
+            if (root.pageMode === "search")
+                searchField.focusRow()
+            else
+                InputKeys.focus(searchButton)
+        }
         delegate: Column {
             id: settingsDelegate
             required property int index
             required property string rowKey
             required property bool showHeader
             required property bool advanced
-            required property int sourceIndex
+            required property real sourceIndex
             readonly property var rowData: root.rowsByKey[rowKey]
             // The view marks exactly one delegate as current, so the highlight
             // cannot land on two rows at once. Comparing a per-row copy of the
@@ -679,23 +1190,29 @@ FocusScope {
             GroupHeader {
                 width: parent.width
                 visible: parent.showHeader
-                title: rowData.group
+                title: SettingsNavigation.categoryTitle(root.categoryId)
             }
-            Loader {
-                id: rowLoader
-                width: Math.max(0, parent.width - (parent.advanced ? Metrics.scaled(24) : 0))
-                x: parent.advanced ? Metrics.scaled(24) : 0
-                // Bindings, not assignments: the loaded row reads these back
-                // through its parent so a model change reaches it. Copying
-                // them into the item once at load time froze them for the
-                // life of a delegate that outlives several model shapes.
-                readonly property var row: settingsDelegate.rowData
-                readonly property int rowIndex: settingsDelegate.index
-                readonly property bool rowCurrent: settingsDelegate.rowCurrent
-                sourceComponent: rowData.type === "toggle" ? toggleComponent : rowData.type === "select"
-                                                             ? selectComponent : rowData.type === "slider"
-                                                               ? sliderComponent : rowData.type === "text"
-                                                                 ? textComponent : settingComponent
+            Item {
+                width: Math.max(0, parent.width - (settingsDelegate.advanced ? Metrics.scaled(24) : 0))
+                x: settingsDelegate.advanced ? Metrics.scaled(24) : 0
+                height: rowLoader.height
+                Loader {
+                    id: rowLoader
+                    width: parent.width
+                    readonly property var row: settingsDelegate.rowData
+                    readonly property int rowIndex: settingsDelegate.index
+                    readonly property bool rowCurrent: settingsDelegate.rowCurrent
+                    sourceComponent: root.pageMode !== "category" || root.availabilityReason(row).length || (row.destination
+                                                                                                             && row.destination
+                                                                                                             !== "category")
+                                     ? settingComponent : row.type === "toggle" ? toggleComponent : row.type
+                                                                                  === "select" ? selectComponent :
+                                                                                                 row.type === "slider"
+                                                                                                 ? sliderComponent :
+                                                                                                   row.type === "text"
+                                                                                                   ? textComponent :
+                                                                                                     settingComponent
+                }
             }
         }
     }
@@ -715,11 +1232,15 @@ FocusScope {
             description: row ? root.rowDescription(row) : ""
             valueText: row ? root.rowValueText(row) : ""
             valueTextVisible: !isSubmenu
-            pointerActivationEnabled: row && (row.type === "action" || isSubmenu)
+            pointerActivationEnabled: row && (root.pageMode !== "category" || row.type === "action" || row.type
+                                              === "index" || isSubmenu || row.dependsOnKey || (row.destination
+                                                                                               && row.destination
+                                                                                               !== "category"))
             trailing: [
                 MaterialIcon {
                     visible: settingRow.isSubmenu
-                    name: root.groupExpanded(settingRow.row ? settingRow.row.group : "") ? "expand_less" : "expand_more"
+                    name: root.groupExpanded(settingRow.row ? settingRow.row.categoryId : "") ? "expand_less" :
+                                                                                                "expand_more"
                     iconSize: Math.max(20, Metrics.iconSizePx)
                     iconColor: Theme.textSecondary
                 }
@@ -745,6 +1266,7 @@ FocusScope {
             checked: row ? Boolean(root.settingsValue(row)) : false
             onToggled: checked => {
                 root.selectRow(rowIndex, true)
+                root.navigationMode = "row"
                 root.setRowValue(row, checked, -1)
             }
         }
@@ -763,6 +1285,7 @@ FocusScope {
             description: row ? root.rowDescription(row) : ""
             onOpened: {
                 root.selectRow(rowIndex, true)
+                root.navigationMode = "row"
                 root.activateRow(row, rowIndex)
             }
             options: row ? root.rowOptions(row) : []
@@ -786,14 +1309,24 @@ FocusScope {
             logarithmic: Boolean(row && row.key === "playback/forwardCacheSizeMiB")
             unitText: row ? String(row.unitText || "") : ""
             value: row ? Number(root.settingsValue(row)) : 0
-            onValueEdited: value => root.setRowValue(row, value, -1)
-            onInteractionStarted: root.selectRow(rowIndex, false)
+            onValueEdited: value => {
+                root.setRowValue(row, value, -1)
+                root.finishRowEdit()
+                root.navigationMode = "row"
+                InputKeys.focus(settingsList)
+            }
+            onInteractionStarted: {
+                root.selectRow(rowIndex, false)
+                root.beginRowEdit(row)
+                root.navigationMode = "value-editing"
+            }
         }
     }
     Component {
         id: textComponent
 
         Surface {
+            id: textRow
             readonly property var row: parent ? parent.row : null
             readonly property int rowIndex: parent ? parent.rowIndex : -1
             width: parent ? parent.width : settingsList.width
@@ -803,7 +1336,7 @@ FocusScope {
 
             function activate() {
                 if (browseButton.visible && browseButton.activeFocus)
-                    root.mpvFolderDialog.open()
+                    root.openMpvFolderDialog()
                 else
                     pathField.focusField()
             }
@@ -814,6 +1347,13 @@ FocusScope {
                 else
                     pathField.focusField()
                 return true
+            }
+            function finishEditing(commitValue) {
+                if (commitValue)
+                    root.setRowValue(row, pathField.text, -1)
+                else
+                    pathField.text = String(root.settingsValue(row) || "")
+                Qt.inputMethod.hide()
             }
 
             Column {
@@ -852,8 +1392,17 @@ FocusScope {
                         text: row ? String(root.settingsValue(row) || "") : ""
                         placeholderText: "/absolute/path/to/mpv"
                         inputMethodHints: Qt.ImhNoPredictiveText
+                        onEditingChanged: {
+                            if (editing) {
+                                root.selectRow(rowIndex, false)
+                                root.beginRowEdit(row)
+                                root.navigationMode = "value-editing"
+                            }
+                        }
                         onAccepted: {
-                            root.setRowValue(row, text, -1)
+                            textRow.finishEditing(true)
+                            root.finishRowEdit()
+                            root.navigationMode = "row"
                             Qt.callLater(function () {
                                 root.selectRow(rowIndex, true)
                             })
@@ -862,22 +1411,37 @@ FocusScope {
 
                     ActionButton {
                         id: browseButton
-                        visible: root.mpvFolderDialog !== null
+                        visible: !Platform.isTV
                         width: visible ? Metrics.scaled(132) : 0
                         height: pathField.height
                         text: "Browse"
                         iconName: "folder"
-                        onClicked: root.mpvFolderDialog.open()
+                        onClicked: {
+                            root.selectRow(textRow.rowIndex, false)
+                            root.beginRowEdit(textRow.row)
+                            root.openMpvFolderDialog()
+                        }
                     }
                 }
             }
         }
     }
 
+    function openMpvFolderDialog() {
+        if (Platform.isTV)
+            return
+        mpvFolderDialogVisible = true
+        if (mpvFolderDialog)
+            mpvFolderDialog.open()
+        else
+            mpvFolderDialogLoader.active = true
+    }
+
     Loader {
         id: mpvFolderDialogLoader
-        active: !Platform.isTV
+        active: false
         source: active ? Qt.resolvedUrl("DesktopFolderDialog.qml") : ""
+        onLoaded: item.open()
     }
 
     Connections {
@@ -888,10 +1452,16 @@ FocusScope {
             if (root.pendingCustomMpvMode)
                 Settings.setValue("playback/mpvConfigMode", "custom")
             root.pendingCustomMpvMode = false
+            root.mpvFolderDialogVisible = false
+            root.finishRowEdit()
+            Qt.callLater(root.focusEntry)
         }
 
         function onDismissed() {
             root.pendingCustomMpvMode = false
+            root.mpvFolderDialogVisible = false
+            root.finishRowEdit()
+            Qt.callLater(root.focusEntry)
         }
     }
 

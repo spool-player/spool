@@ -6,7 +6,7 @@
 
 #include <windows.h>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
     QString spoolRoot()
@@ -33,7 +33,7 @@ QString bundledFontsPath(const QString& appRootPath)
 
 QString startupCacheRoot(const QString&)
 {
-    const QByteArray configured = qgetenv("JELLYFIN_NATIVE_CACHE_HOME");
+    const QByteArray configured = qgetenv("SPOOL_CACHE_HOME");
     if (!configured.isEmpty())
         return QString::fromLocal8Bit(configured);
     return QDir(spoolRoot()).filePath(QStringLiteral("cache"));
@@ -41,11 +41,17 @@ QString startupCacheRoot(const QString&)
 
 QString persistentDataRoot()
 {
+    const QString configured = qEnvironmentVariable("SPOOL_DATA_HOME");
+    if (!configured.isEmpty())
+        return configured;
     return QDir(spoolRoot()).filePath(QStringLiteral("data"));
 }
 
 QStringList appLogDirectories(const QString&)
 {
+    const QString configured = qEnvironmentVariable("SPOOL_DATA_HOME");
+    if (!configured.isEmpty())
+        return { QDir(configured).filePath(QStringLiteral("logs")) };
     return { QDir(spoolRoot()).filePath(QStringLiteral("logs")) };
 }
 
@@ -54,4 +60,4 @@ QString appLogFileName()
     return QStringLiteral("spool.log");
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

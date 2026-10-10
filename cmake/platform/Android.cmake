@@ -1,4 +1,4 @@
-function(jellyfin_resolve_android_dependencies)
+function(spool_resolve_android_dependencies)
     set(ANDROID_DEPS_PREFIX "" CACHE PATH "Android media dependency prefix")
     find_path(MPV_INCLUDE_DIR mpv/client.h
         HINTS "${ANDROID_DEPS_PREFIX}/include"
@@ -22,7 +22,7 @@ function(jellyfin_resolve_android_dependencies)
     endif()
 endfunction()
 
-function(jellyfin_configure_android_targets native_target core_target)
+function(spool_configure_android_targets native_target core_target)
     target_sources(${core_target} PRIVATE
         src/platform/android/AndroidPlatform.cpp
         # Android is Linux, and every file this reads -- /proc/stat,
@@ -34,6 +34,7 @@ function(jellyfin_configure_android_targets native_target core_target)
         src/platform/common/LinuxPerformanceSampler.cpp
         src/platform/desktop/DesktopMpvConfigPolicy.cpp
         src/platform/android/AndroidPlaybackSurface.cpp
+        src/platform/desktop/DesktopPlaybackRuntime.cpp
     )
     target_sources(${native_target} PRIVATE
         src/platform/android/AndroidNativeAppWindow.cpp
@@ -45,7 +46,6 @@ function(jellyfin_configure_android_targets native_target core_target)
         src/platform/UpdateController.h
         src/platform/android/AndroidUpdateInstaller.cpp
         src/platform/android/AndroidUpdateInstaller.h
-        src/platform/desktop/DesktopPlaybackRuntime.cpp
     )
     target_link_libraries(${core_target} PUBLIC MPV::MPV)
     # liblog carries diagnostics to logcat, the only readable output on Android.
@@ -87,7 +87,7 @@ function(jellyfin_configure_android_targets native_target core_target)
     set_property(TARGET ${native_target} PROPERTY QT_ANDROID_LEGACY_PACKAGING TRUE)
     set_property(TARGET ${native_target} PROPERTY QT_ANDROID_PACKAGE_SOURCE_DIR "${android_package_source}")
     set_property(TARGET ${native_target} PROPERTY QT_ANDROID_PACKAGE_NAME "${android_package_name}")
-    set_property(TARGET ${native_target} PROPERTY QT_ANDROID_APP_NAME "Spool for Jellyfin")
+    set_property(TARGET ${native_target} PROPERTY QT_ANDROID_APP_NAME "Spool")
     set_property(TARGET ${native_target} PROPERTY QT_ANDROID_MIN_SDK_VERSION 28)
     set_property(TARGET ${native_target} PROPERTY QT_ANDROID_TARGET_SDK_VERSION 36)
     set_property(TARGET ${native_target} PROPERTY QT_ANDROID_VERSION_NAME "${PROJECT_VERSION}")

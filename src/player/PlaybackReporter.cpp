@@ -1,9 +1,8 @@
 #include "PlaybackReporter.h"
 
-#include "../api/JellyfinApiFacade.h"
 #include "../common/AsyncTask.h"
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
 
@@ -12,7 +11,7 @@ namespace {
 
 } // namespace
 
-PlaybackReporter::PlaybackReporter(JellyfinApiFacade *api, QObject *parent)
+PlaybackReporter::PlaybackReporter(PlaybackSource *api, QObject *parent)
     : QObject(parent)
     , m_api(api)
 {
@@ -27,15 +26,12 @@ PlaybackReporter::PlaybackReporter(JellyfinApiFacade *api, QObject *parent)
 
 void PlaybackReporter::start(const PlaybackSession& session, double playbackRate, int volume, bool muted)
 {
-    ++m_generation;
-    m_session = session;
+    m_report = std::make_shared<Report>();
+    m_report->session = session;
+    m_report->id = ++m_nextReportId;
     m_startPlaybackRate = playbackRate;
     m_startVolume = volume;
     m_startMuted = muted;
-    m_active = true;
-    m_startInFlight = false;
-    m_startReported = false;
-    m_progressInFlight = false;
     m_progressPending = false;
     m_startRetryTimer.stop();
     m_progressRetryTimer.stop();
@@ -44,16 +40,19 @@ void PlaybackReporter::start(const PlaybackSession& session, double playbackRate
 
 bool PlaybackReporter::setStreamIndexes(int audioStreamIndex, int subtitleStreamIndex)
 {
-    if (m_session.audioStreamIndex == audioStreamIndex && m_session.subtitleStreamIndex == subtitleStreamIndex)
+    if (!m_report || !m_report->active
+        || (m_report->session.audioStreamIndex == audioStreamIndex
+            && m_report->session.subtitleStreamIndex == subtitleStreamIndex)) {
         return false;
-    m_session.audioStreamIndex = audioStreamIndex;
-    m_session.subtitleStreamIndex = subtitleStreamIndex;
+    }
+    m_report->session.audioStreamIndex = audioStreamIndex;
+    m_report->session.subtitleStreamIndex = subtitleStreamIndex;
     return true;
 }
 
 void PlaybackReporter::reportProgress(qint64 positionTicks, bool paused, double playbackRate, int volume, bool muted)
 {
-    if (!m_active || !m_api)
+    if (!m_report || !m_report->active || !m_api)
         return;
 
     m_pendingPositionTicks = positionTicks;
@@ -62,103 +61,139 @@ void PlaybackReporter::reportProgress(qint64 positionTicks, bool paused, double 
     m_pendingVolume = volume;
     m_pendingMuted = muted;
     m_progressPending = true;
-    if (!m_progressInFlight && !m_progressRetryTimer.isActive())
+    if (!m_report->progressInFlight && !m_progressRetryTimer.isActive())
         sendProgress();
 }
 
-void PlaybackReporter::stop(qint64 positionTicks, bool failed, double playbackRate)
+quint64 PlaybackReporter::stop(qint64 positionTicks, bool failed, double playbackRate, bool watched)
 {
-    if (!m_active || !m_api)
-        return;
+    const ReportPtr report = m_report;
+    if (!report || !report->active)
+        return 0;
 
-    m_active = false;
+    report->active = false;
+    report->stopPending = true;
+    report->stopPositionTicks = positionTicks;
+    report->stopFailed = failed;
+    report->stopPlaybackRate = playbackRate;
+    report->watched = watched;
+    const ReportPtr predecessor = m_stopTails.value(report->session.itemId);
+    if (predecessor) {
+        report->predecessor = predecessor;
+        predecessor->successor = report;
+    }
+    m_stopTails.insert(report->session.itemId, report);
     m_startRetryTimer.stop();
     m_progressRetryTimer.stop();
     m_progressPending = false;
-
-    sendStop(m_session, positionTicks, failed, playbackRate, 1);
+    sendStopIfReady(report);
+    return report->id;
 }
 
-void PlaybackReporter::sendStop(
-    const PlaybackSession& session, qint64 positionTicks, bool failed, double playbackRate, int attempt)
+void PlaybackReporter::sendStopIfReady(const ReportPtr& report)
+{
+    if (!report->stopPending || report->startInFlight || report->progressInFlight
+        || (report->predecessor && !report->predecessor->stopFinished))
+        return;
+    report->stopPending = false;
+    if (!m_api) {
+        finishStop(report);
+        return;
+    }
+    sendStop(report, 1);
+}
+
+void PlaybackReporter::sendStop(const ReportPtr& report, int attempt)
 {
     Async::runScoped(
-        this, m_api->reportPlaybackStopped(session, positionTicks, failed, playbackRate), []() {},
-        [this, session, positionTicks, failed, playbackRate, attempt](const std::exception_ptr& error) {
+        this,
+        m_api->reportPlaybackStopped(
+            report->session, report->stopPositionTicks, report->stopFailed, report->stopPlaybackRate),
+        [this, report]() { finishStop(report); },
+        [this, report, attempt](const std::exception_ptr& error) {
             qWarning() << "player: playback stop report attempt" << attempt << "failed:" << exceptionMessage(error);
             emit reportFailed(QStringLiteral("playback stop"), exceptionMessage(error));
-            if (attempt >= kMaxStopReportAttempts)
+            if (attempt >= kMaxStopReportAttempts) {
+                finishStop(report);
                 return;
-            QTimer::singleShot(
-                kReportRetryDelayMs, this, [this, session, positionTicks, failed, playbackRate, attempt]() {
-                    sendStop(session, positionTicks, failed, playbackRate, attempt + 1);
-                });
+            }
+            QTimer::singleShot(kReportRetryDelayMs, this, [this, report, attempt]() { sendStop(report, attempt + 1); });
         },
         "playback stop report");
 }
 
+void PlaybackReporter::finishStop(const ReportPtr& report)
+{
+    report->stopFinished = true;
+    report->predecessor.reset();
+    if (m_stopTails.value(report->session.itemId) == report)
+        m_stopTails.remove(report->session.itemId);
+    if (report->watched)
+        emit watchedPersistenceRequested(report->session.itemId, report->id);
+    if (const ReportPtr successor = report->successor.lock())
+        sendStopIfReady(successor);
+}
+
 void PlaybackReporter::sendStart()
 {
-    if (!m_active || !m_api || m_startInFlight || m_startReported)
+    const ReportPtr report = m_report;
+    if (!report || !report->active || !m_api || report->startInFlight || report->startReported)
         return;
 
-    m_startInFlight = true;
-    const PlaybackSession session = m_session;
-    const quint64 generation = m_generation;
+    report->startInFlight = true;
     Async::runScoped(
-        this, m_api->reportPlaybackStart(session, m_startPlaybackRate, m_startVolume, m_startMuted),
-        [this, generation]() {
-            if (generation != m_generation)
-                return;
-            m_startInFlight = false;
-            m_startReported = true;
+        this, m_api->reportPlaybackStart(report->session, m_startPlaybackRate, m_startVolume, m_startMuted),
+        [this, report]() {
+            report->startInFlight = false;
+            report->startReported = true;
+            sendStopIfReady(report);
+            if (report == m_report && report->active)
+                sendProgress();
         },
-        [this, generation](const std::exception_ptr& error) {
-            if (generation != m_generation)
-                return;
-            m_startInFlight = false;
-            if (m_active)
+        [this, report](const std::exception_ptr& error) {
+            report->startInFlight = false;
+            if (report == m_report && report->active)
                 m_startRetryTimer.start();
             qWarning() << "player: playback start report failed:" << exceptionMessage(error);
             emit reportFailed(QStringLiteral("playback start"), exceptionMessage(error));
+            sendStopIfReady(report);
         },
         "playback start report");
 }
 
 void PlaybackReporter::sendProgress()
 {
-    if (!m_active || !m_api || m_progressInFlight || !m_progressPending)
+    const ReportPtr report = m_report;
+    if (!report || !report->active || !m_api || !report->startReported || report->progressInFlight
+        || !m_progressPending)
         return;
 
-    m_progressInFlight = true;
+    report->progressInFlight = true;
     m_progressPending = false;
-    const PlaybackSession session = m_session;
     const qint64 positionTicks = m_pendingPositionTicks;
     const bool paused = m_pendingPaused;
     const double playbackRate = m_pendingPlaybackRate;
     const int volume = m_pendingVolume;
     const bool muted = m_pendingMuted;
-    const quint64 generation = m_generation;
     Async::runScoped(
-        this, m_api->reportPlaybackProgress(session, positionTicks, paused, playbackRate, volume, muted),
-        [this, generation]() {
-            if (generation != m_generation)
-                return;
-            m_progressInFlight = false;
-            if (m_progressPending)
+        this, m_api->reportPlaybackProgress(report->session, positionTicks, paused, playbackRate, volume, muted),
+        [this, report]() {
+            report->progressInFlight = false;
+            sendStopIfReady(report);
+            if (report == m_report && report->active)
                 sendProgress();
         },
-        [this, generation](const std::exception_ptr& error) {
-            if (generation != m_generation)
-                return;
-            m_progressInFlight = false;
-            m_progressPending = true;
-            if (m_active)
+        [this, report](const std::exception_ptr& error) {
+            report->progressInFlight = false;
+            if (report == m_report && report->active) {
+                m_progressPending = true;
                 m_progressRetryTimer.start();
+            }
             qWarning() << "player: playback progress report failed:" << exceptionMessage(error);
             emit reportFailed(QStringLiteral("playback progress"), exceptionMessage(error));
+            sendStopIfReady(report);
         },
         "playback progress report");
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

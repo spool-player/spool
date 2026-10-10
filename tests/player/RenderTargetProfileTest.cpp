@@ -3,6 +3,7 @@
 #include "player/MpvOptionProfile.h"
 
 #include "TestMain.h"
+#include "TestRequire.h"
 
 #include <QCoreApplication>
 #include <QStandardPaths>
@@ -11,7 +12,7 @@
 #include <cstdlib>
 #include <iostream>
 
-using namespace JellyfinNative;
+using namespace Spool;
 
 namespace {
 
@@ -24,19 +25,14 @@ QByteArray valueFor(const std::vector<MpvOption>& options, const QByteArray& nam
     return {};
 }
 
-void require(bool condition, const char *message)
-{
-    if (condition)
-        return;
-    std::cerr << message << '\n';
-    std::exit(1);
-}
+using SpoolTests::require;
 
 DisplayOutputCapabilities hdrDisplay(
     RenderTargetProfile::Format format = RenderTargetProfile::Format::ExtendedSrgbLinear)
 {
     DisplayOutputCapabilities display;
     display.hdrAvailable = true;
+    display.desktopHdrEnabled = true;
     display.preferredFormat = format;
     display.sdrWhiteNits = 240.0f;
     display.minLuminanceNits = 0.005f;
@@ -47,7 +43,7 @@ DisplayOutputCapabilities hdrDisplay(
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("render-target-profile")
+SPOOL_TEST_MAIN("render-target-profile")
 {
     QCoreApplication app(argc, argv);
     // The startup store is the application's own QSettings, named by these.
@@ -57,17 +53,32 @@ JELLYFIN_TEST_MAIN("render-target-profile")
     app.setOrganizationName(QStringLiteral("spool-jellyfin-test"));
     app.setApplicationName(QStringLiteral("render-target-profile"));
 
-    // Nothing asked, so nothing is requested: a window left alone stays SDR.
+    for (const auto preference : { HdrOutputPreference::Auto, HdrOutputPreference::Always }) {
+        RenderTargetPolicy::rememberPreference(preference);
+        require(RenderTargetPolicy::startupSwapChainRequest(false, true).isEmpty(),
+            "an SDR or unknown desktop must never request an HDR swapchain, even with Always");
+        require(RenderTargetPolicy::startupSwapChainRequest(true, true) == QByteArrayLiteral("scrgb"),
+            "an active HDR desktop may request an scRGB swapchain");
+    }
+    require(RenderTargetPolicy::startupSwapChainRequest(true, false) == QByteArrayLiteral("scrgb"),
+        "Always enables a supported HDR desktop on platforms without automatic HDR selection");
     RenderTargetPolicy::rememberPreference(HdrOutputPreference::Auto);
-    require(RenderTargetPolicy::startupSwapChainRequest().isEmpty(),
-        "automatic should not turn the window over to HDR without automaticHdr enabled");
-    require(RenderTargetPolicy::startupSwapChainRequest(true) == QByteArrayLiteral("scrgb"),
-        "automatic with automaticHdr enabled should request scrgb");
+    require(RenderTargetPolicy::startupSwapChainRequest(true, false).isEmpty(),
+        "Auto respects platforms without automatic HDR selection");
     RenderTargetPolicy::rememberPreference(HdrOutputPreference::Never);
-    require(RenderTargetPolicy::startupSwapChainRequest().isEmpty(), "never should leave the window SDR");
-    RenderTargetPolicy::rememberPreference(HdrOutputPreference::Always);
-    require(RenderTargetPolicy::startupSwapChainRequest() == QByteArrayLiteral("scrgb"),
-        "always should ask Qt for the scRGB swapchain by the name Qt reads");
+    require(RenderTargetPolicy::startupSwapChainRequest(true, true).isEmpty(),
+        "Never keeps even an HDR desktop on an SDR surface");
+
+    auto hdrCapableSdrDesktop = hdrDisplay();
+    hdrCapableSdrDesktop.desktopHdrEnabled = false;
+    for (const auto preference : { HdrOutputPreference::Auto, HdrOutputPreference::Always }) {
+        const auto profile = RenderTargetPolicy::resolve(hdrCapableSdrDesktop, preference, { 1000.0f, 203.0f });
+        require(!profile.isHdr(), "FP16 support and manual luminance do not override the desktop's SDR mode");
+        const auto options = RenderTargetPolicy::targetOptions(profile);
+        require(valueFor(options, "target-trc") == "bt.1886" && valueFor(options, "target-peak") == "auto"
+                && valueFor(options, "hdr-reference-white") == "auto",
+            "SDR mode resets HDR transfer and paperwhite so mpv owns tone mapping to the SDR target");
+    }
 
     const DisplayOutputCapabilities sdrOnly;
     require(!RenderTargetPolicy::resolve(sdrOnly, HdrOutputPreference::Always).isHdr(),

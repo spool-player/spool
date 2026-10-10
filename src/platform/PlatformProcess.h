@@ -6,7 +6,7 @@
 
 class QCoreApplication;
 
-namespace JellyfinNative {
+namespace Spool {
 
 struct ProcessStartupTiming {
     qint64 execToMainMs = -1;
@@ -28,4 +28,4 @@ private:
     std::unique_ptr<PlatformData> m_platform;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

@@ -1,6 +1,7 @@
 #include "app/UpdateManifest.h"
 
 #include "TestMain.h"
+#include "TestRequire.h"
 
 #include <QCoreApplication>
 #include <QJsonArray>
@@ -10,17 +11,11 @@
 #include <cstdlib>
 #include <iostream>
 
-using namespace JellyfinNative;
+using namespace Spool;
 
 namespace {
 
-void require(bool condition, const char *message)
-{
-    if (condition)
-        return;
-    std::cerr << message << '\n';
-    std::exit(EXIT_FAILURE);
-}
+using SpoolTests::require;
 
 QJsonObject release(const QString& channel, int versionCode, const QString& version, const QString& assetKey)
 {
@@ -174,7 +169,7 @@ void webOSSelectsArmPackage()
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("update-manifest")
+SPOOL_TEST_MAIN("update-manifest")
 {
     QCoreApplication app(argc, argv);
     const QString assetKey = QStringLiteral("arm64-v8a");

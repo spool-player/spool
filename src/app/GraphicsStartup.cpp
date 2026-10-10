@@ -4,7 +4,7 @@
 #include "platform/PlatformDisplayOutput.h"
 #include "platform/PlatformStartup.h"
 #include "player/RenderTargetProfile.h"
-#if defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID) && !defined(JELLYFIN_NATIVE_WEBOS)
+#if defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID) && !defined(SPOOL_WEBOS)
 #include "platform/linux/WaylandColorInfo.h"
 #endif
 
@@ -14,7 +14,7 @@
 #include <QQuickWindow>
 #include <QSurfaceFormat>
 
-namespace JellyfinNative {
+namespace Spool {
 
 QSGRendererInterface::GraphicsApi GraphicsStartup::configureBeforeApplication(bool launchTest)
 {
@@ -22,7 +22,7 @@ QSGRendererInterface::GraphicsApi GraphicsStartup::configureBeforeApplication(bo
     // compatibility path; Linux and macOS use Vulkan for HDR-capable rendering.
 #if defined(Q_OS_WIN)
     auto graphicsApi = QSGRendererInterface::Direct3D11;
-#elif defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID) && !defined(JELLYFIN_NATIVE_WEBOS) && QT_CONFIG(vulkan)
+#elif defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID) && !defined(SPOOL_WEBOS) && QT_CONFIG(vulkan)
     auto graphicsApi = QSGRendererInterface::Vulkan;
 #elif defined(Q_OS_MACOS) && QT_CONFIG(vulkan)
     auto graphicsApi = QSGRendererInterface::Vulkan;
@@ -42,7 +42,15 @@ QSGRendererInterface::GraphicsApi GraphicsStartup::configureBeforeApplication(bo
             qInfo("startup: graphics backend setting asks for %s", requestedApi.constData());
         }
     }
-    if (launchTest) {
+#if defined(SPOOL_APPLE_MOBILE)
+    // The UIKit simulator/device is a real native surface. Its smoke must
+    // exercise the GLES scene graph used by the embedded mpv framebuffer.
+    const bool softwareLaunchTest = false;
+    Q_UNUSED(launchTest);
+#else
+    const bool softwareLaunchTest = launchTest;
+#endif
+    if (softwareLaunchTest) {
         // Headless launch tests cannot assume any graphics adapter exists.
         graphicsApi = QSGRendererInterface::Software;
     } else if (requestedApi == "opengl") {
@@ -66,6 +74,9 @@ QSGRendererInterface::GraphicsApi GraphicsStartup::configureBeforeApplication(bo
         qputenv("QT_MTL_NO_TRANSACTION", QByteArrayLiteral("1"));
     }
 #endif
+#if defined(SPOOL_APPLE_MOBILE)
+    graphicsApi = QSGRendererInterface::OpenGL;
+#endif
     QQuickWindow::setGraphicsApi(graphicsApi);
     qInfo("startup: scene graph on %s",
         graphicsApi == QSGRendererInterface::Vulkan           ? "Vulkan"
@@ -81,18 +92,19 @@ QByteArray GraphicsStartup::prepareBeforeWindow(QSGRendererInterface::GraphicsAp
     bool automaticHdr = false;
     bool allowHdrRequest = !launchTest
         && (graphicsApi == QSGRendererInterface::Vulkan || graphicsApi == QSGRendererInterface::Direct3D11);
-#if defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID) && !defined(JELLYFIN_NATIVE_WEBOS)
+#if defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID) && !defined(SPOOL_WEBOS)
     allowHdrRequest = allowHdrRequest && QGuiApplication::platformName().startsWith(QLatin1String("wayland"));
     automaticHdr = allowHdrRequest;
 #elif defined(Q_OS_WIN)
-    // Qt checks the window's output and Windows' Use HDR state before choosing
-    // FP16. The live probe verifies the actual buffer and native signaling.
-    // Vulkan requests the same scRGB encoding through swapchain colorspace.
+    // Check Windows' current desktop HDR mode before asking Qt for FP16.
+    // Backend support alone also exists on SDR desktops.
     automaticHdr = allowHdrRequest;
 #endif
+    const bool desktopHdr
+        = allowHdrRequest && PlatformDisplayOutput::desktopHdrEnabled(QGuiApplication::primaryScreen());
     const QByteArray hdrRequest
-        = allowHdrRequest ? RenderTargetPolicy::startupSwapChainRequest(automaticHdr) : QByteArray();
-#if !defined(Q_OS_ANDROID) && !defined(JELLYFIN_NATIVE_WEBOS)
+        = allowHdrRequest ? RenderTargetPolicy::startupSwapChainRequest(desktopHdr, automaticHdr) : QByteArray();
+#if !defined(Q_OS_ANDROID) && !defined(SPOOL_WEBOS)
     if (!hdrRequest.isEmpty()) {
         qputenv("QSG_RHI_HDR", hdrRequest);
         qInfo("startup: set QSG_RHI_HDR=%s in environment", hdrRequest.constData());
@@ -112,13 +124,13 @@ GraphicsStartup::GraphicsStartup(NativeAppWindow& window, const QByteArray& hdrR
     : QObject(&window)
     , m_window(window)
 {
-#if defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID) && !defined(JELLYFIN_NATIVE_WEBOS)
+#if defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID) && !defined(SPOOL_WEBOS)
     m_waylandHdrSurface = std::make_unique<WaylandHdrSurface>(&window);
 #endif
     window.setProperty("_qt_sg_hdr_format", hdrRequest);
     qInfo("startup: output request=%s qpa=%s", hdrRequest.isEmpty() ? "SDR" : hdrRequest.constData(),
         qPrintable(QGuiApplication::platformName()));
-#if !defined(Q_OS_ANDROID) && !defined(JELLYFIN_NATIVE_WEBOS)
+#if !defined(Q_OS_ANDROID) && !defined(SPOOL_WEBOS)
     // QQuickWindow stops its scene graph before destroying its QObject children.
     // Direct callbacks therefore retain a live owner through render shutdown;
     // queued GUI updates are cancelled automatically when the owner dies.
@@ -133,7 +145,7 @@ GraphicsStartup::~GraphicsStartup() = default;
 
 void GraphicsStartup::probeSwapchain()
 {
-#if !defined(Q_OS_ANDROID) && !defined(JELLYFIN_NATIVE_WEBOS)
+#if !defined(Q_OS_ANDROID) && !defined(SPOOL_WEBOS)
     // QRhi access stays on the render thread. Retry until the swapchain exists,
     // then snapshot once per scene graph, not on every frame. Output-change
     // subscriptions are deliberately separate from this startup observation.
@@ -149,9 +161,9 @@ void GraphicsStartup::probeSwapchain()
             // Native display queries, Wayland protocol ownership and QML
             // notifications belong to the GUI thread, never the render thread.
             PlatformDisplayOutput::updateDisplayLuminance(display, &m_window);
-            bool scrgb
-                = display.hdrAvailable && display.preferredFormat == RenderTargetProfile::Format::ExtendedSrgbLinear;
-#if defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID) && !defined(JELLYFIN_NATIVE_WEBOS)
+            bool scrgb = display.desktopHdrEnabled && display.hdrAvailable
+                && display.preferredFormat == RenderTargetProfile::Format::ExtendedSrgbLinear;
+#if defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID) && !defined(SPOOL_WEBOS)
             if (!m_waylandHdrSurface->setEnabled(scrgb && display.needsWaylandDescription))
                 scrgb = false;
 #endif
@@ -165,4 +177,4 @@ void GraphicsStartup::probeSwapchain()
 #endif
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

@@ -1,25 +1,20 @@
 #include "common/RequestGeneration.h"
 
 #include "TestMain.h"
+#include "TestRequire.h"
 
 #include <cstdlib>
 #include <iostream>
 
-using JellyfinNative::RequestGeneration;
+using Spool::RequestGeneration;
 
 namespace {
 
-void require(bool condition, const char *message)
-{
-    if (condition)
-        return;
-    std::cerr << message << '\n';
-    std::exit(EXIT_FAILURE);
-}
+using SpoolTests::require;
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("request-generation")
+SPOOL_TEST_MAIN("request-generation")
 {
     RequestGeneration generation;
     const RequestGeneration::Token first = generation.next();

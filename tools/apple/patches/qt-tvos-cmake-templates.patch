@@ -1,0 +1,42 @@
+--- a/cmake/QtBaseGlobalTargets.cmake
++++ b/cmake/QtBaseGlobalTargets.cmake
+@@ -427,7 +427,7 @@
+ if(APPLE)
+     if(MACOS)
+         set(platform_shortname "macos")
+-    elseif(IOS)
++    elseif(IOS OR TVOS)
+         set(platform_shortname "ios")
+     elseif(VISIONOS)
+         set(platform_shortname "visionos")
+@@ -459,7 +459,7 @@
+         file(COPY "cmake/${platform_shortname}/test.entitlements.plist"
+             DESTINATION "${__GlobalConfig_build_dir}/${platform_shortname}"
+         )
+-    elseif(IOS)
++    elseif(IOS OR TVOS)
+         qt_copy_or_install(FILES "cmake/ios/LaunchScreen.storyboard"
+             DESTINATION "${__GlobalConfig_install_dir}/ios"
+         )
+--- a/cmake/QtBuildPathsHelpers.cmake
++++ b/cmake/QtBuildPathsHelpers.cmake
+@@ -235,7 +235,7 @@
+     if(APPLE)
+         if(NOT CMAKE_SYSTEM_NAME OR CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+             set(__qt_internal_cmake_apple_support_files_path "${QT_CMAKE_DIR}/macos")
+-        elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
++        elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS" OR CMAKE_SYSTEM_NAME STREQUAL "tvOS")
+             set(__qt_internal_cmake_apple_support_files_path "${QT_CMAKE_DIR}/ios")
+         elseif(CMAKE_SYSTEM_NAME STREQUAL "visionOS")
+             set(__qt_internal_cmake_apple_support_files_path "${QT_CMAKE_DIR}/visionos")
+--- a/cmake/QtConfig.cmake.in
++++ b/cmake/QtConfig.cmake.in
+@@ -75,7 +75,7 @@
+ if(APPLE)
+     if(NOT CMAKE_SYSTEM_NAME OR CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+         set(__qt_internal_cmake_apple_support_files_path "${_qt_import_prefix}/macos")
+-    elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
++    elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS" OR CMAKE_SYSTEM_NAME STREQUAL "tvOS")
+         set(__qt_internal_cmake_apple_support_files_path "${_qt_import_prefix}/ios")
+     elseif(CMAKE_SYSTEM_NAME STREQUAL "visionOS")
+         set(__qt_internal_cmake_apple_support_files_path "${_qt_import_prefix}/visionos")

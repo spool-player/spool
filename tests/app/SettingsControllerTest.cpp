@@ -1,63 +1,73 @@
 #include "app/SettingsController.h"
 
 #include "app/ArtworkService.h"
+#include "app/LocalizationManager.h"
 #include "cache/DatabaseManager.h"
+#include "diagnostics/InputLatencyMonitor.h"
+#include "platform/PlatformCapabilities.h"
 #include "platform/PlatformSettingsPolicy.h"
 
+#include "RecordingArtworkSource.h"
 #include "TestMain.h"
+#include "TestRequire.h"
 
 #include <QCoreApplication>
 #include <QCoroTask>
+#include <QJsonDocument>
+#include <QSettings>
+#include <QSqlDatabase>
+#include <QSqlQuery>
 #include <QTemporaryDir>
 
 #include <cstdlib>
 #include <iostream>
 
-using JellyfinNative::ArtworkService;
-using JellyfinNative::DatabaseManager;
-using JellyfinNative::MovieItem;
-using JellyfinNative::platformDefaultArtworkFormat;
-using JellyfinNative::SettingsController;
+using Spool::ArtworkService;
+using Spool::DatabaseManager;
+using Spool::MovieItem;
+using Spool::SettingsController;
 
 namespace {
 
-void require(bool condition, const char *message)
-{
-    if (condition)
-        return;
-    std::cerr << message << '\n';
-    std::exit(EXIT_FAILURE);
-}
+using SpoolTests::require;
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("settings-controller")
+SPOOL_TEST_MAIN("settings-controller")
 {
     QCoreApplication app(argc, argv);
     QTemporaryDir directory;
     require(directory.isValid(), "temporary settings directory was not created");
+    QCoreApplication::setOrganizationName(QStringLiteral("SpoolTests"));
+    QCoreApplication::setApplicationName(QStringLiteral("SettingsController"));
+    QSettings::setDefaultFormat(QSettings::IniFormat);
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, directory.path());
 
     DatabaseManager database;
     require(database.initialize(directory.filePath(QStringLiteral("settings.sqlite"))),
         "settings database did not initialize");
 
+    Spool::Testing::RecordingArtworkSource artworkSource;
     ArtworkService artwork(QString(), 0, 1024, 1, nullptr);
-    artwork.setServerUrl(QStringLiteral("https://example.test"));
+    artwork.setSource(&artworkSource);
     MovieItem poster;
     poster.id = QStringLiteral("item1");
     poster.posterTag = QStringLiteral("tag1");
     const QVariant posterValue = QVariant::fromValue(poster);
     const auto posterUrl = [&] { return artwork.url(posterValue, QStringLiteral("poster")); };
 
-    SettingsController settings(&database, nullptr, nullptr, &artwork);
+    SettingsController settings(&database, nullptr, &artwork);
     QCoro::waitFor(settings.loadLocalAsync());
 
-    // A fresh profile leaves the codec to the platform, and the artwork
-    // service has to be told before the first poster is requested rather than
-    // when the settings page is first opened.
-    require(posterUrl().contains(QStringLiteral("format=") + QString::fromLatin1(platformDefaultArtworkFormat())),
-        "artwork did not start on the platform's default format");
-    require(posterUrl().contains(QStringLiteral("quality=75")), "artwork did not start at the default webp quality");
+    // Automatic encoding is part of the device contract, not an expected value
+    // obtained from the policy being tested. Native Apple TV keeps WebP; only
+    // webOS and Android televisions choose JPEG.
+    const auto& capabilities = Spool::platformCapabilities();
+    const bool defaultJpeg = capabilities.isWebOS || (capabilities.isAndroid && capabilities.isTV);
+    require(posterUrl().contains(defaultJpeg ? QStringLiteral("format=jpeg") : QStringLiteral("format=webp")),
+        "artwork did not start on the device's default format");
+    require(posterUrl().contains(defaultJpeg ? QStringLiteral("quality=82") : QStringLiteral("quality=75")),
+        "artwork did not start at the default quality for its format");
 
     settings.setValue(QStringLiteral("artwork/format"), QStringLiteral("jpeg"));
     require(posterUrl().contains(QStringLiteral("format=jpeg")), "changing the artwork format did not reach artwork");
@@ -68,7 +78,7 @@ JELLYFIN_TEST_MAIN("settings-controller")
     settings.setValue(QStringLiteral("artwork/format"), QStringLiteral("webp"));
     require(
         posterUrl().contains(QStringLiteral("quality=75")), "switching back to webp did not restore the webp quality");
-    require(settings.uiScalePercent() == 100, "desktop UI scale default was not 100 percent");
+    require(settings.uiScalePercent() == 100, "fresh profile UI scale default was not 100 percent");
     require(!settings.value(QStringLiteral("playback/manualStreamingBitrate")).toBool(),
         "fresh profile unexpectedly enabled the manual streaming limit");
     require(!settings.value(QStringLiteral("playback/unlimitedLocalBitrate")).toBool(),
@@ -78,8 +88,8 @@ JELLYFIN_TEST_MAIN("settings-controller")
     require(settings.value(QStringLiteral("playback/rememberSeriesAudioTrack")).toBool(),
         "fresh profile did not remember per-series audio tracks by default");
     require(settings.playerControlTooltipsEnabled(), "fresh profile unexpectedly hid player control tooltips");
-    require(settings.castButtonEnabled(), "desktop Cast button default was not enabled");
-    require(settings.remoteControlTargetEnabled(), "desktop remote-control target default was not enabled");
+    require(settings.remoteControlTargetEnabled() == !capabilities.isMobile,
+        "remote control must default off on handsets and on for desktop/TV targets");
 
     settings.setValue(QStringLiteral("playback/forwardCacheSizeMiB"), QStringLiteral("256"));
     require(settings.value(QStringLiteral("playback/forwardCacheSizeMiB")).toString() == QStringLiteral("256"),
@@ -90,10 +100,21 @@ JELLYFIN_TEST_MAIN("settings-controller")
     settings.setValue(QStringLiteral("playback/rememberSeriesAudioTrack"), false);
     require(!settings.value(QStringLiteral("playback/rememberSeriesAudioTrack")).toBool(),
         "series audio-track retention toggle was not updated");
-    settings.setValue(QStringLiteral("remote/showCastButton"), false);
+    // Exercise both transitions even on a handset, where false is the default.
+    // Defaults are resolved without materializing a persisted override. First
+    // establish false, then true is a real transition on every device kind.
     settings.setValue(QStringLiteral("remote/acceptCommands"), false);
-    require(!settings.castButtonEnabled(), "Cast button toggle was not applied");
+    require(!settings.remoteControlTargetEnabled(), "remote target baseline could not be disabled");
+    settings.setValue(QStringLiteral("remote/acceptCommands"), true);
+    require(settings.remoteControlTargetEnabled(), "remote target could not be enabled");
+    require(
+        QCoro::waitFor(database.loadSettingAsync(QStringLiteral("remote/acceptCommands"))) == QStringLiteral("true"),
+        "enabled remote target toggle was not persisted");
+    settings.setValue(QStringLiteral("remote/acceptCommands"), false);
     require(!settings.remoteControlTargetEnabled(), "remote target toggle was not applied");
+    require(
+        QCoro::waitFor(database.loadSettingAsync(QStringLiteral("remote/acceptCommands"))) == QStringLiteral("false"),
+        "disabled remote target toggle was not persisted");
 
     settings.setAudioDelayMs(120);
     require(settings.audioDelayMs() == 120, "audio delay setter did not update the global desktop value");
@@ -166,7 +187,7 @@ JELLYFIN_TEST_MAIN("settings-controller")
             == QStringLiteral("3"),
         "completed control-tooltip sessions were not persisted");
 
-    SettingsController restored(&database, nullptr, nullptr, nullptr);
+    SettingsController restored(&database, nullptr, nullptr);
     QCoro::waitFor(restored.loadLocalAsync());
     require(restored.uiScalePercent() == 135, "persisted UI scale was not restored");
     require(restored.audioDelayMs() == 120, "persisted global desktop audio delay was not restored");
@@ -174,10 +195,172 @@ JELLYFIN_TEST_MAIN("settings-controller")
         "persisted forward cache size was not restored");
     require(!restored.value(QStringLiteral("playback/rememberSeriesAudioTrack")).toBool(),
         "series audio-track retention toggle was not restored");
-    require(!restored.castButtonEnabled(), "persisted Cast button toggle was not restored");
     require(!restored.remoteControlTargetEnabled(), "persisted remote target toggle was not restored");
     require(!restored.playerControlTooltipsEnabled(), "persisted control-tooltip sessions were not restored");
 
+    int commits = 0;
+    int notifications = 0;
+    int subtitleNotifications = 0;
+    QVariantMap committed;
+    QObject::connect(&settings, &SettingsController::userValuesCommitted, &settings, [&](QVariantMap values) {
+        ++commits;
+        committed = std::move(values);
+    });
+    QObject::connect(&settings, &SettingsController::settingsValuesChanged, &settings, [&] { ++notifications; });
+    QObject::connect(
+        &settings, &SettingsController::subtitleSettingsChanged, &settings, [&] { ++subtitleNotifications; });
+    QCoro::waitFor(settings.applyValues({ { QStringLiteral("subtitles/scalePercent"), 150 },
+                                            { QStringLiteral("subtitles/verticalPositionPercent"), 75 },
+                                            { QStringLiteral("appearance/uiScalePercent"), 160 },
+                                            { QStringLiteral("playback/maxStreamingBitrateMbps"), 5000 } },
+        Spool::ChangeOrigin::RemoteSync));
+    require(notifications == 1 && subtitleNotifications == 1 && commits == 0,
+        "a remote batch must notify once without echoing a user commit");
+    require(settings.uiScalePercent() == 135
+            && settings.value(QStringLiteral("playback/maxStreamingBitrateMbps")).toInt() == 120,
+        "remote application changed a Never key or clamped an unknown remote value");
+    QCoro::waitFor(settings.applyValues({ { QStringLiteral("settings/audioDelayMs"), 9000 },
+                                            { QStringLiteral("audio/language"), QStringLiteral("en") } },
+        Spool::ChangeOrigin::User));
+    require(commits == 1 && committed.value(QStringLiteral("settings/audioDelayMs")).toInt() == 2000
+            && committed.value(QStringLiteral("audio/language")).toString() == QStringLiteral("eng"),
+        "user commit did not expose the exact normalized durable values");
+    QCoro::waitFor(settings.applyValues(
+        { { QStringLiteral("playback/renderQuality"), QStringLiteral("fast") } }, Spool::ChangeOrigin::Automatic));
+    settings.previewValue(QStringLiteral("subtitles/scalePercent"), 125);
+    require(commits == 1, "preview or automatic adaptation echoed an upload");
+    settings.updateAudioOutputRoute(QStringLiteral("hdmi"), 20, 10);
+    if (!Spool::platformUsesPerOutputAudioDelay())
+        require(QCoro::waitFor(database.loadSettingAsync(QStringLiteral("settings/audioDelayMs")))
+                == QStringLiteral("2000"),
+            "route changes rewrote the global audio trim");
+    else {
+        QCoro::waitFor(
+            settings.applyValues({ { QStringLiteral("settings/audioDelayMs"), 150 } }, Spool::ChangeOrigin::User));
+        require(QCoro::waitFor(database.loadSettingAsync(Spool::platformAudioDelayStorageKey(QStringLiteral("hdmi"))))
+                == QStringLiteral("150"),
+            "per-output trim did not persist on the captured route");
+    }
+
+    Spool::LocalizationManager locale;
+    Spool::InputLatencyMonitor latency;
+    settings.attachLocalization(&locale);
+    settings.attachInputLatency(&latency);
+    QCoro::waitFor(settings.applyValues(
+        { { QStringLiteral("i18n/locale"), QStringLiteral("en-GB") }, { QStringLiteral("shell/latencyGuard"), false } },
+        Spool::ChangeOrigin::User));
+    require(locale.currentLocale() == QStringLiteral("en-GB") && !latency.enabled(),
+        "facade did not apply preferences through canonical external owners");
+    require(QCoro::waitFor(database.loadSettingAsync(QStringLiteral("i18n/locale"))).isEmpty(),
+        "locale was duplicated into the SQLite settings store");
+    const int afterExternalCommit = commits;
+    latency.setOverlayEnabled(!latency.overlayEnabled());
+    require(settings.value(QStringLiteral("shell/latencyOverlay")).toBool() == latency.overlayEnabled()
+            && commits == afterExternalCommit,
+        "internal latency changes did not mirror without upload");
+
+    const QString journalKey = QStringLiteral("settings/application/i18n/locale");
+    const auto seedApplication = [&](const QString& value, Spool::ChangeOrigin origin) {
+        const QVariantMap record { { QStringLiteral("value"), value },
+            { QStringLiteral("origin"), static_cast<int>(origin) },
+            { QStringLiteral("generation"), QStringLiteral("7000") },
+            { QStringLiteral("accountId"), QStringLiteral("removed-account") }, { QStringLiteral("deferred"), false } };
+        QCoro::waitFor(database.saveSettings(
+            { { journalKey, QString::fromUtf8(QJsonDocument::fromVariant(record).toJson(QJsonDocument::Compact)) } }));
+    };
+    seedApplication(QStringLiteral("en-US"), Spool::ChangeOrigin::User);
+    SettingsController recovery(&database, nullptr, nullptr);
+    recovery.attachLocalization(&locale);
+    QCoro::waitFor(recovery.loadLocalAsync());
+    int recoveryCommits = 0;
+    QObject::connect(
+        &recovery, &SettingsController::userValuesCommitted, &recovery, [&](QVariantMap) { ++recoveryCommits; });
+    QCoro::waitFor(recovery.recoverUnfinishedApplications());
+    require(locale.currentLocale() == QStringLiteral("en-US") && recoveryCommits == 0
+            && QCoro::waitFor(database.loadSettingAsync(journalKey)).isEmpty(),
+        "interrupted external application did not recover exactly once without upload");
+
+    seedApplication(QStringLiteral("en-GB"), Spool::ChangeOrigin::User);
+    QCoro::waitFor(recovery.loadLocalAsync());
+    QCoro::waitFor(recovery.applyValues(
+        { { QStringLiteral("i18n/locale"), QStringLiteral("en-AU") } }, Spool::ChangeOrigin::User));
+    QCoro::waitFor(recovery.recoverUnfinishedApplications());
+    require(locale.currentLocale() == QStringLiteral("en-AU"),
+        "unfinished application overrode a later explicit local commit");
+
+    seedApplication(QStringLiteral("en-GB"), Spool::ChangeOrigin::RemoteSync);
+    QCoro::waitFor(recovery.loadLocalAsync());
+    QCoro::waitFor(recovery.recoverUnfinishedApplications());
+    require(locale.currentLocale() == QStringLiteral("en-AU"),
+        "invalidated source's unfinished remote locale overrode the local locale");
+    const int beforeRace = recoveryCommits;
+    auto remoteLocale = recovery.applyValues(
+        { { QStringLiteral("i18n/locale"), QStringLiteral("en-US") } }, Spool::ChangeOrigin::RemoteSync);
+    recovery.cancelRemoteApplications();
+    auto localLocale = recovery.applyValues(
+        { { QStringLiteral("i18n/locale"), QStringLiteral("en-GB") } }, Spool::ChangeOrigin::User);
+    QCoro::waitFor(std::move(remoteLocale));
+    QCoro::waitFor(std::move(localLocale));
+    require(locale.currentLocale() == QStringLiteral("en-GB") && recoveryCommits == beforeRace + 1,
+        "late external remote application defeated cancellation/local supersession");
+    SettingsController noReplay(&database, nullptr, nullptr);
+    noReplay.attachLocalization(&locale);
+    QCoro::waitFor(noReplay.loadLocalAsync());
+    locale.setLocale(QStringLiteral("en-AU"));
+    QCoro::waitFor(noReplay.recoverUnfinishedApplications());
+    require(locale.currentLocale() == QStringLiteral("en-AU"),
+        "startup replayed a replica rather than only unfinished application records");
+    const QString trackJournal = QStringLiteral("settings/application/audio/language");
+    const QVariantMap deferredTrack { { QStringLiteral("value"), QStringLiteral("fra") },
+        { QStringLiteral("origin"), static_cast<int>(Spool::ChangeOrigin::RemoteSync) },
+        { QStringLiteral("generation"), QStringLiteral("8000") },
+        { QStringLiteral("accountId"), QStringLiteral("account") }, { QStringLiteral("deferred"), true } };
+    QCoro::waitFor(database.saveSettings({ { trackJournal,
+        QString::fromUtf8(QJsonDocument::fromVariant(deferredTrack).toJson(QJsonDocument::Compact)) } }));
+    QCoro::waitFor(recovery.loadLocalAsync());
+    const int beforeTrackCommit = recoveryCommits;
+    // Even explicitly recommitting the current local preference must discard
+    // a remotely queued default for the next item.
+    QCoro::waitFor(recovery.applyValues(
+        { { QStringLiteral("audio/language"), QStringLiteral("eng") } }, Spool::ChangeOrigin::User));
+    QCoro::waitFor(recovery.applyDeferredTrackDefaults());
+    require(recovery.value(QStringLiteral("audio/language")) == QStringLiteral("eng")
+            && recoveryCommits == beforeTrackCommit + 1
+            && QCoro::waitFor(database.loadSettingAsync(trackJournal)).isEmpty(),
+        "deferred track default defeated a later explicit local preference");
+
+    {
+        QSqlDatabase fault = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), QStringLiteral("facade-fault"));
+        fault.setDatabaseName(directory.filePath(QStringLiteral("state.sqlite")));
+        require(fault.open(), "facade fault connection should open");
+        QSqlQuery query(fault);
+        require(query.exec(QStringLiteral("CREATE TRIGGER reject_facade BEFORE INSERT ON kv "
+                                          "WHEN NEW.key = 'theme/accent' BEGIN SELECT RAISE(ABORT, 'fault'); END")),
+            "facade persistence fault should install");
+        bool failed = false;
+        try {
+            QCoro::waitFor(recovery.applyValues({ { QStringLiteral("theme/accent"), QStringLiteral("1") } },
+                Spool::ChangeOrigin::User,
+                { { QStringLiteral("settingsSync/state/failure-test"), QStringLiteral("pending") } }));
+        } catch (const std::exception&) {
+            failed = true;
+        }
+        require(failed
+                && QCoro::waitFor(database.loadSettingAsync(QStringLiteral("settingsSync/state/failure-test")))
+                    .isEmpty(),
+            "facade failure left durable intent without its value");
+        require(query.exec(QStringLiteral("DROP TRIGGER reject_facade")), "facade persistence fault should remove");
+        const int beforeRetry = recoveryCommits;
+        recovery.cancelRemoteApplications({}, false);
+        QCoro::waitFor(recovery.retryPendingPersistence());
+        require(QCoro::waitFor(database.loadSettingAsync(QStringLiteral("theme/accent"))) == QStringLiteral("1")
+                && QCoro::waitFor(database.loadSettingAsync(QStringLiteral("settingsSync/state/failure-test")))
+                    == QStringLiteral("pending")
+                && recoveryCommits == beforeRetry,
+            "failed transaction recovery did not persist the exact value/intent without an upload echo");
+        fault.close();
+    }
+    QSqlDatabase::removeDatabase(QStringLiteral("facade-fault"));
     database.shutdown();
     return EXIT_SUCCESS;
 }

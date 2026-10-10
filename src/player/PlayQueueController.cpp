@@ -1,13 +1,14 @@
 #include "PlayQueueController.h"
 
-#include "../api/JellyfinApiFacade.h"
 #include "../common/AsyncTask.h"
+#include "../provider/PlaybackSource.h"
 
 #include <QDebug>
 #include <algorithm>
 #include <numeric>
+#include <utility>
 
-namespace JellyfinNative {
+namespace Spool {
 
 namespace {
 
@@ -99,13 +100,14 @@ namespace {
             { QStringLiteral("genericEpisodeTitle"), isGenericEpisodeTitle(item) },
             { QStringLiteral("playable"), isPlayableItem(item) },
             { QStringLiteral("resumeTicks"), item.resumeTicks },
+            { QStringLiteral("played"), item.played },
             { QStringLiteral("runtimeTicks"), item.runtimeTicks },
         };
     }
 
 } // namespace
 
-PlayQueueController::PlayQueueController(JellyfinApiFacade *api, QObject *parent)
+PlayQueueController::PlayQueueController(PlaybackSource *api, QObject *parent)
     : QAbstractListModel(parent)
     , m_api(api)
     , m_outline(new PlayQueueOutlineModel(this, this))
@@ -233,6 +235,23 @@ bool PlayQueueController::hasPlaylistItems() const
         m_entries.cbegin(), m_entries.cend(), [](const MovieItem& item) { return !item.playlistItemId.isEmpty(); });
 }
 
+MovieItem PlayQueueController::nextUnplayedEpisode(const MovieItem& episode) const
+{
+    if (episode.seriesId.isEmpty())
+        return {};
+    const MovieItem *successor = nullptr;
+    const auto completedOrder = std::pair(episode.seasonNumber, episode.episodeNumber);
+    for (const MovieItem& candidate : m_entries) {
+        const auto order = std::pair(candidate.seasonNumber, candidate.episodeNumber);
+        if (candidate.itemType != QStringLiteral("Episode") || !isPlayableItem(candidate) || candidate.played
+            || candidate.seriesId != episode.seriesId || order <= completedOrder)
+            continue;
+        if (!successor || order < std::pair(successor->seasonNumber, successor->episodeNumber))
+            successor = &candidate;
+    }
+    return successor ? *successor : MovieItem {};
+}
+
 bool PlayQueueController::updateResumeTicks(const QString& itemId, qint64 resumeTicks)
 {
     if (itemId.isEmpty())
@@ -248,6 +267,24 @@ bool PlayQueueController::updateResumeTicks(const QString& itemId, qint64 resume
         updated = true;
         // The queue is a visible list now, so a silent write leaves stale
         // progress on screen until something else rebuilds the delegates.
+        const QModelIndex changed = index(row);
+        emit dataChanged(changed, changed, { ItemRole, ProgressRole });
+    }
+    return updated;
+}
+
+bool PlayQueueController::updatePlayed(const QString& itemId, bool played)
+{
+    if (itemId.isEmpty())
+        return false;
+    bool updated = false;
+    for (int row = 0; row < rowCount(); ++row) {
+        MovieItem& item = m_entries[static_cast<size_t>(row)];
+        if (item.id != itemId || (item.played == played && item.resumeTicks == 0))
+            continue;
+        item.played = played;
+        item.resumeTicks = 0;
+        updated = true;
         const QModelIndex changed = index(row);
         emit dataChanged(changed, changed, { ItemRole, ProgressRole });
     }
@@ -429,6 +466,7 @@ bool PlayQueueController::playNow(const std::vector<MovieItem>& items, int start
     if (nextCurrent < 0)
         return false;
 
+    cancelEpisodeSuccessors();
     const int previousCurrent = currentIndex();
     beginResetModel();
     m_entries = std::move(nextEntries);
@@ -565,26 +603,44 @@ bool PlayQueueController::moveRange(int from, int count, int to)
 
 void PlayQueueController::enqueueEpisodeSuccessors(const MovieItem& episode)
 {
-    if (!m_api || episode.itemType != QStringLiteral("Episode") || episode.seriesId.isEmpty()
-        || m_api->session().accessToken.isEmpty()) {
+    cancelEpisodeSuccessors();
+    const quint64 generation = m_successorGeneration;
+    if (!m_api || episode.itemType != QStringLiteral("Episode") || episode.seriesId.isEmpty() || !m_api->signedIn()) {
+        emit successorLookupFinished(false);
         return;
     }
+    m_successorItemId = episode.id;
     Async::runScoped(
-        this, m_api->fetchEpisodes(episode.seriesId),
-        [this, episode](const std::vector<MovieItem>& episodes) {
+        this, m_api->fetchSeriesEpisodes(episode.seriesId),
+        [this, episode, generation](const std::vector<MovieItem>& episodes) {
+            if (generation != m_successorGeneration || currentItem().id != episode.id)
+                return;
+            m_successorItemId.clear();
             auto current = std::find_if(episodes.begin(), episodes.end(),
                 [&episode](const MovieItem& candidate) { return candidate.id == episode.id; });
-            if (current == episodes.end())
+            if (current == episodes.end()) {
+                emit successorLookupFinished(false);
                 return;
+            }
             std::vector<MovieItem> successors;
             std::copy_if(++current, episodes.end(), std::back_inserter(successors),
                 [](const MovieItem& item) { return !item.id.isEmpty() && isPlayableItem(item); });
-            if (playNow(successors, 0))
-                emit successorPlaybackReady();
+            const bool ready = playNow(successors, 0);
+            emit successorLookupFinished(ready);
         },
-        [](const std::exception_ptr& error) {
+        [this, generation](const std::exception_ptr& error) {
+            if (generation != m_successorGeneration)
+                return;
+            m_successorItemId.clear();
             qWarning() << "play queue: episode successor lookup failed" << exceptionMessage(error);
+            emit successorLookupFinished(false);
         });
+}
+
+void PlayQueueController::cancelEpisodeSuccessors()
+{
+    ++m_successorGeneration;
+    m_successorItemId.clear();
 }
 
 bool PlayQueueController::isQueueable(const MovieItem& item)
@@ -626,9 +682,22 @@ void PlayQueueController::setCurrentOrderIndex(int orderIndex)
 
 void PlayQueueController::emitQueueStateChanged(int previousCurrentIndex)
 {
+    // Editing other rows must not strand EOF's pending advance. A newly
+    // queued item wins over automatic series expansion; ownership changes
+    // cancel expansion, while harmless edits leave the lookup running.
     emit queueChanged();
     if (previousCurrentIndex != currentIndex())
         emit currentIndexChanged();
+    if (!m_successorItemId.isEmpty()) {
+        if (currentItem().id != m_successorItemId) {
+            cancelEpisodeSuccessors();
+            emit successorLookupFinished(false);
+        } else if (canGoNext()) {
+            cancelEpisodeSuccessors();
+            const bool ready = next();
+            emit successorLookupFinished(ready);
+        }
+    }
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

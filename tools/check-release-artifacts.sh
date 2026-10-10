@@ -15,6 +15,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 build="$root/.github/workflows/build-artifacts.yml"
 release="$root/.github/workflows/release.yml"
 status=0
+tvos_devices=0
 
 # Artifact names, not the cachix action's own `name:` input, so only the lines
 # that sit under an upload-artifact step count.
@@ -36,6 +37,11 @@ names="$(awk '
 
 while IFS= read -r name; do
   case "$name" in
+    spool-tvos-device-arm64) tvos_devices=$((tvos_devices + 1)) ;;
+    spool-tvos-*)
+      printf 'error: tvOS simulator/build inputs must be internal-*, not %s\n' "$name" >&2
+      status=1
+      ;;
     spool-*|internal-*) ;;
     *)
       printf 'error: artifact %s is neither spool-* (published) nor internal-* (a build input)\n' \
@@ -44,6 +50,10 @@ while IFS= read -r name; do
       ;;
   esac
 done <<<"$names"
+[[ "$tvos_devices" -eq 1 ]] || {
+  echo "error: expected exactly one spool-tvos-device-arm64 public artifact" >&2
+  status=1
+}
 
 grep -Fq 'pattern: spool-*' "$release" || {
   echo "error: the release download must ask for spool-* only, or internal artifacts reach the release page" >&2

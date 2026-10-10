@@ -25,7 +25,7 @@ TestCase {
         const values = {
             "playback/mpvConfigMode": "custom"
         }
-        const lookup = valueLookup(values);
+        const lookup = valueLookup(values)
         // Stands in for the Platform singleton. webOS and Android TV are both
         // televisions, so isTV alone cannot tell a webOS-only row from an
         // Android one -- which is why each platform is asked about directly.
@@ -182,5 +182,72 @@ TestCase {
         compare(model.get(3).rowKey, "suffix")
         compare(model.get(3).showHeader, true)
         model.destroy()
+    }
+
+    function test_valueRouting_data() {
+        return [
+                    {
+                        tag: "right-adjusts",
+                        mode: "row",
+                        action: "right",
+                        edit: true,
+                        next: "row",
+                        effect: "value"
+                    },
+                    {
+                        tag: "left-adjusts",
+                        mode: "row",
+                        action: "left",
+                        edit: true,
+                        next: "row",
+                        effect: "value"
+                    },
+                    {
+                        tag: "begin-edit",
+                        mode: "row",
+                        action: "activate",
+                        edit: true,
+                        next: "value-editing",
+                        effect: "begin-edit"
+                    },
+                    {
+                        tag: "editing-right",
+                        mode: "value-editing",
+                        action: "right",
+                        edit: true,
+                        next: "value-editing",
+                        effect: "value"
+                    },
+                    {
+                        tag: "finish-edit",
+                        mode: "value-editing",
+                        action: "back",
+                        edit: true,
+                        next: "row",
+                        effect: "end-edit"
+                    },
+                    {
+                        tag: "move-row",
+                        mode: "value-editing",
+                        action: "down",
+                        edit: true,
+                        next: "row",
+                        effect: "move-down"
+                    },
+                    {
+                        tag: "activate-toggle",
+                        mode: "row",
+                        action: "activate",
+                        edit: false,
+                        next: "row",
+                        effect: "activate"
+                    }
+                ]
+    }
+
+    function test_valueRouting(data) {
+        const result = SettingsNavigation.valueRoute(data.mode, data.action, data.edit)
+        compare(result.mode, data.next)
+        compare(result.effect, data.effect)
     }
 }

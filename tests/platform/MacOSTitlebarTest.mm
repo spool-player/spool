@@ -1,4 +1,5 @@
 #include "TestMain.h"
+#include "TestRequire.h"
 #include "platform/NativeAppWindow.h"
 
 #include <QGuiApplication>
@@ -9,20 +10,14 @@
 #include <iostream>
 
 namespace {
-void require(bool condition, const char *message)
-{
-    if (!condition) {
-        std::cerr << message << '\n';
-        std::exit(1);
-    }
-}
+using SpoolTests::require;
 }
 
-JELLYFIN_TEST_MAIN("macos-titlebar")
+SPOOL_TEST_MAIN("macos-titlebar")
 {
     qputenv("QT_QPA_PLATFORM", "cocoa");
     QGuiApplication app(argc, argv);
-    JellyfinNative::NativeAppWindow window(QStringLiteral("titlebar-test"));
+    Spool::NativeAppWindow window(QStringLiteral("titlebar-test"));
     window.show();
     app.processEvents();
     NSWindow *native = reinterpret_cast<NSView *>(window.winId()).window;

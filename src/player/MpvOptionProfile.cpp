@@ -11,7 +11,47 @@
 #include <cmath>
 #include <iterator>
 
-namespace JellyfinNative {
+extern "C" {
+#include <mpv/client.h>
+}
+
+namespace Spool {
+
+bool MpvOptionProfile::applyRequestHeaders(mpv_handle *handle, QByteArray headers)
+{
+    // Providers use newline-delimited HTTP fields. mpv's string setter instead
+    // parses a comma-delimited option list; pass typed nodes so header values
+    // retain commas/backslashes and no LF reaches libcurl's HTTP headers.
+    std::vector<mpv_node> fields;
+    if (!headers.isEmpty()) {
+        fields.reserve(static_cast<size_t>(headers.count('\n') + 1));
+        char *const data = headers.data();
+        const qsizetype size = headers.size();
+        qsizetype start = 0;
+        for (qsizetype end = 0; end <= size; ++end) {
+            if (end != size && data[end] != '\n')
+                continue;
+            if (end < size)
+                data[end] = '\0';
+            if (end > start && data[end - 1] == '\r')
+                data[end - 1] = '\0';
+            if (data[start]) {
+                mpv_node field {};
+                field.format = MPV_FORMAT_STRING;
+                field.u.string = data + start;
+                fields.push_back(field);
+            }
+            start = end + 1;
+        }
+    }
+    mpv_node_list list {};
+    list.num = static_cast<int>(fields.size());
+    list.values = fields.data();
+    mpv_node node {};
+    node.format = MPV_FORMAT_NODE_ARRAY;
+    node.u.list = &list;
+    return mpv_set_property(handle, "http-header-fields", MPV_FORMAT_NODE, &node) >= 0;
+}
 
 QByteArray MpvOptionProfile::inputKey(int key, int modifiers, const QString& text)
 {
@@ -541,7 +581,11 @@ std::vector<MpvOption> MpvOptionProfile::applicationOptions(Platform platform, b
             options.push_back({ "ao", "audiotrack,opensles,null" });
     } else {
         options.push_back({ "vo", needsVideoSurface ? "libmpv" : "null" });
+#if defined(SPOOL_APPLE_MOBILE)
+        options.push_back({ "audio-fallback-to-null", "no" });
+#else
         options.push_back({ "audio-fallback-to-null", "yes" });
+#endif
         // Everything above this line ran at libplacebo's defaults before,
         // which is a great deal of work for a Mali-class part to do sixty
         // times a second.
@@ -556,7 +600,9 @@ std::vector<MpvOption> MpvOptionProfile::applicationOptions(Platform platform, b
             // hardware and read the frames back.
             options.push_back({ "hwdec", "mediacodec-copy" });
         } else {
-#if defined(Q_OS_LINUX)
+#if defined(SPOOL_APPLE_MOBILE)
+            options.push_back({ "hwdec", "videotoolbox-copy" });
+#elif defined(Q_OS_LINUX)
             options.push_back({ "hwdec", "auto-copy" });
 #else
             options.push_back({ "hwdec", "auto-safe" });
@@ -572,6 +618,11 @@ std::vector<MpvOption> MpvOptionProfile::applicationOptions(Platform platform, b
             options.push_back({ "ao", "audiotrack,opensles,null" });
         }
     }
+#if defined(SPOOL_APPLE_MOBILE)
+    // AudioUnit otherwise enables MixWithOthers and defeats interruption focus.
+    options.push_back({ "ao", "audiounit" });
+    options.push_back({ "audio-exclusive", "yes" });
+#endif
 
     const MpvOption applicationOptions[] = {
         { "osd-bar", "no" },
@@ -777,4 +828,4 @@ std::vector<MpvOption> MpvOptionProfile::subtitleOptions(
     };
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

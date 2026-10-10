@@ -16,16 +16,16 @@ for breaking down a resident heap footprint.
   webOS sysroot has no elfutils/libdw, so the device only records a *raw* trace;
   symbolisation happens on the desktop. Runtime deps (libunwind, libstdc++ with
   `CXXABI_1.3.15`) are satisfied by the TV + the app's bundled `libstdc++.so.6.0.33`.
-- **Launch shim:** `app/bin/jellyfin-native` is a tiny shell shim. It is a
-  transparent passthrough to `jellyfin-native.real` **unless** the marker file
-  `/tmp/jellyfin-heaptrack.on` exists, in which case it `LD_PRELOAD`s heaptrack
+- **Launch shim:** `app/bin/spool` is a tiny shell shim. It is a
+  transparent passthrough to `spool.real` **unless** the marker file
+  `/tmp/spool-heaptrack.on` exists, in which case it `LD_PRELOAD`s heaptrack
   for that one launch (one-shot) and writes the trace path to
-  `/tmp/jellyfin-heaptrack.last`. A failed/absent preload is non-fatal, so normal
+  `/tmp/spool-heaptrack.last`. A failed/absent preload is non-fatal, so normal
   playback can never break.
 - **Desktop side (analysis):** `heaptrack_interpret` + `heaptrack_gui` from
   nixpkgs. Symbols are resolved against a sysroot assembled from the live
   process's own `/proc/<pid>/maps` (exactly the loaded modules) plus the
-  unstripped `build/jellyfin-native.unstripped` via `--extra-paths` (build-id
+  unstripped `build/spool.unstripped` via `--extra-paths` (build-id
   matched).
 
 ## Build and install the recorder
@@ -59,7 +59,7 @@ Useful options: `--no-stop` (leave the app running; partial-but-live trace),
 instead of from the first play event, or `PLAY_WAIT=SEC` to change that wait.
 
 Output lands in `build/memory/heaptrack/<timestamp>/`:
-`heaptrack.jellyfin.gz` (open in `heaptrack_gui`), `summary.txt`
+`heaptrack.spool.gz` (open in `heaptrack_gui`), `summary.txt`
 (`heaptrack_print`), `maps.txt`, and `smaps_rollup.txt` (RSS breakdown).
 
 ## Reading the result for the +350 MB question

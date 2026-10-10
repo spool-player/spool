@@ -1,5 +1,5 @@
 import QtQuick
-import JellyfinWebOS
+import Spool
 import "../primitives"
 
 FocusScope {
@@ -9,6 +9,9 @@ FocusScope {
     property bool mediaInfoVisible: false
     property bool diagnosticsVisible: false
     readonly property bool directionRelease: true
+    readonly property bool modalInputActive: playerOverlay.subtitleSettingsVisible || playerOverlay.audioSyncVisible
+                                             || playerOverlay.queuePanelVisible || playerOverlay.browsePanelVisible
+                                             || playerOverlay.isMenuOpen()
     readonly property bool titlebarVisible: !active || playerOverlay.controlsVisible
     onTitlebarVisibleChanged: {
         if (Qt.platform.os === "osx")
@@ -59,6 +62,13 @@ FocusScope {
         focusInput()
     }
 
+    function openPlaybackSetting(key) {
+        if (!active || !playerOverlay.openPlaybackSetting(key))
+            return false
+        focusInput()
+        return true
+    }
+
     function toggleOsd() {
         if (playerOverlay.controlsVisible)
             playerOverlay.hideControls()
@@ -84,6 +94,7 @@ FocusScope {
     // Registered dynamically by main.cpp, so no static .qmltypes entry exists.
     MpvVideoItem {
         anchors.fill: parent
+        hdrOutput: NativeWindow.hdrOutput
         visible: root.active && Player.embeddedVideoOutput
         opacity: 1.0
         z: 0

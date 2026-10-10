@@ -255,11 +255,59 @@
         "dovi_split"
       ]
     },
+    "ios": {
+      "gpl": false,
+      "configureFlags": [
+        "--enable-network",
+        "--enable-securetransport",
+        "--enable-audiotoolbox",
+        "--enable-videotoolbox"
+      ],
+      "hardwareAccelerators": [
+        "av1_videotoolbox",
+        "h263_videotoolbox",
+        "h264_videotoolbox",
+        "hevc_videotoolbox",
+        "mpeg1_videotoolbox",
+        "mpeg2_videotoolbox",
+        "mpeg4_videotoolbox",
+        "prores_videotoolbox",
+        "vp9_videotoolbox"
+      ],
+      "protocols": [],
+      "bitstreamFilters": [
+        "dovi_split"
+      ]
+    },
     "macos": {
       "gpl": false,
       "configureFlags": [
         "--enable-network",
         "--enable-gnutls",
+        "--enable-audiotoolbox",
+        "--enable-videotoolbox"
+      ],
+      "hardwareAccelerators": [
+        "av1_videotoolbox",
+        "h263_videotoolbox",
+        "h264_videotoolbox",
+        "hevc_videotoolbox",
+        "mpeg1_videotoolbox",
+        "mpeg2_videotoolbox",
+        "mpeg4_videotoolbox",
+        "prores_videotoolbox",
+        "vp9_videotoolbox"
+      ],
+      "protocols": [],
+      "bitstreamFilters": [
+        "dovi_split"
+      ]
+    },
+    "tvos": {
+      "gpl": false,
+      "configureFlags": [
+        "--enable-network",
+        "--enable-securetransport",
         "--enable-audiotoolbox",
         "--enable-videotoolbox"
       ],

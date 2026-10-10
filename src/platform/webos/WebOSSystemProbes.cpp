@@ -7,7 +7,7 @@
 #include <cstdio>
 #include <malloc.h>
 
-namespace JellyfinNative {
+namespace Spool {
 namespace {
     constexpr qint64 kMiB = 1024LL * 1024LL;
 
@@ -125,4 +125,4 @@ QString platformProcessMemoryDiagnostics()
         .arg(mmap / bytesPerMiB);
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

@@ -2,7 +2,7 @@
 
 #include <QString>
 
-namespace JellyfinNative {
+namespace Spool {
 
 struct MpvConfigPolicy {
     enum class Mode {
@@ -20,4 +20,4 @@ struct MpvConfigPolicy {
 
 MpvConfigPolicy validatedPlatformMpvConfigPolicy(const QString& mode, const QString& directory);
 
-} // namespace JellyfinNative
+} // namespace Spool

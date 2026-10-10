@@ -2,7 +2,7 @@
 
 ## Project
 
-- Spool for Jellyfin client for webOS and desktop.
+- Spool: a media player for webOS, desktop and Android.
 - Prefer a smaller, faster, easier-to-extend codebase over compatibility scaffolding or speculative abstractions.
 - The app is prerelease software: bump/reset caches on schema changes instead of adding migrations or fallback readers.
 - `mpv/` is a submodule. Commit mpv changes inside `mpv/`, then commit its pointer here.
@@ -29,18 +29,33 @@
 
 ## Module Seam
 
-The goal is one core that several backends can sit on (spool-jellyfin,
-spool-plex, spool-stremio). `CMakeLists.txt` groups sources into
-`SPOOL_PLATFORM_SOURCES`, `SPOOL_PLAYER_SOURCES`, `SPOOL_SHELL_SOURCES` and
-`SPOOL_JELLYFIN_SOURCES` to mark where that cut goes. They still build as one
-library; the grouping exists so the split stays mechanical.
+The app knows no media backend. Every source is a provider package (JS logic
+and QML screens) run by `src/provider/`; `docs/providers.md` describes the
+pieces and `sdk/` is the current format-3 provider contract. Jellyfin, Emby, Plex and
+Stremio live in their `spool-player/spool-*` repositories; Open Movies lives in
+`spool-player/spool-provider-example`. All five are bundled from digest-pinned
+archives in `providers/lock.json`. Providers and host cut over together; do not add
+compatibility shims for older provider/host builds.
 
-- Do not add a `src/api/` or `src/discovery/` include to the platform, player
-  or shell groups. Four such dependencies already exist and are the work a
-  split has to undo first: `PlayerController`, `PlaybackReporter`,
-  `PlayQueueController` and `SettingsController` each take a
-  `JellyfinApiFacade`, and `configurePlatformPlaybackCapabilities()` is
-  handed one.
+- Core is everything under `src/` except `src/providers/` (native providers;
+  only `LocalProvider` today) and `src/main.cpp`, the composition root. Core
+  never includes `src/providers/`; `tools/check-module-seam.sh` is the
+  `module-seam` ctest.
+- The app sees one `Provider`, `SourceHub`, which routes to every enabled
+  account. IDs leaving it are scoped (`<8 hex>:<id>`) and stay opaque to
+  routes, caches and QML. Pages reach media through `Catalog`,
+  `SearchSource`, `UserItemStateSink`, `ArtworkSource`, `PlaybackSource` and
+  `StreamQualityControl`, never a provider type.
+- Shared QML gates optional controls on the `ProviderCapabilities` singleton
+  (search, userItemState, playbackReporting, segments, groupPlayback,
+  remoteControl, streamQuality, trickplay): what the enabled accounts can do
+  between them. Provider-specific UI is the provider's own QML, mounted by
+  `shell/ProviderSurface` with a `ProviderUiContext`; item-menu entries come
+  from the manifest's `actions`.
+- Group playback and remote control are generic (`GroupPlaybackController`,
+  `AppControllerRemote.cpp`); providers translate their protocol into
+  `group` and `remote` events. Do not touch `src/player` or
+  `qml/pages/Player*` for provider work beyond renames.
 - `qml/primitives` and `qml/theme` reach exactly two singletons, `Art.url` and
   `Settings.uiScalePercent`. Keep it that way; page- and shell-level QML is
   where backend-shaped data belongs.
@@ -52,6 +67,12 @@ library; the grouping exists so the split stays mechanical.
 - `tools/manifests/toolchain.json` sets the Qt and FFmpeg versions for every
   platform. Nothing else may name one; `tools/toolchain-versions.sh --check`
   is what CI runs to keep the Qt module manifests honest.
+- Qt source manifests use the official-listed FAU archive mirror rather than a
+  geo-selected redirect. Mirror changes must preserve version/module SHA-256 pins;
+  verify the full archive digest before changing a source URL.
+- webOS GCC coroutine calls use named argument maps before `co_await`; nesting
+  a member expression inside a temporary argument aggregate triggered a compiler
+  internal error. Keep the wire arguments unchanged when restructuring such calls.
 - The launch screen carries the version, so it is rendered per build by
   `tools/generate-splash.sh` from `tools/manifests/splash.json` and is not
   committed. Configuring the app is enough to get it on every platform.
@@ -61,11 +82,29 @@ library; the grouping exists so the split stays mechanical.
 - Launch the native release app with `nix run`. Clean Git revisions substitute the immutable package from Cachix; dirty tracked changes use the incremental checkout build.
 - Launch the already-built native release app without rebuilding with `nix run .#run`. It fails with a build-command hint when the binary is missing.
 - Build without launching with `nix run .#build`.
-- Run the test suite the way CI does with `nix run .#tests` (release build, then the same ctest invocation and exclusions as the workflow).
+- Run the test suite the way CI does with `nix run .#tests` (release build, then `python tools/run-tests.py --build-dir <dir> --workers N`: traditional selectors finish before real GUI e2e; failures aggregate without GPU exclusions).
 - Leave interactive UI testing to the user. Do not drive their desktop with xdotool/xdgtool or similar input automation, or launch visible smoke tests unless explicitly requested. Use builds and isolated/offscreen checks for verification.
-- Use `nix develop .#native -c ...` for targeted development commands (e.g. `cmake --preset linux-dev`, then `cmake --build build/linux-dev/app --target jellyfin-native`).
+- Use `nix develop .#native -c ...` for targeted development commands (e.g. `cmake --preset linux-dev`, then `cmake --build build/linux-dev/app --target spool`).
 - The image-diagnostics equivalents remain `nix run .#image-debug-build` followed by `nix run .#image-debug`.
 - Batch coherent edits, then run one build and one `qmlformat`/`clang-format` invocation over all touched files; don't build or format file-by-file.
+
+### Filtered preview diagnostics
+
+- Trace is opt-in: `QT_LOGGING_RULES='spool.provider.trace.debug=true'`.
+  Enable it only for the shortest necessary inspection, then unset it.
+- Never print or share unfiltered app logs, diagnostics JSON, provider responses,
+  credential stores, URLs, request headers, or account configuration. Restoration
+  must use the real app's existing credential path, never pasted tokens.
+- Always filter trace output before displaying it: select only `preview metadata`,
+  `preview session`, `preview fetch failed`, and `preview load failed` messages
+  from `spool.provider.trace`. Prefer an explicit field allowlist (item ID,
+  enabled, availability, format, dimensions/count, numeric network/status codes,
+  frame/speculative). Redact authentication, URL/query, user/account and path
+  values even if upstream logging is already sanitized.
+- `spoolet` may inspect restored-account library rows and drive an explicitly
+  requested offscreen preview smoke. Filter JSON to the required titles, IDs,
+  player/preview state and dimensions. Never dump raw provider payloads or
+  support reports to discover preview availability.
 
 ## webOS
 

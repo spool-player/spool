@@ -1,9 +1,10 @@
 #include "../CredentialStore.h"
 #include "../common/CredentialStoreFileBackend.h"
 
+#include <QDebug>
 #include <QProcess>
 
-namespace JellyfinNative::CredentialStore {
+namespace Spool::CredentialStore {
 namespace {
 
     struct SecretResult {
@@ -17,22 +18,27 @@ namespace {
         process.setProgram(QStringLiteral("secret-tool"));
         process.setArguments(arguments);
         process.start();
-        if (!process.waitForStarted(3000))
+        if (!process.waitForStarted(3000)) {
+            qWarning() << "credential store: secret-tool could not start; check the Linux runtime prerequisites";
             return {};
+        }
         if (!input.isEmpty()) {
             process.write(input);
             process.closeWriteChannel();
         }
-        if (!process.waitForFinished(10000))
+        if (!process.waitForFinished(10000)) {
+            qWarning() << "credential store: secret-tool timed out";
+            process.kill();
+            process.waitForFinished();
             return {};
+        }
         return { process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0,
             process.readAllStandardOutput() };
     }
 
     QStringList attributes(const QString& profileId)
     {
-        return { QStringLiteral("application"), QStringLiteral("jellyfin-native"), QStringLiteral("profile"),
-            profileId };
+        return { QStringLiteral("application"), QStringLiteral("spool"), QStringLiteral("profile"), profileId };
     }
 
 } // namespace
@@ -54,7 +60,7 @@ bool save(const QString& profileId, const QString& accessToken)
     if (FileBackend::enabled())
         return FileBackend::save(profileId, accessToken);
     return runSecretTool(
-        QStringList { QStringLiteral("store"), QStringLiteral("--label=Spool for Jellyfin") } + attributes(profileId),
+        QStringList { QStringLiteral("store"), QStringLiteral("--label=Spool") } + attributes(profileId),
         accessToken.toUtf8())
         .success;
 }
@@ -76,7 +82,7 @@ void clear()
         FileBackend::clear();
         return;
     }
-    runSecretTool({ QStringLiteral("clear"), QStringLiteral("application"), QStringLiteral("jellyfin-native") });
+    runSecretTool({ QStringLiteral("clear"), QStringLiteral("application"), QStringLiteral("spool") });
 }
 
-} // namespace JellyfinNative::CredentialStore
+} // namespace Spool::CredentialStore

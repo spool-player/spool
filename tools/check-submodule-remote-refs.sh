@@ -5,8 +5,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODE="${1:---head}"
 ZERO_SHA="0000000000000000000000000000000000000000"
 
-if [[ "${JELLYFIN_SKIP_SUBMODULE_REMOTE_CHECK:-0}" == "1" ]]; then
-  echo "Skipping submodule remote check because JELLYFIN_SKIP_SUBMODULE_REMOTE_CHECK=1" >&2
+if [[ "${SPOOL_SKIP_SUBMODULE_REMOTE_CHECK:-0}" == "1" ]]; then
+  echo "Skipping submodule remote check because SPOOL_SKIP_SUBMODULE_REMOTE_CHECK=1" >&2
   exit 0
 fi
 
@@ -56,11 +56,16 @@ collect_submodule_refs() {
   done | sort -u
 }
 
-check_ref() {
+check_ref() (
   local name="$1" path="$2" sha="$3" parent_commit="$4"
-  local url branch submodule_dir
+  local url branch submodule_dir git_variable
   url="$(git -C "$ROOT" config -f "$ROOT/.gitmodules" --get "submodule.$name.url" || true)"
   branch="$(git -C "$ROOT" config -f "$ROOT/.gitmodules" --get "submodule.$name.branch" || true)"
+  # Hooks export superproject repository selectors. Clear them only in this
+  # foreign-repository subshell, after reading the superproject metadata.
+  while IFS= read -r git_variable; do
+    unset "$git_variable"
+  done < <(git -C "$ROOT" rev-parse --local-env-vars)
   [[ -n "$url" ]] || url="$(git -C "$ROOT/$path" remote get-url origin 2>/dev/null || true)"
   [[ -n "$branch" ]] || branch="HEAD"
   submodule_dir="$ROOT/$path"
@@ -100,7 +105,7 @@ Push the submodule commit first, then retry the parent repository push:
 EOF
     return 1
   fi
-}
+)
 
 refs_file="$(mktemp)"
 trap 'rm -f "$refs_file"' EXIT

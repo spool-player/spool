@@ -4,7 +4,7 @@
 
 #include <memory>
 
-namespace JellyfinNative {
+namespace Spool {
 
 struct PlatformPerformanceSample {
     // Whether this process's own CPU time could be read. On Android that is
@@ -48,4 +48,4 @@ private:
     std::unique_ptr<PlatformData> m_platform;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool

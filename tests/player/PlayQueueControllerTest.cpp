@@ -1,24 +1,26 @@
 #include "player/PlayQueueController.h"
+#include "provider/PlaybackSource.h"
+
+#include <QCoroFuture>
 
 #include "TestMain.h"
+#include "TestRequire.h"
 
 #include <QCoreApplication>
+#include <QElapsedTimer>
+#include <QPromise>
+#include <QThread>
 
 #include <cstdlib>
 #include <iostream>
+#include <memory>
 #include <vector>
 
-using namespace JellyfinNative;
+using namespace Spool;
 
 namespace {
 
-void require(bool condition, const char *message)
-{
-    if (condition)
-        return;
-    std::cerr << message << '\n';
-    std::exit(EXIT_FAILURE);
-}
+using SpoolTests::require;
 
 MovieItem item(QString id, QString title, QString playlistItemId = {})
 {
@@ -37,7 +39,76 @@ QString idAt(const PlayQueueController& queue, int index)
 
 } // namespace
 
-JELLYFIN_TEST_MAIN("play-queue-controller")
+namespace {
+class EpisodeSource final : public PlaybackSource {
+public:
+    QByteArray mediaRequestHeaders() const override
+    {
+        return {};
+    }
+    QUrl mediaOrigin() const override
+    {
+        return {};
+    }
+    int playbackParallelRequests() const override
+    {
+        return 1;
+    }
+    bool signedIn() const override
+    {
+        return true;
+    }
+    QCoro::Task<PlaybackSession> resolvePlayback(MovieItem, bool) override
+    {
+        co_return PlaybackSession {};
+    }
+    QCoro::Task<std::vector<MediaSegment>> fetchMediaSegments(QString) override
+    {
+        co_return std::vector<MediaSegment> {};
+    }
+    QCoro::Task<void> reportPlaybackStart(PlaybackSession, double, int, bool) override
+    {
+        co_return;
+    }
+    QCoro::Task<void> reportPlaybackProgress(PlaybackSession, qint64, bool, double, int, bool) override
+    {
+        co_return;
+    }
+    QCoro::Task<void> reportPlaybackStopped(PlaybackSession, qint64, bool, double) override
+    {
+        co_return;
+    }
+
+    QCoro::Task<std::vector<MovieItem>> fetchSeriesEpisodes(QString seriesId) override
+    {
+        requestedSeries = std::move(seriesId);
+        pending = std::make_unique<QPromise<std::vector<MovieItem>>>();
+        pending->start();
+        auto awaitable = qCoro(pending->future());
+        auto episodes = co_await awaitable.takeResult();
+        ++completedRequests;
+        co_return episodes;
+    }
+    void reply(const std::vector<MovieItem>& episodes)
+    {
+        const int previous = completedRequests;
+        pending->addResult(episodes);
+        pending->finish();
+        QElapsedTimer timer;
+        timer.start();
+        while (completedRequests == previous && timer.elapsed() < 5000) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+            QThread::msleep(1);
+        }
+        require(completedRequests > previous, "episode context request completes");
+    }
+    QString requestedSeries;
+    int completedRequests = 0;
+    std::unique_ptr<QPromise<std::vector<MovieItem>>> pending;
+};
+} // namespace
+
+SPOOL_TEST_MAIN("play-queue-controller")
 {
     QCoreApplication app(argc, argv);
 
@@ -250,6 +321,91 @@ JELLYFIN_TEST_MAIN("play-queue-controller")
     MovieItem blocked = item(QStringLiteral("x"), QStringLiteral("Blocked"));
     blocked.itemType = QStringLiteral("Series");
     require(!queue.playNow(blocked), "unplayable item should not become the queue");
+
+    EpisodeSource source;
+    PlayQueueController episodicQueue(&source);
+    MovieItem completed = item(QStringLiteral("0123abcd:episode-1"), QStringLiteral("First"));
+    completed.seriesId = QStringLiteral("0123abcd:series");
+    completed.seasonNumber = 1;
+    completed.episodeNumber = 1;
+    MovieItem successor = item(QStringLiteral("0123abcd:episode-2"), QStringLiteral("Next"));
+    successor.seriesId = completed.seriesId;
+    successor.seasonNumber = 1;
+    successor.episodeNumber = 2;
+    successor.resumeTicks = 100'000'000;
+    MovieItem laterSeason = successor;
+    laterSeason.id = QStringLiteral("0123abcd:season-2-first");
+    laterSeason.seasonNumber = 2;
+    laterSeason.episodeNumber = 1;
+    MovieItem otherViewer = successor;
+    otherViewer.id = QStringLiteral("89abcdef:episode-2");
+    otherViewer.seriesId = QStringLiteral("89abcdef:series");
+    MovieItem watched = successor;
+    watched.id = QStringLiteral("0123abcd:watched");
+    watched.played = true;
+    require(episodicQueue.playNow({ laterSeason, otherViewer, watched, successor, completed }, 4),
+        "manual queue order can differ from chronological Next Up");
+    require(episodicQueue.nextUnplayedEpisode(completed).id == successor.id,
+        "Next Up selects the nearest unplayed chronological episode from this scoped series, not queue order");
+    require(episodicQueue.updatePlayed(successor.id, true), "completed queue episode must accept played state");
+    require(episodicQueue.itemAt(3).played && episodicQueue.itemAt(3).resumeTicks == 0
+            && episodicQueue.get(3).value(QStringLiteral("played")).toBool(),
+        "completion must clear queue progress and publish watched state to item-details consumers");
+    require(episodicQueue.nextUnplayedEpisode(completed).id == laterSeason.id,
+        "a completed queue episode must not remain eligible as the nearest unplayed successor");
+    require(!episodicQueue.itemAt(1).played, "completion must not change another account's queued episode");
+    require(episodicQueue.updatePlayed(successor.id, false)
+            && !episodicQueue.get(3).value(QStringLiteral("played")).toBool()
+            && episodicQueue.nextUnplayedEpisode(completed).id == successor.id,
+        "mark unwatched must restore queue successor eligibility without stale progress");
+    MovieItem unavailable = successor;
+    unavailable.id = QStringLiteral("0123abcd:missing");
+    unavailable.itemType = QStringLiteral("Series");
+    const std::vector<MovieItem> context { completed, unavailable, successor };
+    int lookups = 0;
+    int ready = 0;
+    QObject::connect(
+        &episodicQueue, &PlayQueueController::successorLookupFinished, &episodicQueue, [&](bool available) {
+            ++lookups;
+            ready += available;
+        });
+    require(episodicQueue.playNow(completed), "isolated episode starts with no successor in its queue");
+    episodicQueue.enqueueEpisodeSuccessors(completed);
+    require(source.requestedSeries == completed.seriesId, "successor lookup retains the provider-scoped series ID");
+    source.reply(context);
+    require(ready == 1 && episodicQueue.currentItem().id == successor.id && episodicQueue.count() == 1,
+        "episode context selects the next playable scoped episode");
+
+    episodicQueue.enqueueEpisodeSuccessors(successor);
+    source.reply(context);
+    require(lookups == 2 && ready == 1 && episodicQueue.currentItem().id == successor.id,
+        "the final episode finishes its lookup without replaying or clearing the current item");
+
+    require(episodicQueue.playNow(completed), "completed episode starts a deferred lookup");
+    episodicQueue.enqueueEpisodeSuccessors(completed);
+    const MovieItem explicitlyQueued = item(QStringLiteral("89abcdef:manual-next"), QStringLiteral("Manual next"));
+    require(episodicQueue.addToQueue(explicitlyQueued), "a pending user queue request completes during lookup");
+    require(ready == 2 && episodicQueue.currentItem().id == explicitlyQueued.id,
+        "a newly queued successor must settle automatic advancement immediately");
+    source.reply(context);
+    require(ready == 2 && episodicQueue.currentItem().id == explicitlyQueued.id && episodicQueue.count() == 2,
+        "late automatic context must not replace the explicitly queued successor");
+
+    for (int cancellation = 0; cancellation < 3; ++cancellation) {
+        require(episodicQueue.playNow(completed), "completed episode is restored for delayed lookup");
+        episodicQueue.enqueueEpisodeSuccessors(completed);
+        if (cancellation == 0)
+            episodicQueue.cancelEpisodeSuccessors();
+        else if (cancellation == 1)
+            episodicQueue.clear();
+        else
+            require(episodicQueue.playNow(item(QStringLiteral("89abcdef:other"), QStringLiteral("Other account"))),
+                "another provider replaces the queue during lookup");
+        const QString expected = episodicQueue.currentItem().id;
+        source.reply(context);
+        require(ready == 2 && episodicQueue.currentItem().id == expected,
+            "manual stop, clear, or replacement prevents late episode context from restarting playback");
+    }
 
     return EXIT_SUCCESS;
 }

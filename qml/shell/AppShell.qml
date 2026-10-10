@@ -59,6 +59,43 @@ KeyRouter {
     }
 
     Binding {
+        target: Theme
+        property: "accentIndex"
+        value: Number(Settings.values["theme/accent"])
+        restoreMode: Binding.RestoreNone
+    }
+    Binding {
+        target: Theme
+        property: "reducedMotion"
+        value: Boolean(Settings.values["theme/reducedMotion"])
+        restoreMode: Binding.RestoreNone
+    }
+    Binding {
+        target: Theme
+        property: "technicalMetadataMode"
+        value: String(Settings.values["theme/technicalMetadata"])
+        restoreMode: Binding.RestoreNone
+    }
+    Binding {
+        target: Theme
+        property: "sideRailLabels"
+        value: String(Settings.values["theme/railLabels"])
+        restoreMode: Binding.RestoreNone
+    }
+    Binding {
+        target: Theme
+        property: "antialiasedText"
+        value: Boolean(Settings.values["theme/antialiasedText"])
+        restoreMode: Binding.RestoreNone
+    }
+    Binding {
+        target: Theme
+        property: "normalTextRenderType"
+        value: Number(Settings.values["theme/renderMode"])
+        restoreMode: Binding.RestoreNone
+    }
+
+    Binding {
         target: Metrics
         property: "coarsePointer"
         value: true
@@ -123,21 +160,15 @@ KeyRouter {
     focus: true
     backspaceNavigatesInTextInput: Platform.isTV
     webOsScanCodes: Platform.isTV
+    tvOsRemote: Boolean(Platform.isTVOS)
     platformMayPairHolds: Platform.isAndroid && Platform.isTV
 
     readonly property string route: Router.route
     readonly property var routeArgs: Router.args || ({})
-    property bool remoteConnectionKnown: false
-    property string lastRemoteTargetName: ""
-    onRouteChanged: {
-        root.exitArmedAt = 0
-        if (route === "remoteControl" && !RemoteControl.targetSelected) {
-            Qt.callLater(function () {
-                if (root.route === "remoteControl" && !RemoteControl.targetSelected)
-                    root.goHome()
-            })
-        }
-    }
+    // Routes that stand outside browsing: no rail, no now-playing chrome.
+    readonly property bool setupRoute: chromeRoute === "addProvider" || chromeRoute === "providerScreen"
+    readonly property bool signedIn: Providers.hasAccounts || Downloads.jobs.some(job => job.state === "complete")
+    onRouteChanged: root.exitArmedAt = 0
 
     // Back is how an Android app is left, and at the top of the stack there is
     // nowhere further to go. Nothing here ever exited, so the press did
@@ -150,35 +181,64 @@ KeyRouter {
     readonly property bool backExitsAtRoot: Platform.isAndroid
     property int exitConfirmWindowMs: 3000
     property double exitArmedAt: 0
-    property bool diagnosticsVisible: false
-    property string switchUserReturnProfileId: ""
-    property string switchUserReturnRoute: ""
-    property var switchUserReturnArgs: ({})
-    property bool switchUserReturnPending: false
-    readonly property bool canCancelSwitchUser: switchUserReturnProfileId.length > 0
+    readonly property bool diagnosticsVisible: Boolean(Settings.values["shell/diagnostics"])
     property bool mediaInfoVisible: false
     property bool itemMenuLoaded: false
     property int uiScaleShortcutKey: 0
     property int searchShortcutKey: 0
     property int settingsShortcutKey: 0
+    property int openFilesShortcutKey: 0
+    readonly property bool desktopFilesAvailable: Platform.hasDesktopPointer && !Platform.isTV
+    readonly property var fileDropDialog: fileDropDialogLoader.item
+    readonly property var activePage: routeStack.activeItem
+    readonly property bool pageInputOwned: Boolean(activePage && (activePage.modalVisible || activePage.choiceVisible
+                                                                  || activePage.resetVisible || activePage.editingKey))
+    readonly property bool unrelatedFileInputOwned: textInputActive || setupRoute || Providers.startupChoicePending
+                                                    || startupSplash.visible || updateDialog.open || tlsTrustPending
+                                                    || networkConsentPending || remoteGroupConfirmationPending
+                                                    || providerOverlay !== null || Downloads.opened || itemMenuOpen
+                                                    || mediaInfoVisible || navBar.menuOpen || pageInputOwned || (
+                                                        videoSurface.active && videoSurface.modalInputActive)
+    readonly property bool fileInputBlocked: unrelatedFileInputOwned || (providerInstallDialog.visible && (
+                                                                             !fileDropDialog || fileDropDialog.phase
+                                                                             !== "installing"))
     readonly property bool itemMenuOpen: itemContextMenuLoader.item ? itemContextMenuLoader.item.opened : false
     readonly property bool tlsTrustPending: TlsTrust.pending
+    readonly property var networkConsent: Providers.networkConsent || ({})
+    readonly property bool networkConsentPending: Boolean(networkConsent.id)
+    readonly property bool remoteGroupConfirmationPending: RemoteTargets.groupLeaveConfirmationPending
+    readonly property bool remoteControlsVisible: contentLayer.visible && (chromeRoute === "remoteControl"
+                                                                           || remoteMini.visible)
+    onRemoteControlsVisibleChanged: RemoteTargets.setControlsVisible(remoteControlsVisible)
     property var mediaInfoItem: ({})
-    property bool managementOverlayVisible: false
-    property string managementMode: ""
-    property var managementItem: ({})
+    // A provider screen asked for while something plays (a release picker).
+    property var providerOverlay: null
+    property var downloadsReturnFocus: null
+    property bool downloadsDestinationRequested: false
     property var personItem: ({})
     property var pendingPlaybackBackItem: ({})
     textInputActive: Qt.inputMethod.visible || InputKeys.isTextInputItem(root.Window.window
                                                                          ? root.Window.window.activeFocusItem : null)
     property var navigationTarget: routeStack
-    activeTarget: updateDialog.open ? updateDialog : tlsTrustPending ? tlsTrustDialog : managementOverlayVisible
-                                                                       ? managementOverlayLoader.item : itemMenuOpen
-                                                                         ? itemContextMenuLoader.item :
-                                                                           mediaInfoVisible
-                                                                           ? mediaInfoOverlayLoader.item : hasPlayer
-                                                                             && player.visible ? videoSurface :
-                                                                                                 navigationTarget
+    activeTarget: updateDialog.open ? updateDialog : tlsTrustPending ? tlsTrustDialog : networkConsentPending
+                                                                       ? networkConsentLoader.item :
+                                                                         providerInstallDialog.visible
+                                                                         ? providerInstallDialog : fileDropDialog
+                                                                           && fileDropDialog.visible ? fileDropDialog :
+                                                                                                       remoteGroupConfirmationPending
+                                                                                                       ? remoteGroupConfirmationLoader.item :
+                                                                                                         providerOverlay
+                                                                                                         ? providerOverlayLoader.item :
+                                                                                                           Downloads.opened
+                                                                                                           ? downloadsDialogLoader.item :
+                                                                                                             itemMenuOpen
+                                                                                                             ? itemContextMenuLoader.item :
+                                                                                                               mediaInfoVisible
+                                                                                                               ? mediaInfoOverlayLoader.item :
+                                                                                                                 hasPlayer
+                                                                                                                 && player.visible
+                                                                                                                 ? videoSurface :
+                                                                                                                   navigationTarget
     backHandler: function () {
         return root.back()
     }
@@ -324,42 +384,51 @@ KeyRouter {
                                "returnRoute": root.route
                            })
         }
-        function onRemoteSeekPreviewRequested(positionTicks, active) {
-            videoSurface.showRemoteSeekPreview(Number(positionTicks) / 10000000, active)
-        }
     }
 
     Connections {
-        target: RemoteControl
-        function onTargetChanged() {
-            if (RemoteControl.targetSelected) {
-                const name = RemoteControl.selectedTargetName || "remote device"
-                if (!root.remoteConnectionKnown || root.lastRemoteTargetName !== name)
-                    toast.show("Connected to " + name, toast.briefDurationMs)
-                root.remoteConnectionKnown = true
-                root.lastRemoteTargetName = name
-                return
-            }
-            if (!root.remoteConnectionKnown)
-                return
-            const targetName = root.lastRemoteTargetName || "remote device"
-            root.remoteConnectionKnown = false
-            root.lastRemoteTargetName = ""
-            if (root.route === "remoteControl")
-                root.goHome()
-            toast.show("Disconnected from " + targetName, toast.briefDurationMs)
+        target: Providers
+        function onRestoredChanged() {
+            if (App.initialized)
+                root.applyInitializedRoute()
         }
+        function onAccountSetupStarted(accountId) {
+            Router.reset("accounts", {
+                             "onboarding": accountId
+                         })
+            root.navigationTarget = routeStack
+            InputKeys.focus(routeStack)
+        }
+        function onComponentRequested(context) {
+            root.providerOverlay = context
+        }
+    }
+
+    function resolveNetworkConsent(approved) {
+        if (networkConsentPending)
+            Providers.resolveNetworkConsent(String(networkConsent.id), approved)
+        Qt.callLater(function () {
+            if (root.activeTarget)
+                InputKeys.focus(root.activeTarget)
+        })
+    }
+
+    Component.onDestruction: {
+        if (root.networkConsentPending)
+            Providers.resolveNetworkConsent(String(root.networkConsent.id), false)
     }
     function showToastAction(message, actionText, callback) {
         toast.showAction(message, actionText, callback)
     }
 
     function defaultRoute() {
-        return Session.authenticated ? "home" : "login"
+        if (!root.signedIn)
+            return "addProvider"
+        return "home"
     }
 
     function restoreRecoveredRoute() {
-        if (!Router.recoveryPending || !Session.authenticated)
+        if (!Router.recoveryPending || !root.signedIn)
             return false
         const args = root.routeArgs
         if (root.route === "libraryGrid") {
@@ -404,31 +473,23 @@ KeyRouter {
     }
 
     function applyInitializedRoute() {
+        if (!Providers.restored)
+            return
+        // A recovered page must never bypass a server's startup viewer choice.
+        if (Providers.startupChoicePending) {
+            Router.finishRecovery()
+            Router.reset("accounts", {
+                             "startup": true
+                         })
+            return
+        }
         if (Router.recoveryPending) {
             if (root.restoreRecoveredRoute())
                 return
-            if (Session.authenticated)
+            if (root.signedIn)
                 return
         }
         Router.reset(root.defaultRoute())
-    }
-
-    Connections {
-        target: Session
-        function onAuthenticatedStateChanged() {
-            if (Session.authenticated && root.switchUserReturnPending) {
-                root.completeSwitchUserReturn()
-                return
-            }
-            if (Session.authenticated)
-                root.clearSwitchUserReturn()
-            if (Session.authenticated && root.restoreRecoveredRoute())
-                return
-            if (Session.authenticated)
-                Router.replace(root.defaultRoute())
-            else
-                Router.reset(root.defaultRoute())
-        }
     }
 
     // Every platform states its own text rendering rather than inheriting a
@@ -442,9 +503,8 @@ KeyRouter {
     //
     // Linux native rendering goes through the platform FreeType/fontconfig
     // path, including the user's antialiasing and subpixel policy. Light
-    // hinting keeps baselines aligned without snapping stems to whole pixels,
-    // which is what small labels were being coarsened by. Other desktops
-    // retain Qt's scalable distance-field rendering.
+    // hinting keeps baselines aligned without snapping stems to whole pixels.
+    // The durable render-mode setting owns the text rasterizer.
     Component.onCompleted: {
         // A phone is a finger until something says otherwise. The pointer
         // handlers above only fire once the app has been touched, so without
@@ -458,20 +518,14 @@ KeyRouter {
             // the television's text look chiselled at a viewing distance.
             // Hinting the vertical metrics alone keeps the weight and the
             // baseline crisp while curves antialias smoothly.
-            Theme.normalTextRenderType = Text.NativeRendering
             Typography.sansHinting = Font.PreferVerticalHinting
         } else if (Qt.platform.os === "linux") {
-            Theme.normalTextRenderType = Text.NativeRendering
             Typography.sansHinting = Font.PreferVerticalHinting
-        } else {
-            Theme.normalTextRenderType = Text.QtRendering
         }
         // The TV keeps its two-step text entry: there the field taking focus
         // is what raises the on-screen keyboard, so the row stays the D-pad
         // target until Select is pressed.
         Theme.textEntryFollowsFocus = !Platform.isTV
-        root.remoteConnectionKnown = RemoteControl.targetSelected
-        root.lastRemoteTargetName = RemoteControl.targetSelected ? RemoteControl.selectedTargetName : ""
         if (App.initialized)
             root.applyInitializedRoute()
     }
@@ -592,6 +646,14 @@ KeyRouter {
     }
 
     function goHome() {
+        if (Providers.startupChoicePending) {
+            Router.reset("accounts", {
+                             "startup": true
+                         })
+            navigationTarget = routeStack
+            InputKeys.focus(routeStack)
+            return
+        }
         Router.reset("home")
         App.goHome()
         navigationTarget = routeStack
@@ -602,7 +664,7 @@ KeyRouter {
         if (!playerSessionActive)
             return
         pendingPlaybackBackItem = ({})
-        player.stopWithReason(reason)
+        player.stopWithReason(reason, true)
     }
 
     function handleRemoteUiAction(action) {
@@ -641,56 +703,37 @@ KeyRouter {
         }
     }
 
-    function switchUser() {
-        switchUserReturnProfileId = Session.activeProfileId
-        switchUserReturnRoute = route
-        switchUserReturnArgs = Object.assign({}, routeArgs)
-        switchUserReturnPending = false
-        Router.reset("login")
-        App.switchUser()
-        navigationTarget = routeStack
-        InputKeys.focus(routeStack)
+    function openProviderScreen(context) {
+        if (context)
+            pushRoute("providerScreen", {
+                          "context": context
+                      })
     }
 
-    // The way out of a start that is not arriving: back to the server list,
-    // with discovery running again, without waiting for whatever is not
-    // answering.
-    function chooseServer() {
-        switchUser()
-        Qt.callLater(function () {
-            const page = routeStack.activeItem
-            if (page && page.openAddAccount)
-                page.openAddAccount()
-        })
-    }
-
-    function cancelSwitchUser() {
-        if (!canCancelSwitchUser)
+    function openCollectionEditor(containerId, title) {
+        if (!containerId || !Sources.collectionEditingAvailable(containerId))
             return false
-        if (switchUserReturnPending)
-            return true
-        switchUserReturnPending = true
-        App.useProfile(switchUserReturnProfileId)
+        pushRoute("collectionEditor", {
+                      containerId: containerId,
+                      title: title
+                  })
         return true
     }
 
-    function completeSwitchUserReturn() {
-        if (!switchUserReturnPending || !Session.authenticated)
+    function openFiles() {
+        if (!desktopFilesAvailable || !fileDropDialog || fileInputBlocked || fileDropDialog.opened)
             return false
-        const returnRoute = switchUserReturnRoute
-        const returnArgs = switchUserReturnArgs
-        clearSwitchUserReturn()
-        Router.reset(returnRoute, returnArgs)
-        navigationTarget = routeStack
-        InputKeys.focus(routeStack)
+        fileDropDialog.openFiles()
         return true
     }
 
-    function clearSwitchUserReturn() {
-        switchUserReturnProfileId = ""
-        switchUserReturnRoute = ""
-        switchUserReturnArgs = ({})
-        switchUserReturnPending = false
+    function openPlaybackSetting(key) {
+        if (textInputActive || updateDialog.open || tlsTrustPending || networkConsentPending
+                || providerInstallDialog.visible || remoteGroupConfirmationPending || providerOverlay
+                || Downloads.opened || itemMenuOpen || mediaInfoVisible || (fileDropDialog && fileDropDialog.opened)
+                || pageInputOwned)
+            return false
+        return videoSurface.openPlaybackSetting(key)
     }
 
     function releaseTextInput() {
@@ -709,28 +752,42 @@ KeyRouter {
             return updateDialog.back()
         if (tlsTrustPending)
             return tlsTrustDialog.back()
+        if (networkConsentPending) {
+            resolveNetworkConsent(false)
+            return true
+        }
+        if (providerInstallDialog.visible)
+            return true
+        if (fileDropDialog && fileDropDialog.visible)
+            return fileDropDialog.back()
+        if (remoteGroupConfirmationPending) {
+            RemoteTargets.confirmLeaveGroup(false)
+            return true
+        }
+        if (providerOverlay) {
+            providerOverlay.close()
+            return true
+        }
+        if (Downloads.opened) {
+            if (downloadsDialogLoader.item)
+                return downloadsDialogLoader.item.back()
+            Downloads.close()
+            return true
+        }
         if (textInputActive) {
             releaseTextInput()
             return true
         }
-        if (navBar.visible && navBar.remoteControlMenuOpen) {
-            navBar.closeRemoteMenu()
-            return true
-        }
-        if (navBar.visible && navBar.syncPlayMenuOpen) {
-            navBar.closeSyncPlayMenu()
+        if (navBar.visible && navBar.menuOpen) {
+            navBar.back()
             return true
         }
         if (diagnosticsVisible) {
-            diagnosticsVisible = false
+            Settings.setValue("shell/diagnostics", false)
             return true
         }
         if (itemMenuOpen && itemContextMenuLoader.item) {
             itemContextMenuLoader.item.closeMenu()
-            return true
-        }
-        if (managementOverlayVisible) {
-            closeManagementOverlay()
             return true
         }
         if (mediaInfoVisible) {
@@ -741,7 +798,7 @@ KeyRouter {
             if (root.player.backAllowed) {
                 root.preparePlaybackBackNavigation(PlayQueue.currentIndex >= 0 ? PlayQueue.get(PlayQueue.currentIndex) :
                                                                                  ({}))
-                root.player.stopWithReason("shell-back-fallback")
+                root.player.stopWithReason("shell-back-fallback", true)
             }
             return true
         }
@@ -756,7 +813,7 @@ KeyRouter {
             goHome()
             return true
         }
-        if (route === "home" || route === "login")
+        if (route === "home" || (route === "addProvider" && !root.signedIn))
             return backAtRoot()
         if (Router.canPop) {
             Router.pop(route === "personDetails" ? "itemDetails" : "home")
@@ -780,9 +837,8 @@ KeyRouter {
     }
 
     function forward() {
-        if (tlsTrustPending || textInputActive || (navBar.visible && (navBar.syncPlayMenuOpen
-                                                                      || navBar.remoteControlMenuOpen))
-                || diagnosticsVisible || itemMenuOpen || managementOverlayVisible || mediaInfoVisible
+        if (networkConsentPending || tlsTrustPending || textInputActive || (navBar.visible && navBar.menuOpen)
+                || diagnosticsVisible || itemMenuOpen || providerOverlay || Downloads.opened || mediaInfoVisible
                 || playerSessionActive)
             return true
         if (!Router.canForward)
@@ -801,10 +857,40 @@ KeyRouter {
     }
 
     function openItemMenu(item, anchorItem, context) {
-        Management.loadCurrentUserPolicy()
         itemMenuLoaded = true
         return itemContextMenuLoader.item ? itemContextMenuLoader.item.openForItem(item || ({}), anchorItem || null,
                                                                                    context || ({})) : false
+    }
+
+    function openDownloads(itemId, returnFocus, destination) {
+        downloadsReturnFocus = returnFocus || navigationTarget
+        downloadsDestinationRequested = Boolean(destination)
+        Downloads.open(itemId || "")
+    }
+
+    Connections {
+        target: Downloads
+        function onOpenedChanged() {
+            if (Downloads.opened) {
+                if (!root.downloadsReturnFocus)
+                    root.downloadsReturnFocus = root.navigationTarget
+            } else {
+                const target = root.downloadsReturnFocus
+                root.downloadsReturnFocus = null
+                root.downloadsDestinationRequested = false
+                Qt.callLater(() => InputKeys.focus(root.providerOverlay || root.itemMenuOpen ? root.activeTarget :
+                                                                                               target && target.visible
+                                                                                               ? target :
+                                                                                                 root.activeTarget))
+            }
+        }
+    }
+
+    function openLibraryMenu(library, anchorItem, context) {
+        const options = Object.assign({}, context || ({}), {
+                                          "library": true
+                                      })
+        return openItemMenu(library || ({}), anchorItem, options)
     }
 
     function finishItemMenuOpeningGesture() {
@@ -813,7 +899,7 @@ KeyRouter {
     }
 
     function restoreFocusAfterItemMenu() {
-        if (managementOverlayVisible || mediaInfoVisible || diagnosticsVisible || player.visible)
+        if (providerOverlay || Downloads.opened || mediaInfoVisible || diagnosticsVisible || player.visible)
             return
         navigationTarget = routeStack
         InputKeys.focus(routeStack)
@@ -837,20 +923,6 @@ KeyRouter {
     function closeMediaInfo() {
         mediaInfoVisible = false
         mediaInfoItem = ({})
-        InputKeys.focus(routeStack)
-    }
-
-    function openManagement(mode, item) {
-        managementMode = mode
-        managementItem = item || ({})
-        managementOverlayVisible = true
-    }
-
-    function closeManagementOverlay() {
-        managementOverlayVisible = false
-        managementMode = ""
-        managementItem = ({})
-        Qt.inputMethod.hide()
         InputKeys.focus(routeStack)
     }
 
@@ -881,7 +953,7 @@ KeyRouter {
     }
 
     function focusNavBar() {
-        if (route === "login")
+        if (setupRoute || Providers.startupChoicePending || !navBar.visible)
             return
         const page = routeStack.activeItem
         if (page && page.revealHeader)
@@ -905,6 +977,8 @@ KeyRouter {
     function globalShortcut(key, phase, repeat, modifiers) {
         if (phase === "press" && key !== 0)
             Metrics.keyboardFocusActive = true
+        if (networkConsentPending)
+            return false
         if (phase === "release" && key === uiScaleShortcutKey) {
             uiScaleShortcutKey = 0
             return true
@@ -917,11 +991,31 @@ KeyRouter {
             settingsShortcutKey = 0
             return true
         }
+        if (phase === "release" && key === openFilesShortcutKey) {
+            openFilesShortcutKey = 0
+            return true
+        }
         if (repeat)
-            return key === uiScaleShortcutKey || key === searchShortcutKey || key === settingsShortcutKey
+            return key === uiScaleShortcutKey || key === searchShortcutKey || key === settingsShortcutKey || key
+                    === openFilesShortcutKey
 
         const control = Boolean(modifiers & Qt.ControlModifier)
         const primaryModifier = Boolean(modifiers & (Qt.ControlModifier | Qt.MetaModifier))
+        if (phase === "press" && control && key === Qt.Key_F && chromeRoute === "settings" && activePage
+                && activePage.visible) {
+            if (activeTarget !== navigationTarget || textInputActive || pageInputOwned || playerSessionActive)
+                return false
+            const handled = Boolean(activePage.unhandledKey && activePage.unhandledKey(key, phase, repeat, modifiers))
+            if (handled)
+                searchShortcutKey = key
+            return handled
+        }
+        if (phase === "press" && primaryModifier && key === Qt.Key_O) {
+            if (!root.openFiles())
+                return false
+            openFilesShortcutKey = key
+            return true
+        }
         const shortcutRoute = key === Qt.Key_F ? "search" : key === Qt.Key_Comma ? "settings" : ""
         if (phase === "press" && primaryModifier && shortcutRoute.length > 0) {
             if (shortcutRoute === "search")
@@ -960,7 +1054,7 @@ KeyRouter {
         if (phase !== "release")
             return false
         if (control && key === Qt.Key_D) {
-            diagnosticsVisible = !diagnosticsVisible
+            Settings.setValue("shell/diagnostics", !diagnosticsVisible)
             return true
         }
         if (key === Qt.Key_Slash) {
@@ -981,7 +1075,7 @@ KeyRouter {
         if (key === Qt.Key_H || key === Qt.Key_L)
             return deliver(activeTarget, key === Qt.Key_H ? Qt.Key_Left : Qt.Key_Right, "press", false)
         if (key === Qt.Key_Q && root.playerSessionActive) {
-            root.player.stopWithReason("shortcut-q")
+            root.player.stopWithReason("shortcut-q", true)
             return true
         }
         return false
@@ -994,13 +1088,12 @@ KeyRouter {
         PointHandler {
             acceptedButtons: Qt.LeftButton
             onActiveChanged: if (active) {
-                                 if (navBar.remoteControlMenuOpen && !navBar.containsRemoteControlPoint(root,
-                                                                                                        point.position.x,
-                                                                                                        point.position.y))
+                                 if (navBar.remoteMenuOpen && !navBar.containsRemotePoint(root, point.position.x,
+                                                                                          point.position.y))
                                      navBar.closeRemoteMenu(false)
-                                 if (navBar.syncPlayMenuOpen && !navBar.containsSyncPlayPoint(root, point.position.x,
-                                                                                              point.position.y))
-                                     navBar.closeSyncPlayMenu(false)
+                                 if (navBar.groupMenuOpen && !navBar.containsGroupPoint(root, point.position.x,
+                                                                                        point.position.y))
+                                     navBar.closeGroupMenu(false)
                              }
         }
     }
@@ -1031,6 +1124,7 @@ KeyRouter {
 
             TopBar {
                 id: navBar
+                anchors.rightMargin: openFilesButton.visible ? openFilesButton.width + Metrics.scaled(14) : 0
                 objectName: "shellNavigationBar"
                 anchors.left: parent.left
                 anchors.right: parent.right
@@ -1039,21 +1133,20 @@ KeyRouter {
                 // window lane; top and bottom can briefly coexist and leave the
                 // bar stretched across the viewport.
                 y: root.navBarAtBottom ? Math.max(0, parent.height - height) : 0
-                height: root.chromeRoute === "login" ? 0 : Metrics.topBarHeightPx
+                height: root.setupRoute || Providers.startupChoicePending ? 0 : Metrics.topBarHeightPx
                 edge: root.navBarAtBottom ? "bottom" : "top"
-                visible: root.chromeRoute !== "login"
+                visible: !root.setupRoute && !Providers.startupChoicePending
                 z: 1
                 // Same reason as the height above: the rail marks where you are,
                 // not where you are going, so it does not blink its selection off
                 // for the frames a page takes to arrive.
+                shell: root
                 currentRoute: root.chromeRoute
                 onActiveFocusChanged: if (activeFocus)
                                           root.navigationTarget = navBar
                 onNavigate: r => {
                     if (r === "home")
                         root.goHome()
-                    else if (r === "switchUser")
-                        root.switchUser()
                     else if (r === "settings")
                         root.pushRoute("settings")
                     else
@@ -1062,9 +1155,35 @@ KeyRouter {
                 onContentRequested: root.focusContent()
             }
 
-            // Space the now-playing bar takes out of the page, so content ends
-            // above it rather than under it.
-            readonly property real nowPlayingReserve: nowPlayingBar.visible ? nowPlayingBar.height : 0
+            IconButton {
+                id: openFilesButton
+                objectName: "shellOpenFiles"
+                anchors.right: parent.right
+                anchors.rightMargin: Metrics.scaled(14)
+                y: navBar.y + (navBar.height - height) / 2
+                visible: root.desktopFilesAvailable && navBar.visible && !root.playerHoldsScreen
+                enabled: !root.fileInputBlocked && !(root.fileDropDialog && root.fileDropDialog.opened)
+                iconName: "folder_open"
+                accessibleName: "Open files (Ctrl+O)"
+                z: 2
+                onClicked: root.openFiles()
+                onActiveFocusChanged: if (activeFocus)
+                                          root.navigationTarget = openFilesButton
+                function activate() {
+                    root.openFiles()
+                }
+                function routeKey(key, phase, repeat) {
+                    if (!InputKeys.isDirection(key))
+                        return false
+                    if (phase === "press") {
+                        if (InputKeys.isHorizontal(key))
+                            InputKeys.focus(navBar)
+                        else
+                            root.focusContent()
+                    }
+                    return true
+                }
+            }
 
             RouteStack {
                 id: routeStack
@@ -1072,7 +1191,7 @@ KeyRouter {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 y: root.navBarAtBottom ? 0 : navBar.height
-                height: Math.max(0, parent.height - navBar.height - contentLayer.nowPlayingReserve)
+                height: Math.max(0, parent.height - navBar.height - remoteMini.height)
                 route: root.route
                 shell: root
                 startupReady: App.initialized
@@ -1081,20 +1200,19 @@ KeyRouter {
                                           root.navigationTarget = routeStack
             }
 
-            RemoteNowPlayingBar {
-                id: nowPlayingBar
-                objectName: "shellRemoteNowPlayingBar"
+            RemoteNowPlaying {
+                id: remoteMini
+                objectName: "shellRemoteNowPlaying"
                 anchors.left: parent.left
                 anchors.right: parent.right
-                // Above the navigation when it sits at the bottom, against the
-                // viewport edge when it does not.
-                y: root.navBarAtBottom ? Math.max(0, navBar.y - height) : Math.max(0, parent.height - height)
-                z: 2
-                // The remote control page is this bar in full, so it would only
-                // duplicate itself there.
-                visible: shown && root.chromeRoute !== "remoteControl" && root.chromeRoute !== "login"
-                enabled: visible
-                onOpenRequested: root.pushRoute("remoteControl")
+                y: routeStack.y + routeStack.height
+                height: visible ? implicitHeight : 0
+                visible: (RemoteTargets.selectedTargetId.length > 0 || RemoteTargets.problem.length > 0)
+                         && root.chromeRoute !== "remoteControl" && !root.setupRoute
+                shell: root
+                onOpenControls: root.pushRoute("remoteControl")
+                onActiveFocusChanged: if (activeFocus)
+                                          root.navigationTarget = remoteMini
             }
         }
     }
@@ -1107,6 +1225,19 @@ KeyRouter {
         diagnosticsVisible: root.diagnosticsVisible
         onPlaybackBackRequested: item => root.preparePlaybackBackNavigation(item)
         z: 19
+    }
+
+    DropArea {
+        id: desktopDropArea
+        objectName: "shellDesktopDropArea"
+        anchors.fill: parent
+        enabled: root.desktopFilesAvailable
+        onDropped: drop => {
+            if (drop.hasUrls && root.fileDropDialog) {
+                root.fileDropDialog.submitUrls(drop.urls)
+                drop.acceptProposedAction()
+            }
+        }
     }
 
     // All of these surfaces already lived above video. Keep their individual
@@ -1201,9 +1332,12 @@ KeyRouter {
                 ActionButton {
                     id: switchServerButton
                     Layout.alignment: Qt.AlignHCenter
-                    text: "Switch server"
+                    text: "Accounts"
                     kind: "secondary"
-                    onClicked: root.chooseServer()
+                    onClicked: {
+                        startupSplash.dismissed = true
+                        Router.reset("accounts")
+                    }
                 }
             }
         }
@@ -1227,18 +1361,50 @@ KeyRouter {
             }
         }
 
+        // A provider's own screen over whatever is showing, such as the release
+        // picker a provider raises while resolving playback.
         Loader {
-            id: managementOverlayLoader
+            id: providerOverlayLoader
             anchors.fill: parent
-            z: 57
-            active: root.managementOverlayVisible
-            asynchronous: true
-            sourceComponent: ManagementDialog {
-                mode: root.managementMode
-                item: root.managementItem
-                onDismissed: root.closeManagementOverlay()
+            z: 59
+            active: root.providerOverlay !== null
+            sourceComponent: ProviderSurface {
+                context: root.providerOverlay
+                overlay: true
+                onFinished: {
+                    root.providerOverlay = null
+                    InputKeys.focus(root.activeTarget)
+                }
             }
-            onLoaded: item.prepare()
+        }
+
+        Loader {
+            id: remoteGroupConfirmationLoader
+            anchors.fill: parent
+            z: 60
+            active: root.remoteGroupConfirmationPending
+            sourceComponent: ConfirmationDialog {
+                title: "Leave watch together?"
+                message: "Controlling another device leaves your current watch-together group. Selecting the device does not transfer or start playback."
+                confirmText: "Leave and select device"
+                onAccepted: {
+                    RemoteTargets.confirmLeaveGroup(true)
+                    root.focusContent()
+                }
+                onDismissed: {
+                    RemoteTargets.confirmLeaveGroup(false)
+                    root.focusContent()
+                }
+            }
+        }
+
+        ProviderUpdatePrompt {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: root.safeBottomPx + Metrics.scaled(24)
+            shown: root.chromeRoute === "home" && !root.playerHoldsScreen && App.initialized
+            z: 65
         }
 
         Loader {
@@ -1249,6 +1415,17 @@ KeyRouter {
             sourceComponent: ItemContextMenu {
                 shell: root
                 onClosed: Qt.callLater(root.restoreFocusAfterItemMenu)
+            }
+        }
+
+        Loader {
+            id: downloadsDialogLoader
+            anchors.fill: parent
+            z: 58.5
+            active: Downloads.opened
+            sourceComponent: DownloadsDialog {
+                destinationExpanded: root.downloadsDestinationRequested
+                inputActive: root.activeTarget === downloadsDialogLoader.item
             }
         }
 
@@ -1339,6 +1516,33 @@ KeyRouter {
                 onClicked: App.clearError()
             }
         }
+        Loader {
+            id: fileDropDialogLoader
+            anchors.fill: parent
+            z: 90
+            active: root.desktopFilesAvailable
+            function loadDialog() {
+                if (active && status === Loader.Null)
+                    setSource(Qt.resolvedUrl("FileDropDialog.qml"), {
+                                  "shell": root,
+                                  "blocked": Qt.binding(() => root.fileInputBlocked)
+                              })
+            }
+            onActiveChanged: {
+                if (active)
+                    loadDialog()
+                else
+                    source = ""
+            }
+            Component.onCompleted: loadDialog()
+        }
+        ProviderInstallDialog {
+            id: providerInstallDialog
+            transfers: Store.transfers
+            suspendLocalTransfers: root.unrelatedFileInputOwned
+            z: 100
+        }
+
         UpdateDialog {
             id: updateDialog
             updater: Platform.updateController
@@ -1350,6 +1554,31 @@ KeyRouter {
             trustController: TlsTrust
             inputKeys: InputKeys
             z: 250
+        }
+        Loader {
+            id: networkConsentLoader
+            anchors.fill: parent
+            z: 240
+            active: root.networkConsentPending
+            sourceComponent: ConfirmationDialog {
+                title: root.networkConsent.kind === "lan" ? "Search local network?" : "Allow provider connection?"
+                message: {
+                    const consent = root.networkConsent
+                    const owner = String(consent.provider || "") + (consent.account ? " — " + consent.account : "")
+                    if (consent.kind === "lan")
+                        return owner + " wants to search nearby private networks for servers.\n\n"
+                                + "This sends bounded, unauthenticated HTTP requests. It does not sign in "
+                                + "or allow authenticated connections to discovered servers."
+                    return owner + " wants permission to connect to this exact origin:\n\n" + String(consent.origin
+                                                                                                     || "") + "\n\n" + (
+                                consent.unencrypted
+                                ? "This connection is unencrypted. Other people on the network may be able to read or change its traffic.\n\n" :
+                                  "") + "Allow only if you trust this destination."
+                }
+                confirmText: root.networkConsent.kind === "lan" ? "Search" : "Allow"
+                onAccepted: root.resolveNetworkConsent(true)
+                onDismissed: root.resolveNetworkConsent(false)
+            }
         }
         InputLatencyWarning {
             anchors.fill: parent

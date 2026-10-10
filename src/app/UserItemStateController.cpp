@@ -1,6 +1,5 @@
 #include "UserItemStateController.h"
 
-#include "../api/JellyfinApiFacade.h"
 #include "../common/AsyncTask.h"
 
 #include "BrowseSessionController.h"
@@ -8,12 +7,12 @@
 #include "HomeModelController.h"
 #include "SearchController.h"
 
-namespace JellyfinNative {
+namespace Spool {
 
-UserItemStateController::UserItemStateController(JellyfinApiFacade *api, BrowseSessionController *currentItems,
+UserItemStateController::UserItemStateController(UserItemStateSink *sink, BrowseSessionController *currentItems,
     HomeModelController *home, ContentModelController *content, SearchController *search, QObject *parent)
     : QObject(parent)
-    , m_api(api)
+    , m_api(sink)
     , m_browse(currentItems)
     , m_home(home)
     , m_content(content)
@@ -26,12 +25,12 @@ void UserItemStateController::applyResumeTicks(const QString& itemId, qint64 pos
     if (itemId.isEmpty() || positionTicks < 0)
         return;
 
+    if (m_content)
+        m_content->updateResumeTicks(itemId, positionTicks);
     if (m_browse)
         m_browse->updateResumeTicks(itemId, positionTicks);
     if (m_home)
         m_home->updateResumeTicks(itemId, positionTicks);
-    if (m_content)
-        m_content->updateResumeTicks(itemId, positionTicks);
     if (m_search)
         m_search->updateResumeTicks(itemId, positionTicks);
 }
@@ -57,37 +56,55 @@ void UserItemStateController::applyPlayed(const QString& itemId, bool played)
     if (itemId.isEmpty())
         return;
 
+    if (m_content)
+        m_content->updatePlayed(itemId, played);
     if (m_browse)
         m_browse->updatePlayed(itemId, played);
     if (m_home)
         m_home->updatePlayed(itemId, played);
-    if (m_content)
-        m_content->updatePlayed(itemId, played);
     if (m_search)
         m_search->updatePlayed(itemId, played);
     emit playedChanged(itemId, played);
 }
 
-void UserItemStateController::recordPlaybackStopped(
-    const MovieItem& item, const QString& itemId, qint64 positionTicks, bool completed)
+void UserItemStateController::recordPlaybackStopped(const MovieItem& item, const QString& itemId, qint64 positionTicks,
+    bool watched, const MovieItem& successor, quint64 reportId)
 {
-    if (!completed) {
+    if (!watched) {
         applyResumeTicks(itemId, positionTicks);
         if (m_home && item.id == itemId)
             m_home->upsertResumeItem(item, positionTicks);
         return;
     }
+    if (itemId.isEmpty())
+        return;
+    if (reportId != 0)
+        m_pendingPlaybackWatched.insert(itemId, reportId);
+    if (m_home && item.id == itemId)
+        m_home->advanceNextUp(item, successor);
     applyPlayed(itemId, true);
-    if (!m_api || m_api->session().accessToken.isEmpty())
+}
+
+void UserItemStateController::persistPlaybackWatched(const QString& itemId, quint64 reportId)
+{
+    const auto pending = m_pendingPlaybackWatched.constFind(itemId);
+    if (pending == m_pendingPlaybackWatched.cend() || pending.value() != reportId)
+        return;
+    m_pendingPlaybackWatched.remove(itemId);
+    if (!m_api || !m_api->signedIn())
         return;
     Async::runScoped(
-        this, m_api->setItemPlayed(itemId, true), []() {},
+        this, m_api->setItemPlayed(itemId, true),
+        [this]() {
+            if (m_home)
+                m_home->refreshPlaybackRows();
+        },
         [this](const std::exception_ptr& error) { emit errorOccurred(exceptionMessage(error)); });
 }
 
 void UserItemStateController::setFavorite(const QString& itemId, bool favorite)
 {
-    if (itemId.isEmpty() || !m_api || m_api->session().accessToken.isEmpty())
+    if (itemId.isEmpty() || !m_api || !m_api->signedIn())
         return;
     applyFavorite(itemId, favorite);
     Async::runScoped(
@@ -100,11 +117,16 @@ void UserItemStateController::setFavorite(const QString& itemId, bool favorite)
 
 void UserItemStateController::setPlayed(const QString& itemId, bool played)
 {
-    if (itemId.isEmpty() || !m_api || m_api->session().accessToken.isEmpty())
+    if (itemId.isEmpty() || !m_api || !m_api->signedIn())
         return;
+    m_pendingPlaybackWatched.remove(itemId);
     applyPlayed(itemId, played);
     Async::runScoped(
-        this, m_api->setItemPlayed(itemId, played), []() {},
+        this, m_api->setItemPlayed(itemId, played),
+        [this]() {
+            if (m_home)
+                m_home->refreshPlaybackRows();
+        },
         [this, itemId, played](const std::exception_ptr& error) {
             applyPlayed(itemId, !played);
             emit errorOccurred(exceptionMessage(error));
@@ -113,8 +135,9 @@ void UserItemStateController::setPlayed(const QString& itemId, bool played)
 
 void UserItemStateController::clearProgress(const QString& itemId)
 {
-    if (itemId.isEmpty() || !m_api || m_api->session().accessToken.isEmpty())
+    if (itemId.isEmpty() || !m_api || !m_api->signedIn())
         return;
+    m_pendingPlaybackWatched.remove(itemId);
     applyResumeTicks(itemId, 0);
     applyPlayed(itemId, false);
     Async::runScoped(
@@ -122,4 +145,4 @@ void UserItemStateController::clearProgress(const QString& itemId)
         [this](const std::exception_ptr& error) { emit errorOccurred(exceptionMessage(error)); });
 }
 
-} // namespace JellyfinNative
+} // namespace Spool

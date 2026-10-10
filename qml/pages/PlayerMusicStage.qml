@@ -2,7 +2,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Layouts
-import JellyfinWebOS
+import Spool
 import "../theme"
 import "../primitives"
 
@@ -18,7 +18,7 @@ Item {
     readonly property string trackTitle: {
         const queued = String(root.item.title || "").trim()
         if (queued.length > 0)
-        return queued
+            return queued
         return overlay.hasPlayer ? overlay.player.title : ""
     }
     readonly property string artistText: String(root.item.albumArtist || "").trim()
@@ -27,7 +27,7 @@ Item {
     readonly property string queuePositionText: {
         const queue = overlay.playQueue
         if (!queue || queue.count <= 1)
-        return ""
+            return ""
         return "Track " + (queue.currentIndex + 1) + " of " + queue.count
     }
     readonly property real viewportScale: Math.max(1, Math.min(1.8, Math.min(root.width / root.dp(1600), root.height

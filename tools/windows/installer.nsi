@@ -15,31 +15,31 @@ Unicode true
     !error "OUTPUT_FILE is required"
 !endif
 
-Name "Spool for Jellyfin"
+Name "Spool"
 OutFile "${OUTPUT_FILE}"
 Icon "${SOURCE_ROOT}\app\icons\spool.ico"
 UninstallIcon "${SOURCE_ROOT}\app\icons\spool.ico"
-InstallDir "$LocalAppData\Programs\Spool for Jellyfin"
-InstallDirRegKey HKCU "Software\Spool for Jellyfin" "InstallDir"
+InstallDir "$LocalAppData\Programs\Spool"
+InstallDirRegKey HKCU "Software\Spool" "InstallDir"
 RequestExecutionLevel user
 ManifestDPIAware true
 SetCompressor /SOLID lzma
 ShowInstDetails nevershow
 ShowUninstDetails nevershow
-BrandingText "Spool for Jellyfin"
+BrandingText "Spool"
 
 VIProductVersion "${VERSION}.0"
-VIAddVersionKey /LANG=1033 "ProductName" "Spool for Jellyfin"
-VIAddVersionKey /LANG=1033 "FileDescription" "Spool for Jellyfin installer"
+VIAddVersionKey /LANG=1033 "ProductName" "Spool"
+VIAddVersionKey /LANG=1033 "FileDescription" "Spool installer"
 VIAddVersionKey /LANG=1033 "FileVersion" "${VERSION}"
 VIAddVersionKey /LANG=1033 "ProductVersion" "${VERSION}"
-VIAddVersionKey /LANG=1033 "LegalCopyright" "Spool for Jellyfin contributors"
+VIAddVersionKey /LANG=1033 "LegalCopyright" "Spool contributors"
 
 !define MUI_ABORTWARNING
 !define MUI_ICON "${SOURCE_ROOT}\app\icons\spool.ico"
 !define MUI_UNICON "${SOURCE_ROOT}\app\icons\spool.ico"
-!define MUI_FINISHPAGE_RUN "$InstDir\jellyfin-native.exe"
-!define MUI_FINISHPAGE_RUN_TEXT "Launch Spool for Jellyfin"
+!define MUI_FINISHPAGE_RUN "$InstDir\spool.exe"
+!define MUI_FINISHPAGE_RUN_TEXT "Launch Spool"
 
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
@@ -49,42 +49,42 @@ VIAddVersionKey /LANG=1033 "LegalCopyright" "Spool for Jellyfin contributors"
 
 !insertmacro MUI_LANGUAGE "English"
 
-Section "Spool for Jellyfin" SEC_APP
+Section "Spool" SEC_APP
     SectionIn RO
     SetShellVarContext current
     SetOutPath "$InstDir"
     File /r "${STAGE_DIR}\*"
 
     WriteUninstaller "$InstDir\Uninstall.exe"
-    CreateDirectory "$SMPROGRAMS\Spool for Jellyfin"
-    CreateShortcut "$SMPROGRAMS\Spool for Jellyfin\Spool for Jellyfin.lnk" "$InstDir\jellyfin-native.exe"
-    CreateShortcut "$SMPROGRAMS\Spool for Jellyfin\Uninstall Spool for Jellyfin.lnk" "$InstDir\Uninstall.exe"
+    CreateDirectory "$SMPROGRAMS\Spool"
+    CreateShortcut "$SMPROGRAMS\Spool\Spool.lnk" "$InstDir\spool.exe"
+    CreateShortcut "$SMPROGRAMS\Spool\Uninstall Spool.lnk" "$InstDir\Uninstall.exe"
 
-    WriteRegStr HKCU "Software\Spool for Jellyfin" "InstallDir" "$InstDir"
-    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Spool for Jellyfin" \
-        "DisplayName" "Spool for Jellyfin"
-    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Spool for Jellyfin" \
+    WriteRegStr HKCU "Software\Spool" "InstallDir" "$InstDir"
+    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Spool" \
+        "DisplayName" "Spool"
+    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Spool" \
         "DisplayVersion" "${VERSION}"
-    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Spool for Jellyfin" \
-        "DisplayIcon" "$InstDir\jellyfin-native.exe"
-    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Spool for Jellyfin" \
+    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Spool" \
+        "DisplayIcon" "$InstDir\spool.exe"
+    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Spool" \
         "InstallLocation" "$InstDir"
-    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Spool for Jellyfin" \
+    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Spool" \
         "UninstallString" '"$InstDir\Uninstall.exe"'
-    WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Spool for Jellyfin" \
+    WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Spool" \
         "NoModify" 1
-    WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Spool for Jellyfin" \
+    WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Spool" \
         "NoRepair" 1
 SectionEnd
 
 Section "Uninstall"
     SetShellVarContext current
-    Delete "$SMPROGRAMS\Spool for Jellyfin\Spool for Jellyfin.lnk"
-    Delete "$SMPROGRAMS\Spool for Jellyfin\Uninstall Spool for Jellyfin.lnk"
-    RMDir "$SMPROGRAMS\Spool for Jellyfin"
+    Delete "$SMPROGRAMS\Spool\Spool.lnk"
+    Delete "$SMPROGRAMS\Spool\Uninstall Spool.lnk"
+    RMDir "$SMPROGRAMS\Spool"
 
-    DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Spool for Jellyfin"
-    DeleteRegKey HKCU "Software\Spool for Jellyfin"
+    DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Spool"
+    DeleteRegKey HKCU "Software\Spool"
 
     Delete "$InstDir\Uninstall.exe"
     RMDir /r "$InstDir"

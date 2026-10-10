@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../common/JellyfinTypes.h"
+#include "../media/MediaTypes.h"
 #include "../platform/MpvConfigPolicy.h"
 #include "MpvLifecycle.h"
 #include "MpvOptionProfile.h"
@@ -16,18 +16,25 @@
 #include <QObject>
 #include <QStringList>
 #include <QTimer>
+#include <QUrl>
 #include <QVariant>
 
+#ifdef Q_OS_ANDROID
+#include <QFile>
+#endif
+
 #include <atomic>
+#include <utility>
 #include <vector>
 
 struct mpv_handle;
 
-namespace JellyfinNative {
+namespace Spool {
 
-class JellyfinApiFacade;
 class NativeAppWindow;
+class PlaybackSource;
 class TlsTrustController;
+class TrickplayService;
 
 class PlayerController final : public QObject {
     Q_OBJECT
@@ -76,10 +83,11 @@ class PlayerController final : public QObject {
     Q_PROPERTY(QString activeSegmentType READ activeSegmentType NOTIFY segmentsChanged)
     Q_PROPERTY(double activeSegmentEndSeconds READ activeSegmentEndSeconds NOTIFY segmentsChanged)
     Q_PROPERTY(bool trickplayAvailable READ trickplayAvailable NOTIFY trickplayChanged)
-    Q_PROPERTY(QStringList trickplaySheetUrls READ trickplaySheetUrls NOTIFY trickplayChanged)
+    Q_PROPERTY(bool localPlaylist READ localPlaylist NOTIFY localPlaylistChanged)
+    Q_PROPERTY(QVariantList localPlaylistEntries READ localPlaylistEntries NOTIFY localPlaylistChanged)
 
 public:
-    PlayerController(NativeAppWindow *window, JellyfinApiFacade *api, TlsTrustController *tlsTrust,
+    PlayerController(NativeAppWindow *window, PlaybackSource *api, TlsTrustController *tlsTrust,
         const QString& subtitleFontsPath, QObject *parent = nullptr);
     ~PlayerController() override;
 
@@ -137,11 +145,25 @@ public:
     QString activeSegmentType() const;
     double activeSegmentEndSeconds() const;
     bool trickplayAvailable() const;
-    QStringList trickplaySheetUrls() const;
     Q_INVOKABLE void skipActiveSegment();
     Q_INVOKABLE QVariantMap trickplayForSeconds(double seconds) const;
+    void setTrickplayService(TrickplayService *service);
 
-    Q_INVOKABLE void play(const JellyfinNative::PlaybackSession& session, bool startPaused = false);
+    Q_INVOKABLE void play(const Spool::PlaybackSession& session, bool startPaused = false);
+    void playLocalFiles(const QList<QUrl>& urls);
+    bool appendLocalFiles(const QList<QUrl>& urls);
+    bool localPlaylist() const
+    {
+        return m_localPlaylist;
+    }
+    QVariantList localPlaylistEntries() const
+    {
+        return m_localPlaylistEntries;
+    }
+    void selectLocalPlaylistEntry(const QString& entryId);
+    void stepLocalPlaylist(int direction);
+    bool moveLocalPlaylistRange(int from, int count, int to);
+    void removeLocalPlaylistEntry(const QString& entryId);
     void setMediaSegments(const QString& itemId, const std::vector<MediaSegment>& segments);
     Q_INVOKABLE void togglePause();
     Q_INVOKABLE bool forwardMpvKey(int key, int modifiers, const QString& text, bool pressed, bool repeat);
@@ -171,7 +193,8 @@ public:
     Q_INVOKABLE void nextChapter();
     Q_INVOKABLE void previousChapter();
     Q_INVOKABLE void stop();
-    Q_INVOKABLE void stopWithReason(const QString& reason);
+    Q_INVOKABLE void stopWithReason(const QString& reason, bool explicitStop = false);
+    void setWatchedThresholdPercent(int percent);
     Q_INVOKABLE void setNightModeEnabled(bool enabled);
     Q_INVOKABLE void setToneMappingVisualizationEnabled(bool enabled);
     Q_INVOKABLE void setAudioDelayMs(int delayMs);
@@ -207,8 +230,8 @@ public:
     Q_INVOKABLE void setPlaybackSpeed(double speed);
     void setSyncPlaybackSpeed(double speed);
     void clearSyncPlaybackSpeed();
-    void setSubtitlePreferences(const JellyfinNative::SubtitlePreferences& preferences);
-    void previewSubtitlePreferences(const JellyfinNative::SubtitlePreferences& preferences);
+    void setSubtitlePreferences(const Spool::SubtitlePreferences& preferences);
+    void previewSubtitlePreferences(const Spool::SubtitlePreferences& preferences);
     void setDemuxerBudget(const QByteArray& maxBytes, const QByteArray& maxBackBytes);
     void setForwardCacheSizeMiB(int sizeMiB);
     void setMpvConfigPolicy(const MpvConfigPolicy& policy);
@@ -228,7 +251,14 @@ signals:
     void segmentsChanged();
     void trickplayChanged();
     void chaptersChanged();
-    void playbackStopped(const QString& itemId, qint64 positionTicks, bool completed);
+    // Also emitted between sessions so Stop cancels pending queue negotiation.
+    void stopRequested();
+    void playbackStopped(const QString& itemId, qint64 positionTicks, bool watched, bool reachedEnd, quint64 reportId);
+    void watchedPersistenceRequested(const QString& itemId, quint64 reportId);
+    // The stream ended before the item did. Emitted after playbackStopped,
+    // which has already recorded the position as a resume point.
+    void playbackInterrupted(const QString& itemId, qint64 positionTicks, bool resumable);
+    void playbackSeekOutsideStream(const QString& itemId, qint64 positionTicks);
     void playbackLoadFailed(const QString& itemId, qint64 positionTicks, const QString& message,
         bool retryableCodecFailure, int audioStreamIndex, int subtitleStreamIndex);
     void streamSelectionChanged(int audioStreamIndex, int subtitleStreamIndex);
@@ -242,6 +272,8 @@ signals:
     void volumeChanged();
     void playbackSpeedChanged();
     void effectivePlaybackSpeedChanged();
+    void localPlaylistChanged();
+    void localEntryEnded(const QString& entryId, qint64 positionTicks, bool completed);
 
 public:
     // Silence active playback before application services and the render
@@ -256,6 +288,14 @@ public:
 
 private:
     QHash<int, QByteArray> m_mpvKeys;
+    void playSession(const PlaybackSession& session, bool startPaused, const QList<QUrl>& localFiles);
+    void refreshLocalPlaylist();
+    void beginLocalEntry(qint64 entryId);
+    bool loadLocalFiles(const QList<QUrl>& urls);
+    bool m_localPlaylist = false;
+    bool m_localEntryStarted = false;
+    qint64 m_localEntryId = -1;
+    QVariantList m_localPlaylistEntries;
     void logColorDiagnostics(mpv_handle *handle);
     bool usesUserMpvConfig() const;
     int uiTrackIndexForStream(const QString& type, int streamIndex, int firstUiIndex) const;
@@ -281,10 +321,18 @@ private:
     mpv_handle *takeIdleMpvHandle();
     bool configureAndInitializeMpv(mpv_handle *handle, bool needsVideoSurface, bool embeddedVideo);
     void observeMpvProperties(mpv_handle *handle);
+    void synchronizeWindowFullscreen(mpv_handle *handle);
     void scheduleMpvTeardown();
-    void handleMpvEvent(mpv_event *event);
+    void handleMpvEvent(mpv_event *event, quint64 generation, mpv_handle *handle);
+    template <typename Callback> void postMpvEvent(quint64 generation, Callback callback)
+    {
+        QMetaObject::invokeMethod(this, [this, generation, callback = std::move(callback)]() mutable {
+            if (generation == m_mpvEventGeneration)
+                callback();
+        });
+    }
     void startProgressReporting();
-    void stopProgressReporting(bool failed = false, bool completed = false);
+    void stopProgressReporting(bool failed = false, bool reachedEnd = false, bool explicitStop = false);
     bool mpvCommand(QByteArrayList command);
     bool beginSeekCommand(double targetSeconds, const QByteArray& flags);
     QByteArrayList buildSeekCommand(double targetSeconds, const QByteArray& flags) const;
@@ -299,7 +347,6 @@ private:
     double seekAnchorPosition();
     void resetPlaybackUiState();
     void resetRenderStrain();
-    void rebuildTrickplaySheetUrls();
     bool applyMpvRuntimeOption(MpvRuntimeOption option, MpvOptionApplyMode mode, mpv_handle *handle);
     bool applyMpvSubtitleOptions(MpvOptionApplyMode mode, mpv_handle *handle, bool preserveTrackSelection = false,
         const SubtitlePreferences *previousPreferences = nullptr);
@@ -325,11 +372,17 @@ private:
     int m_videoWidth = 0;
     int m_videoHeight = 0;
     NativeAppWindow *m_window = nullptr;
-    JellyfinApiFacade *m_api = nullptr;
+    PlaybackSource *m_api = nullptr;
+    TrickplayService *m_trickplay = nullptr;
     PlaybackSession m_session;
     PlaybackReporter m_reporter;
+#ifdef Q_OS_ANDROID
+    // Declared before the lifecycle so its destructor also runs after mpv's.
+    QFile m_contentPlaybackFile;
+#endif
     MpvLifecycle m_mpvLifecycle;
     quint64 m_mpvTeardownGeneration = 0;
+    quint64 m_mpvEventGeneration = 0;
     mpv_handle *m_idleMpvHandle = nullptr;
     bool m_idleMpvPreparationScheduled = false;
     bool m_idleMpvPreparationEnabled = true;
@@ -341,6 +394,7 @@ private:
     bool m_visible = false;
     bool m_sessionActive = false;
     bool m_fileLoaded = false;
+    int m_watchedThresholdPercent = 90;
     bool m_seekDispatchReady = false;
     bool m_paused = false;
     bool m_buffering = false;
@@ -392,6 +446,7 @@ private:
     QByteArray m_demuxerMaxBytes = QByteArrayLiteral("64M");
     QByteArray m_demuxerMaxBackBytes = QByteArrayLiteral("32M");
     MpvConfigPolicy m_mpvConfigPolicy;
+    quint64 m_fullscreenSyncSerial = 0;
     bool m_activeUserMpvConfig = false;
     TlsTrustController *m_tlsTrust = nullptr;
     const QByteArray m_subtitleFontsPath;
@@ -406,7 +461,6 @@ private:
     QByteArray m_targetTransfer;
     PlaybackPositionTracker m_positionTracker;
     PlaybackTimeline m_timeline;
-    QStringList m_trickplaySheetUrls;
 };
 
-} // namespace JellyfinNative
+} // namespace Spool
