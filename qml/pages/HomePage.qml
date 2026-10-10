@@ -144,14 +144,14 @@ FocusScope {
                           "title": "Continue Watching",
                           "model": Home.resumeItems,
                           "kind": "landscape",
-                          "reserveWhenEmpty": Home.loading
+                          "reserveWhileLoading": true
                       }, {
                           "key": "nextUpItems",
                           "title": "Next Up",
                           "model": Home.nextUpItems,
                           "kind": "landscape",
-                          "reserveWhenEmpty": Home.loading && (Home.latestLibraryRows || []).some(row => row.collectionType
-                                                                                                         === "tvshows")
+                          "reserveWhileLoading": (Home.latestLibraryRows || []).some(row => row.collectionType
+                                                                                            === "tvshows")
                       })
         const latest = Home.latestLibraryRows || []
         for (let index = 0; index < latest.length; ++index) {
@@ -163,7 +163,7 @@ FocusScope {
                               "model": row && row.model ? row.model : null,
                               "kind": row && row.kind ? row.kind : "poster",
                               "enabled": !Libraries.isHidden(String(row && row.libraryId || "")),
-                              "reserveWhenEmpty": Home.loading,
+                              "reserveWhileLoading": true,
                               "headerBadge": multiple && row ? root.sourceBadge(row.libraryId, false) : null,
                               "useSeriesPoster": true,
                               "preferEpisodeTitle": true,
@@ -358,6 +358,7 @@ FocusScope {
         anchors.topMargin: Metrics.scaled(8)
         shell: root.shell
         sections: root.buildSections()
+        loading: Home.loading
         contextReturnRoute: "home"
         measureFirstRow: true
         focus: true
