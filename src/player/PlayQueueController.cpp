@@ -362,36 +362,7 @@ void PlayQueueController::setShuffled(bool shuffled)
 
 bool PlayQueueController::moveItem(int from, int to)
 {
-    if (from < 0 || from >= rowCount() || to < 0 || to >= rowCount() || from == to)
-        return false;
-
-    const int previousCurrent = currentIndex();
-    int nextCurrent = previousCurrent;
-    if (previousCurrent == from)
-        nextCurrent = to;
-    else if (from < previousCurrent && previousCurrent <= to)
-        --nextCurrent;
-    else if (to <= previousCurrent && previousCurrent < from)
-        ++nextCurrent;
-
-    beginMoveRows({}, from, from, {}, to > from ? to + 1 : to);
-    MovieItem moved = std::move(m_entries[static_cast<size_t>(from)]);
-    m_entries.erase(m_entries.begin() + from);
-    m_entries.insert(m_entries.begin() + to, std::move(moved));
-    const bool movedProvenance = m_userQueued[static_cast<size_t>(from)];
-    m_userQueued.erase(m_userQueued.begin() + from);
-    m_userQueued.insert(m_userQueued.begin() + to, movedProvenance);
-    endMoveRows();
-
-    // Shuffle ends here on purpose. The panel lists entries in model order, so
-    // while shuffled a drag would rearrange rows without touching what plays
-    // next — the gesture would look broken. Taking manual control of the order
-    // is the clearer reading, and `shuffled` notifies so the toggle follows.
-    m_shuffled = false;
-    rebuildNaturalOrder();
-    m_orderIndex = nextCurrent;
-    emitQueueStateChanged(previousCurrent);
-    return true;
+    return moveRange(from, 1, to);
 }
 
 bool PlayQueueController::removeItem(int index)
@@ -578,28 +549,41 @@ bool PlayQueueController::addToQueue(const std::vector<MovieItem>& items, bool n
 
 bool PlayQueueController::moveRange(int from, int count, int to)
 {
-    if (count <= 1)
-        return count == 1 && moveItem(from, to);
     // `to` is where the block lands once it has been lifted out, matching
     // moveItem's own erase-then-insert reading of its arguments.
-    if (from < 0 || count < 0 || from + count > rowCount() || to < 0 || to > rowCount() - count)
-        return false;
-    if (to == from)
+    const int rows = rowCount();
+    if (from < 0 || count <= 0 || from >= rows || count > rows - from || to < 0 || to > rows - count || to == from)
         return false;
 
-    // Walk the block a row at a time so every index shift is one moveItem
-    // already reasons about, the playing row's included.
-    if (to < from) {
-        for (int offset = 0; offset < count; ++offset) {
-            if (!moveItem(from + offset, to + offset))
-                return false;
-        }
-        return true;
-    }
-    for (int offset = 0; offset < count; ++offset) {
-        if (!moveItem(from, to + count - 1))
-            return false;
-    }
+    const int previousCurrent = currentIndex();
+    int nextCurrent = previousCurrent;
+    if (previousCurrent >= from && previousCurrent < from + count)
+        nextCurrent += to - from;
+    else if (to < from && previousCurrent >= to && previousCurrent < from)
+        nextCurrent += count;
+    else if (to > from && previousCurrent >= from + count && previousCurrent < to + count)
+        nextCurrent -= count;
+
+    if (!beginMoveRows({}, from, from + count - 1, {}, to > from ? to + count : to))
+        return false;
+    // Rotate the block and the rows it crosses once. Moving each member
+    // separately shifted the queue, rebuilt its play order and invalidated
+    // the outline once per episode in a folded run.
+    const auto moveBlock = [from, count, to](auto& values) {
+        if (to < from)
+            std::rotate(values.begin() + to, values.begin() + from, values.begin() + from + count);
+        else
+            std::rotate(values.begin() + from, values.begin() + from + count, values.begin() + to + count);
+    };
+    moveBlock(m_entries);
+    moveBlock(m_userQueued);
+    // Manual moves end shuffle so the visible order is also the play order.
+    // Publish the final cursor before rowsMoved lets the outline inspect it.
+    m_shuffled = false;
+    rebuildNaturalOrder();
+    m_orderIndex = nextCurrent;
+    endMoveRows();
+    emitQueueStateChanged(previousCurrent);
     return true;
 }
 
