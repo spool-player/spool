@@ -13,11 +13,13 @@ FocusScope {
     property bool menuOpen: false
     property var entries: []
     property int currentIndex: 0
+    // The host bounds the menu to its viewport: 0 means natural height.
+    property real maximumHeight: 0
     signal requestClose
 
     visible: menuOpen
     implicitHeight: panel.implicitHeight
-    height: implicitHeight
+    height: maximumHeight > 0 ? Math.min(implicitHeight, maximumHeight) : implicitHeight
 
     function isActionable(entry) {
         return entry && (entry.kind === "join" || entry.kind === "create" || entry.kind === "leave")
@@ -157,11 +159,8 @@ FocusScope {
 
     Surface {
         id: panel
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.top: parent.top
+        anchors.fill: parent
         implicitHeight: contentColumn.implicitHeight + 20
-        height: implicitHeight
         elevated: true
         baseColor: Theme.bgRaised
         clip: true
@@ -170,9 +169,7 @@ FocusScope {
 
         ColumnLayout {
             id: contentColumn
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.top: parent.top
+            anchors.fill: parent
             anchors.margins: 10
             spacing: 6
 
@@ -188,6 +185,8 @@ FocusScope {
             MenuListView {
                 id: list
                 Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.minimumHeight: 0
                 Layout.preferredHeight: contentHeight
                 interactive: false
                 model: menu.entries
