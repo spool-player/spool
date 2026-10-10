@@ -84,7 +84,8 @@ Item {
 
     function handleControlsKey(key) {
         if (key === Qt.Key_Up) {
-            overlay.focusZone = overlay.focusZone === "actions" ? "timeline" : "back"
+            overlay.focusZone = overlay.focusZone === "actions" ? "timeline" : overlay.focusZone === "timeline"
+                                                                  && overlay.hasActiveSegment ? "skip" : "back"
             overlay.showControls(overlay.focusZone)
             return true
         }
@@ -95,7 +96,8 @@ Item {
             }
             if (overlay.focusZone === "timeline")
                 overlay.actionIndex = overlay.pauseActionIndex
-            overlay.focusZone = overlay.focusZone === "back" ? "timeline" : "actions"
+            overlay.focusZone = overlay.focusZone === "back" ? (overlay.hasActiveSegment ? "skip" : "timeline") :
+                                                               overlay.focusZone === "skip" ? "timeline" : "actions"
             overlay.showControls(overlay.focusZone)
             return true
         }
@@ -163,7 +165,7 @@ Item {
             overlay.player.enableSubtitles()
             break
         case "skipSegment":
-            overlay.player.skipActiveSegment()
+            overlay.skipActiveSegment()
             break
         case "queuePrevious":
             overlay.playPrevious()
@@ -202,8 +204,8 @@ Item {
         }
         if (overlay.controlsVisible && handleControlsKey(key))
             return true
-        if (key === Qt.Key_T && overlay.hasPlayer && overlay.player.activeSegmentType.length > 0) {
-            overlay.player.skipActiveSegment()
+        if (key === Qt.Key_T && overlay.hasActiveSegment) {
+            overlay.skipActiveSegment()
             return true
         }
         if (key === Qt.Key_F && overlay.hasPlayer) {
