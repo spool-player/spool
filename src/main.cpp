@@ -840,8 +840,11 @@ int main(int argc, char **argv)
     player->setDemuxerBudget(memoryBudget.mpvDemuxerMaxBytes, memoryBudget.mpvDemuxerMaxBackBytes);
     Spool::ScreenSaverInhibitor screenSaverInhibitor;
     const auto updateScreenSaver = [&screenSaverInhibitor, player = player.get()] {
-        screenSaverInhibitor.setInhibited(
-            Spool::screenSaverShouldBeInhibited(player && player->sessionActive(), player && player->paused()));
+        bool active = player && player->sessionActive();
+#if defined(SPOOL_APPLE_MOBILE)
+        active = active && player->mediaKind() != QStringLiteral("audio");
+#endif
+        screenSaverInhibitor.setInhibited(Spool::screenSaverShouldBeInhibited(active, player && player->paused()));
     };
     QObject::connect(player.get(), &Spool::PlayerController::playbackStateChanged, &app, updateScreenSaver);
     QObject::connect(player.get(), &Spool::PlayerController::sessionActiveChanged, &app, updateScreenSaver);

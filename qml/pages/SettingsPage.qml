@@ -198,6 +198,8 @@ FocusScope {
     onDownloadsAvailableChanged: refreshSettingsFilter(false)
 
     function rowAvailable(row) {
+        if (row.key === "providers/updates" && !Store.storeAvailable)
+            return false
         if (row.key === "action/connectionSpeed" && !ProviderCapabilities.speedTest)
             return false
         if (row.key === "action/downloads")
@@ -1471,9 +1473,9 @@ FocusScope {
         active: root.diagnosticsExportVisible
         z: 200
         sourceComponent: ConfirmationDialog {
-            title: Platform.isAndroid ? "Share diagnostics?" : "Save diagnostics report?"
+            title: Platform.isMobile ? "Share diagnostics?" : "Save diagnostics report?"
             message: root.diagnosticsExportPreview
-            confirmText: Platform.isAndroid ? "Share" : "Save"
+            confirmText: Platform.isMobile ? "Share" : "Save"
             onAccepted: {
                 App.saveDiagnosticsReport()
                 root.diagnosticsExportVisible = false

@@ -759,6 +759,52 @@ signature prevents launch. This requires no Apple developer certificate,
 exercises the real sandboxed Keychain consumer, and does not sign or provision
 the separately built device IPA.
 
+## iOS review build
+
+The iOS implementation is integrated on `big-refactor` for review, not released
+or App Store-approved. Its native build requires macOS, Xcode and
+matching host/iOS Qt kits at the version in `tools/manifests/toolchain.json`.
+Set `QT_HOST_PATH` and `QT_TARGET_PREFIX`, then run `tools/build-ios.sh`.
+`APPLE_SDK=iphonesimulator` selects the simulator; the default is `iphoneos`.
+The device architecture defaults to `arm64`, the official Qt simulator kit to
+`x86_64`. Apple Silicon Macs require Rosetta for this simulator kit; the review
+workflow uses an Intel macOS runner. A custom source-built Qt kit can select
+`APPLE_ARCH=arm64` for the simulator. The deployment baseline is iOS 17,
+matching [Qt 6.11's supported configuration](https://doc.qt.io/qt-6.11/ios.html).
+The shared
+`tools/apple/build-dependencies.sh` verifies existing dependency pins and builds
+static FFmpeg, curl/OpenSSL, subtitle libraries, libplacebo, mpv and QCoro for
+the selected SDK. Qt and application code use OpenGL ES; no desktop AppKit,
+IOKit, dynamic provider loader or desktop command socket is included.
+
+App Store review builds force bundled-only provider code and include only pins
+whose catalogue-derived `appleAppStore` flag is exactly `true`. Provider checkout
+overrides and downloaded provider updates are not permitted. Account sign-in
+still uses the bundled provider screens and system browser.
+
+Tokens use device-only Keychain items, retained for background audio after the
+first unlock. Media data stays in the sandbox; caches/logs are disposable and
+application data is excluded from backup. Video pauses when hidden, while
+audio uses the system playback session and lock-screen/AirPods transport
+commands. Interruptions and disconnected audio routes pause playback.
+Video remains full-bleed; touch controls respect the device safe areas.
+
+Local-network access is prompted by iOS when connecting to a user-selected LAN
+server. If access was denied, enable **Settings → Spool → Local Network**.
+UDP discovery explicitly reports `discovery_unavailable`: this bundle does not
+request Apple's restricted multicast entitlement. Manual addresses and
+consented HTTP discovery remain available. Plain-HTTP connections to
+user-owned servers require the included ATS exception and an App Review
+explanation. No camera, microphone, photo-library or broad-storage permission
+is requested. Diagnostics use the native share sheet.
+
+To export a signed archive, set `APPLE_ARCHIVE=1`, `APPLE_DEVELOPMENT_TEAM`, and
+`APPLE_EXPORT_OPTIONS` (your Xcode ExportOptions.plist); unsigned simulator
+builds are the default verification path. The privacy manifest declares local
+preferences, file metadata, free disk space and monotonic timing APIs; App
+Store submission still requires the developer's privacy/legal declarations,
+signing, entitlement review and device playback/route/lifecycle testing.
+
 ## Android development
 
 The Android toolchain is pinned to SDK 36, Build Tools 36.0.0 and NDK
