@@ -115,13 +115,16 @@ void MpvLifecycle::runEventLoop(
     mpv_handle *handle, EventHandler eventHandler, const std::shared_ptr<std::atomic_bool>& stop)
 {
     while (!stop->load()) {
-        mpv_event *event = mpv_wait_event(handle, 0.1);
+        // mpv_wakeup interrupts this wait and remembers a wakeup that arrives
+        // just before it. Idle/paused players need no timeout polling, and a
+        // teardown need not wait for a polling timeout to expire.
+        mpv_event *event = mpv_wait_event(handle, -1);
         if (stop->load())
             break;
-        if (event && event->event_id == MPV_EVENT_SHUTDOWN)
-            stop->store(true);
-        if (event && eventHandler)
+        if (event && event->event_id != MPV_EVENT_NONE && eventHandler)
             eventHandler(event);
+        if (event && event->event_id == MPV_EVENT_SHUTDOWN)
+            break;
     }
 }
 
