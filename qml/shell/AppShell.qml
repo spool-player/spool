@@ -123,8 +123,8 @@ KeyRouter {
                          }
     }
 
-    // Qt's logical pixel on Android is exactly an Android dp, and Android has
-    // already decided what a dp should be for the panel in front of it: a
+    // Android dp and iOS points are distance-corrected logical pixels. Android
+    // has already decided what a dp should be for the panel in front of it: a
     // handset reports a few hundred dp across because it is held at arm's
     // length, and a television reports about 960x540 because it is watched
     // from across a room. Scoring that television viewport at 1.0 is what
@@ -135,7 +135,7 @@ KeyRouter {
     Binding {
         target: Metrics
         property: "baselinePx"
-        value: Platform.isAndroid ? 720 : 1440
+        value: Platform.isAndroid || Platform.isMobile ? 720 : 1440
         restoreMode: Binding.RestoreNone
     }
 
