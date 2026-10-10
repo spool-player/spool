@@ -4,6 +4,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QSaveFile>
 #include <QString>
 
 namespace Spool::CredentialStore::FileBackend {
@@ -33,18 +34,24 @@ inline QString load(const QString& profileId)
     return QString::fromUtf8(file.readAll());
 }
 
-inline bool save(const QString& profileId, const QString& token)
+inline bool saveToPath(const QString& credentialPath, const QString& token)
 {
-    const QString credentialPath = path(profileId);
     QDir directory = QFileInfo(credentialPath).dir();
     if (!directory.mkpath(QStringLiteral(".")))
         return false;
-    QFile::setPermissions(directory.path(), QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
-    QFile file(credentialPath);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+    if (!QFile::setPermissions(
+            directory.path(), QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner))
         return false;
-    file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
-    return file.write(token.toUtf8()) >= 0;
+    QSaveFile file(credentialPath);
+    if (!file.open(QIODevice::WriteOnly) || !file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner))
+        return false;
+    const QByteArray bytes = token.toUtf8();
+    return file.write(bytes) == bytes.size() && file.commit();
+}
+
+inline bool save(const QString& profileId, const QString& token)
+{
+    return saveToPath(path(profileId), token);
 }
 
 inline void remove(const QString& profileId)
