@@ -37,6 +37,16 @@ void LibraryPrefetchController::stop()
     m_active = false;
 }
 
+// A scope change (account or library availability) drops the stored pages;
+// merely navigating away only stops the queue via stop().
+void LibraryPrefetchController::reset()
+{
+    stop();
+    m_pages.clear();
+    m_pageStoredAtMs.clear();
+    m_cachedKeys.clear();
+}
+
 void LibraryPrefetchController::schedule(const std::vector<LibraryItem>& libraries, const QStringList& recentLibraryIds)
 {
     stop();
