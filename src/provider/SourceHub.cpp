@@ -962,6 +962,13 @@ void SourceHub::runItemAction(const QString& actionId, const QString& itemId, co
                          QVariantMap args) -> QCoro::Task<void> {
         QPointer<SourceHub> guard(self);
         QPointer<Provider> sourceGuard(self->source(account));
+        const auto permitted = [](const QVariantList& actions, const QString& requested) {
+            return std::any_of(actions.begin(), actions.end(), [&](const QVariant& value) {
+                const auto action = value.toMap();
+                return action.value(QStringLiteral("id")).toString() == requested
+                    && action.value(QStringLiteral("enabled"), true).toBool();
+            });
+        };
         const auto actions
             = co_await self->fetchItemActions(scopedItemId, args.value(QStringLiteral("itemType")).toString(),
                 scopedContainerId, args.value(QStringLiteral("entryId")).toString(), QStringLiteral("item-action"));
@@ -970,12 +977,7 @@ void SourceHub::runItemAction(const QString& actionId, const QString& itemId, co
         if (!sourceGuard || sourceGuard != self->source(account) || !self->accountEnabled(account))
             throw std::runtime_error("source_unavailable");
         const auto requested = args.value(QStringLiteral("action")).toString();
-        const bool permitted = std::any_of(actions.begin(), actions.end(), [&](const QVariant& value) {
-            const auto action = value.toMap();
-            return action.value(QStringLiteral("id")).toString() == requested
-                && action.value(QStringLiteral("enabled"), true).toBool();
-        });
-        if (!permitted)
+        if (!permitted(actions, requested))
             throw std::runtime_error("action_unavailable");
         QVariantMap result = co_await self->call(account, QStringLiteral("runItemAction"), args);
         if (guard && result.contains(QStringLiteral("pick"))) {
@@ -986,6 +988,17 @@ void SourceHub::runItemAction(const QString& actionId, const QString& itemId, co
             if (!sourceGuard || sourceGuard != self->source(account) || !self->accountEnabled(account))
                 throw std::runtime_error("source_unavailable");
             args.insert(choice);
+            // Permission may have been revoked while the picker was open; the
+            // second execution repeats the same scoped policy check.
+            const auto refreshed
+                = co_await self->fetchItemActions(scopedItemId, args.value(QStringLiteral("itemType")).toString(),
+                    scopedContainerId, args.value(QStringLiteral("entryId")).toString(), QStringLiteral("item-action"));
+            if (!guard)
+                co_return;
+            if (!sourceGuard || sourceGuard != self->source(account) || !self->accountEnabled(account))
+                throw std::runtime_error("source_unavailable");
+            if (!permitted(refreshed, requested))
+                throw std::runtime_error("action_unavailable");
             result = co_await self->call(account, QStringLiteral("runItemAction"), args);
         }
         if (!guard)
