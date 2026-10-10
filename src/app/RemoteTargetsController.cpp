@@ -643,14 +643,11 @@ void RemoteTargetsController::beginOptimistic(const QVariantMap& command)
     const auto name = command.value("action").toString();
     m_ackSequence.reset();
     if (name == "pause" || name == "unpause" || name == "stop") {
-        // Capture the running clock before the transport changes state: a
+        // Capture the current position before the transport changes state: a
         // stale poll must neither rewind it nor restart an optimistic
-        // unpause's clock, and playback advances even from a zero position.
-        if (!m_position.isEmpty()) {
-            const QString captured = QString::number(predictedPositionTicks());
-            m_optimistic.insert("positionTicks", captured);
-            m_position = captured;
-        }
+        // unpause's clock. An optimistic seek target is already exact.
+        if (!m_position.isEmpty())
+            m_optimistic.insert("positionTicks", m_position);
         m_optimistic.insert("state", name == "pause" ? "paused" : name == "unpause" ? "playing" : "stopped");
     } else if (name == "seek")
         m_optimistic.insert("positionTicks", command.value("positionTicks"));

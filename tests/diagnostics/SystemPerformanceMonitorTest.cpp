@@ -22,6 +22,10 @@ SPOOL_TEST_MAIN("system-performance-monitor")
 {
     QCoreApplication app(argc, argv);
     Spool::SystemPerformanceMonitor monitor;
+    // Sampling runs only while an observer (the diagnostics overlay) is
+    // registered; the bare monitor holds no thread or counters of its own.
+    QObject overlayObserver;
+    monitor.observe(&overlayObserver);
     std::atomic<qint64> fakeAudioDecodeTimeNs { 0 };
     monitor.setAudioDecodeCpuTimeProvider(
         [&fakeAudioDecodeTimeNs] { return fakeAudioDecodeTimeNs.fetch_add(1'000'000) + 1'000'000; });

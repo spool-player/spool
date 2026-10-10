@@ -932,6 +932,10 @@ QCoro::Task<void> ProviderRegistry::install(
     if (root.isEmpty())
         throw std::runtime_error("installs_disabled");
     const QString id = package.manifest.id;
+    // Admission spans the request: a newer install or removal supersedes this
+    // one before its bytes can commit, while the turn below keeps commits and
+    // directory removal in request order.
+    const quint64 revision = ++m_installRevisions[id];
     QPromise<void> turn;
     turn.start();
     const QFuture<void> previous = std::exchange(m_installTails[id], turn.future());
@@ -943,7 +947,6 @@ QCoro::Task<void> ProviderRegistry::install(
     if (const auto *existing = module(id);
         existing && ProviderPackage::compareVersions(package.manifest.version, existing->manifest.version) <= 0)
         throw std::runtime_error("install_version_not_newer");
-    const quint64 revision = ++m_installRevisions[id];
     QPointer<ProviderRegistry> guard(this);
     // Only inert files are written in the worker. Admission and activation
     // share the registry thread, so a concurrent replacement cannot slip
@@ -973,6 +976,10 @@ QCoro::Task<void> ProviderRegistry::install(
 
 QCoro::Task<void> ProviderRegistry::uninstall(QString moduleId)
 {
+    // A removal request retires older pending installs immediately, while the
+    // turn keeps its directory removal behind any earlier commit and ahead of
+    // any newer install's activation.
+    ++m_installRevisions[moduleId];
     QPromise<void> turn;
     turn.start();
     const QFuture<void> previous = std::exchange(m_installTails[moduleId], turn.future());
@@ -980,7 +987,6 @@ QCoro::Task<void> ProviderRegistry::uninstall(QString moduleId)
     if (previous.isValid())
         co_await qCoro(previous).result();
     clearGrants(moduleId);
-    ++m_installRevisions[moduleId];
     const ProviderModule *existing = module(moduleId);
     if (!existing || (existing->bundled && !existing->overridesBundled) || existing->native)
         co_return;
