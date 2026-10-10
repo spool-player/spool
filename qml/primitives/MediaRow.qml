@@ -51,7 +51,6 @@ FocusScope {
     property var dragCardData: ({})
     // Lets even the final card be positioned at the start of the viewport.
     property bool allowTrailingSpace: false
-    property int modelRevision: 0
     readonly property bool delegatesPresented: presentation.delegatesReady
 
     readonly property int count: modelCount()
@@ -83,14 +82,12 @@ FocusScope {
     Component.onCompleted: resetPresentation()
     onAtomicPopulateChanged: Qt.callLater(resetPresentation)
     onModelChanged: {
-        ++modelRevision
         if (!publishingMove && (moveMode || dragActive))
             finishMove()
         if (!publishingMove)
             Qt.callLater(resetPresentation)
     }
     onCountChanged: {
-        ++modelRevision
         if (!publishingMove) {
             currentIndex = count > 0 ? Math.max(0, Math.min(currentIndex, count - 1)) : -1
             if (moveMode || dragActive)
@@ -121,25 +118,12 @@ FocusScope {
         target: root.model && root.model.rowCount !== undefined ? root.model : null
         ignoreUnknownSignals: true
 
-        function onDataChanged() {
-            ++root.modelRevision
-        }
         function onModelReset() {
-            ++root.modelRevision
             if (!root.publishingMove) {
                 root.finishMove()
                 root.currentIndex = root.count > 0 ? Math.max(0, Math.min(root.currentIndex, root.count - 1)) : -1
             }
             Qt.callLater(root.syncViewCurrentIndex)
-        }
-        function onRowsInserted() {
-            ++root.modelRevision
-        }
-        function onRowsMoved() {
-            ++root.modelRevision
-        }
-        function onRowsRemoved() {
-            ++root.modelRevision
         }
     }
 
@@ -147,9 +131,7 @@ FocusScope {
         return ModelAccess.count(model)
     }
 
-    // revision is unused but must stay in the signature: bindings pass
-    // modelRevision so a model change re-evaluates them.
-    function itemAt(index, revision) {
+    function itemAt(index) {
         return ModelAccess.at(model, index)
     }
 
@@ -420,8 +402,15 @@ FocusScope {
             id: card
 
             required property int index
-            readonly property var cardData: root.itemAt(index, root.modelRevision)
-            readonly property var cardItem: root.cardKind === "library" ? (cardData.item || ({})) : cardData
+            required property var modelData
+            // Qt supplies a live role object for our native models, and the
+            // element itself for a QVariantList/JS array. Read the item role
+            // directly so one changed row does not re-fetch every card.
+            readonly property var cardData: modelData || ({})
+            readonly property var cardItem: {
+                const itemRole = cardData.item
+                return libraryCard ? (itemRole || ({})) : itemRole !== undefined ? itemRole : cardData
+            }
             readonly property bool libraryCard: root.cardKind === "library"
             readonly property bool personCard: root.cardKind === "person"
             readonly property var badge: root.cardBadge ? root.cardBadge(cardData) : null
