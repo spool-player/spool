@@ -404,11 +404,17 @@ Item {
     // its bindings from ever running otherwise.
     Loader {
         id: syncPlayMenu
-        anchors.right: parent.right
-        anchors.bottom: hud.top
-        anchors.rightMargin: root.dp(52)
-        anchors.bottomMargin: root.dp(18)
-        width: root.dp(420)
+        readonly property real edgeMargin: root.dp(16)
+        readonly property real spaceAboveHud: Math.max(0, hud.y - root.dp(18) - edgeMargin)
+        // Stay above the transport when there is room for a heading and row.
+        // Very short windows let the menu cover the HUD so its list stays usable.
+        maximumHeight: Math.min(Metrics.scaled(520), spaceAboveHud >= Metrics.controlHeightPx * 2 ? spaceAboveHud : Math.max(0,
+                                                                                                                             root.height
+                                                                                                                             - edgeMargin
+                                                                                                                             * 2))
+        width: Math.max(0, Math.min(root.dp(420), root.width - edgeMargin * 2))
+        x: Math.max(edgeMargin, root.width - width - root.dp(52))
+        y: Math.max(edgeMargin, hud.y - height - root.dp(18))
         z: 55
         active: root.overlay.syncPlay !== null
         sourceComponent: Shell.GroupMenu {

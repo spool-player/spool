@@ -55,6 +55,8 @@ FocusScope {
     readonly property int actionTargetSize: Math.max(Metrics.touchTargetPx, dp(audioOnly ? 54 : 68))
     readonly property var audioSyncSteps: [1, 5, 10, 100]
     readonly property bool audioSelectable: hasPlayer && player.audioTracks.length > 1
+    readonly property bool hasActiveSegment: hasPlayer && player.activeSegmentType.length > 0
+                                             && player.activeSegmentEndSeconds > 0
     // Nothing hides over a now playing stage, and the controls that only make
     // sense against a picture are left out of it.
     readonly property bool audioOnly: hasPlayer && player.mediaKind === "audio"
@@ -538,7 +540,11 @@ FocusScope {
         audioSyncVisible = false
         subtitleSettingsVisible = false
         controlsVisible = true
-        const initialIndex = kind === "audio" && hasPlayer ? player.selectedAudioIndex : 0
+        let initialIndex = 0
+        if (hasPlayer && kind === "audio")
+            initialIndex = player.selectedAudioIndex
+        else if (hasPlayer && kind === "subtitles")
+            initialIndex = player.selectedSubtitleIndex
         chrome.resetMenu(Math.max(0, initialIndex))
         autohide.stop()
     }
@@ -881,6 +887,14 @@ FocusScope {
             player.seek(clampSeconds(seconds))
     }
 
+    function skipActiveSegment() {
+        if (!hasActiveSegment)
+            return false
+        seekTo(player.activeSegmentEndSeconds)
+        showControls("timeline")
+        return true
+    }
+
     function seekRelative(seconds) {
         if (syncPlayActive)
             syncPlay.requestRelativeSeek(seconds)
@@ -947,14 +961,6 @@ FocusScope {
     }
 
     function back() {
-        if (touchscreenControls)
-            return stopPlayback("overlay-back")
-        if (desktopControlsAvailable && NativeWindow.fullScreen) {
-            toggleFullScreen()
-            return true
-        }
-        if (desktopControlsAvailable)
-            return stopPlayback("overlay-back")
         // Back abandons a scrub — a held seek included — rather than leaving
         // playback, so read it before the input hand-back clears it.
         const wasScrubbing = scrubbing
@@ -965,10 +971,8 @@ FocusScope {
             autohide.stop()
             return true
         }
-        if (subtitleSettingsVisible) {
-            closeSubtitleSettings()
-            return true
-        }
+        if (subtitleSettingsVisible)
+            return subtitleSettings.back()
         // The panel answers first: while a row is picked up, Back puts it back
         // rather than closing out from under the move.
         if (browsePanelVisible)
@@ -983,6 +987,15 @@ FocusScope {
             closeMenu()
             return true
         }
+
+        if (touchscreenControls)
+            return stopPlayback("overlay-back")
+        if (desktopControlsAvailable && NativeWindow.fullScreen) {
+            toggleFullScreen()
+            return true
+        }
+        if (desktopControlsAvailable)
+            return stopPlayback("overlay-back")
 
         if (controlsVisible)
             return hideControls()
@@ -1048,6 +1061,10 @@ FocusScope {
             stopPlayback("overlay-back")
             return
         }
+        if (focusZone === "skip") {
+            skipActiveSegment()
+            return
+        }
         if (focusZone === "timeline") {
             if (!commitScrub() && hasPlayer)
                 togglePlayback()
@@ -1082,6 +1099,8 @@ FocusScope {
     }
     onScrubbingChanged: if (!scrubbing)
                             maybeRestartAutohide()
+    onHasActiveSegmentChanged: if (!hasActiveSegment && focusZone === "skip")
+                                   focusZone = "timeline"
 
     Connections {
         target: syncPlay
