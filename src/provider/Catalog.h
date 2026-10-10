@@ -40,6 +40,10 @@ public:
     virtual QCoro::Task<std::vector<MovieItem>> fetchNextUpEpisodes(int limit = 24) = 0;
     virtual QCoro::Task<std::vector<MovieItem>> fetchLatestItems(QString parentId = {}, int limit = 24) = 0;
     virtual QCoro::Task<std::vector<MovieItem>> fetchSimilarItems(QString itemId, int limit = 24) = 0;
+    // Server-indexed trailers ("trailers") and extras ("extras") for an item,
+    // as ordinary playable rows. Optional: a source without related media
+    // returns an empty list.
+    virtual QCoro::Task<std::vector<MovieItem>> fetchRelatedMedia(QString itemId, QString kind) = 0;
     virtual QCoro::Task<PersonCredits> fetchItemsByPerson(QString personId, int maximumItems = 4000) = 0;
 
     // The top-level libraries the home page and the rail are built from.

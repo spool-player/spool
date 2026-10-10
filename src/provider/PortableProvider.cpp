@@ -551,6 +551,24 @@ QCoro::Task<std::vector<MovieItem>> PortableProvider::fetchSimilarItems(QString 
     return list(QStringLiteral("similar"), { { QStringLiteral("itemId"), itemId } }, limit);
 }
 
+QCoro::Task<std::vector<MovieItem>> PortableProvider::fetchRelatedMedia(QString itemId, QString kind)
+{
+    std::vector<MovieItem> rows = co_await list(QStringLiteral("relatedMedia"),
+        { { QStringLiteral("itemId"), itemId }, { QStringLiteral("kind"), kind } }, 100);
+    // Related items play through the same authenticated negotiation as the
+    // main feature. Ignore placeholders and duplicate entries in this shelf.
+    std::vector<MovieItem> items;
+    items.reserve(rows.size());
+    QSet<QString> seen;
+    for (MovieItem& row : rows) {
+        if (row.id.isEmpty() || row.id == itemId || !isPlayableItem(row) || seen.contains(row.id))
+            continue;
+        seen.insert(row.id);
+        items.push_back(std::move(row));
+    }
+    co_return items;
+}
+
 QCoro::Task<PersonCredits> PortableProvider::fetchItemsByPerson(QString personId, int maximumItems)
 {
     PersonCredits credits;

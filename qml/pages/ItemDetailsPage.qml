@@ -12,6 +12,8 @@ FocusScope {
     property var shell
     readonly property var contextRow: detailRowsLoader.item ? detailRowsLoader.item.contextRow : null
     readonly property var peopleRow: detailRowsLoader.item ? detailRowsLoader.item.peopleRow : null
+    readonly property var trailersRow: detailRowsLoader.item ? detailRowsLoader.item.trailersRow : null
+    readonly property var extrasRow: detailRowsLoader.item ? detailRowsLoader.item.extrasRow : null
     readonly property var similarRow: detailRowsLoader.item ? detailRowsLoader.item.similarRow : null
     readonly property var seasonPickerList: seasonPickerPanel.menuList
     readonly property var routeContext: RoutePolicy.detailsContext(shell ? shell.routeArgs : ({}), Browse.items)
@@ -98,6 +100,8 @@ FocusScope {
     readonly property int contextCount: Content.detailSeasons ? Content.detailSeasons.count : 0
     readonly property int seasonOptionCount: Content.detailSeasonOptions ? Content.detailSeasonOptions.count : 0
     readonly property int similarCount: Content.detailSimilarItems ? Content.detailSimilarItems.count : 0
+    readonly property int trailerCount: Content.detailTrailers ? Content.detailTrailers.count : 0
+    readonly property int extraCount: Content.detailExtras ? Content.detailExtras.count : 0
     readonly property bool contextPosterCards: typeText === "Series" || typeText === "BoxSet"
     readonly property bool contextItemsPossible: albumDetail || contextPosterCards || ((typeText === "Episode"
                                                                                         || typeText === "Season")
@@ -528,6 +532,10 @@ FocusScope {
         }
     }
     function currentMediaItem() {
+        if (focusZone === "trailers" && trailersRow && trailersRow.currentIndex >= 0)
+            return Content.detailTrailers.get(trailersRow.currentIndex)
+        if (focusZone === "extras" && extrasRow && extrasRow.currentIndex >= 0)
+            return Content.detailExtras.get(extrasRow.currentIndex)
         return item
     }
 
@@ -638,6 +646,14 @@ FocusScope {
         if (similarRow)
             similarRow.currentIndex = similarCount > 0 ? Math.max(0, Math.min(similarRow.currentIndex, similarCount - 1)) :
                                                          0
+        if (trailersRow)
+            trailersRow.currentIndex = trailerCount > 0 ? Math.max(0, Math.min(trailersRow.currentIndex, trailerCount
+                                                                               - 1)) : -1
+        if (extrasRow)
+            extrasRow.currentIndex = extraCount > 0 ? Math.max(0, Math.min(extrasRow.currentIndex, extraCount - 1)) : -1
+        if (routeActive && ((focusZone === "trailers" && trailerCount === 0) || (focusZone === "extras" && extraCount
+                                                                                 === 0)))
+            focusDefaultAction()
         Qt.callLater(positionContextRow)
     }
 
@@ -664,6 +680,10 @@ FocusScope {
             contextRow.currentIndex = 0
         if (similarRow)
             similarRow.currentIndex = 0
+        if (trailersRow)
+            trailersRow.currentIndex = 0
+        if (extrasRow)
+            extrasRow.currentIndex = 0
         Content.loadDetailRows(itemId, typeText, seriesIdText, seasonIdText)
     }
 
@@ -754,6 +774,10 @@ FocusScope {
             zones.push("context")
         if (showPeopleRow)
             zones.push("people")
+        if (trailerCount > 0)
+            zones.push("trailers")
+        if (extraCount > 0)
+            zones.push("extras")
         if (showSimilarRow)
             zones.push("similar")
         return zones
@@ -768,12 +792,16 @@ FocusScope {
             return actionRow
         if (zone === "metadata")
             return metadataPanel
-        if (zone === "context" || zone === "people" || zone === "similar")
+        if (zone === "context" || zone === "people" || zone === "trailers" || zone === "extras" || zone === "similar")
             detailRowsLoader.forced = true
         if (zone === "context")
             return contextRow
         if (zone === "people")
             return peopleRow
+        if (zone === "trailers")
+            return trailersRow
+        if (zone === "extras")
+            return extrasRow
         return similarRow
     }
 
@@ -790,6 +818,10 @@ FocusScope {
             contextRow.focusList()
         else if (zone === "people")
             peopleRow.focusList()
+        else if (zone === "trailers")
+            trailersRow.focusList()
+        else if (zone === "extras")
+            extrasRow.focusList()
         else if (zone === "similar")
             similarRow.focusList()
         else
@@ -993,6 +1025,11 @@ FocusScope {
             shell.openDetailsAt(Content.detailSeasons, index, "context", detailsReturnRoute)
     }
 
+    function playRelatedMedia(model, index) {
+        if (!App.busy && model && index >= 0 && index < model.count)
+            App.playFromModel(model, index)
+    }
+
     function openSimilarItem(index) {
         if (index >= 0 && String(Content.detailSimilarItems.get(index).itemType || "") === "Audio") {
             App.playFromModel(Content.detailSimilarItems, index)
@@ -1081,6 +1118,10 @@ FocusScope {
             contextRow.activate()
         } else if (focusZone === "people") {
             peopleRow.activate()
+        } else if (focusZone === "trailers") {
+            trailersRow.activate()
+        } else if (focusZone === "extras") {
+            extrasRow.activate()
         } else if (focusZone === "similar") {
             similarRow.activate()
         } else if (focusZone === "overflow") {
@@ -1119,6 +1160,10 @@ FocusScope {
             return contextRow.longPress()
         if (focusZone === "similar")
             return similarRow.longPress()
+        if (focusZone === "trailers")
+            return trailersRow.longPress()
+        if (focusZone === "extras")
+            return extrasRow.longPress()
         return focusZone === "actions" && shell ? shell.openItemMenu(item, orderedActions()[actionIndex], {
                                                                          "deferBackdropDismissal": true,
                                                                          "containerId": actionContainerId,
@@ -1574,7 +1619,8 @@ FocusScope {
                 property bool forced: false
                 readonly property int estimatedRowHeight: Math.round(root.rowPosterWidth * 1.5) + Metrics.scaled(94)
                 readonly property int estimatedRows: Number(root.showContextRow || root.reserveContextRow) + Number(
-                                                         root.showPeopleRow) + Number(root.showSimilarRow)
+                                                         root.showPeopleRow) + Number(root.showSimilarRow) + Number(
+                                                         root.trailerCount > 0) + Number(root.extraCount > 0)
                 active: forced || detailsFlick.contentY + detailsFlick.height * 1.5 >= y
                 // zoneTarget() needs the rows to exist synchronously when it
                 // forces them for focus; flipping asynchronous off completes
@@ -1586,18 +1632,27 @@ FocusScope {
                     id: detailRowsArea
                     property alias contextRow: contextRowItem
                     property alias peopleRow: peopleRowItem
+                    property alias trailersRow: trailersRowItem
+                    property alias extrasRow: extrasRowItem
                     property alias similarRow: similarRowItem
                     readonly property int rowSpacing: Metrics.sectionGapPx
                     readonly property int visibleRowCount: (contextRowItem.visible ? 1 : 0) + (peopleRowItem.visible
                                                                                                ? 1 : 0) + (
-                                                               similarRowItem.visible ? 1 : 0)
+                                                               similarRowItem.visible ? 1 : 0) + (
+                                                               trailersRowItem.visible ? 1 : 0) + (
+                                                               extrasRowItem.visible ? 1 : 0)
                     readonly property int rowsHeight: contextRowItem.height + peopleRowItem.height
+                                                      + trailersRowItem.height + extrasRowItem.height
                                                       + similarRowItem.height + Math.max(0, visibleRowCount - 1)
                                                       * rowSpacing
                     readonly property int contextY: 0
                     readonly property int peopleY: contextY + (contextRowItem.visible ? contextRowItem.height + rowSpacing :
                                                                                         0)
-                    readonly property int similarY: peopleY + (peopleRowItem.visible ? peopleRowItem.height + rowSpacing :
+                    readonly property int trailersY: peopleY + (peopleRowItem.visible ? peopleRowItem.height + rowSpacing :
+                                                                                        0)
+                    readonly property int extrasY: trailersY + (trailersRowItem.visible ? trailersRowItem.height + rowSpacing :
+                                                                                          0)
+                    readonly property int similarY: extrasY + (extrasRowItem.visible ? extrasRowItem.height + rowSpacing :
                                                                                        0)
                     implicitHeight: rowsHeight + root.contentMargin
 
@@ -1646,6 +1701,48 @@ FocusScope {
                         enabledRow: root.showPeopleRow
                         reserveWhenEmpty: root.reservePeopleRow
                         onActivated: (index, person) => root.openPerson(person)
+                    }
+
+                    MediaRow {
+                        id: trailersRowItem
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.leftMargin: root.contentMargin
+                        anchors.rightMargin: root.contentMargin
+                        y: detailRowsArea.trailersY
+                        title: "Trailers"
+                        model: Content.detailTrailers
+                        shell: root.shell
+                        cardKind: "landscape"
+                        cardWidth: root.rowLandscapeWidth
+                        cardGap: root.rowGap
+                        enabledRow: root.trailerCount > 0
+                        onActiveFocusChanged: {
+                            if (activeFocus)
+                                root.focusZone = "trailers"
+                        }
+                        onActivated: index => root.playRelatedMedia(Content.detailTrailers, index)
+                    }
+
+                    MediaRow {
+                        id: extrasRowItem
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.leftMargin: root.contentMargin
+                        anchors.rightMargin: root.contentMargin
+                        y: detailRowsArea.extrasY
+                        title: "Extras"
+                        model: Content.detailExtras
+                        shell: root.shell
+                        cardKind: "landscape"
+                        cardWidth: root.rowLandscapeWidth
+                        cardGap: root.rowGap
+                        enabledRow: root.extraCount > 0
+                        onActiveFocusChanged: {
+                            if (activeFocus)
+                                root.focusZone = "extras"
+                        }
+                        onActivated: index => root.playRelatedMedia(Content.detailExtras, index)
                     }
 
                     MediaRow {
