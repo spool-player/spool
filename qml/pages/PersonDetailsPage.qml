@@ -6,13 +6,16 @@ import "../theme"
 import "../primitives"
 import "../browse"
 import "../shell/ItemActivation.js" as ItemActivation
+import "../shell/RoutePolicy.js" as RoutePolicy
 
 FocusScope {
     id: root
 
     property var shell
     readonly property bool directionRelease: rows.directionRelease
-    readonly property var person: shell ? shell.personItem : ({})
+    readonly property var person: RoutePolicy.personContext(shell ? shell.routeArgs : ({}))
+    readonly property bool routeActive: Boolean(shell && shell.route === "personDetails")
+    property bool routeRefreshScheduled: false
     // The controller supplies title/model/kind per credit row; the page adds
     // the presentation the row kind implies. A person's episode credits name
     // the episode, where Continue Watching names the series.
@@ -38,8 +41,24 @@ FocusScope {
     readonly property bool contentReady: !Content.personItemsBusy
     focus: true
 
-    Component.onCompleted: rows.reset()
+    Component.onCompleted: {
+        rows.reset()
+        schedulePersonRefresh()
+    }
     onSectionsChanged: rows.reset()
+    onPersonChanged: schedulePersonRefresh()
+    onRouteActiveChanged: schedulePersonRefresh()
+
+    function schedulePersonRefresh() {
+        if (!routeActive || routeRefreshScheduled)
+            return
+        routeRefreshScheduled = true
+        Qt.callLater(function () {
+            root.routeRefreshScheduled = false
+            if (root.routeActive)
+                Content.loadPersonItems(String(root.person.id || ""))
+        })
+    }
 
     function routeKey(key, phase, repeat) {
         return rows.routeKey(key, phase, repeat)

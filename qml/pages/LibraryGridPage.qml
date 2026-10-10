@@ -158,6 +158,19 @@ FocusScope {
         return Libraries.rowCount()
     }
 
+    function checkpointRoute() {
+        if (!visible || !shell || shell.route !== "libraryGrid")
+            return
+        const libraryId = String(Browse.libraryId || "")
+        const routeLibraryId = String(shell.routeArgs.libraryId || "")
+        if (routeLibraryId.length > 0 && routeLibraryId !== libraryId)
+            return
+        Router.checkpoint({
+                              libraryId: libraryId,
+                              focusIndex: Math.max(0, grid.currentIndex)
+                          })
+    }
+
     function currentLibraryModelIndex() {
         const currentId = String(Browse.libraryId || "")
         const count = libraryCount()
@@ -1336,11 +1349,7 @@ FocusScope {
                     id: routeCheckpoint
                     interval: 250
                     repeat: false
-                    onTriggered: if (root.shell)
-                                     Router.checkpoint({
-                                                           libraryId: Browse.libraryId,
-                                                           focusIndex: Math.max(0, grid.currentIndex)
-                                                       })
+                    onTriggered: root.checkpointRoute()
                 }
 
                 Timer {
