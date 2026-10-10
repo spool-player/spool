@@ -81,11 +81,11 @@ export type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error';
 export type LogFields = Readonly<Record<string, null | boolean | number | string>>;
 
 /**
- * Given to createSource and lives as long as the account: use it for
- * connections that outlast an operation. Everything stops when the account
- * is removed, disabled or the provider is updated.
+ * The host surface shared by sources and operations, under different scopes:
+ * source services outlive any one operation; operation requests are cancelled
+ * with their call.
  */
-export interface SourceHost {
+export interface ProviderHost {
     device: Device;
     /** Frozen manifest declarations mapped to true; not account authorization. */
     readonly capabilities: Capabilities;
@@ -95,16 +95,27 @@ export interface SourceHost {
     log(level: LogLevel, message: string | (() => string), fields?: LogFields): void;
     /** Only origins the account was set up with (or manifest `origins`). */
     http(url: string, options?: HttpOptions): Promise<HttpResponse>;
-    /** 0–60000 ms. */
-    delay(milliseconds: number): Promise<void>;
-    /** ws:// or wss:// on an allowed origin; at most four open. */
-    socket(url: string, options?: { headers?: Record<string, string> }): Socket;
     /** Push to Spool: see Events. */
     emit<K extends keyof Events>(type: K, payload: Events[K]): void;
 }
 
-/** Given to each operation; its requests are cancelled with it. */
-export interface OperationHost extends SourceHost {
+/**
+ * Given to createSource and lives as long as the account: use it for
+ * connections that outlast an operation. Everything stops when the account
+ * is removed, disabled or the provider is updated.
+ */
+export interface SourceHost extends ProviderHost {
+    /** 0–60000 ms. */
+    delay(milliseconds: number): Promise<void>;
+    /** ws:// or wss:// on an allowed origin; at most four open. */
+    socket(url: string, options?: { headers?: Record<string, string> }): Socket;
+}
+
+/**
+ * Given to each operation; its requests are cancelled with it. Sockets are
+ * source-level services only: operations cannot open them.
+ */
+export interface OperationHost extends ProviderHost {
     /** 0–10000 ms. */
     delay(milliseconds: number): Promise<void>;
     /** Requires discovery declaration. UDP broadcast; replies within `timeout` ms (100–5000). */
