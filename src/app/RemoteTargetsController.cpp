@@ -131,7 +131,7 @@ RemoteTargetsController::RemoteTargetsController(
     connect(m_mediaSession.get(), &PlatformRemoteMediaSession::seekRelativeRequested, this, [this](qint64 delta) {
         if (m_position.isEmpty())
             return;
-        const qint64 maximum = m_runtime.isEmpty() ? std::numeric_limits<qint64>::max() : m_runtime.toLongLong();
+        const qint64 maximum = m_runtime.toLongLong() > 0 ? m_runtime.toLongLong() : std::numeric_limits<qint64>::max();
         qint64 ticks = std::clamp(m_position.toLongLong(), qint64(0), maximum);
         if (delta > 0)
             ticks = delta > (maximum - ticks) / 10000 ? maximum : ticks + delta * 10000;
@@ -159,6 +159,15 @@ QVariantMap RemoteTargetsController::state() const
     if (!m_runtime.isEmpty())
         result.insert("runtimeTicks", m_runtime);
     return result;
+}
+
+qint64 RemoteTargetsController::predictedPositionTicks() const
+{
+    const qint64 base = m_position.toLongLong();
+    if (m_state.value("state").toString() != QStringLiteral("playing"))
+        return base;
+    const qint64 elapsedMs = std::max<qint64>(0, m_clock.elapsed() - m_positionAt);
+    return base + static_cast<qint64>(elapsedMs * 10000.0 * m_state.value("rate", 1.0).toDouble());
 }
 
 bool RemoteTargetsController::isCurrent(const Selection& selection) const
@@ -560,6 +569,11 @@ void RemoteTargetsController::applyState(QVariantMap response)
     const auto now = m_clock.elapsed();
     const bool acknowledged = m_ackSequence && response.contains("commandSequence")
         && response.value("commandSequence").toULongLong() >= *m_ackSequence;
+    // Until the target acknowledges our pause/unpause/stop, its polls describe
+    // the old running clock; the captured position must survive them.
+    const bool transportPending
+        = m_optimistic.contains("state") && response.value("state") != m_optimistic.value("state");
+    bool positionOwned = false;
     if (!m_optimistic.isEmpty() && now < m_optimisticUntil && !acknowledged) {
         for (auto it = m_optimistic.begin(); it != m_optimistic.end();) {
             bool confirmed = response.value(it.key()) == it.value();
@@ -572,9 +586,13 @@ void RemoteTargetsController::applyState(QVariantMap response)
                     = std::abs(static_cast<long double>(response.value(it.key()).toString().toLongLong()) - expected)
                     <= 25000000;
             }
+            if (it.key() == "positionTicks" && transportPending)
+                confirmed = false;
             if (confirmed && !m_ackSequence)
                 it = m_optimistic.erase(it);
             else {
+                if (it.key() == "positionTicks")
+                    positionOwned = true;
                 response.insert(it.key(), it.value());
                 ++it;
             }
@@ -588,6 +606,8 @@ void RemoteTargetsController::applyState(QVariantMap response)
     const bool positionChangedValue = position != m_position || runtime != m_runtime;
     m_position = position;
     m_runtime = runtime;
+    if (!positionOwned && !position.isEmpty())
+        m_positionAt = now;
     // A genuine acknowledgement is transport state, not a media model change.
     response.remove("commandSequence");
     const QString revision = response.value("queueRevision").toString();
@@ -622,9 +642,17 @@ void RemoteTargetsController::beginOptimistic(const QVariantMap& command)
 {
     const auto name = command.value("action").toString();
     m_ackSequence.reset();
-    if (name == "pause" || name == "unpause" || name == "stop")
+    if (name == "pause" || name == "unpause" || name == "stop") {
+        // Capture the running clock before the transport changes state: a
+        // stale poll must neither rewind it nor restart an optimistic
+        // unpause's clock, and playback advances even from a zero position.
+        if (!m_position.isEmpty()) {
+            const QString captured = QString::number(predictedPositionTicks());
+            m_optimistic.insert("positionTicks", captured);
+            m_position = captured;
+        }
         m_optimistic.insert("state", name == "pause" ? "paused" : name == "unpause" ? "playing" : "stopped");
-    else if (name == "seek")
+    } else if (name == "seek")
         m_optimistic.insert("positionTicks", command.value("positionTicks"));
     else if (name == "volume")
         m_optimistic.insert("volume", command.value("value"));
@@ -634,8 +662,10 @@ void RemoteTargetsController::beginOptimistic(const QVariantMap& command)
         m_optimistic.insert("shuffled", command.value("value"));
     else if (name == "repeat")
         m_optimistic.insert("repeatMode", command.value("mode"));
-    if (name == "seek")
+    if (name == "seek" || name == "pause" || name == "unpause" || name == "stop") {
         m_optimisticAt = m_clock.elapsed();
+        m_positionAt = m_optimisticAt;
+    }
     m_optimisticUntil = m_clock.elapsed() + 8000;
     auto snapshot = state();
     for (auto it = m_optimistic.cbegin(); it != m_optimistic.cend(); ++it)
@@ -733,6 +763,18 @@ QCoro::Task<bool> RemoteTargetsController::command(Selection selected, QVariantM
 }
 void RemoteTargetsController::send(QVariantMap value)
 {
+    if (value.value("action").toString() == QStringLiteral("seek")) {
+        bool ok = false;
+        qint64 ticks = value.value("positionTicks").toString().toLongLong(&ok);
+        if (!ok)
+            return;
+        ticks = std::max<qint64>(0, ticks);
+        // An unknown runtime must not clamp a positive seek to zero.
+        const qint64 runtime = m_runtime.toLongLong();
+        if (runtime > 0)
+            ticks = std::min(ticks, runtime);
+        value.insert("positionTicks", QString::number(ticks));
+    }
     Async::runScoped(
         this, command(m_selection, std::move(value)), [](bool) {},
         [this](const std::exception_ptr&) { setProblem(tr("The remote command could not be sent.")); },
@@ -883,7 +925,7 @@ void RemoteTargetsController::updateMediaSession()
     session.artist = item.value("albumArtist").toString();
     session.album = item.value("album").toString();
     session.targetName = m_target.value("name").toString();
-    session.positionMs = m_position.toLongLong() / 10000;
+    session.positionMs = predictedPositionTicks() / 10000;
     session.durationMs = m_runtime.toLongLong() / 10000;
     session.playing = m_state.value("state") == "playing";
     session.playbackRate = m_state.value("rate", 1.0).toDouble();
