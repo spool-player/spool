@@ -1122,12 +1122,15 @@ void InputLatencyMonitor::handleCompletedSample(const InputLatencySample& sample
 void InputLatencyMonitor::cancelMeasurements()
 {
     m_timeline.cancel();
-    resetUiTransition();
     finishCancellationOnGuiThread();
 }
 
 void InputLatencyMonitor::finishCancellationOnGuiThread()
 {
+    // Disabling capture, clearing statistics and scene-graph invalidation
+    // must retire route work as well as input deadlines. Otherwise a route
+    // that never became ready keeps its frame-budget timer running.
+    resetUiTransition();
     m_deadlineTimer.stop();
     hideWarning();
 }
