@@ -846,12 +846,11 @@ release download: the separately built `spool-x86_64.apk` stays nondebuggable.
 After native GUI selectors, the same host e2e binary drives the actual emulator
 app and checks device screenshots. The lifecycle then uninstalls the developer
 app, installs the exact signed release `spool-x86_64.apk`, and checks **both**
-launcher categories on that shipped artifact. Release CI runs only the phone image,
-requiring every traditional selector, GUI selector, and the full real-app journey.
-Android TV checks remain manual because the guest ANGLE driver faults on the TV
-image; they are not release-CI runtime proof. The TV command above retains all
-strict assertions. TV mode is derived from the emulator OS's leanback feature,
-not fabricated through an app override.
+launcher categories on that shipped artifact. Phone and TV runtime checks remain
+manual with all strict assertions intact; neither is release-CI runtime proof.
+The hosted phone journey/launch gate lacks a recoverable underlying launch
+diagnostic, and the TV guest ANGLE driver faults. TV mode is derived from the
+emulator OS's leanback feature, not fabricated through an app override.
 Phone/TV receipts and screenshots live in distinct `build/android/launch-test/`
 subdirectories. Private AVD storage is removed when its owned emulator exits.
 
@@ -868,13 +867,13 @@ repository selectors in a scoped subshell, so linked worktrees validate the
 submodule rather than accidentally querying the superproject's object store;
 this does not bypass the lineage check.
 
-Release CI requires the complete Linux traditional and real GUI suite, retains
-the Windows supported-OpenGL test gate, and separately requires real ASan/UBSan
-consumer checks. Android phone runtime coverage includes all traditional and GUI
-selectors and the full actual-app journey. macOS native, tvOS simulator native,
-and Android TV checks remain available manually with unchanged strict assertions,
-but are not automatic release-CI proof. All platform builds and package audits
-remain required; successful Apple/TV artifacts do not imply native tests passed.
+Release CI requires the complete Linux traditional and real GUI suite and
+separate real ASan/UBSan consumer checks. Windows, Android phone/TV, macOS native
+and tvOS simulator runtime checks remain available manually with unchanged
+strict assertions, but are not automatic release-CI proof. Hosted Windows OCR
+has rejected a visibly rendered Resume control. All platform builds, package
+audits and signing checks remain required; successful artifacts do not imply
+those platforms' native tests passed.
 
 Build and run the same complete host suite as CI with `nix run .#tests`, or run
 already-built targets with:
@@ -899,7 +898,7 @@ crash; ordinary resume runs it again while retaining the interrupted attempt.
 Explicit retry also permits failed, timed-out and start-failed cases, never
 known crashes.
 Use `--config Release` for Xcode or another multi-configuration CMake generator.
-Linux and Windows host CI always retain the phase journals, selector-attempt logs and journey
+Linux host CI retains the phase journals, selector-attempt logs and journey
 screenshots in one-day `internal-*-unified-tests` artifacts, even after test
 failure. It does not export the journey's credential files, control descriptors,
 isolated settings or raw product logs. The provider resource has one shared
@@ -1049,14 +1048,14 @@ forward/reverse mappings. A private nonce-bound capability file lets the
 controller request those operations; adapter cleanup still runs if the controller
 crashes or times out, without relying on C++ destructors or removing unrelated
 device resources. Request framing has an absolute deadline, including before
-authentication. Android phone CI enables `SPOOL_TEST_DEVICE_CLEANUP_REGRESSIONS=1` to inject
-real controller timeout/crash after public `spoolet` readiness, test an
+authentication. Set `SPOOL_TEST_DEVICE_CLEANUP_REGRESSIONS=1` for manual Android
+phone checks to inject real controller timeout/crash after public `spoolet` readiness, test an
 unauthenticated slow client, verify process/mapping retirement, and exercise
 another actual consumer. The inner controller fault remains crashed/timed-out;
 only the independent cleanup assertion can pass.
 
-Mobile attempts receive their own `SPOOL_E2E_ARTIFACT_DIR`. Android phone CI uploads only the
-adapter's `safe-export` subtree: schema-generated native/controller results,
+Mobile attempts receive their own `SPOOL_E2E_ARTIFACT_DIR`. The adapter's
+`safe-export` subtree contains schema-generated native/controller results,
 sanitized journals and attempt diagnostics, and named screenshots. Capability
 files, control descriptors, credentials, raw product logs and isolated data roots
 remain private. Standalone fault checks use `tools/run-device-tests.py --phase

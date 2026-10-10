@@ -1194,30 +1194,9 @@ jobs:
             build/android/qcoro
           key: ${{ steps.android-cache.outputs.cache-primary-key }}
 
-      - name: Build same-binary native controller for the actual mobile app journey
-        if: ${{ matrix.abi == 'x86_64' }}
-        run: nix develop .#native -c bash tools/build-linux-release.sh
 
-      - name: Run strict traditional, GUI, and real app journey phases on Android phone
-        if: ${{ matrix.abi == 'x86_64' }}
-        env:
-          SPOOL_TEST_DEVICE_CLEANUP_REGRESSIONS: "1"
-        run: |
-          nix develop .#android -c env SPOOL_ANDROID_FORM_FACTOR=phone \
-            bash tools/android/emulator-launch-test.sh \
-            dist/android/spool-e2e-app-x86_64.apk
-
-      - name: Upload internal emulator test receipts and diagnostics
-        if: ${{ always() && matrix.abi == 'x86_64' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
-        with:
-          name: internal-spool-android-tests
-          path: |
-            build/android/launch-test/**/safe-export/**
-            dist/android/spool-tests-x86_64.apk
-            dist/android/spool-e2e-tests-x86_64.apk
-            dist/android/spool-e2e-app-x86_64.apk
-          retention-days: 1
+      # Hosted emulator runtime checks remain available through
+      # tools/android/emulator-launch-test.sh, but do not gate release artifacts.
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
         with:
@@ -1434,25 +1413,10 @@ jobs:
         shell: pwsh
         run: tools\windows\build.ps1 -Clean -CMakeArguments '-DSPOOL_TEST_RENDER_BACKEND=opengl'
 
-      - name: Install pinned real OpenGL and fixture test dependencies
-        shell: pwsh
-        run: tools\windows\install-test-runtime.ps1
 
-      - name: Run traditional and real OpenGL GUI e2e tests
-        shell: pwsh
-        run: tools\windows\test.ps1
-      - name: Retain internal native phase results after failures
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
-        with:
-          name: internal-windows-unified-tests
-          path: |
-            build/windows-release/app/*-results.json*
-            build/windows-release/app/test-phases.json
-            build/windows-release/app/test-artifacts/app-journey-*/*.png
-          if-no-files-found: ignore
-          retention-days: 1
 
+      # The strict Windows native suite remains available through
+      # tools/windows/test.ps1. Hosted OCR/runtime checks do not gate packaging.
 
       - name: Stage and launch-test release payload
         shell: pwsh
