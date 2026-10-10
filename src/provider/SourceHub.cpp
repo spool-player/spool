@@ -1424,6 +1424,15 @@ QCoro::Task<std::vector<MovieItem>> SourceHub::fetchSimilarItems(QString itemId,
     co_return scopedItems(co_await provider->catalog()->fetchSimilarItems(rawId(itemId), limit), account);
 }
 
+QCoro::Task<std::vector<MovieItem>> SourceHub::fetchRelatedMedia(QString itemId, QString kind)
+{
+    const QString account = accountOf(itemId);
+    Provider *provider = source(account);
+    if (!provider)
+        co_return {};
+    co_return scopedItems(co_await provider->catalog()->fetchRelatedMedia(rawId(itemId), kind), account);
+}
+
 QCoro::Task<PersonCredits> SourceHub::fetchItemsByPerson(QString personId, int maximumItems)
 {
     const QString account = accountOf(personId);

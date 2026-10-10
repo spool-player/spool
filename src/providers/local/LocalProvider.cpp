@@ -393,6 +393,11 @@ QCoro::Task<std::vector<MovieItem>> LocalProvider::fetchSimilarItems(QString, in
     co_return {};
 }
 
+QCoro::Task<std::vector<MovieItem>> LocalProvider::fetchRelatedMedia(QString, QString)
+{
+    co_return {};
+}
+
 QCoro::Task<PersonCredits> LocalProvider::fetchItemsByPerson(QString, int)
 {
     co_return {};

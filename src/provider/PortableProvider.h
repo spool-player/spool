@@ -90,6 +90,7 @@ public:
     QCoro::Task<std::vector<MovieItem>> fetchNextUpEpisodes(int limit = 24) override;
     QCoro::Task<std::vector<MovieItem>> fetchLatestItems(QString parentId = {}, int limit = 24) override;
     QCoro::Task<std::vector<MovieItem>> fetchSimilarItems(QString itemId, int limit = 24) override;
+    QCoro::Task<std::vector<MovieItem>> fetchRelatedMedia(QString itemId, QString kind) override;
     QCoro::Task<PersonCredits> fetchItemsByPerson(QString personId, int maximumItems = 4000) override;
     QCoro::Task<std::vector<LibraryItem>> fetchLibraries() override;
     QCoro::Task<QVariantMap> fetchLibraryFilterOptions(QString libraryId, QString collectionType = {}) override;

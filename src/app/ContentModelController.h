@@ -22,6 +22,8 @@ class ContentModelController final : public QObject {
     Q_PROPERTY(Spool::MovieGridModel *detailSeasons READ detailSeasons CONSTANT)
     Q_PROPERTY(Spool::MovieGridModel *detailSeasonOptions READ detailSeasonOptions CONSTANT)
     Q_PROPERTY(Spool::MovieGridModel *detailSimilarItems READ detailSimilarItems CONSTANT)
+    Q_PROPERTY(Spool::MovieGridModel *detailTrailers READ detailTrailers CONSTANT)
+    Q_PROPERTY(Spool::MovieGridModel *detailExtras READ detailExtras CONSTANT)
     Q_PROPERTY(Spool::MovieGridModel *linkedItems READ linkedItems CONSTANT)
     Q_PROPERTY(QVariantList personItemRows READ personItemRows NOTIFY personItemsChanged)
     Q_PROPERTY(bool detailRowsBusy READ detailRowsBusy NOTIFY detailRowsChanged)
@@ -42,6 +44,14 @@ public:
     MovieGridModel *detailSimilarItems()
     {
         return &m_detailSimilarItems;
+    }
+    MovieGridModel *detailTrailers()
+    {
+        return &m_detailTrailers;
+    }
+    MovieGridModel *detailExtras()
+    {
+        return &m_detailExtras;
     }
     QVariantList personItemRows() const;
     MovieGridModel *linkedItems()
@@ -103,6 +113,8 @@ private:
     MovieGridModel m_detailSeasons;
     MovieGridModel m_detailSeasonOptions;
     MovieGridModel m_detailSimilarItems;
+    MovieGridModel m_detailTrailers;
+    MovieGridModel m_detailExtras;
     std::vector<PersonItemSection> m_personItemSections;
     MovieGridModel m_linkedItems;
     MovieItem m_detailItem;

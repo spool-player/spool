@@ -50,6 +50,8 @@ void ContentModelController::loadDetailRows(
     m_detailSeasons.clear();
     m_detailSeasonOptions.clear();
     m_detailSimilarItems.clear();
+    m_detailTrailers.clear();
+    m_detailExtras.clear();
 
     if (itemId.isEmpty() || !m_api || !m_api->signedIn()) {
         emit detailRowsChanged();
@@ -63,8 +65,10 @@ void ContentModelController::loadDetailRows(
     const bool loadBoxSet = itemType == QStringLiteral("BoxSet");
     const bool loadAlbum = itemType == QStringLiteral("MusicAlbum");
     const bool loadContext = loadSeasons || loadEpisodes || loadBoxSet || loadAlbum;
+    const bool loadRelatedMedia = itemType == QStringLiteral("Movie") || itemType == QStringLiteral("Series")
+        || itemType == QStringLiteral("Season") || itemType == QStringLiteral("Episode");
     m_detailRowsBusy = true;
-    m_detailRowsPending = 1 + (loadContext ? 1 : 0) + (loadSeasonOptions ? 1 : 0);
+    m_detailRowsPending = 1 + (loadContext ? 1 : 0) + (loadSeasonOptions ? 1 : 0) + (loadRelatedMedia ? 2 : 0);
     emit detailRowsChanged();
 
     qInfo() << "detail rows: loading" << itemType << itemId << "context="
@@ -164,6 +168,27 @@ void ContentModelController::loadDetailRows(
                 qWarning() << "detail rows: season options fetch failed" << seriesId << exceptionMessage(error);
                 finishDetailRowLoad(generation);
             });
+    }
+
+    if (loadRelatedMedia) {
+        for (const auto& [kind, model] :
+            { std::pair<QString, MovieGridModel *> { QStringLiteral("trailers"), &m_detailTrailers },
+                std::pair<QString, MovieGridModel *> { QStringLiteral("extras"), &m_detailExtras } }) {
+            Async::runLatest(
+                this, m_api->fetchRelatedMedia(itemId, kind), m_detailRowsGeneration, generation,
+                [this, generation, model](const std::vector<MovieItem>& items) {
+                    model->setMovies(items);
+                    m_prefetch->prefetchPosters(items);
+                    emit detailRowsChanged();
+                    finishDetailRowLoad(generation);
+                },
+                [this, generation](const std::exception_ptr& error) {
+                    // An unavailable optional shelf must not hide the main
+                    // item, its episodes, or other successful detail rows.
+                    qWarning() << "detail rows: related media fetch failed" << exceptionMessage(error);
+                    finishDetailRowLoad(generation);
+                });
+        }
     }
 
     Async::runLatest(
@@ -374,6 +399,8 @@ void ContentModelController::updateResumeTicks(const QString& itemId, qint64 pos
     m_detailSeasons.updateResumeTicks(itemId, positionTicks);
     m_detailSeasonOptions.updateResumeTicks(itemId, positionTicks);
     m_detailSimilarItems.updateResumeTicks(itemId, positionTicks);
+    m_detailTrailers.updateResumeTicks(itemId, positionTicks);
+    m_detailExtras.updateResumeTicks(itemId, positionTicks);
     for (PersonItemSection& section : m_personItemSections)
         section.model->updateResumeTicks(itemId, positionTicks);
 }
@@ -388,6 +415,8 @@ void ContentModelController::updateFavorite(const QString& itemId, bool favorite
     m_detailSeasons.updateFavorite(itemId, favorite);
     m_detailSeasonOptions.updateFavorite(itemId, favorite);
     m_detailSimilarItems.updateFavorite(itemId, favorite);
+    m_detailTrailers.updateFavorite(itemId, favorite);
+    m_detailExtras.updateFavorite(itemId, favorite);
     for (PersonItemSection& section : m_personItemSections)
         section.model->updateFavorite(itemId, favorite);
 }
@@ -407,6 +436,8 @@ void ContentModelController::updatePlayed(const QString& itemId, bool played)
     m_detailSeasons.updatePlayed(itemId, played);
     m_detailSeasonOptions.updatePlayed(itemId, played);
     m_detailSimilarItems.updatePlayed(itemId, played);
+    m_detailTrailers.updatePlayed(itemId, played);
+    m_detailExtras.updatePlayed(itemId, played);
     for (PersonItemSection& section : m_personItemSections)
         section.model->updatePlayed(itemId, played);
 }
@@ -420,6 +451,8 @@ void ContentModelController::reset()
     m_detailSeasons.clear();
     m_detailSeasonOptions.clear();
     m_detailSimilarItems.clear();
+    m_detailTrailers.clear();
+    m_detailExtras.clear();
     clearPersonItems();
     m_linkedItems.clear();
     if (m_api)
