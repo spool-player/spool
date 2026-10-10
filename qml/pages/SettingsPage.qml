@@ -1053,7 +1053,10 @@ FocusScope {
         target: Settings
 
         function onSettingChanged(key) {
-            root.refreshSettingsFilter(false)
+            // Value bindings update independently. Only availability changes
+            // need to reconcile the rows and force another list layout.
+            if (SettingsNavigation.rowsDependOnSetting(root.rowsByKey, key))
+                root.refreshSettingsFilter(false)
         }
     }
     Connections {
