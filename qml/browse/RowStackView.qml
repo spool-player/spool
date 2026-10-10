@@ -76,20 +76,23 @@ FocusScope {
     // Re-publishing a card model is not replacing its section. Keep descriptor
     // objects (and therefore row delegates) when the section topology is stable.
     function updateSectionObjects() {
-        let sameSections = sectionObjects.length === sectionCount
-        for (let index = 0; sameSections && index < sectionCount; ++index) {
+        // sectionsChanged precedes reevaluation of dependent bindings in some
+        // QML delivery orders. Reconcile the published payload, not sectionCount.
+        const nextCount = sections ? sections.length : 0
+        let sameSections = sectionObjects.length === nextCount
+        for (let index = 0; sameSections && index < nextCount; ++index) {
             const previous = sectionObjects[index].descriptor
             const next = sections[index]
             sameSections = previous.key === next.key && previous.contextSource === next.contextSource
         }
         if (sameSections) {
-            for (let index = 0; index < sectionCount; ++index)
+            for (let index = 0; index < nextCount; ++index)
                 sectionObjects[index].descriptor = sections[index]
             return
         }
         const previousObjects = sectionObjects
         const nextObjects = []
-        for (let index = 0; index < sectionCount; ++index)
+        for (let index = 0; index < nextCount; ++index)
             nextObjects.push(sectionObjectComponent.createObject(root, {
                                                                      "descriptor": sections[index]
                                                                  }))
