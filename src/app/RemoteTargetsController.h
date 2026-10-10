@@ -64,12 +64,13 @@ public:
         return m_target;
     }
     QVariantMap state() const;
-    // The running clock: the last accepted position advanced by elapsed time
-    // while the target plays. Zero is a real position, not a frozen clock.
+    // The running clock for media-session consumers: the last accepted
+    // position advanced by elapsed time while the target plays. Zero is a
+    // real position, not a frozen clock.
     qint64 predictedPositionTicks() const;
     QString positionTicks() const
     {
-        return m_position.isEmpty() ? m_position : QString::number(predictedPositionTicks());
+        return m_position;
     }
     QString runtimeTicks() const
     {
