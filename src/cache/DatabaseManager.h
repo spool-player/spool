@@ -43,17 +43,17 @@ public:
     QCoro::Task<QString> loadDeviceIdAsync();
     void saveDeviceId(const QString& deviceId);
 
-    QCoro::Task<QJsonObject> loadHomePayloadAsync(const QString& key, int schemaVersion);
+    QCoro::Task<QJsonObject> loadHomePayloadAsync(QString key, int schemaVersion);
     void saveHomePayload(const QString& key, int schemaVersion, const QJsonObject& payload);
 
-    QCoro::Task<QString> loadSettingAsync(const QString& key, const QString& defaultValue = {});
-    QCoro::Task<QVariantMap> loadValuesAsync(const QStringList& keys);
-    QCoro::Task<StartupState> loadStartupStateAsync(const QStringList& keys);
+    QCoro::Task<QString> loadSettingAsync(QString key, QString defaultValue = {});
+    QCoro::Task<QVariantMap> loadValuesAsync(QStringList keys);
+    QCoro::Task<StartupState> loadStartupStateAsync(QStringList keys);
     void saveSetting(const QString& key, const QString& value);
     QCoro::Task<void> saveSettings(QVariantMap serializedValues);
 
     QCoro::Task<int> schemaVersionAsync();
-    QCoro::Task<QByteArray> loadCacheEntryAsync(const QString& nameSpace, const QString& key, qint64 maxAgeMs = -1);
+    QCoro::Task<QByteArray> loadCacheEntryAsync(QString nameSpace, QString key, qint64 maxAgeMs = -1);
     void saveCacheEntry(const QString& nameSpace, const QString& key, const QByteArray& value, qint64 ttlMs = 0);
     void invalidateCacheNamespace(const QString& nameSpace);
     void evictCacheEntries(int maximumEntries);
