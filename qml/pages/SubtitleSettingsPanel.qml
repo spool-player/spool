@@ -138,7 +138,7 @@ FocusScope {
         if (spec.key === "subtitles/mode") {
             const options = settingsController.subtitleLanguageOptions
             const index = settingsController.subtitleLanguageIndex
-            const word = index > 0 && index < options.length ? String(options[index]).split(" ")[0] : "your language"
+            const word = index > 0 && index < options.length ? String(options[index]) : "your language"
             const result = []
             for (let i = 0; i < spec.choiceLabels.length; ++i)
                 result.push(String(spec.choiceLabels[i]).replace("%1", word))
