@@ -11,6 +11,7 @@ FocusScope {
     id: root
 
     property var shell
+    readonly property bool directionRelease: rows.directionRelease
     readonly property var person: shell ? shell.personItem : ({})
     // The controller supplies title/model/kind per credit row; the page adds
     // the presentation the row kind implies. A person's episode credits name
@@ -85,7 +86,7 @@ FocusScope {
         onEdgeUp: {
             positionAtBeginning()
             if (root.shell)
-            root.shell.focusNavBar()
+                root.shell.focusNavBar()
         }
         onActivated: (section, index, item) => root.openAt(section, index, item)
 

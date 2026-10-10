@@ -40,6 +40,7 @@ FocusScope {
     readonly property bool hasHeaderAction: typeof headerAction === "function"
     property var contextMenu: null
     property bool moveMode: false
+    property bool publishingMove: false
     property bool dragActive: false
     property int dragSourceIndex: -1
     property int dragTargetIndex: -1
@@ -75,7 +76,7 @@ FocusScope {
     visible: rowVisible
     onVisibleChanged: if (!visible && (moveMode || dragActive))
                           finishMove()
-    onActiveFocusChanged: if (!activeFocus && (moveMode || dragActive))
+    onActiveFocusChanged: if (!activeFocus && !publishingMove && (moveMode || dragActive))
                               finishMove()
     focus: true
 
@@ -83,19 +84,23 @@ FocusScope {
     onAtomicPopulateChanged: Qt.callLater(resetPresentation)
     onModelChanged: {
         ++modelRevision
-        if (moveMode || dragActive)
+        if (!publishingMove && (moveMode || dragActive))
             finishMove()
-        Qt.callLater(resetPresentation)
+        if (!publishingMove)
+            Qt.callLater(resetPresentation)
     }
     onCountChanged: {
         ++modelRevision
-        currentIndex = count > 0 ? Math.max(0, Math.min(currentIndex, count - 1)) : -1
-        if (moveMode || dragActive)
-            finishMove()
+        if (!publishingMove) {
+            currentIndex = count > 0 ? Math.max(0, Math.min(currentIndex, count - 1)) : -1
+            if (moveMode || dragActive)
+                finishMove()
+        }
         // The view rewrites its currentIndex internally on model changes;
         // re-assert ours once it has processed them.
         Qt.callLater(syncViewCurrentIndex)
-        Qt.callLater(resetPresentation)
+        if (!publishingMove)
+            Qt.callLater(resetPresentation)
     }
     onCurrentIndexChanged: syncViewCurrentIndex()
     onReorderEnabledChanged: if (!reorderEnabled && (moveMode || dragActive))
@@ -121,8 +126,10 @@ FocusScope {
         }
         function onModelReset() {
             ++root.modelRevision
-            root.finishMove()
-            root.currentIndex = root.count > 0 ? Math.max(0, Math.min(root.currentIndex, root.count - 1)) : -1
+            if (!root.publishingMove) {
+                root.finishMove()
+                root.currentIndex = root.count > 0 ? Math.max(0, Math.min(root.currentIndex, root.count - 1)) : -1
+            }
             Qt.callLater(root.syncViewCurrentIndex)
         }
         function onRowsInserted() {
@@ -160,6 +167,15 @@ FocusScope {
 
     function topLeftVisibleCandidate(outerViewport) {
         return InputKeys.topLeftVisibleCandidate(listView, outerViewport)
+    }
+
+    function selectionVisiblyUsable(outerViewport) {
+        if (headerButton.activeFocus)
+            return true
+        for (let index = 0; index < carouselButtons.children.length; ++index)
+            if (carouselButtons.children[index].activeFocus)
+                return true
+        return InputKeys.selectionVisiblyUsable(listView, outerViewport)
     }
 
     function focusIndexWithoutScrolling(index) {
@@ -281,12 +297,16 @@ FocusScope {
                                               "deferBackdropDismissal": Boolean(deferBackdropDismissal)
                                           }))
     }
-    function beginMoveById(libraryId) {
-        for (let index = 0; index < count; ++index) {
+    function libraryIndex(libraryId) {
+        for (let index = 0; index < count; ++index)
             if (String(itemAt(index).libraryId || "") === libraryId)
-                return beginMove(index)
-        }
-        return false
+                return index
+        return -1
+    }
+
+    function beginMoveById(libraryId) {
+        const index = libraryIndex(libraryId)
+        return index >= 0 && beginMove(index)
     }
 
     function beginMove(index) {
@@ -312,14 +332,27 @@ FocusScope {
     function moveTo(from, to) {
         if (!moveMode || !reorderEnabled || from < 0 || to < 0 || from >= count || to >= count)
             return false
-        if (from !== to && !moveItem(from, to))
-            return false
-        currentIndex = to
-        syncViewCurrentIndex()
-        listView.forceLayout()
-        listView.positionViewAtIndex(to, ListView.Contain)
-        focusList()
-        return true
+        const libraryId = String(itemAt(from).libraryId || "")
+        const scrollOffset = listView.contentX - listView.originX
+        publishingMove = true
+        try {
+            if (from !== to && !moveItem(from, to))
+                return false
+            const movedIndex = libraryIndex(libraryId)
+            if (movedIndex < 0) {
+                finishMove()
+                return false
+            }
+            currentIndex = movedIndex
+            syncViewCurrentIndex()
+            listView.forceLayout()
+            listView.contentX = listView.originX + scrollOffset
+            listView.positionViewAtIndex(movedIndex, ListView.Contain)
+            focusList()
+            return true
+        } finally {
+            publishingMove = false
+        }
     }
 
     function moveSelected(direction) {

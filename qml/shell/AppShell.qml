@@ -1230,11 +1230,25 @@ KeyRouter {
     DropArea {
         id: desktopDropArea
         objectName: "shellDesktopDropArea"
+        property var enteredUrls: []
+        function copyUrls(urls) {
+            return Array.from(urls, url => String(url))
+        }
+        onEntered: drag => {
+            // Native MIME data can expire before drop. Own values, never the event wrapper.
+            const urls = copyUrls(drag.urls)
+            enteredUrls = drag.hasUrls ? urls : []
+        }
+        onExited: enteredUrls = []
         anchors.fill: parent
         enabled: root.desktopFilesAvailable
         onDropped: drop => {
-            if (drop.hasUrls && root.fileDropDialog) {
-                root.fileDropDialog.submitUrls(drop.urls)
+            // Read the native getter once while this event is alive; do no work until drop.
+            const freshUrls = copyUrls(drop.urls)
+            const urls = drop.hasUrls ? (freshUrls.length > 0 ? freshUrls : enteredUrls.slice()) : []
+            enteredUrls = []
+            if (urls.length > 0 && root.fileDropDialog) {
+                root.fileDropDialog.submitUrls(urls)
                 drop.acceptProposedAction()
             }
         }

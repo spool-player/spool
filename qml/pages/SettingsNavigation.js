@@ -189,22 +189,9 @@ function matchesSearch(row, query, choices) {
 // Recover in the viewport that the pointer left behind, never scroll back to
 // an old anchor. InputKeys owns candidate preference and visibility threshold.
 function recoverVisibleSelection(view, clipItem, inputKeys) {
-    const selected = view.itemAtIndex(view.currentIndex)
+    if (inputKeys.selectionVisiblyUsable(view, clipItem))
+        return false
     const candidate = inputKeys.topLeftVisibleCandidate(view, clipItem)
-    if (view.activeFocus && selected) {
-        const rect = selected.mapToItem(clipItem, 0, 0, selected.width, selected.height)
-        const viewport = view.mapToItem(clipItem, 0, 0, view.width, view.height)
-        const width = Math.max(0, Math.min(rect.x + rect.width, viewport.x + viewport.width, clipItem.width)
-                               - Math.max(rect.x, viewport.x, 0))
-        const height = Math.max(0, Math.min(rect.y + rect.height, viewport.y + viewport.height, clipItem.height)
-                                - Math.max(rect.y, viewport.y, 0))
-        if (width * height / Math.max(1, rect.width * rect.height) >= inputKeys.focusRecoveryVisibleThreshold)
-            return false
-        // At large zoom a row may exceed the whole viewport. InputKeys' partial
-        // candidate fallback still makes the visible part of that row usable.
-        if (candidate && candidate.index === view.currentIndex && rect.height > view.height && height > 0)
-            return false
-    }
     if (candidate)
         inputKeys.focusIndexWithoutScrolling(view, candidate.index)
     return true
@@ -213,17 +200,11 @@ function recoverVisibleSelection(view, clipItem, inputKeys) {
 // A recovery press is not an edit gesture. Qt may send synthetic releases
 // between repeats; only the physical release permits the next action.
 function consumeRecoveryGesture(view, clipItem, inputKeys, gesture, key, phase, repeat) {
-    if (phase === "release") {
-        if (!repeat && gesture.key === key)
-            gesture.key = 0
-        return true
-    }
-    if (gesture.key === key)
+    if (inputKeys.consumeRecoveryGesture(gesture, key, phase, repeat, false))
         return true
     if (!recoverVisibleSelection(view, clipItem, inputKeys))
         return false
-    gesture.key = key
-    return true
+    return inputKeys.consumeRecoveryGesture(gesture, key, phase, repeat, true)
 }
 
 var subtitleSections = [
