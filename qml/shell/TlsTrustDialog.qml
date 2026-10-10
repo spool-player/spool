@@ -14,9 +14,9 @@ FocusScope {
 
     function routeKey(key, phase, repeat) {
         if (root.inputKeys.isBack(key, false, false)) {
-            if (phase === "release")
+            if (phase === "press" && !repeat)
                 root.trustController.cancel()
-            return true
+            return phase === "press"
         }
         if (!root.inputKeys.isDirection(key))
             return true

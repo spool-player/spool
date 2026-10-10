@@ -85,9 +85,11 @@ FocusScope {
 
     function routeKey(key, phase, repeat) {
         if (inputKeys.isBack(key, false, false)) {
-            if (phase === "release")
+            if (phase === "press" && !repeat)
                 dismissed()
-            return true
+            // KeyRouter swallows the release of a claimed Back press. An
+            // isolated release can fall through to back() instead.
+            return phase === "press"
         }
         if (inputKeys.isDirection(key)) {
             if (phase === "press" && key === Qt.Key_Up)
@@ -111,6 +113,8 @@ FocusScope {
     Component.onCompleted: schedulePresentation()
     onVisibleChanged: schedulePresentation()
     onAnchorItemChanged: schedulePresentation()
+    onWidthChanged: schedulePresentation()
+    onHeightChanged: schedulePresentation()
 
     MouseArea {
         anchors.fill: parent
