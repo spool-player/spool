@@ -202,7 +202,10 @@ FocusScope {
         property bool enabledButton: true
         signal activated
 
-        width: primary ? Math.min(Math.max(implicitWidth, 190), 320) : Math.min(Math.max(implicitWidth, 132), 230)
+        width: Math.min(actionRow.width, primary ? Math.min(Math.max(implicitWidth, Metrics.scaled(190)), Metrics.scaled(
+                                                                320)) : Math.min(Math.max(implicitWidth, Metrics.scaled(
+                                                                                              132)), Metrics.scaled(
+                                                                                     230)))
         text: label
         kind: primary ? "primary" : "secondary"
         enabled: enabledButton
@@ -241,23 +244,27 @@ FocusScope {
         signal activated
 
         visible: label.length > 0
-        implicitWidth: linkColumn.implicitWidth
+        implicitWidth: linkText.implicitWidth + linkIcon.implicitWidth + linkRow.spacing
         implicitHeight: linkColumn.implicitHeight
+        Layout.maximumWidth: root.copyWidth
         focus: true
 
         Column {
             id: linkColumn
             anchors.left: parent.left
+            anchors.right: parent.right
             anchors.top: parent.top
             spacing: 2
 
             Row {
                 id: linkRow
+                width: parent.width
                 spacing: 8
 
                 AppText {
                     id: linkText
                     anchors.verticalCenter: parent.verticalCenter
+                    width: Math.max(0, linkRow.width - linkIcon.width - linkRow.spacing)
                     text: link.label
                     color: link.activeFocus || hover.hovered ? Theme.textPrimary : Theme.textSecondary
                     font.pixelSize: root.detailTitlePx
@@ -267,6 +274,7 @@ FocusScope {
                 }
 
                 MaterialIcon {
+                    id: linkIcon
                     anchors.verticalCenter: linkText.verticalCenter
                     name: link.dropdown ? "expand_more" : "chevron_right"
                     iconSize: Math.max(20, Math.round(root.detailTitlePx * 0.45))
@@ -855,16 +863,9 @@ FocusScope {
     }
 
     function orderedActions() {
-        const actions = []
-        if (showPrimaryAction)
-            actions.push(primaryAction)
-        if (showPrimaryAction && hasProgress)
-            actions.push(restartAction)
-        actions.push(playedAction)
-        actions.push(favoriteAction)
-        if (showContextPlaybackActions || mediaInfoAvailable || showLetterboxdAction || showExternalActions)
-            actions.push(menuAction)
-        return actions
+        return [primaryAction, restartAction, playedAction, favoriteAction, menuAction].filter(function (action) {
+            return action.visible
+        })
     }
 
     function focusActionIndex(index) {
@@ -874,11 +875,37 @@ FocusScope {
         focusZone = "actions"
         actionIndex = Math.max(0, Math.min(index, actions.length - 1))
         InputKeys.focus(actions[actionIndex])
+        InputKeys.positionChild(detailsFlick, actions[actionIndex])
         return true
     }
 
     function focusNextAction(delta) {
         return focusActionIndex(actionIndex + delta)
+    }
+
+    function focusActionVertically(delta) {
+        const actions = orderedActions()
+        const current = actions[actionIndex]
+        if (!current)
+            return false
+        let next = -1
+        let nearestRow = Infinity
+        let nearestColumn = Infinity
+        const center = current.x + current.width / 2
+        for (let index = 0; index < actions.length; ++index) {
+            const candidate = actions[index]
+            const rowDistance = (candidate.y - current.y) * delta
+            if (rowDistance <= 1)
+                continue
+            const columnDistance = Math.abs(candidate.x + candidate.width / 2 - center)
+            if (rowDistance < nearestRow - 1 || (Math.abs(rowDistance - nearestRow) <= 1 && columnDistance
+                                                 < nearestColumn)) {
+                next = index
+                nearestRow = rowDistance
+                nearestColumn = columnDistance
+            }
+        }
+        return next >= 0 && focusActionIndex(next)
     }
 
     function activatePrimary(fromStart) {
@@ -1087,6 +1114,8 @@ FocusScope {
                 focusOverflow(0)
                 return true
             }
+            if (focusZone === "actions" && focusActionVertically(key === Qt.Key_Down ? 1 : -1))
+                return true
             return moveFocusZone(key === Qt.Key_Down ? 1 : -1)
         }
         if (focusZone === "actions") {
@@ -1479,10 +1508,12 @@ FocusScope {
                         elide: Text.ElideRight
                     }
 
-                    Row {
+                    Flow {
                         id: actionRow
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 0
                         Layout.topMargin: root.compactEpisodicDetail ? 8 : 18
-                        spacing: 10
+                        spacing: Metrics.scaled(10)
 
                         DetailAction {
                             id: primaryAction
