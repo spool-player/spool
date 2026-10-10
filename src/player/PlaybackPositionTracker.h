@@ -21,6 +21,9 @@ public:
     void clear();
 
     double position() const;
+    // Extrapolation needs an accepted mpv sample after reset or a seek. The
+    // UI need not run a timer while the tracker is still holding a target.
+    bool canEstimatePosition() const;
     double estimatedPosition(double playbackSpeed, bool advancing) const;
     double duration() const;
     // A settled sample from mpv, rather than the resume seed or seek target.
