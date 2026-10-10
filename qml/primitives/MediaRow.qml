@@ -408,8 +408,11 @@ FocusScope {
             // directly so one changed row does not re-fetch every card.
             readonly property var cardData: modelData || ({})
             readonly property var cardItem: {
-                const itemRole = cardData.item
-                return libraryCard ? (itemRole || ({})) : itemRole !== undefined ? itemRole : cardData
+                // Bindings can evaluate before cardData's own binding lands
+                // during delegate construction; treat that as empty.
+                const data = cardData || ({})
+                const itemRole = data.item
+                return libraryCard ? (itemRole || ({})) : itemRole !== undefined ? itemRole : data
             }
             readonly property bool libraryCard: root.cardKind === "library"
             readonly property bool personCard: root.cardKind === "person"
