@@ -20,12 +20,10 @@ public:
     mpv_handle *handle() const;
     bool adopt(mpv_handle *handle, EventHandler eventHandler);
     void destroy(BeforeDestroy beforeDestroy = {});
-    // Hands the event-thread join and mpv_terminate_destroy to a detached
-    // worker: the join can wait out a full mpv_wait_event timeout and the
-    // destroy tears down the demuxer, neither of which belongs on the GUI
-    // thread. Safe to call from the GUI thread mid-session.
+    // Stops event delivery before returning, then hands mpv_terminate_destroy
+    // to a detached worker. Event handlers may refer to the owning controller;
+    // only destruction of the self-contained mpv core may outlive it.
     void destroyAsync(BeforeDestroy beforeDestroy = {});
-    void requestEventLoopStop();
 
     void beginFileLoad();
     void cancelFileLoad();
@@ -37,8 +35,7 @@ private:
         mpv_handle *handle, EventHandler eventHandler, const std::shared_ptr<std::atomic_bool>& stop);
 
     std::thread m_eventThread;
-    // Owned per adoption and shared with the event thread so a detached
-    // teardown worker never needs to touch `this`.
+    // Each adopted core has its own stop flag, shared with its event thread.
     std::shared_ptr<std::atomic_bool> m_stopFlag;
     std::atomic<int> m_pendingFileLoads { 0 };
     std::atomic<mpv_handle *> m_handle { nullptr };
