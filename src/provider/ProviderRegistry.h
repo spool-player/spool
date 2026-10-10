@@ -280,6 +280,9 @@ private:
     ScriptRuntime::NetworkHooks m_hooks;
     QHash<QString, ProviderModule> m_modules;
     QHash<QString, quint64> m_installRevisions;
+    // Installs and removals serialize per module so a pending directory
+    // removal can never land on top of a newer explicit install.
+    QHash<QString, QFuture<void>> m_installTails;
     std::vector<ProviderAccount> m_accounts;
     QHash<QString, Running> m_running;
     QHash<QString, QString> m_runtimeSources;

@@ -932,6 +932,12 @@ QCoro::Task<void> ProviderRegistry::install(
     if (root.isEmpty())
         throw std::runtime_error("installs_disabled");
     const QString id = package.manifest.id;
+    QPromise<void> turn;
+    turn.start();
+    const QFuture<void> previous = std::exchange(m_installTails[id], turn.future());
+    const auto releaseTurn = qScopeGuard([&turn] { turn.finish(); });
+    if (previous.isValid())
+        co_await qCoro(previous).result();
     if (admission && !admission())
         throw std::runtime_error("install_cancelled");
     if (const auto *existing = module(id);
@@ -967,6 +973,12 @@ QCoro::Task<void> ProviderRegistry::install(
 
 QCoro::Task<void> ProviderRegistry::uninstall(QString moduleId)
 {
+    QPromise<void> turn;
+    turn.start();
+    const QFuture<void> previous = std::exchange(m_installTails[moduleId], turn.future());
+    const auto releaseTurn = qScopeGuard([&turn] { turn.finish(); });
+    if (previous.isValid())
+        co_await qCoro(previous).result();
     clearGrants(moduleId);
     ++m_installRevisions[moduleId];
     const ProviderModule *existing = module(moduleId);
