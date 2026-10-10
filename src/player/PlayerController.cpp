@@ -260,7 +260,7 @@ PlayerController::PlayerController(NativeAppWindow *window, PlaybackSource *api,
         emit playbackStateChanged();
     });
     connect(&m_uiPositionTimer, &QTimer::timeout, this, [this]() {
-        if (m_sessionActive)
+        if (positionAdvancing())
             emit positionChanged();
     });
     connect(&m_seekWatchdogTimer, &QTimer::timeout, this, [this]() {
@@ -875,8 +875,7 @@ double PlayerController::positionSeconds() const
 
 double PlayerController::estimatedPositionSeconds() const
 {
-    const bool advancing = m_sessionActive && !m_paused && !m_buffering && !m_seeking;
-    return m_positionTracker.estimatedPosition(effectivePlaybackSpeed(), advancing);
+    return m_positionTracker.estimatedPosition(effectivePlaybackSpeed(), positionAdvancing());
 }
 
 double PlayerController::durationSeconds() const
@@ -1308,13 +1307,13 @@ void PlayerController::playSession(const PlaybackSession& session, bool startPau
     m_restoreStreamSelection = session.restoreStreamSelection;
     m_backAllowed = false;
     m_backGuardTimer.start();
-    m_uiPositionTimer.start();
     const bool wasVisible = m_visible;
     const bool wasSessionActive = m_sessionActive;
     // Audio has no video surface but still owns the screen: it gets the same
     // transport chrome over a now playing stage instead of playing unseen.
     m_visible = true;
     m_sessionActive = true;
+    updateUiPositionTimer();
     if (wasVisible != m_visible)
         emit visibleChanged();
     if (wasSessionActive != m_sessionActive)
@@ -1940,6 +1939,7 @@ void PlayerController::stepChapter(int delta)
     // it says so -- but it is still a seek, and the samples on the way to it
     // belong to where playback was, not to where it is going.
     m_positionTracker.beginBlindSeek();
+    updateUiPositionTimer();
     m_seekWatchdogTimer.start();
     if (mpvCommand({ QByteArrayLiteral("add"), QByteArrayLiteral("chapter"), QByteArray::number(delta) }))
         return;
@@ -2618,7 +2618,7 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_
             break;
 
         const double seconds = *static_cast<double *>(property->data);
-        postMpvEvent(generation, [this, seconds]() { setPositionSeconds(seconds); });
+        postMpvEvent(generation, [this, seconds]() { setPositionSeconds(seconds, true); });
         break;
     }
     case MPV_EVENT_PROPERTY_CHANGE: {
@@ -2969,8 +2969,29 @@ void PlayerController::updatePlaybackStatusText()
 
 void PlayerController::notifyPlaybackStateChanged()
 {
+    const bool wasAdvancing = m_uiPositionTimer.isActive();
+    updateUiPositionTimer();
+    // A pause or buffering transition freezes the clock at the latest mpv
+    // sample. Seek gestures already publish their optimistic target directly.
+    if (wasAdvancing && !m_uiPositionTimer.isActive() && !m_positionTracker.seekInFlight())
+        emit positionChanged();
     updatePlaybackStatusText();
     emit playbackStateChanged();
+}
+
+bool PlayerController::positionAdvancing() const
+{
+    return m_sessionActive && m_fileLoaded && !m_paused && !m_buffering && !m_seeking
+        && m_positionTracker.canEstimatePosition();
+}
+
+void PlayerController::updateUiPositionTimer()
+{
+    if (!positionAdvancing()) {
+        m_uiPositionTimer.stop();
+    } else if (!m_uiPositionTimer.isActive()) {
+        m_uiPositionTimer.start();
+    }
 }
 
 double PlayerController::clampedPosition(double seconds) const
@@ -2998,23 +3019,27 @@ void PlayerController::requestMpvPositionRefresh(const char *reason)
                    << mpv_error_string(error);
 }
 
-void PlayerController::setPositionSeconds(double seconds, bool notifySegments)
+void PlayerController::setPositionSeconds(double seconds, bool publishImmediately)
 {
     // Tearing down mpv leaves its last position events queued for the main
     // thread, so they land after play() has reset the tracker for the new item
     // -- and they are about the item that just ended. Until the new file is
     // loaded the tracker already holds the requested start position, and
     // nothing mpv says about the old one is worth hearing.
-    if (!m_fileLoaded)
+    if (!m_fileLoaded || !std::isfinite(seconds) || m_positionTracker.seekInFlight())
         return;
 
-    if (!m_positionTracker.update(m_timeline.sourceSeconds(seconds)))
-        return;
+    const bool firstSample = !m_positionTracker.canEstimatePosition();
+    const bool changed = m_positionTracker.update(m_timeline.sourceSeconds(seconds));
+    updateUiPositionTimer();
 
-    const bool segmentChanged = m_timeline.updatePosition(m_positionTracker.position());
-
-    emit positionChanged();
-    if (notifySegments && segmentChanged)
+    // Every observation still reaches the tracker and segment boundaries.
+    // Normal playback publishes its extrapolated UI clock at 250 ms instead
+    // of also invalidating every QML/JNI consumer for each mpv sample. A first
+    // sample, explicit refresh, or changed frozen position remains immediate.
+    if (publishImmediately || firstSample || (changed && !m_uiPositionTimer.isActive()))
+        emit positionChanged();
+    if (m_timeline.updatePosition(m_positionTracker.position()))
         emit segmentsChanged();
 }
 

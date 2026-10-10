@@ -342,7 +342,9 @@ private:
     void flushPendingSeek();
     void updatePlaybackStatusText();
     void notifyPlaybackStateChanged();
-    void setPositionSeconds(double seconds, bool notifySegments = true);
+    void setPositionSeconds(double seconds, bool publishImmediately = false);
+    bool positionAdvancing() const;
+    void updateUiPositionTimer();
     void requestMpvPositionRefresh(const char *reason);
     double clampedPosition(double seconds) const;
     double seekAnchorPosition();
