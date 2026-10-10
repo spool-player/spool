@@ -28,6 +28,7 @@ void PlaybackReporter::start(const PlaybackSession& session, double playbackRate
 {
     m_report = std::make_shared<Report>();
     m_report->session = session;
+    m_report->context = m_api ? m_api->reportingContext(session.itemId) : nullptr;
     m_report->id = ++m_nextReportId;
     m_startPlaybackRate = playbackRate;
     m_startVolume = volume;
@@ -103,14 +104,29 @@ void PlaybackReporter::sendStopIfReady(const ReportPtr& report)
     sendStop(report, 1);
 }
 
+bool PlaybackReporter::contextCurrent(const ReportPtr& report) const
+{
+    return m_api && report->context && m_api->reportingContext(report->session.itemId) == report->context.data();
+}
+
 void PlaybackReporter::sendStop(const ReportPtr& report, int attempt)
 {
+    if (!contextCurrent(report)) {
+        report->watched = false;
+        finishStop(report);
+        return;
+    }
     Async::runScoped(
         this,
         m_api->reportPlaybackStopped(
             report->session, report->stopPositionTicks, report->stopFailed, report->stopPlaybackRate),
         [this, report]() { finishStop(report); },
         [this, report, attempt](const std::exception_ptr& error) {
+            if (!contextCurrent(report)) {
+                report->watched = false;
+                finishStop(report);
+                return;
+            }
             qWarning() << "player: playback stop report attempt" << attempt << "failed:" << exceptionMessage(error);
             emit reportFailed(QStringLiteral("playback stop"), exceptionMessage(error));
             if (attempt >= kMaxStopReportAttempts) {
@@ -124,6 +140,8 @@ void PlaybackReporter::sendStop(const ReportPtr& report, int attempt)
 
 void PlaybackReporter::finishStop(const ReportPtr& report)
 {
+    if (report->stopFinished)
+        return;
     report->stopFinished = true;
     report->predecessor.reset();
     if (m_stopTails.value(report->session.itemId) == report)
@@ -139,6 +157,10 @@ void PlaybackReporter::sendStart()
     const ReportPtr report = m_report;
     if (!report || !report->active || !m_api || report->startInFlight || report->startReported)
         return;
+    if (!contextCurrent(report)) {
+        report->active = false;
+        return;
+    }
 
     report->startInFlight = true;
     Async::runScoped(
@@ -167,6 +189,10 @@ void PlaybackReporter::sendProgress()
     if (!report || !report->active || !m_api || !report->startReported || report->progressInFlight
         || !m_progressPending)
         return;
+    if (!contextCurrent(report)) {
+        report->active = false;
+        return;
+    }
 
     report->progressInFlight = true;
     m_progressPending = false;

@@ -276,6 +276,10 @@ public:
     {
         return m_hub->signedIn();
     }
+    PlaybackSource *reportingContext(const QString& itemId) override
+    {
+        return sourceFor(itemId);
+    }
 
     QCoro::Task<PlaybackSession> resolvePlayback(MovieItem item, bool forceTranscode) override
     {

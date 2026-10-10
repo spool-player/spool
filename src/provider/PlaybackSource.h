@@ -33,6 +33,12 @@ public:
     virtual int playbackParallelRequests() const = 0;
     // Whether reports and follow-up lookups can be made right now.
     virtual bool signedIn() const = 0;
+    // Reporting retries must retain the source instance that accepted playback,
+    // rather than route an old session through a replacement account runtime.
+    virtual PlaybackSource *reportingContext(const QString&)
+    {
+        return this;
+    }
 
     // Turns an item into something mpv can open: the URL, its streams, and
     // where to start. `forceTranscode` asks a source that can re-encode to
