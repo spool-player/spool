@@ -4,6 +4,7 @@
 #include "../provider/PlaybackSource.h"
 
 #include <QDebug>
+#include <QRandomGenerator>
 #include <algorithm>
 #include <numeric>
 #include <utility>
@@ -433,6 +434,7 @@ bool PlayQueueController::removeItem(int index)
 
 void PlayQueueController::clear()
 {
+    cancelEpisodeSuccessors();
     if (m_entries.empty())
         return;
     const int previousCurrent = currentIndex();
@@ -665,7 +667,7 @@ void PlayQueueController::rebuildShuffledOrder(int currentNaturalIndex)
     auto current = std::find(m_order.begin(), m_order.end(), currentNaturalIndex);
     if (current != m_order.end())
         m_order.erase(current);
-    std::reverse(m_order.begin(), m_order.end());
+    std::shuffle(m_order.begin(), m_order.end(), *QRandomGenerator::global());
     m_order.insert(m_order.begin(), currentNaturalIndex);
     m_orderIndex = 0;
 }
