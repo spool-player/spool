@@ -120,9 +120,20 @@ FocusScope {
     function mergeServers(found) {
         const merged = servers.slice()
         for (const entry of found) {
-            const index = merged.findIndex(row => row.id === entry.id)
-            if (index < 0)
+            // Only nonempty IDs establish identity; ID-less entries match by
+            // address, so unrelated servers never collapse into one row.
+            const index = merged.findIndex(row => (entry.id && row.id === entry.id) || (!!entry.address && row.address
+                                                                                        === entry.address))
+            if (index < 0) {
                 merged.push(entry)
+                continue
+            }
+            const row = merged[index]
+            // Address matching must retain a server ID learned by an earlier probe.
+            if ((!entry.id || entry.id === entry.address) && row.id)
+                merged[index] = Object.assign({}, entry, {
+                                                  id: row.id
+                                              })
             else
                 merged[index] = entry
         }
