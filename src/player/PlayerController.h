@@ -252,7 +252,7 @@ signals:
     void trickplayChanged();
     void chaptersChanged();
     // Also emitted between sessions so Stop cancels pending queue negotiation.
-    void stopRequested();
+    void stopRequested(const QString& reason);
     void playbackStopped(const QString& itemId, qint64 positionTicks, bool watched, bool reachedEnd, quint64 reportId);
     void watchedPersistenceRequested(const QString& itemId, quint64 reportId);
     // The stream ended before the item did. Emitted after playbackStopped,
@@ -327,12 +327,13 @@ private:
     template <typename Callback> void postMpvEvent(quint64 generation, Callback callback)
     {
         QMetaObject::invokeMethod(this, [this, generation, callback = std::move(callback)]() mutable {
-            if (generation == m_mpvEventGeneration)
+            if (generation == m_mpvEventGeneration && m_sessionActive)
                 callback();
         });
     }
     void startProgressReporting();
     void stopProgressReporting(bool failed = false, bool reachedEnd = false, bool explicitStop = false);
+    bool sampleSettledPlaybackPosition();
     bool mpvCommand(QByteArrayList command);
     bool beginSeekCommand(double targetSeconds, const QByteArray& flags);
     QByteArrayList buildSeekCommand(double targetSeconds, const QByteArray& flags) const;
@@ -383,6 +384,7 @@ private:
     MpvLifecycle m_mpvLifecycle;
     quint64 m_mpvTeardownGeneration = 0;
     quint64 m_mpvEventGeneration = 0;
+    quint64 m_playGeneration = 0;
     mpv_handle *m_idleMpvHandle = nullptr;
     bool m_idleMpvPreparationScheduled = false;
     bool m_idleMpvPreparationEnabled = true;
@@ -438,6 +440,8 @@ private:
     std::atomic<int> m_subtitleDelayMs = 0;
     std::atomic<int> m_volume = 100;
     std::atomic_bool m_muted = false;
+    bool m_volumeKnown = false;
+    bool m_muteKnown = false;
     double m_playbackSpeed = 1.0;
     double m_syncPlaybackSpeed = 1.0;
     bool m_syncPlaybackSpeedActive = false;
