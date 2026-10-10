@@ -1173,6 +1173,7 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
         VERBATIM)
         set(SPOOL_QML_TESTS
             route-policy tests/qml/tst_RoutePolicy.qml
+            row-stack-view tests/qml/tst_RowStackView.qml
             key-router tests/qml/tst_KeyRouter.qml
             player-overlay-input tests/qml/tst_PlayerOverlayInput.qml
             popup-menu-input tests/qml/tst_PopupMenuInput.qml
@@ -1259,6 +1260,32 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
         target_sources(spool-e2e-tests PRIVATE "${qml_registry}")
         add_test(NAME gui-e2e-native COMMAND spool-e2e-tests --run-all --workers 1 --timeout-ms 600000 --results "${CMAKE_CURRENT_BINARY_DIR}/e2e-results.json")
         set_tests_properties(gui-e2e-native PROPERTIES LABELS e2e ENVIRONMENT "${SPOOL_TEST_ENV}" TIMEOUT 0)
+        # Exercise the event-thread lifecycle with a controllable client API.
+        # Keep this separate from the core targets so the fake symbols cannot
+        # interpose on the real libmpv used by the other player tests.
+        find_package(Threads REQUIRED)
+        add_executable(mpv-lifecycle-tests
+            tests/player/MpvLifecycleTest.cpp
+            src/player/MpvLifecycle.cpp)
+        target_include_directories(mpv-lifecycle-tests PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/src"
+            "${MPV_ACTIVE_SOURCE_DIR}"
+            "${MPV_ACTIVE_SOURCE_DIR}/include")
+        # Native builds normally obtain installed headers from the libmpv
+        # target. Import those paths without linking its real client symbols.
+        foreach(mpv_headers_target IN ITEMS PkgConfig::MPV MPV::MPV)
+            if(TARGET ${mpv_headers_target})
+                target_include_directories(mpv-lifecycle-tests SYSTEM PRIVATE
+                    "$<TARGET_PROPERTY:${mpv_headers_target},INTERFACE_INCLUDE_DIRECTORIES>")
+            endif()
+        endforeach()
+        target_link_libraries(mpv-lifecycle-tests PRIVATE Qt6::Core Threads::Threads)
+        set_target_properties(mpv-lifecycle-tests PROPERTIES
+            AUTOMOC OFF
+            AUTOUIC OFF
+            AUTORCC OFF)
+        add_test(NAME mpv-lifecycle COMMAND mpv-lifecycle-tests)
+        set_tests_properties(mpv-lifecycle PROPERTIES LABELS e2e ENVIRONMENT "${SPOOL_TEST_ENV}" TIMEOUT 0)
         foreach(test_target IN ITEMS spool-tests spool-e2e-tests)
             set_target_properties(${test_target} PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF
                 INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL OFF)

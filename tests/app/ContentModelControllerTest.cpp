@@ -242,6 +242,13 @@ public:
         co_return std::vector<MovieItem> {};
     }
 
+    QCoro::Task<std::vector<MovieItem>> fetchRelatedMedia(QString itemId, QString kind) override
+    {
+        Q_UNUSED(itemId);
+        Q_UNUSED(kind);
+        co_return std::vector<MovieItem> {};
+    }
+
     QCoro::Task<PersonCredits> fetchItemsByPerson(QString personId, int maximumItems = 4000) override
     {
         Q_UNUSED(personId);
