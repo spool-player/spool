@@ -64,7 +64,7 @@ FocusScope {
                                                                              && seriesIdText.length > 0
                                                                              && seasonIdText.length > 0
     readonly property bool canPlayAlbum: albumDetail && contextCount > 0
-    readonly property bool showPrimaryAction: canPlayEpisodicContainer || canPlayAlbum || (selectedIndex >= 0
+    readonly property bool showPrimaryAction: canPlayEpisodicContainer || canPlayAlbum || (Boolean(item.movieId)
                                                                                            && canPlay)
 
     readonly property bool hasProgress: Number(item.resumeTicks || 0) > 0 && Number(item.runtimeTicks || 0) > 0
@@ -495,6 +495,21 @@ FocusScope {
         scheduleActiveRouteRefresh()
     }
 
+    onVisibleChanged: {
+        // The player's browse sheet reuses Content's detail rows while this
+        // resident page is hidden. Reclaim them when the page returns.
+        loadedDetailKey = ""
+        if (visible)
+            scheduleActiveRouteRefresh()
+    }
+
+    onFullDetailItemChanged: {
+        if (fullDetailItem.movieId) {
+            syncUserState()
+            Qt.callLater(root.refreshDetailRows)
+        }
+    }
+
     onRouteActiveChanged: {
         if (routeActive)
             enterRoute(false)
@@ -530,12 +545,12 @@ FocusScope {
     }
 
     function scheduleActiveRouteRefresh() {
-        if (!routeActive || routeRefreshScheduled)
+        if (!routeActive || !visible || routeRefreshScheduled)
             return
         routeRefreshScheduled = true
         Qt.callLater(function () {
             root.routeRefreshScheduled = false
-            if (!root.routeActive)
+            if (!root.routeActive || !root.visible)
                 return
             root.refreshDetailRows()
             root.refreshItemDetail()
@@ -547,10 +562,6 @@ FocusScope {
         function onDetailRowsChanged() {
             root.updateDetailCounts()
             root.rebuildSeasonEntries()
-        }
-        function onDetailItemChanged() {
-            if (root.fullDetailItem.movieId)
-                root.syncUserState()
         }
     }
 
@@ -641,6 +652,8 @@ FocusScope {
     }
 
     function refreshDetailRows() {
+        if (!routeActive || !visible)
+            return
         const itemId = item.movieId || ""
         const key = itemId + ":" + typeText + ":" + seriesIdText + ":" + seasonIdText
         if (key === loadedDetailKey)
@@ -847,9 +860,16 @@ FocusScope {
             App.playEpisodicContainer(seriesId, typeText === "Season" ? seasonIdText : "")
             return
         }
-        if (selectedIndex < 0 || !canPlay)
+        const itemId = String(item.movieId || "")
+        if (itemId.length <= 0 || !canPlay)
             return
-        App.playFromModel(itemModel, selectedIndex, fromStart === true)
+        // The model can change after this page was opened. Resolve the ID
+        // again at activation, and fetch it directly if it has left the model.
+        const index = RoutePolicy.modelIndexForItemId(itemModel, itemId, selectedIndex)
+        if (index >= 0)
+            App.playFromModel(itemModel, index, fromStart === true)
+        else
+            App.playItemId(itemId, fromStart === true)
     }
 
     function playDetailContext(shuffled) {
@@ -1449,7 +1469,7 @@ FocusScope {
                             iconName: root.playedState ? "visibility" : "visibility_off"
                             label: root.playedState ? "Mark unwatched" : "Mark watched"
                             checked: root.playedState
-                            enabledButton: root.selectedIndex >= 0
+                            enabledButton: Boolean(root.item.movieId)
                             onActivated: root.togglePlayed()
                         }
 
@@ -1458,7 +1478,7 @@ FocusScope {
                             iconName: root.favoriteState ? "favorite" : "favorite_border"
                             label: root.favoriteState ? "Remove favourite" : "Add favourite"
                             checked: root.favoriteState
-                            enabledButton: root.selectedIndex >= 0
+                            enabledButton: Boolean(root.item.movieId)
                             onActivated: root.toggleFavorite()
                         }
 
@@ -1468,7 +1488,7 @@ FocusScope {
                             label: "More"
                             checked: root.overflowOpen
                             visible: String(root.item.movieId || "").length > 0
-                            enabledButton: root.selectedIndex >= 0
+                            enabledButton: Boolean(root.item.movieId)
                             onActivated: root.toggleOverflow()
                         }
                     }

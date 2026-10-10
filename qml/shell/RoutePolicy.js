@@ -8,8 +8,21 @@ function itemTypeFor(item) {
     return item ? String(item.itemType || item.type || "") : ""
 }
 
+function personContext(args) {
+    const routeArgs = args || ({})
+    return {
+        id: String(routeArgs.personId || ""),
+        name: String(routeArgs.personName || "Person"),
+        role: String(routeArgs.personRole || ""),
+        type: String(routeArgs.personType || "Person"),
+        imageTag: String(routeArgs.personImageTag || "")
+    }
+}
+
 function modelCount(model) {
-    return model && model.rowCount ? model.rowCount() : 0
+    if (!model)
+        return 0
+    return model.count !== undefined ? Number(model.count) : model.rowCount ? model.rowCount() : 0
 }
 
 function modelItem(model, index) {
@@ -24,6 +37,9 @@ function modelIndexForItemId(model, itemId, fallbackIndex) {
             if (itemIdFor(model.get(i)) === id)
                 return i
         }
+        // A route's identity survives its source model being refreshed or
+        // reused by another page. Never turn it into a different item.
+        return -1
     }
     return count > 0 ? Math.max(0, Math.min(Number(fallbackIndex || 0), count - 1)) : -1
 }
@@ -33,7 +49,6 @@ function detailsContext(args, fallbackModel) {
     const model = routeArgs.model || fallbackModel
     const index = modelIndexForItemId(model, routeArgs.itemId, routeArgs.focusIndex)
     let item = modelItem(model, index)
-    let effectiveIndex = index
     if (itemIdFor(item).length <= 0 && String(routeArgs.itemId || "").length > 0) {
         item = {
             movieId: String(routeArgs.itemId),
@@ -43,11 +58,10 @@ function detailsContext(args, fallbackModel) {
             seasonId: String(routeArgs.seasonId || ""),
             playable: true
         }
-        effectiveIndex = 0
     }
     return {
         model: model,
-        index: effectiveIndex,
+        index: index,
         item: item,
         source: String(routeArgs.source || "movies"),
         returnRoute: String(routeArgs.returnRoute || "libraryGrid")

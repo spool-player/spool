@@ -215,7 +215,6 @@ KeyRouter {
     property var providerOverlay: null
     property var downloadsReturnFocus: null
     property bool downloadsDestinationRequested: false
-    property var personItem: ({})
     property var pendingPlaybackBackItem: ({})
     textInputActive: Qt.inputMethod.visible || InputKeys.isTextInputItem(root.Window.window
                                                                          ? root.Window.window.activeFocusItem : null)
@@ -456,17 +455,8 @@ KeyRouter {
             }
         } else if (root.route === "personDetails") {
             const personId = String(args.personId || "")
-            if (personId.length <= 0) {
+            if (personId.length <= 0)
                 Router.reset("home")
-            } else {
-                personItem = {
-                    id: personId,
-                    name: String(args.personName || "Person"),
-                    role: String(args.personRole || ""),
-                    type: String(args.personType || "Person")
-                }
-                Content.loadPersonItems(personItem.id)
-            }
         }
         Router.finishRecovery()
         return true
@@ -927,22 +917,20 @@ KeyRouter {
     }
 
     function openPerson(person) {
-        personItem = person || ({})
-        const personId = String(personItem.id || "")
+        const personId = String(person && person.id || "")
         if (personId.length <= 0)
             return false
-        if (Content)
-            Content.loadPersonItems(personId)
-        if (route === "personDetails") {
-            InputKeys.focus(routeStack)
-            return true
+        const args = {
+            personId: personId,
+            personName: String(person.name || "Person"),
+            personRole: String(person.role || ""),
+            personType: String(person.type || "Person"),
+            personImageTag: String(person.imageTag || "")
         }
-        pushRoute("personDetails", {
-                      personId: personId,
-                      personName: String(personItem.name || "Person"),
-                      personRole: String(personItem.role || ""),
-                      personType: String(personItem.type || "Person")
-                  })
+        if (route === "personDetails" && String(routeArgs.personId || "") === personId)
+            replaceRoute("personDetails", args)
+        else
+            pushRoute("personDetails", args)
         return true
     }
 
