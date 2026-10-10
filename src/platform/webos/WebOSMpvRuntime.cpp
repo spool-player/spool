@@ -34,6 +34,7 @@ extern "C" {
     X(mpv_destroy)                                                                                                     \
     X(mpv_terminate_destroy)                                                                                           \
     X(mpv_wait_event)                                                                                                  \
+    X(mpv_wakeup)                                                                                                      \
     X(mpv_request_log_messages)                                                                                        \
     X(mpv_observe_property)                                                                                            \
     X(mpv_set_option_string)                                                                                           \
@@ -338,6 +339,12 @@ mpv_event *mpv_wait_event(mpv_handle *ctx, double timeout)
     if (!Spool::WebOSMpvRuntime::ensureLoaded())
         return nullptr;
     return g_api.mpv_wait_event(ctx, timeout);
+}
+
+void mpv_wakeup(mpv_handle *ctx)
+{
+    if (ctx && Spool::WebOSMpvRuntime::ensureLoaded())
+        g_api.mpv_wakeup(ctx);
 }
 
 int mpv_request_log_messages(mpv_handle *ctx, const char *min_level)

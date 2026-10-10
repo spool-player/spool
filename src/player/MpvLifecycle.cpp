@@ -47,6 +47,7 @@ void MpvLifecycle::destroy(BeforeDestroy beforeDestroy)
 
     if (m_stopFlag)
         m_stopFlag->store(true);
+    mpv_wakeup(handle);
     if (m_eventThread.joinable())
         m_eventThread.join();
 
@@ -72,24 +73,18 @@ void MpvLifecycle::destroyAsync(BeforeDestroy beforeDestroy)
 
     if (m_stopFlag)
         m_stopFlag->store(true);
+    mpv_wakeup(handle);
+    if (m_eventThread.joinable())
+        m_eventThread.join();
     m_stopFlag.reset();
     m_pendingFileLoads = 0;
 
-    // The worker owns the event thread and the handle from here on, so this
-    // object may be reused (or destroyed) immediately.
-    std::thread([handle, eventThread = std::move(m_eventThread)]() mutable {
-        if (eventThread.joinable())
-            eventThread.join();
+    // The event handler can no longer run; only the handle outlives this object.
+    std::thread([handle]() {
         qInfo() << "player: calling mpv_terminate_destroy (async)";
         mpv_terminate_destroy(handle);
         qInfo() << "player: mpv_terminate_destroy returned";
     }).detach();
-}
-
-void MpvLifecycle::requestEventLoopStop()
-{
-    if (m_stopFlag)
-        m_stopFlag->store(true);
 }
 
 void MpvLifecycle::beginFileLoad()
@@ -121,6 +116,10 @@ void MpvLifecycle::runEventLoop(
 {
     while (!stop->load()) {
         mpv_event *event = mpv_wait_event(handle, 0.1);
+        if (stop->load())
+            break;
+        if (event && event->event_id == MPV_EVENT_SHUTDOWN)
+            stop->store(true);
         if (event && eventHandler)
             eventHandler(event);
     }
