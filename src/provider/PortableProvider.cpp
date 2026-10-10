@@ -275,6 +275,11 @@ private:
         args.insert(QStringLiteral("positionTicks"), QString::number(positionTicks));
         args.insert(QStringLiteral("audioStreamIndex"), session.audioStreamIndex);
         args.insert(QStringLiteral("subtitleStreamIndex"), session.subtitleStreamIndex);
+        // Empty repeat mode means a group owns queue policy; report no mode.
+        if (!session.repeatMode.isEmpty()) {
+            args.insert(QStringLiteral("repeatMode"), session.repeatMode);
+            args.insert(QStringLiteral("shuffled"), session.shuffled);
+        }
         QString queueRevision;
         const quint64 supportGeneration = m_queueSupportGeneration;
         if (event != QStringLiteral("stop")

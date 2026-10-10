@@ -173,7 +173,7 @@ void AppController::handleRemoteCommand(const QString& accountId, const QVariant
         const QString mode = command.value(QStringLiteral("mode")).toString();
         if (mode == QStringLiteral("RepeatNone") || mode == QStringLiteral("RepeatAll")
             || mode == QStringLiteral("RepeatOne"))
-            m_repeatMode = mode;
+            setRepeatMode(mode);
     } else if (name == QStringLiteral("shuffle")) {
         m_playQueue->setShuffled(command.value(QStringLiteral("value")).toBool());
     } else if (name == QStringLiteral("quality")) {

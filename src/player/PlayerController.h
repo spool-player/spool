@@ -195,6 +195,9 @@ public:
     Q_INVOKABLE void stop();
     Q_INVOKABLE void stopWithReason(const QString& reason, bool explicitStop = false);
     void setWatchedThresholdPercent(int percent);
+    // Keeps progress reports truthful about the queue, repeat and shuffle
+    // while the session plays.
+    void setQueueState(const std::vector<PlaybackQueueItem>& queue, const QString& repeatMode, bool shuffled);
     Q_INVOKABLE void setNightModeEnabled(bool enabled);
     Q_INVOKABLE void setToneMappingVisualizationEnabled(bool enabled);
     Q_INVOKABLE void setAudioDelayMs(int delayMs);
