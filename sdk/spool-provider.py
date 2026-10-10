@@ -20,12 +20,17 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 from typing import NoReturn
 
 MAX_ARCHIVE = 16 * 1024 * 1024
 MAX_EXPANDED = 32 * 1024 * 1024
 MAX_FILE = 8 * 1024 * 1024
 MAX_FILES = 512
+# Bound archive metadata as well as file payloads. Allow directory headers and
+# ustar record padding without letting ignored members expand without a limit.
+MAX_MEMBERS = 2 * MAX_FILES
+MAX_TAR = MAX_EXPANDED + MAX_MEMBERS * 1024 + tarfile.RECORDSIZE
 EXTENSIONS = {".mjs", ".js", ".qml", ".json", ".png", ".jpg", ".svg", ".webp", ".ttf", ".otf", ".txt", ".md", ".map"}
 QML_IMPORTS = {"QtQuick", "QtQuick.Layouts", "QtQuick.Controls", "QtQml", "QtQml.Models", "Spool"}
 CAPABILITIES = {"search", "userState", "reporting", "segments", "streamQuality", "trickplay", "discovery",
@@ -125,41 +130,93 @@ def compress(data: bytes) -> bytes:
                           capture_output=True, check=True).stdout
 
 
+def read_bounded(stream, maximum: int, description: str) -> bytes:
+    data = stream.read(maximum + 1)
+    if len(data) > maximum:
+        fail(f"{description} exceeds its size limit")
+    return data
+
+
 def decompress(data: bytes) -> bytes:
     try:
         from compression import zstd
-        return zstd.decompress(data)
     except ImportError:
-        pass
+        zstd = None
+    if zstd is not None:
+        try:
+            with zstd.open(io.BytesIO(data), "rb", options={zstd.DecompressionParameter.window_log_max: 26}) as stream:
+                return read_bounded(stream, MAX_TAR, "expanded archive")
+        except (zstd.ZstdError, EOFError) as error:
+            fail(f"invalid zstd archive: {error}")
     if not shutil.which("zstd"):
         fail("needs Python 3.14 or the zstd command")
-    return subprocess.run(["zstd", "-d", "-q", "-c"], input=data, capture_output=True, check=True).stdout
+    # A file-backed stdin avoids deadlock between a full compressed-input pipe
+    # and the bounded output reader. Never collect unlimited subprocess output.
+    with tempfile.TemporaryFile() as source:
+        source.write(data)
+        source.seek(0)
+        with subprocess.Popen(["zstd", "-d", "-q", "-c", "--memory=64MB"], stdin=source,
+                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as decoder:
+            try:
+                expanded = read_bounded(decoder.stdout, MAX_TAR, "expanded archive")
+                if decoder.wait() != 0:
+                    fail("invalid zstd archive")
+                return expanded
+            finally:
+                if decoder.poll() is None:
+                    decoder.kill()
+                    decoder.wait()
 
 
 def read(path: pathlib.Path) -> tuple[dict, dict[str, bytes]]:
-    data = path.read_bytes()
-    if len(data) > MAX_ARCHIVE:
-        fail("archive is larger than 16 MiB")
+    with path.open("rb") as source:
+        data = read_bounded(source, MAX_ARCHIVE, "archive")
     files = {}
+    expanded_size = 0
+    folded = set()
     with tarfile.open(fileobj=io.BytesIO(decompress(data)), mode="r:") as archive:
-        for member in archive.getmembers():
+        for count, member in enumerate(archive, 1):
+            if count > MAX_MEMBERS:
+                fail("archive has too many members")
             if member.isdir():
                 continue
-            if not member.isfile():
+            if not member.isfile() or member.issparse():
                 fail(f"links and special files are not allowed: {member.name}")
-            files[member.name.removeprefix("./")] = archive.extractfile(member).read()
+            name = member.name.removeprefix("./")
+            if not valid_path(name):
+                fail(f"forbidden path: {name}")
+            if name.casefold() in folded:
+                fail(f"duplicate or case-colliding path: {name}")
+            if member.size < 0 or member.size > MAX_FILE:
+                fail(f"oversized file: {name}")
+            expanded_size += member.size
+            if len(files) >= MAX_FILES or expanded_size > MAX_EXPANDED:
+                fail("package is too large")
+            folded.add(name.casefold())
+            with archive.extractfile(member) as stream:
+                files[name] = stream.read(member.size)
+            if len(files[name]) != member.size:
+                fail(f"truncated file: {name}")
     return validate(files), files
 
 
 def collect(source: pathlib.Path) -> dict[str, bytes]:
     files = {}
+    expanded_size = 0
     for root in ROOTS:
         path = source / root
-        for entry in [path] if path.is_file() else sorted(path.rglob("*")) if path.is_dir() else []:
+        if path.is_symlink():
+            fail(f"symlinks are not allowed: {path}")
+        for entry in [path] if path.is_file() else path.rglob("*") if path.is_dir() else []:
             if entry.is_symlink():
                 fail(f"symlinks are not allowed: {entry}")
             if entry.is_file():
-                files[entry.relative_to(source).as_posix()] = entry.read_bytes()
+                if len(files) >= MAX_FILES:
+                    fail("package has too many files")
+                with entry.open("rb") as stream:
+                    data = read_bounded(stream, min(MAX_FILE, MAX_EXPANDED - expanded_size), str(entry))
+                expanded_size += len(data)
+                files[entry.relative_to(source).as_posix()] = data
     return files
 
 
@@ -181,7 +238,8 @@ def build(source: pathlib.Path, output: pathlib.Path | None) -> pathlib.Path:
 
 def feed(path: pathlib.Path, url: str) -> dict:
     manifest, _ = read(path)
-    data = path.read_bytes()
+    with path.open("rb") as source:
+        data = read_bounded(source, MAX_ARCHIVE, "archive")
     entry = {key: manifest[key] for key in ("format", "id", "name", "version", "summary", "publisher", "homepage")
              if manifest.get(key)}
     entry.update(url=url, size=len(data), sha256=hashlib.sha256(data).hexdigest())
