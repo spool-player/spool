@@ -604,11 +604,10 @@ KeyRouter {
                                   ? request.source : "", request ? request.focusIndex : 0)
     }
 
-    function openDetailsAt(model, index, source, returnRoute) {
+    function openDetailsAt(model, index, source, returnRoute, parent) {
         const nextModel = model || (Browse.items)
-        return commitDetailsRoute(RoutePolicy.detailsRouteAt(nextModel, index, source, returnRoute, route), source,
+        return commitDetailsRoute(RoutePolicy.detailsRouteAt(nextModel, index, source, returnRoute, route, parent), source,
                                   index)
-
     }
 
     function openSeriesDetails(seriesId, seriesName, returnRoute) {

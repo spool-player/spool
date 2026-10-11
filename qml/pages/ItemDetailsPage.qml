@@ -30,9 +30,18 @@ FocusScope {
                                                                                              || item.title
                                                                                              || item.seriesName
                                                                                              || "Selected item")
-    readonly property string seriesTitle: item.seriesName || (typeText === "Series" ? titleText : "")
+    // The route's copy can know the series before the full details do; a
+    // line that is on screen must not vanish while they load.
+    readonly property string seriesTitle: item.seriesName || routeItem.seriesName || (typeText === "Series" ? titleText :
+                                                                                                              "")
     readonly property string seasonTitleText: seasonTitle()
-    readonly property string seriesIdText: item.seriesId || ""
+    readonly property string seriesIdText: item.seriesId || routeItem.seriesId || ""
+    readonly property string overviewText: item.overview || routeItem.overview || ""
+    // First load of an item with nothing cached: hold the space its overview
+    // and credits usually take, so they fill in rather than push the page.
+    readonly property bool detailsPending: Content.detailItemBusy && !fullDetailItem.movieId
+    readonly property bool videoDetail: typeText === "Movie" || typeText === "Series" || typeText === "Episode"
+                                        || typeText === "Season"
     readonly property string seasonIdText: typeText === "Season" ? String(item.movieId || "") : String(item.seasonId
                                                                                                        || "")
 
@@ -117,10 +126,10 @@ FocusScope {
     readonly property var metadataPeople: fullDetailItem.people && fullDetailItem.people.length > 0
                                           ? fullDetailItem.people : (item.people || [])
     readonly property var people: metadataPeople
-    readonly property bool reservePeopleRow: loadingDetailRows && !fullDetailItem.movieId && (typeText === "Movie"
-                                                                                              || typeText === "Series"
-                                                                                              || typeText === "Episode"
-                                                                                              || typeText === "Season")
+    // Seasons rarely carry their own cast, so reserving a row for one only
+    // drew a heading that then vanished.
+    readonly property bool reservePeopleRow: detailsPending && (typeText === "Movie" || typeText === "Series" || typeText
+                                                                === "Episode")
     readonly property bool showPeopleRow: people.length > 0 || reservePeopleRow
     readonly property var genreList: fullDetailItem.genres && fullDetailItem.genres.length > 0 ? fullDetailItem.genres :
                                                                                                  (item.genres || [])
@@ -548,7 +557,15 @@ FocusScope {
         return item
     }
 
+    // The route's copy of the item is rebuilt whenever its source row
+    // changes, often with the same item in it. Only a different item resets
+    // focus and refetches; anything else would blank the page mid-load.
+    property string enteredItemId: ""
     onRouteItemChanged: {
+        const id = String(routeItem.movieId || "")
+        if (id === enteredItemId)
+            return
+        enteredItemId = id
         seasonPickerOpen = false
         overflowOpen = false
         if (routeActive)
@@ -1042,7 +1059,10 @@ FocusScope {
             return
         if (typeText === "Series") {
             if (shell)
-                shell.openDetailsAt(Content.detailSeasons, index, "season", detailsReturnRoute)
+                shell.openDetailsAt(Content.detailSeasons, index, "season", detailsReturnRoute, {
+                                        "seriesId": String(item.movieId || ""),
+                                        "seriesName": titleText
+                                    })
             return
         }
         if (albumDetail) {
@@ -1498,14 +1518,36 @@ FocusScope {
                     AppText {
                         Layout.fillWidth: true
                         Layout.topMargin: root.compactEpisodicDetail ? 2 : 8
-                        visible: Boolean(root.item.overview && root.item.overview.length > 0)
-                        text: root.item.overview || ""
+                        visible: root.overviewText.length > 0
+                        text: root.overviewText
                         color: Theme.textSecondary
                         wrapMode: Text.Wrap
                         font.pixelSize: Metrics.bodySizePx + 1
                         lineHeight: 1.18
                         maximumLineCount: root.compactEpisodicDetail ? (root.typeText === "Season" ? 3 : 4) : 5
                         elide: Text.ElideRight
+                    }
+
+                    Column {
+                        id: overviewPlaceholder
+                        Layout.fillWidth: true
+                        Layout.topMargin: root.compactEpisodicDetail ? 2 : 8
+                        visible: root.detailsPending && root.videoDetail && root.overviewText.length === 0
+                        spacing: Math.round((Metrics.bodySizePx + 1) * 0.5)
+                        Accessible.ignored: true
+
+                        Repeater {
+                            model: root.compactEpisodicDetail ? 2 : 3
+                            delegate: Rectangle {
+                                required property int index
+                                width: overviewPlaceholder.width * (index === (root.compactEpisodicDetail ? 1 : 2)
+                                                                    ? 0.62 : 0.96)
+                                height: Math.round((Metrics.bodySizePx + 1) * 0.72)
+                                radius: Theme.radiusSmall
+                                color: Theme.bgHover
+                                opacity: 0.8
+                            }
+                        }
                     }
 
                     Flow {
@@ -1574,6 +1616,45 @@ FocusScope {
                         text: root.progressText() + " / " + root.remainingText()
                         color: Theme.textMuted
                         font.pixelSize: Metrics.metaSizePx
+                    }
+
+                    Surface {
+                        id: metadataPlaceholder
+                        Layout.fillWidth: true
+                        Layout.topMargin: root.compactEpisodicDetail ? 12 : 28
+                        // One credit row for an episode or season, a typical
+                        // three for a film or show.
+                        readonly property int rowCount: root.compactEpisodicDetail ? 1 : 3
+                        readonly property int rowHeight: Metrics.metaSizePx + 13
+                        implicitHeight: rowCount * rowHeight + (rowCount - 1) * 12 + 34
+                        visible: root.detailsPending && root.videoDetail && root.metadataRows.length === 0
+                        baseColor: Theme.floatingPanel
+                        radius: Theme.radiusPanel
+                        Accessible.ignored: true
+
+                        Column {
+                            anchors.fill: parent
+                            anchors.margins: 17
+                            spacing: 12
+                            Repeater {
+                                model: metadataPlaceholder.rowCount
+                                delegate: Row {
+                                    spacing: 16
+                                    Rectangle {
+                                        width: 72
+                                        height: metadataPlaceholder.rowHeight
+                                        radius: Theme.radiusSmall
+                                        color: Theme.bgHover
+                                    }
+                                    Rectangle {
+                                        width: Metrics.scaled(240)
+                                        height: metadataPlaceholder.rowHeight
+                                        radius: Theme.radiusSmall
+                                        color: Theme.bgHover
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     MetadataPanel {
