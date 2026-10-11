@@ -1283,7 +1283,7 @@ FocusScope {
             id: settingRow
             readonly property var row: parent ? parent.row : null
             readonly property int rowIndex: parent ? parent.rowIndex : -1
-            readonly property bool isSubmenu: row && row.type === "submenu"
+            readonly property bool isSubmenu: Boolean(row && row.type === "submenu")
             width: parent ? parent.width : settingsList.width
             focus: false
             focusPolicy: Qt.NoFocus
@@ -1292,10 +1292,10 @@ FocusScope {
             description: row ? root.rowDescription(row) : ""
             valueText: row ? root.rowValueText(row) : ""
             valueTextVisible: !isSubmenu
-            pointerActivationEnabled: row && (root.pageMode !== "category" || row.type === "action" || row.type
-                                              === "index" || isSubmenu || row.dependsOnKey || (row.destination
-                                                                                               && row.destination
-                                                                                               !== "category"))
+            pointerActivationEnabled: Boolean(row && (root.pageMode !== "category" || row.type === "action" || row.type
+                                                      === "index" || isSubmenu || row.dependsOnKey || (row.destination
+                                                                                                       && row.destination
+                                                                                                       !== "category")))
             trailing: [
                 MaterialIcon {
                     visible: settingRow.isSubmenu

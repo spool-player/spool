@@ -49,7 +49,7 @@ FocusScope {
                                                     === "resumeItems"
     readonly property bool partialEpisode: itemType === "Episode" && hasProgress && !playedState
     readonly property bool actionable: itemId.length > 0
-    readonly property bool queueable: actionable && item && item.playable !== false
+    readonly property bool queueable: Boolean(actionable && item && item.playable !== false)
     readonly property string currentViewKind: String(Browse.viewKind || "")
     readonly property bool inPlaylist: currentViewKind === "playlist"
     readonly property bool inCollection: currentViewKind === "boxset" || currentViewKind === "collection"
@@ -86,7 +86,7 @@ FocusScope {
             root.menuIndex = Math.max(0, index)
             Qt.callLater(root.positionMenu)
         }
-        function onExtensionSupportChanged(accountId) {
+        function onCapabilitySupportChanged(accountId) {
             if (root.opened && !root.libraryContext)
                 root.loadProviderActions()
         }
