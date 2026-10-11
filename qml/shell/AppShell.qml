@@ -1,4 +1,5 @@
 import QtQuick
+import QtCore as Persist
 import QtQuick.Layouts
 import "../theme"
 import "../primitives"
@@ -608,6 +609,30 @@ KeyRouter {
         const nextModel = model || (Browse.items)
         return commitDetailsRoute(RoutePolicy.detailsRouteAt(nextModel, index, source, returnRoute, route, parent), source,
                                   index)
+    }
+
+    // Details pages remember, per account and item type, how much overview
+    // and credit space their last fully loaded page took, so the next first
+    // load holds the right space. Kept here and on disk, so it outlives a
+    // trimmed page and a restart; keys are opaque account prefixes and types.
+    readonly property var detailLayoutMemory: {
+        try {
+            return JSON.parse(detailLayoutStore.memory)
+        } catch (error) {
+            return ({})
+        }
+    }
+    function rememberDetailLayout(key, layout) {
+        const memory = Object.assign({}, detailLayoutMemory)
+        if (JSON.stringify(memory[key]) === JSON.stringify(layout))
+            return
+        memory[key] = layout
+        detailLayoutStore.memory = JSON.stringify(memory)
+    }
+    Persist.Settings {
+        id: detailLayoutStore
+        category: "detailLayout"
+        property string memory: "{}"
     }
 
     // spoolet open: select an item the way a person would, so automation
