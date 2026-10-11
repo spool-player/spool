@@ -610,6 +610,30 @@ KeyRouter {
                                   index)
     }
 
+    // spoolet open: select an item the way a person would, so automation
+    // exercises the same route, model and snapshot as a real selection.
+    function automationOpen(source, index) {
+        const page = activePage
+        const onDetails = route === "itemDetails" && page
+        if (source === "context" && onDetails && page.openContextItem) {
+            if (index < 0 || index >= Content.detailSeasons.count)
+                return false
+            page.openContextItem(index)
+            return true
+        }
+        if (source === "similar" && onDetails && page.openSimilarItem) {
+            if (index < 0 || index >= Content.detailSimilarItems.count)
+                return false
+            page.openSimilarItem(index)
+            return true
+        }
+        const model = source === "browse" ? Browse.items : source === "resume" ? Home.resumeItems : source === "next-up"
+                                                                                 ? Home.nextUpItems : null
+        if (!model || index < 0 || index >= model.count)
+            return false
+        return openDetailsAt(model, index, source === "browse" ? "movies" : source, route)
+    }
+
     function openSeriesDetails(seriesId, seriesName, returnRoute) {
         const id = String(seriesId || "")
         if (id.length <= 0)

@@ -1,11 +1,13 @@
 #pragma once
 
 #include <QElapsedTimer>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QLocalServer>
 #include <QObject>
 #include <QSet>
 #include <QTcpServer>
+#include <QTimer>
 #include <memory>
 
 class QIODevice;
@@ -39,6 +41,10 @@ private:
     QJsonObject state() const;
     QJsonObject items(const QJsonObject& args) const;
     void screenshot(QIODevice *socket, const QString& id, const QString& path);
+    QString startCapture(const QJsonObject& args);
+    void captureFrame();
+    void stopCapture(const QString& reason);
+    QJsonObject captureStatus() const;
 
     AppController *m_app;
     RouterController *m_router;
@@ -55,5 +61,21 @@ private:
     bool m_settingPending = false;
     Qt::MouseButtons m_pointerButtons = Qt::NoButton;
     QElapsedTimer m_inputClock;
+
+    // Frame capture for load diagnostics: every rendered frame that differs
+    // from the last is saved until the screen holds still or a deadline.
+    struct Capture {
+        bool running = false;
+        QString directory;
+        QString stopReason;
+        int rendered = 0;
+        int saved = 0;
+        QByteArray lastDigest;
+        QElapsedTimer clock;
+        QTimer settle;
+        QTimer deadline;
+        QMetaObject::Connection frames;
+        QJsonArray index;
+    } m_capture;
 };
 }
