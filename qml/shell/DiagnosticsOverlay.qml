@@ -12,6 +12,10 @@ Item {
     // singleton to report on.
     readonly property var syncPlay: ProviderCapabilities.groupPlayback ? Group : null
     readonly property bool syncPlayActive: syncPlay ? syncPlay.enabled : false
+    // Rows with nothing behind them are left out rather than shown as zeros:
+    // a column of 0.00 reads as a measurement, not an absence.
+    readonly property bool playbackActive: Player.sessionActive
+    readonly property bool latencyRecorded: InputLatency.enabled
 
     Component.onCompleted: SystemPerformance.observe(root)
 
@@ -77,14 +81,22 @@ Item {
                           SystemPerformance.processCpuPercent)
             }
             SecondaryText {
+                visible: !root.playbackActive
+                text: "Playback  idle"
+                color: Theme.textMuted
+            }
+            SecondaryText {
+                visible: root.playbackActive
                 text: "mpv  total " + root.cpu(SystemPerformance.mpvCpuPercent) + "  video decode " + root.cpu(
                           SystemPerformance.videoDecodeCpuPercent)
             }
             SecondaryText {
+                visible: root.playbackActive
                 text: "audio  decode " + root.cpu(SystemPerformance.audioDecodeCpuPercent) + "  output " + root.cpu(
                           SystemPerformance.audioOutputCpuPercent)
             }
             SecondaryText {
+                visible: root.playbackActive
                 text: "Dropped frames  decoder " + Player.decoderDroppedFrames + "  output "
                       + Player.outputDroppedFrames + "  late " + Player.delayedFrames
             }
@@ -92,6 +104,7 @@ Item {
             // to audio does not drop frames when it cannot keep up; it runs
             // slow, and only the rate shows it.
             SecondaryText {
+                visible: root.playbackActive
                 text: "Frame rate  " + Player.outputFps.toFixed(2) + " of " + Player.containerFps.toFixed(2) + " fps"
             }
             SecondaryText {
@@ -109,10 +122,19 @@ Item {
                           SystemPerformance.systemAvailableBytes)
             }
             SecondaryText {
+                visible: !root.latencyRecorded
+                Layout.maximumWidth: Metrics.scaled(396)
+                text: "Input latency  not recorded · turn on Record input latency"
+                color: Theme.textMuted
+                elide: Text.ElideRight
+            }
+            SecondaryText {
+                visible: root.latencyRecorded
                 text: "Input  " + InputLatency.lastLatencyMs.toFixed(2) + " ms  worst " + InputLatency.worstLatencyMs.toFixed(
                           2) + " ms  budget " + InputLatency.frameBudgetMs.toFixed(2) + " ms"
             }
             SecondaryText {
+                visible: root.latencyRecorded
                 text: "Frames  late " + InputLatency.lateCount + "  missed " + InputLatency.missedFrameCount
                       + "  samples " + InputLatency.sampleCount
             }
@@ -145,6 +167,7 @@ Item {
                 elide: Text.ElideRight
             }
             SecondaryText {
+                visible: root.latencyRecorded
                 Layout.maximumWidth: Metrics.scaled(396)
                 text: "Stage  " + InputLatency.lastStage + (InputLatency.lastRouteSample.length > 0 ? "  ·  "
                                                                                                       + InputLatency.lastRouteSample :
