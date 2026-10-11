@@ -79,9 +79,37 @@ FocusScope {
                               finishMove()
     focus: true
 
-    Component.onCompleted: resetPresentation()
+    // Row stacks recycle whole rows, so one row can go from a JS array of
+    // libraries to an item model of episodes. Qt's card pool keeps cards
+    // built for the old kind of model and hands them to the new one, which
+    // reads null role data and can crash inside the delegate model. When the
+    // kind changes, assign the model with reuse off: that drains the pool and
+    // destroys the released cards instead of recycling them.
+    property string boundModelKind: ""
+    function modelKind(value) {
+        if (!value)
+            return ""
+        return Array.isArray(value) ? "list" : value.rowCount !== undefined ? "item" : "other"
+    }
+    function bindModel() {
+        const kind = modelKind(root.model)
+        if (kind === boundModelKind) {
+            listView.model = root.model
+            return
+        }
+        boundModelKind = kind
+        listView.reuseItems = false
+        listView.model = root.model
+        listView.reuseItems = true
+    }
+
+    Component.onCompleted: {
+        bindModel()
+        resetPresentation()
+    }
     onAtomicPopulateChanged: Qt.callLater(resetPresentation)
     onModelChanged: {
+        bindModel()
         if (!publishingMove && (moveMode || dragActive))
             finishMove()
         if (!publishingMove)
@@ -416,23 +444,32 @@ FocusScope {
             }
             readonly property bool libraryCard: root.cardKind === "library"
             readonly property bool personCard: root.cardKind === "person"
-            readonly property var badge: root.cardBadge ? root.cardBadge(cardData) : null
+            readonly property var badge: root.cardBadge ? root.cardBadge(cardData || ({})) : null
+
+            // The same ordering hazard as cardItem: a binding below can run
+            // before cardData's does, while it is still null. Reading a role
+            // off null failed the binding and left, say, a library card with
+            // no name until something else made it re-evaluate.
+            function role(name) {
+                const data = cardData || modelData
+                return data ? data[name] : undefined
+            }
 
             width: root.cardWidth
             height: listView.height
             shell: libraryCard || personCard ? null : root.shell
             kind: libraryCard ? "landscape" : personCard ? "poster" : root.cardKind
             item: cardItem || ({})
-            titleOverride: libraryCard ? String(cardData.name || "") : personCard ? String(cardData.name || "") : ""
-            subtitleOverride: libraryCard ? String(badge && badge.detail || cardData.collectionType || "") : personCard
-                                            ? String(cardData.role || cardData.type || "") : ""
+            titleOverride: libraryCard || personCard ? String(role("name") || "") : ""
+            subtitleOverride: libraryCard ? String(badge && badge.detail || role("collectionType") || "") : personCard
+                                            ? String(role("role") || role("type") || "") : ""
             showSubtitle: !libraryCard || Boolean(badge && badge.detail)
             badgeIcon: badge ? badge.iconUrl : ""
             badgeText: badge ? String(badge.text || "") : ""
             emphasizedTitle: libraryCard
             imageOverride: libraryCard ? Art.url(cardItem, "landscape") : personCard ? Art.url(cardItem, "poster") : ""
-            fallbackIcon: libraryCard ? Theme.libraryIcon(cardData.collectionType) : personCard ? "person" : ""
-            fallbackTint: libraryCard ? Theme.libraryTint(cardData.name) : "transparent"
+            fallbackIcon: libraryCard ? Theme.libraryIcon(role("collectionType")) : personCard ? "person" : ""
+            fallbackTint: libraryCard ? Theme.libraryTint(role("name")) : "transparent"
             useSeriesPoster: root.useSeriesPoster
             preferEpisodeTitle: root.preferEpisodeTitle
             focused: root.keyboardFocusActive && root.focusVisible && card.index === listView.currentIndex
@@ -605,7 +642,7 @@ FocusScope {
         leftMargin: root.focusPadding
         rightMargin: root.allowTrailingSpace ? Math.max(root.focusPadding, width - root.cardWidth) : root.focusPadding
         reuseItems: true
-        model: root.model
+        // Assigned by bindModel(), never bound: see boundModelKind.
         delegate: cardDelegate
 
         highlightFollowsCurrentItem: true
