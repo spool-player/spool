@@ -682,6 +682,12 @@ FocusScope {
         filterEntries = buildFilterEntries()
     }
 
+    function clearFilters() {
+        savedIndex = 0
+        gridReveal.reset()
+        Browse.clearFilters()
+    }
+
     function focusToolbar() {
         InputKeys.focus(libraryButton)
     }
@@ -905,7 +911,7 @@ FocusScope {
         else if (filterButton.activeFocus)
             openFilterMenu()
         else if (clearFiltersButton.activeFocus)
-            Browse.clearFilters()
+            clearFilters()
         else
             grid.activate()
     }
@@ -1066,11 +1072,13 @@ FocusScope {
                 iconName: "close"
                 label: "Clear"
                 visible: !root.isFixedBrowseView && root.activeFilterCount > 0 && root.lane !== "compact"
-                onActivated: {
-                    root.savedIndex = 0
-                    gridReveal.reset()
-                    Browse.clearFilters()
-                }
+                // Clearing removes this button. Focus left on it stayed on an
+                // invisible item: no ring, arrows fell through to scrolling,
+                // and Enter only cleared again, so a remote could no longer
+                // open anything.
+                onVisibleChanged: if (!visible && activeFocus)
+                                      InputKeys.focus(grid)
+                onActivated: root.clearFilters()
             }
         }
 
@@ -1689,9 +1697,6 @@ FocusScope {
         onCurrentIndexChanged: root.filterIndex = currentIndex
         onDismissed: root.closeMenus()
         onAccepted: entry => root.activateFilterEntry(entry)
-        onReset: {
-            root.savedIndex = 0
-            Browse.clearFilters()
-        }
+        onReset: root.clearFilters()
     }
 }
