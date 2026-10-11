@@ -568,6 +568,7 @@ qt_add_qml_module(spool
         qml/browse/ListBrowseView.qml
         qml/browse/RowStackView.qml
         qml/pages/HomePage.qml
+        qml/pages/HomeProviderPicker.qml
         qml/pages/ItemDetailsPage.qml
         qml/pages/CollectionEditorPage.qml
         qml/pages/LocalFolders.qml
@@ -637,6 +638,7 @@ qt_add_qml_module(spool
         qml/primitives/SettingRow.qml
         qml/primitives/SliderRow.qml
         qml/primitives/Surface.qml
+        qml/primitives/SwitchIndicator.qml
         qml/primitives/TechMetadataLine.qml
         qml/primitives/TechnicalDetailsBar.qml
         qml/primitives/TextFieldRow.qml

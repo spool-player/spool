@@ -572,9 +572,10 @@ const QVector<SettingSpec>& settingSpecs()
             selectSpec("providers/updates", "Accounts", "Provider updates", "", "ask", kProviderUpdateChoices,
                 SettingTarget::External),
             pageSpec("action/manageCertificates", "Accounts", "Remembered certificates", "", SettingType::Action),
-            selectSpec("home/providerId", "Accounts", "Home provider",
-                "All providers, or one installed provider, on Home only", "", nullptr, 0, SettingTarget::External,
-                SettingNormalizer::String),
+            // Comma-separated provider ids turned off for Home. The settings
+            // page opens the Home provider picker rather than editing text.
+            SettingSpec { "home/hiddenProviderIds", "Accounts", "Providers on Home", "", SettingType::Action, "",
+                SettingTarget::External, SettingNormalizer::String },
 
             pageSpec("action/exportDiagnostics", "Diagnostics", "Export diagnostics", "", SettingType::Action),
             pageSpec("action/clearLogs", "Diagnostics", "Clear logs", "", SettingType::Action),

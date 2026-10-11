@@ -16,6 +16,8 @@ T.Control {
     readonly property bool secret: echoMode === TextInput.Password || echoMode === TextInput.PasswordEchoOnEdit
     property int enterKeyType: Qt.EnterKeyDefault
     property string label: ""
+    // A leading glyph, e.g. "search", that says what the field is for.
+    property string iconName: ""
     property string accessibleName: label.length > 0 ? label : placeholderText
     readonly property bool editing: field.activeFocus
     readonly property bool masked: secret && !secretVisible
@@ -78,23 +80,41 @@ T.Control {
         return true
     }
 
+    readonly property real textInset: icon.visible ? icon.x + icon.width + Metrics.scaled(10) : Metrics.scaled(15)
+
+    HoverHandler {
+        id: hover
+    }
+
     background: Rectangle {
         radius: Theme.radiusMedium
-        color: row.editing ? Theme.bgRaised : Theme.bgPanel
-        border.width: (row.activeFocus || row.editing) ? Theme.focusBorderWidth : 1
-        border.color: (row.activeFocus || row.editing) ? Theme.accent : Theme.border
+        color: row.editing ? Theme.inputFillActive : Theme.inputFill
+        border.width: (row.activeFocus || row.editing) ? Theme.focusBorderWidth : Math.max(1, Metrics.scaled(2))
+        border.color: (row.activeFocus || row.editing) ? Theme.accent : hover.hovered ? Theme.inputBorderHover :
+                                                                                        Theme.inputBorder
 
         SecondaryText {
             anchors.left: parent.left
             anchors.top: parent.top
-            anchors.leftMargin: Metrics.scaled(16)
+            anchors.leftMargin: row.textInset + Metrics.scaled(1)
             anchors.topMargin: Metrics.scaled(7)
             visible: row.label.length > 0
             text: row.label
-            color: Theme.textMuted
+            color: Theme.textSecondary
             font.pixelSize: Metrics.metaSizePx + Metrics.scaled(2)
             font.weight: Font.Medium
         }
+    }
+
+    MaterialIcon {
+        id: icon
+        x: Metrics.scaled(14)
+        anchors.verticalCenter: parent.verticalCenter
+        visible: row.iconName.length > 0
+        name: row.iconName
+        iconSize: Math.round(Metrics.bodySizePx * 1.4)
+        iconColor: row.editing || row.activeFocus ? Theme.textPrimary : Theme.textSecondary
+        Accessible.ignored: true
     }
 
     T.TextField {
@@ -105,12 +125,14 @@ T.Control {
                                                                | Qt.ImhNoPredictiveText | Qt.ImhNoAutoUppercase : 0)
         EnterKey.type: row.enterKeyType
         anchors.fill: parent
-        anchors.leftMargin: Metrics.scaled(15)
+        anchors.leftMargin: row.textInset
         anchors.rightMargin: reveal.visible ? reveal.width + Metrics.scaled(16) : Metrics.scaled(15)
         anchors.topMargin: row.label.length > 0 ? Metrics.scaled(22) : Metrics.scaled(9)
         anchors.bottomMargin: Metrics.scaled(9)
         background: Item {}
         color: Theme.textPrimary
+        selectedTextColor: Theme.textPrimary
+        selectionColor: Theme.accentDim
         // The UI face has no U+25CF, the mask character Qt asks for by
         // default, so masked text would fall back to a stranger's glyph or a
         // blank box. U+2022 is in the face; bold and spaced it draws the row
@@ -165,7 +187,7 @@ T.Control {
             anchors.fill: parent
             visible: field.displayText.length === 0 && field.placeholderText.length > 0
             text: field.placeholderText
-            color: Theme.textDisabled
+            color: Theme.textMuted
             font.pixelSize: Metrics.bodySizePx + Metrics.scaled(2)
             verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight

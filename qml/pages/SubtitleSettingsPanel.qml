@@ -739,6 +739,7 @@ FocusScope {
             description: root.rowDescription(spec, rowFocus)
             options: spec ? root.choiceLabels(spec) : []
             currentIndex: spec ? root.currentChoice(spec) : 0
+            expanded: root.choiceVisible && root.choiceRow === spec
             onOpened: {
                 root.focusRow(rowIndex)
                 root.activateRow(rowIndex)

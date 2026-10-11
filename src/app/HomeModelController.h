@@ -30,8 +30,10 @@ class HomeModelController final : public QObject {
     Q_PROPERTY(Spool::MovieGridModel *nextUpItems READ nextUpItems CONSTANT)
     Q_PROPERTY(QVariantList latestLibraryRows READ latestLibraryRows NOTIFY latestLibraryRowsChanged)
     Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
-    Q_PROPERTY(QString preferredProviderId READ preferredProviderId NOTIFY providerScopeChanged)
-    Q_PROPERTY(QString providerId READ providerId NOTIFY providerScopeChanged)
+    // The providers someone turned off for Home, and whether Home is honouring
+    // that right now: it shows everything when nothing that is left on can.
+    Q_PROPERTY(QStringList hiddenProviderIds READ hiddenProviderIds NOTIFY providerScopeChanged)
+    Q_PROPERTY(bool providerFilterActive READ providerFilterActive NOTIFY providerScopeChanged)
     Q_PROPERTY(QString providerScopeMessage READ providerScopeMessage NOTIFY providerScopeChanged)
     Q_PROPERTY(QVariantList providerChoices READ providerChoices NOTIFY providerScopeChanged)
 
@@ -53,13 +55,13 @@ public:
         return m_refreshInFlight;
     }
 
-    QString preferredProviderId() const
+    QStringList hiddenProviderIds() const
     {
-        return m_preferredProviderId;
+        return m_hiddenProviderIds;
     }
-    QString providerId() const
+    bool providerFilterActive() const
     {
-        return m_homeQuery.moduleId;
+        return !m_homeQuery.hiddenModuleIds.isEmpty();
     }
     QString providerScopeMessage() const
     {
@@ -68,7 +70,9 @@ public:
     QVariantList providerChoices() const;
     void attachSettings(SettingsController *settings);
     Q_INVOKABLE bool includesItem(const QString& scopedId) const;
-    Q_INVOKABLE void selectProvider(const QString& moduleId);
+    // Refuses to turn off the last provider that can fill Home.
+    Q_INVOKABLE bool setProviderShown(const QString& moduleId, bool shown);
+    Q_INVOKABLE void showAllProviders();
     bool applyCachedPayload(const QJsonObject& payload);
     void loadCachedPayload();
     void refresh(const std::vector<LibraryItem>& libraries);
@@ -110,7 +114,8 @@ private:
     void reconcilePlaybackRows(std::vector<MovieItem>& resume, std::vector<MovieItem>& nextUp);
 
     void updateProviderScope();
-    void setPreferredProviderId(const QString& moduleId);
+    void setHiddenProviderIds(QStringList moduleIds);
+    void storeHiddenProviderIds(const QStringList& moduleIds);
     QCoro::Task<std::vector<MovieItem>> fetchResumeItems();
     QCoro::Task<std::vector<MovieItem>> fetchNextUpEpisodes();
     DatabaseManager *m_database = nullptr;
@@ -119,7 +124,7 @@ private:
     SourceHub *m_sources = nullptr;
     SettingsController *m_settings = nullptr;
     SourceHub::HomeQuery m_homeQuery;
-    QString m_preferredProviderId;
+    QStringList m_hiddenProviderIds;
     QString m_providerScopeMessage;
     QString m_providerAccountScopeKey;
     std::vector<LibraryItem> m_allLibraries;

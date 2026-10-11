@@ -109,10 +109,10 @@ public:
     // Home has its own query scope; it never changes enabled accounts or
     // the sources used by browsing, search, playback and remote control.
     struct HomeQuery {
-        QString moduleId; // Empty means every currently authorized browsing source.
+        QStringList hiddenModuleIds; // Empty means every currently authorized browsing source.
     };
     QVariantList homeProviderChoices() const;
-    QVariantMap homeProviderStatus(const QString& preferredModuleId) const;
+    QVariantMap homeProviderStatus(const QStringList& hiddenModuleIds) const;
     bool containsHomeItem(const HomeQuery& query, const QString& scopedId) const;
     QString homeScopeKey(const HomeQuery& query) const;
     QCoro::Task<std::vector<MovieItem>> fetchHomeResumeItems(HomeQuery query, int limit = 24);

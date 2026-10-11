@@ -21,9 +21,12 @@ FocusScope {
                                                                                                                ? anchorItem.width
                                                                                                                  * 0.78 : metrics.scaled(
                                                                                                                      460))))
-    readonly property real panelHeight: Math.min(height - edgeMargin * 2, Math.max(rowHeight + metrics.scaled(16), Math.min(
-                                                                                       options.length, 8) * rowHeight
-                                                                                   + metrics.scaled(16)))
+    readonly property real listPadding: metrics.scaled(6)
+    readonly property real headerHeight: title.length > 0 ? titleLabel.implicitHeight + metrics.scaled(22) : 0
+    readonly property real panelHeight: Math.min(height - edgeMargin * 2, headerHeight + Math.max(1, Math.min(options.length,
+                                                                                                              8)) * rowHeight
+                                                 + listPadding * 2)
+    readonly property bool scrolls: options.length * rowHeight > optionList.height + 1
 
     signal selected(int index)
     signal dismissed
@@ -122,6 +125,18 @@ FocusScope {
         onClicked: root.dismissed()
     }
 
+    // A cheap lift off the page; a blurred shadow costs too much on a TV.
+    Rectangle {
+        x: menuPanel.x - root.metrics.scaled(2)
+        y: menuPanel.y + root.metrics.scaled(6)
+        width: menuPanel.width + root.metrics.scaled(4)
+        height: menuPanel.height
+        radius: menuPanel.radius + root.metrics.scaled(2)
+        color: "#66000000"
+        visible: menuPanel.visible
+        opacity: menuPanel.opacity
+    }
+
     PopupMenuPanel {
         id: menuPanel
         objectName: "optionPickerPanel"
@@ -129,12 +144,53 @@ FocusScope {
         open: root.visible && root.placementReady
         openHeight: root.panelHeight
         baseColor: Theme.floatingPanel
+        border.color: Theme.borderStrong
+        opacity: open ? 1 : 0
+
+        Behavior on opacity {
+            enabled: !Theme.reducedMotion
+            NumberAnimation {
+                duration: 110
+                easing.type: Easing.OutCubic
+            }
+        }
+
+        AppText {
+            id: titleLabel
+            visible: root.title.length > 0
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.leftMargin: root.metrics.scaled(16)
+            anchors.rightMargin: root.metrics.scaled(16)
+            anchors.topMargin: root.metrics.scaled(12)
+            text: root.title
+            color: Theme.textMuted
+            font.pixelSize: root.metrics.metaSizePx
+            font.weight: Font.DemiBold
+            maximumLineCount: 1
+            elide: Text.ElideRight
+            Accessible.role: Accessible.Heading
+            Accessible.name: text
+        }
+
+        Rectangle {
+            visible: titleLabel.visible
+            anchors.left: parent.left
+            anchors.right: parent.right
+            y: root.headerHeight - 1
+            height: 1
+            color: Theme.border
+        }
 
         MenuListView {
             id: optionList
             objectName: "optionPickerList"
             anchors.fill: parent
-            anchors.margins: root.metrics.scaled(8)
+            anchors.topMargin: root.headerHeight + root.listPadding
+            anchors.bottomMargin: root.listPadding
+            anchors.leftMargin: root.listPadding
+            anchors.rightMargin: root.listPadding + (root.scrolls ? scrollBar.visualWidth + root.metrics.scaled(6) : 0)
             model: root.options
             currentIndex: root.currentIndex
             onDismissed: root.dismissed()
@@ -148,10 +204,20 @@ FocusScope {
                 minimumRowHeight: root.metrics.controlHeightPx
                 label: String(modelData)
                 checked: index === root.currentIndex
+                checkIconName: "check"
                 highlighted: optionList.activeFocus && optionList.currentIndex === index
                 onHovered: optionList.currentIndex = index
                 onActivated: root.selected(index)
             }
+        }
+
+        ListScrollBar {
+            id: scrollBar
+            visible: root.scrolls
+            anchors.top: optionList.top
+            anchors.bottom: optionList.bottom
+            anchors.right: parent.right
+            flickable: optionList
         }
     }
 }

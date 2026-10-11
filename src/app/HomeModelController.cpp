@@ -161,6 +161,15 @@ namespace {
         return items;
     }
 
+    constexpr auto kHiddenProvidersKey = "home/hiddenProviderIds";
+
+    QStringList parseProviderIds(const QString& value)
+    {
+        QStringList ids = value.split(QLatin1Char(','), Qt::SkipEmptyParts);
+        ids.sort();
+        ids.removeDuplicates();
+        return ids;
+    }
 } // namespace
 
 HomeModelController::HomeModelController(
@@ -179,32 +188,78 @@ HomeModelController::HomeModelController(
 
 QVariantList HomeModelController::providerChoices() const
 {
-    return m_sources ? m_sources->homeProviderChoices() : QVariantList {};
+    if (!m_sources)
+        return {};
+    QVariantList choices = m_sources->homeProviderChoices();
+    int shownWithProfiles = 0;
+    for (QVariant& value : choices) {
+        QVariantMap choice = value.toMap();
+        const bool shown = !m_hiddenProviderIds.contains(choice.value(QStringLiteral("id")).toString());
+        choice.insert(QStringLiteral("shown"), shown);
+        if (shown && choice.value(QStringLiteral("profiles")).toInt() > 0)
+            ++shownWithProfiles;
+        value = choice;
+    }
+    for (QVariant& value : choices) {
+        QVariantMap choice = value.toMap();
+        choice.insert(QStringLiteral("required"),
+            shownWithProfiles == 1 && choice.value(QStringLiteral("shown")).toBool()
+                && choice.value(QStringLiteral("profiles")).toInt() > 0);
+        value = choice;
+    }
+    return choices;
 }
 
 void HomeModelController::attachSettings(SettingsController *settings)
 {
     m_settings = settings;
     connect(settings, &SettingsController::settingChanged, this, [this](const QString& key) {
-        if (key == QStringLiteral("home/providerId"))
-            setPreferredProviderId(m_settings->value(key).toString());
+        if (key == QLatin1String(kHiddenProvidersKey))
+            setHiddenProviderIds(parseProviderIds(m_settings->value(key).toString()));
     });
-    setPreferredProviderId(settings->value(QStringLiteral("home/providerId")).toString());
+    setHiddenProviderIds(parseProviderIds(settings->value(QLatin1String(kHiddenProvidersKey)).toString()));
 }
 
-void HomeModelController::selectProvider(const QString& moduleId)
+bool HomeModelController::setProviderShown(const QString& moduleId, bool shown)
 {
-    if (m_settings)
-        m_settings->setValue(QStringLiteral("home/providerId"), moduleId);
+    if (moduleId.isEmpty() || shown != m_hiddenProviderIds.contains(moduleId))
+        return true;
+    if (!shown) {
+        for (const QVariant& value : providerChoices()) {
+            const QVariantMap choice = value.toMap();
+            if (choice.value(QStringLiteral("id")).toString() == moduleId
+                && choice.value(QStringLiteral("required")).toBool())
+                return false;
+        }
+    }
+    QStringList next = m_hiddenProviderIds;
+    if (shown)
+        next.removeAll(moduleId);
     else
-        setPreferredProviderId(moduleId);
+        next.push_back(moduleId);
+    storeHiddenProviderIds(next);
+    return true;
 }
 
-void HomeModelController::setPreferredProviderId(const QString& moduleId)
+void HomeModelController::showAllProviders()
 {
-    if (m_preferredProviderId == moduleId)
+    storeHiddenProviderIds({});
+}
+
+void HomeModelController::storeHiddenProviderIds(const QStringList& moduleIds)
+{
+    const QString value = parseProviderIds(moduleIds.join(QLatin1Char(','))).join(QLatin1Char(','));
+    if (m_settings)
+        m_settings->setValue(QLatin1String(kHiddenProvidersKey), value);
+    else
+        setHiddenProviderIds(parseProviderIds(value));
+}
+
+void HomeModelController::setHiddenProviderIds(QStringList moduleIds)
+{
+    if (m_hiddenProviderIds == moduleIds)
         return;
-    m_preferredProviderId = moduleId;
+    m_hiddenProviderIds = std::move(moduleIds);
     updateProviderScope();
 }
 
@@ -215,14 +270,14 @@ bool HomeModelController::includesItem(const QString& scopedId) const
 
 void HomeModelController::updateProviderScope()
 {
-    const QString previousModuleId = m_homeQuery.moduleId;
+    const QStringList previousHidden = m_homeQuery.hiddenModuleIds;
     if (m_sources) {
-        const QVariantMap status = m_sources->homeProviderStatus(m_preferredProviderId);
-        m_homeQuery.moduleId = status.value(QStringLiteral("moduleId")).toString();
+        const QVariantMap status = m_sources->homeProviderStatus(m_hiddenProviderIds);
+        m_homeQuery.hiddenModuleIds = status.value(QStringLiteral("hiddenModuleIds")).toStringList();
         m_providerScopeMessage = status.value(QStringLiteral("message")).toString();
     }
     const QString accountScopeKey = m_sources ? m_sources->homeScopeKey(m_homeQuery) : QString();
-    if (previousModuleId == m_homeQuery.moduleId && accountScopeKey == m_providerAccountScopeKey) {
+    if (previousHidden == m_homeQuery.hiddenModuleIds && accountScopeKey == m_providerAccountScopeKey) {
         // Removal/start/stop and metadata updates can describe the same
         // authorized scope repeatedly. Publish chooser/status changes without
         // restarting its in-flight feeds or exhausting provider admission.

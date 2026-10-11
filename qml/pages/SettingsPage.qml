@@ -31,7 +31,9 @@ FocusScope {
                                                                 ? SettingsNavigation.categoryTitle(categoryId) :
                                                                   "Settings"
     readonly property bool modalVisible: certificateManagerVisible || choiceDialogVisible || diagnosticsExportVisible
-                                         || mpvFolderDialogVisible
+                                         || mpvFolderDialogVisible || homeProvidersVisible
+    property bool homeProvidersVisible: false
+    property Item homeProvidersAnchor: null
     property bool mpvFolderDialogVisible: false
     onModalVisibleChanged: if (!modalVisible && rowsBuilt)
                                Qt.callLater(function () {
@@ -55,7 +57,7 @@ FocusScope {
         }
     }
 
-    function restoreLocation(saved) {
+    function restoreLocation(saved, takeFocus) {
         if (!saved)
             return
         finishRowEdit()
@@ -65,7 +67,7 @@ FocusScope {
         searchQuery = saved.query
         expandedGroups = saved.expanded
         revealedRowKey = saved.revealedRowKey
-        reconcileSettingsRows(rebuildVisibleRows(), saved.rowKey, true)
+        reconcileSettingsRows(rebuildVisibleRows(), saved.rowKey, takeFocus !== false)
         // Incremental reconciliation can move ListView's content origin while
         // retaining the result delegate. Raw contentY belongs to the old model.
         settingsList.contentY = settingsList.originY + saved.scrollOffset
@@ -74,13 +76,32 @@ FocusScope {
     function openSearch() {
         if (modalVisible || editingKey.length || inputCompositionActive())
             return false
-        if (pageMode !== "search")
-            priorSearchLocation = location()
-        searchResultLocation = null
-        pageMode = "search"
-        refreshSettingsFilter(true)
-        Qt.callLater(searchField.focusField)
+        searchField.focusField()
         return true
+    }
+
+    // The field is always on screen; what it holds decides the mode. The
+    // first character leaves the page it was typed over for results, and
+    // emptying it puts that page back without taking the caret away.
+    function setSearchQuery(text) {
+        if (!text.length) {
+            if (pageMode !== "search")
+                return
+            const saved = priorSearchLocation
+            priorSearchLocation = null
+            searchResultLocation = null
+            restoreLocation(saved, false)
+            return
+        }
+        if (pageMode !== "search") {
+            finishRowEdit()
+            navigationMode = "row"
+            priorSearchLocation = location()
+            pageMode = "search"
+        }
+        searchResultLocation = null
+        searchQuery = text
+        refreshSettingsFilter(true)
     }
 
     function openCategory(id, rowKey) {
@@ -281,7 +302,6 @@ FocusScope {
             }
         }
         if (pageMode === "index") {
-            visibleRows.push(descriptor("action/searchSettings", -2, false, false))
             visibleRows.push(descriptor("action/zoom", -1, false, false))
             for (let index = 0; index < SettingsNavigation.categories.length; ++index)
                 visibleRows.push(descriptor("action/category/" + SettingsNavigation.categories[index].id, index, false,
@@ -319,12 +339,6 @@ FocusScope {
             "description": "",
             "type": "action",
             "destination": "category"
-        }
-        rowMap["action/searchSettings"] = {
-            "key": "action/searchSettings",
-            "title": "Search settings",
-            "description": "Find any setting by name, value or keyword",
-            "type": "index"
         }
         rowMap["action/zoom"] = {
             "key": "action/zoom",
@@ -510,6 +524,8 @@ FocusScope {
                                            "Manage downloads and play saved files offline"
         if (row.key === "action/downloadDestination" || row.key === "action/mobileDownloadDestination")
             return Downloads.destination + " · Applies only to new downloads"
+        if (row.key === "home/hiddenProviderIds")
+            return "Choose which providers fill Home"
         if (row.key === "action/accounts") {
             const count = Providers.accounts.length
             return count === 1 ? "1 account" : count + " accounts"
@@ -572,6 +588,12 @@ FocusScope {
         if (row.key === "action/clearLatencyStatistics" || row.key === "action/clearLogs")
             return "Clear"
 
+        if (row.key === "home/hiddenProviderIds") {
+            const choices = Home.providerChoices
+            const shown = choices.filter(choice => choice.shown).length
+            return !Home.providerFilterActive || shown === choices.length ? "All" : shown + " of " + choices.length
+        }
+
         if (row.key === "about/version")
             return "v" + Qt.application.version
         if (row.key === "about/locale")
@@ -580,10 +602,6 @@ FocusScope {
     }
 
     function rowOptions(row) {
-        if (row.key === "home/providerId")
-            return Home.providerChoices.map(function (choice) {
-                return choice.name + (choice.version ? " · " + choice.version : "")
-            })
         if (row.key === "i18n/locale") {
             const result = []
             for (let index = 0; index < I18n.availableLocales.length; ++index)
@@ -605,10 +623,6 @@ FocusScope {
     }
 
     function rowChoiceValues(row) {
-        if (row.key === "home/providerId")
-            return Home.providerChoices.map(function (choice) {
-                return choice.id
-            })
         if (row.key === "i18n/locale")
             return I18n.availableLocales
         if (row.key === "subtitles/language" || row.key === "audio/language")
@@ -689,9 +703,7 @@ FocusScope {
             return
         selectRow(index, false)
         if (row.type === "index") {
-            if (row.key === "action/searchSettings")
-                openSearch()
-            else if (row.key === "action/zoom")
+            if (row.key === "action/zoom")
                 openCategory("appearance", "appearance/uiScalePercent")
             else
                 openCategory(row.categoryId, "")
@@ -739,7 +751,10 @@ FocusScope {
                 shell.openDownloads("", settingsList, true)
             else if (row.key === "action/manageCertificates")
                 certificateManagerVisible = true
-            else if (row.key === "action/clearLatencyStatistics")
+            else if (row.key === "home/hiddenProviderIds") {
+                homeProvidersAnchor = rowControlAt(index)
+                homeProvidersVisible = true
+            } else if (row.key === "action/clearLatencyStatistics")
                 InputLatency.clearStatistics()
             else if (row.key === "action/clearLogs")
                 App.clearLogs()
@@ -817,7 +832,19 @@ FocusScope {
             Qt.callLater(choiceDialog.completePresentation)
     }
 
+    function closeHomeProviders() {
+        homeProvidersVisible = false
+        homeProvidersAnchor = null
+        Qt.callLater(function () {
+            selectRow(currentIndex, true)
+        })
+    }
+
     function back() {
+        if (homeProvidersVisible) {
+            closeHomeProviders()
+            return true
+        }
         if (diagnosticsExportVisible) {
             if (diagnosticsExportLoader.item)
                 diagnosticsExportLoader.item.back()
@@ -873,31 +900,42 @@ FocusScope {
         const focused = root.Window.window ? root.Window.window.activeFocusItem : null
         if (inputCompositionActive())
             return false
-        if (searchButton.activeFocus || backButton.activeFocus) {
+        if (backButton.activeFocus) {
             if (action === "activate")
-                return searchButton.activeFocus ? openSearch() : back()
+                return back()
             if (action === "down") {
                 InputKeys.focus(settingsList)
                 return true
             }
-            if (action === "left" && backButton.visible) {
-                InputKeys.focus(backButton)
-                return true
-            }
             if (action === "right") {
-                InputKeys.focus(searchButton)
+                searchField.focusRow()
                 return true
             }
             if (action === "up" && shell) {
                 shell.focusNavBar()
                 return true
             }
-            return false
+            return action === "left"
         }
-        if (pageMode === "search" && (searchField.activeFocus || searchField.editing)) {
+        if (searchField.activeFocus || searchField.editing) {
+            // Resting on the row (TV): Select opens the keyboard. Typing in
+            // it: Select or Down hands the results to the D-pad.
+            if (action === "activate" && !searchField.editing) {
+                searchField.focusField()
+                return true
+            }
             if (action === "down" || action === "activate") {
                 Qt.inputMethod.hide()
                 InputKeys.focus(settingsList)
+                return true
+            }
+            if (action === "up" && shell) {
+                Qt.inputMethod.hide()
+                shell.focusNavBar()
+                return true
+            }
+            if (action === "left" && !searchField.editing && backButton.visible) {
+                InputKeys.focus(backButton)
                 return true
             }
             return false
@@ -974,6 +1012,11 @@ FocusScope {
                                                       repeat)
         if (certificateManagerVisible)
             return certificateManagerLoader.item.routeKey(key, phase, repeat)
+        if (homeProvidersVisible) {
+            if (InputKeys.isBack(key, false, false))
+                return false
+            return homeProvidersLoader.item ? homeProvidersLoader.item.routeKey(key, phase, repeat) : true
+        }
         if (diagnosticsExportVisible)
             return diagnosticsExportLoader.item.routeKey(key, phase, repeat)
         if (mpvFolderDialogVisible)
@@ -996,6 +1039,11 @@ FocusScope {
     }
 
     function activate() {
+        if (homeProvidersVisible) {
+            if (homeProvidersLoader.item)
+                homeProvidersLoader.item.activate()
+            return
+        }
         if (diagnosticsExportVisible) {
             if (diagnosticsExportLoader.item)
                 diagnosticsExportLoader.item.activate()
@@ -1115,30 +1163,27 @@ FocusScope {
                 id: backButton
                 text: "Back"
                 visible: root.pageMode !== "index"
-                width: Math.min(Metrics.scaled(100), Math.max(0, (parent.width - parent.spacing) / 2))
+                width: visible ? Math.min(Metrics.scaled(100), Math.max(0, (parent.width - parent.spacing) / 2)) : 0
+                height: searchField.height
                 onClicked: root.back()
             }
-            ActionButton {
-                id: searchButton
-                text: "Search"
-                width: Math.min(Metrics.scaled(120), Math.max(0, (parent.width - parent.spacing) / 2))
-                onClicked: root.openSearch()
-            }
-        }
-        TextFieldRow {
-            id: searchField
-            width: parent.width
-            visible: root.pageMode === "search"
-            label: "Search settings"
-            placeholderText: "Name, value or keyword (for example zoom)"
-            text: root.searchQuery
-            onTextEdited: text => {
-                root.searchQuery = text
-                root.refreshSettingsFilter(true)
-            }
-            onAccepted: {
-                Qt.inputMethod.hide()
-                InputKeys.focus(settingsList)
+            TextFieldRow {
+                id: searchField
+                width: Math.max(0, parent.width - (backButton.visible ? backButton.width + parent.spacing : 0))
+                implicitHeight: Metrics.scaled(56)
+                iconName: "search"
+                accessibleName: "Search settings"
+                placeholderText: "Search settings by name, value or keyword"
+                inputMethodHints: Qt.ImhNoPredictiveText | Qt.ImhNoAutoUppercase
+                enterKeyType: Qt.EnterKeySearch
+                // A search result opened in context is not a search page; the
+                // query comes back with the results on Back.
+                text: root.pageMode === "search" ? root.searchQuery : ""
+                onTextEdited: text => root.setSearchQuery(text)
+                onAccepted: {
+                    Qt.inputMethod.hide()
+                    InputKeys.focus(settingsList)
+                }
             }
         }
         SecondaryText {
@@ -1181,12 +1226,7 @@ FocusScope {
                                                                                                currentIndex).rowKey : ""
         }
         onAccepted: index => root.routeAction("activate")
-        onEdgeUp: {
-            if (root.pageMode === "search")
-                searchField.focusRow()
-            else
-                InputKeys.focus(searchButton)
-        }
+        onEdgeUp: searchField.focusRow()
         delegate: Column {
             id: settingsDelegate
             required property int index
@@ -1310,6 +1350,7 @@ FocusScope {
             }
             options: row ? root.rowOptions(row) : []
             currentIndex: row ? root.rowCurrentIndex(row) : 0
+            expanded: root.choiceDialogVisible && root.choiceDialogRow === row
             onSelected: (index, value) => root.setRowChoice(row, index)
         }
     }
@@ -1518,6 +1559,17 @@ FocusScope {
                 root.certificateManagerVisible = false
                 InputKeys.focus(settingsList)
             }
+        }
+    }
+
+    Loader {
+        id: homeProvidersLoader
+        anchors.fill: parent
+        active: root.homeProvidersVisible
+        z: 200
+        sourceComponent: HomeProviderPicker {
+            anchorItem: root.homeProvidersAnchor
+            onDismissed: root.closeHomeProviders()
         }
     }
 

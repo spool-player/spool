@@ -111,6 +111,14 @@ namespace {
             rank = std::min(rank, matchRank(folded(item.seriesName), query) + 2);
         return std::min(rank, 4);
     }
+
+    // An account Home may draw from: switched on, signed in and not leaving.
+    bool homeEligible(const QVariantMap& account)
+    {
+        return account.value(QStringLiteral("enabled")).toBool() && !account.value(QStringLiteral("locked")).toBool()
+            && !account.value(QStringLiteral("needsSignIn")).toBool()
+            && !account.value(QStringLiteral("removing")).toBool();
+    }
 } // namespace
 
 struct SourceHub::SearchRun {
@@ -704,47 +712,57 @@ std::vector<Provider *> SourceHub::sources() const
 
 QVariantList SourceHub::homeProviderChoices() const
 {
-    QVariantList choices { QVariantMap {
-        { QStringLiteral("id"), QString() }, { QStringLiteral("name"), QStringLiteral("All providers") } } };
+    QHash<QString, int> profiles;
+    for (const QVariant& value : m_registry->accounts()) {
+        const QVariantMap account = value.toMap();
+        if (homeEligible(account))
+            ++profiles[account.value(QStringLiteral("moduleId")).toString()];
+    }
+    QVariantList choices;
     for (const QVariant& value : m_registry->modules()) {
         const QVariantMap module = value.toMap();
-        choices.push_back(QVariantMap { { QStringLiteral("id"), module.value(QStringLiteral("id")) },
+        const QString id = module.value(QStringLiteral("id")).toString();
+        const ProviderModule *installed = m_registry->module(id);
+        choices.push_back(QVariantMap { { QStringLiteral("id"), id },
             { QStringLiteral("name"), module.value(QStringLiteral("name")) },
             { QStringLiteral("version"), module.value(QStringLiteral("version")) },
-            { QStringLiteral("iconUrl"), module.value(QStringLiteral("iconUrl")) } });
+            { QStringLiteral("iconUrl"), module.value(QStringLiteral("iconUrl")) },
+            { QStringLiteral("profiles"), installed && !installed->failed ? profiles.value(id) : 0 } });
     }
     return choices;
 }
 
-QVariantMap SourceHub::homeProviderStatus(const QString& preferredModuleId) const
+QVariantMap SourceHub::homeProviderStatus(const QStringList& hiddenModuleIds) const
 {
-    QString effective = preferredModuleId;
+    QStringList effective = hiddenModuleIds;
     QString message;
-    if (!preferredModuleId.isEmpty()) {
-        const ProviderModule *module = m_registry->module(preferredModuleId);
-        bool eligible = false;
+    if (!hiddenModuleIds.isEmpty()) {
+        bool shownEligible = false;
+        bool hiddenEligible = false;
         bool disconnected = false;
         for (const QVariant& value : m_registry->accounts()) {
             const QVariantMap account = value.toMap();
-            if (account.value(QStringLiteral("moduleId")).toString() != preferredModuleId
-                || !account.value(QStringLiteral("enabled")).toBool()
-                || account.value(QStringLiteral("locked")).toBool()
-                || account.value(QStringLiteral("needsSignIn")).toBool()
-                || account.value(QStringLiteral("removing")).toBool())
+            const QString moduleId = account.value(QStringLiteral("moduleId")).toString();
+            const ProviderModule *module = m_registry->module(moduleId);
+            if (!module || module->failed || !homeEligible(account))
                 continue;
-            eligible = true;
+            if (hiddenModuleIds.contains(moduleId)) {
+                hiddenEligible = true;
+                continue;
+            }
+            shownEligible = true;
             disconnected = disconnected || !account.value(QStringLiteral("running")).toBool();
         }
-        if (!module || module->failed || !eligible) {
+        if (!shownEligible && hiddenEligible) {
             effective.clear();
-            message = QStringLiteral("Your selected Home provider is unavailable or has no authorized active profile. "
-                                     "Showing All providers. Choose a provider or reconnect in Sources.");
-        } else if (homeSources({ preferredModuleId }).empty() && disconnected) {
-            message = QStringLiteral("Your selected Home provider is temporarily disconnected. "
-                                     "Your preference is retained; reconnect in Sources or choose All providers.");
+            message = QStringLiteral("None of the providers turned on for Home has a signed-in profile, so Home is "
+                                     "showing all providers. Turn one on or reconnect in Profiles & servers.");
+        } else if (shownEligible && disconnected && homeSources({ hiddenModuleIds }).empty()) {
+            message = QStringLiteral("The providers turned on for Home are temporarily disconnected. "
+                                     "Reconnect in Profiles & servers or turn on another provider.");
         }
     }
-    return { { QStringLiteral("moduleId"), effective }, { QStringLiteral("message"), message } };
+    return { { QStringLiteral("hiddenModuleIds"), effective }, { QStringLiteral("message"), message } };
 }
 
 void SourceHub::updateHomeAccounts()
@@ -755,9 +773,7 @@ void SourceHub::updateHomeAccounts()
         const QVariantMap account = value.toMap();
         const QString id = account.value(QStringLiteral("id")).toString();
         m_homeAccountModules.insert(id, account.value(QStringLiteral("moduleId")).toString());
-        if (!account.value(QStringLiteral("enabled")).toBool() || account.value(QStringLiteral("locked")).toBool()
-            || account.value(QStringLiteral("needsSignIn")).toBool()
-            || account.value(QStringLiteral("removing")).toBool())
+        if (!homeEligible(account))
             m_homeUnavailableAccounts.insert(id);
     }
 }
@@ -768,7 +784,7 @@ std::vector<Provider *> SourceHub::homeSources(const HomeQuery& query) const
     std::erase_if(selected, [&](Provider *provider) {
         const QString account = provider->id();
         return m_homeUnavailableAccounts.contains(account)
-            || (!query.moduleId.isEmpty() && m_homeAccountModules.value(account) != query.moduleId);
+            || query.hiddenModuleIds.contains(m_homeAccountModules.value(account));
     });
     return selected;
 }
@@ -780,7 +796,7 @@ bool SourceHub::containsHomeItem(const HomeQuery& query, const QString& scopedId
     const auto entry = m_entries.constFind(scopedId.left(kPrefix));
     return entry != m_entries.cend() && entry->provider && entry->browse
         && !m_homeUnavailableAccounts.contains(entry->accountId)
-        && (query.moduleId.isEmpty() || m_homeAccountModules.value(entry->accountId) == query.moduleId);
+        && !query.hiddenModuleIds.contains(m_homeAccountModules.value(entry->accountId));
 }
 
 QString SourceHub::homeScopeKey(const HomeQuery& query) const
