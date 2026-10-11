@@ -2169,7 +2169,7 @@ FocusScope {
         checkedFor: function (entry) {
             return entry && String(entry.seasonId || "") === root.currentSeasonId
         }
-        onCurrentIndexChanged: root.seasonPickerIndex = currentIndex
+        onMoved: index => root.seasonPickerIndex = index
         onDismissed: root.closeSeasonPicker()
         onAccepted: entry => root.selectSeason(entry)
     }
