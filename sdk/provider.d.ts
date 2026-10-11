@@ -417,7 +417,14 @@ export interface Source extends CatalogueOperations, PreferenceOperations, Appli
         queue?: PlaybackQueueSnapshot; queueIndex?: number }, {}>;
 
     favorite?: Operation<{ itemId: string; value: boolean }, {}>;
+    /** Marking unplayed also clears the resume position on the server. */
     played?: Operation<{ itemId: string; value: boolean }, {}>;
+    /**
+     * Saves the resume position. `"0"` clears it on the server, taking the item out of the server's
+     * continue-watching list, and must leave its played state unchanged. Spool's Clear progress and
+     * Continue Watching's Mark unwatched send exactly this; a server that ignores a zero position
+     * needs another way to reset it.
+     */
     progress?: Operation<{ itemId: string; positionTicks: string }, {}>;
 
     /** Manifest `actions` are run here; `pick` shows the picker, then runs again with its result merged in. */
