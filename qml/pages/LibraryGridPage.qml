@@ -1649,7 +1649,7 @@ FocusScope {
         checkedFor: function (entry) {
             return entry && String(entry.libraryId) === String(Browse.libraryId || "")
         }
-        onCurrentIndexChanged: root.libraryIndex = currentIndex
+        onMoved: index => root.libraryIndex = index
         onDismissed: root.closeMenus()
         onAccepted: entry => root.activateLibraryIndex(entry.index)
     }
@@ -1672,7 +1672,7 @@ FocusScope {
                                                                                 entry && entry.value
                                                                                 === root.currentSortBy()
         }
-        onCurrentIndexChanged: root.sortIndex = currentIndex
+        onMoved: index => root.sortIndex = index
         onDismissed: root.closeMenus()
         onAccepted: entry => root.activateSortEntry(entry)
     }
@@ -1694,7 +1694,7 @@ FocusScope {
         selectionStyle: "check"
         resetVisible: true
         resetEnabled: root.activeFilterCount > 0
-        onCurrentIndexChanged: root.filterIndex = currentIndex
+        onMoved: index => root.filterIndex = index
         onDismissed: root.closeMenus()
         onAccepted: entry => root.activateFilterEntry(entry)
         onReset: root.clearFilters()
