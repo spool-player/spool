@@ -1111,7 +1111,7 @@ KeyRouter {
 
             TopBar {
                 id: navBar
-                anchors.rightMargin: openFilesButton.visible ? openFilesButton.width + Metrics.scaled(14) : 0
+                trailingCells: openFilesButton.visible ? 1 : 0
                 objectName: "shellNavigationBar"
                 anchors.left: parent.left
                 anchors.right: parent.right
@@ -1145,9 +1145,9 @@ KeyRouter {
             IconButton {
                 id: openFilesButton
                 objectName: "shellOpenFiles"
-                anchors.right: parent.right
-                anchors.rightMargin: Metrics.scaled(14)
+                x: navBar.x + navBar.trailingCellCenterX - width / 2
                 y: navBar.y + (navBar.height - height) / 2
+                railStyle: true
                 visible: root.desktopFilesAvailable && navBar.visible && !root.playerHoldsScreen
                 enabled: !root.fileInputBlocked && !(root.fileDropDialog && root.fileDropDialog.opened)
                 iconName: "folder_open"

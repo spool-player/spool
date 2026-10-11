@@ -185,7 +185,7 @@ FocusScope {
                     root.focusOverflow(root.overflowIndex)
             })
         }
-        function onExtensionSupportChanged(accountId) {
+        function onCapabilitySupportChanged(accountId) {
             if (root.overflowOpen)
                 root.loadProviderActions()
         }

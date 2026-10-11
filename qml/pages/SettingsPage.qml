@@ -904,10 +904,6 @@ FocusScope {
             if (action === "activate")
                 return back()
             if (action === "down") {
-                InputKeys.focus(settingsList)
-                return true
-            }
-            if (action === "right") {
                 searchField.focusRow()
                 return true
             }
@@ -915,7 +911,7 @@ FocusScope {
                 shell.focusNavBar()
                 return true
             }
-            return action === "left"
+            return action === "left" || action === "right"
         }
         if (searchField.activeFocus || searchField.editing) {
             // Resting on the row (TV): Select opens the keyboard. Typing in
@@ -929,13 +925,12 @@ FocusScope {
                 InputKeys.focus(settingsList)
                 return true
             }
-            if (action === "up" && shell) {
+            if (action === "up") {
                 Qt.inputMethod.hide()
-                shell.focusNavBar()
-                return true
-            }
-            if (action === "left" && !searchField.editing && backButton.visible) {
-                InputKeys.focus(backButton)
+                if (backButton.visible)
+                    InputKeys.focus(backButton)
+                else if (shell)
+                    shell.focusNavBar()
                 return true
             }
             return false
@@ -1148,42 +1143,44 @@ FocusScope {
         anchors.horizontalCenter: parent.horizontalCenter
         width: settingsList.width
         spacing: Metrics.scaled(10)
-        AppText {
-            width: parent.width
-            text: root.pageTitle
-            font.pixelSize: Metrics.titleSizePx
-            wrapMode: Text.Wrap
-            Accessible.name: text
-            Accessible.role: Accessible.Heading
-        }
         Row {
             width: parent.width
-            spacing: Metrics.scaled(12)
-            ActionButton {
+            spacing: Metrics.scaled(6)
+            IconButton {
                 id: backButton
-                text: "Back"
+                anchors.verticalCenter: parent.verticalCenter
                 visible: root.pageMode !== "index"
-                width: visible ? Math.min(Metrics.scaled(100), Math.max(0, (parent.width - parent.spacing) / 2)) : 0
-                height: searchField.height
+                iconName: "arrow_back"
+                accessibleName: "Back"
                 onClicked: root.back()
             }
-            TextFieldRow {
-                id: searchField
-                width: Math.max(0, parent.width - (backButton.visible ? backButton.width + parent.spacing : 0))
-                implicitHeight: Metrics.scaled(56)
-                iconName: "search"
-                accessibleName: "Search settings"
-                placeholderText: "Search settings by name, value or keyword"
-                inputMethodHints: Qt.ImhNoPredictiveText | Qt.ImhNoAutoUppercase
-                enterKeyType: Qt.EnterKeySearch
-                // A search result opened in context is not a search page; the
-                // query comes back with the results on Back.
-                text: root.pageMode === "search" ? root.searchQuery : ""
-                onTextEdited: text => root.setSearchQuery(text)
-                onAccepted: {
-                    Qt.inputMethod.hide()
-                    InputKeys.focus(settingsList)
-                }
+            AppText {
+                id: titleText
+                anchors.verticalCenter: parent.verticalCenter
+                width: parent.width - (backButton.visible ? backButton.width + parent.spacing : 0)
+                text: root.pageTitle
+                font.pixelSize: Metrics.titleSizePx
+                wrapMode: Text.Wrap
+                Accessible.name: text
+                Accessible.role: Accessible.Heading
+            }
+        }
+        TextFieldRow {
+            id: searchField
+            width: parent.width
+            implicitHeight: Metrics.scaled(56)
+            iconName: "search"
+            accessibleName: "Search settings"
+            placeholderText: "Search settings by name, value or keyword"
+            inputMethodHints: Qt.ImhNoPredictiveText | Qt.ImhNoAutoUppercase
+            enterKeyType: Qt.EnterKeySearch
+            // A search result opened in context is not a search page; the
+            // query comes back with the results on Back.
+            text: root.pageMode === "search" ? root.searchQuery : ""
+            onTextEdited: text => root.setSearchQuery(text)
+            onAccepted: {
+                Qt.inputMethod.hide()
+                InputKeys.focus(settingsList)
             }
         }
         SecondaryText {
@@ -1283,7 +1280,7 @@ FocusScope {
             id: settingRow
             readonly property var row: parent ? parent.row : null
             readonly property int rowIndex: parent ? parent.rowIndex : -1
-            readonly property bool isSubmenu: row && row.type === "submenu"
+            readonly property bool isSubmenu: Boolean(row && row.type === "submenu")
             width: parent ? parent.width : settingsList.width
             focus: false
             focusPolicy: Qt.NoFocus
@@ -1292,10 +1289,10 @@ FocusScope {
             description: row ? root.rowDescription(row) : ""
             valueText: row ? root.rowValueText(row) : ""
             valueTextVisible: !isSubmenu
-            pointerActivationEnabled: row && (root.pageMode !== "category" || row.type === "action" || row.type
-                                              === "index" || isSubmenu || row.dependsOnKey || (row.destination
-                                                                                               && row.destination
-                                                                                               !== "category"))
+            pointerActivationEnabled: Boolean(row && (root.pageMode !== "category" || row.type === "action" || row.type
+                                                      === "index" || isSubmenu || row.dependsOnKey || (row.destination
+                                                                                                       && row.destination
+                                                                                                       !== "category")))
             trailing: [
                 MaterialIcon {
                     visible: settingRow.isSubmenu
