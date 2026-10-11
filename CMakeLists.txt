@@ -1155,7 +1155,7 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
     file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/native-spoolet-path.txt"
         CONTENT "$<TARGET_FILE:spoolet>\n")
     target_include_directories(spool-e2e-tests PRIVATE tests src "${CMAKE_CURRENT_BINARY_DIR}/generated")
-    target_compile_definitions(spool-e2e-tests PRIVATE TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    target_compile_definitions(spool-e2e-tests PRIVATE SPOOL_E2E_BINARY=1 TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
         SPOOL_E2E_APP="$<TARGET_FILE:spool>" SPOOL_E2E_SPOOLET="$<TARGET_FILE:spoolet>")
     if(SPOOL_TEST_RENDER_BACKEND STREQUAL "opengl")
         target_compile_definitions(spool-e2e-tests PRIVATE SPOOL_TEST_OPENGL_ONLY=1)
@@ -1260,7 +1260,15 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
         endforeach()
         file(APPEND "${qml_registry}" "}\n")
         target_sources(spool-e2e-tests PRIVATE "${qml_registry}")
-        add_test(NAME gui-e2e-native COMMAND spool-e2e-tests --run-all --workers 1 --timeout-ms 600000 --results "${CMAKE_CURRENT_BINARY_DIR}/e2e-results.json")
+        # On a Linux host the GUI selectors always get the private Weston/Xvfb
+        # session, so a bare `ctest` cannot open windows on the developer's
+        # desktop (or be disturbed by them using it).
+        if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ANDROID)
+            set(SPOOL_E2E_SESSION bash "${CMAKE_CURRENT_SOURCE_DIR}/tools/test-gpu-session.sh")
+        else()
+            set(SPOOL_E2E_SESSION "")
+        endif()
+        add_test(NAME gui-e2e-native COMMAND ${SPOOL_E2E_SESSION} $<TARGET_FILE:spool-e2e-tests> --run-all --workers 1 --timeout-ms 600000 --results "${CMAKE_CURRENT_BINARY_DIR}/e2e-results.json")
         set_tests_properties(gui-e2e-native PROPERTIES LABELS e2e ENVIRONMENT "${SPOOL_TEST_ENV}" TIMEOUT 0)
         # Exercise the event-thread lifecycle with a controllable client API.
         # Keep this separate from the core targets so the fake symbols cannot
