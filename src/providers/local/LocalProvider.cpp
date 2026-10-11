@@ -405,6 +405,11 @@ QCoro::Task<PersonCredits> LocalProvider::fetchItemsByPerson(QString, int)
 
 QCoro::Task<std::vector<LibraryItem>> LocalProvider::fetchLibraries()
 {
+    // The offline source is always registered so a download can appear the
+    // moment it finishes, but with nothing downloaded there is no library to
+    // offer. Local files are a library only once someone chooses a folder.
+    if (m_roots.isEmpty() && m_downloadedFiles.isEmpty())
+        co_return {};
     LibraryItem library;
     library.id = QLatin1String(kLibraryId);
     library.name = m_libraryName;
