@@ -71,6 +71,45 @@ TestCase {
         ]
     }
 
+    ListModel {
+        id: episodeModel
+        ListElement {
+            title: "One"
+            movieId: "aaaaaaaa:1"
+        }
+        ListElement {
+            title: "Two"
+            movieId: "aaaaaaaa:2"
+        }
+        ListElement {
+            title: "Three"
+            movieId: "aaaaaaaa:3"
+        }
+        ListElement {
+            title: "Four"
+            movieId: "aaaaaaaa:4"
+        }
+        ListElement {
+            title: "Five"
+            movieId: "aaaaaaaa:5"
+        }
+        ListElement {
+            title: "Six"
+            movieId: "aaaaaaaa:6"
+        }
+    }
+
+    // A row recycled by a row stack: the same MediaRow shows an item model,
+    // then a JS array of libraries, then the item model again.
+    Primitives.MediaRow {
+        id: recycledRow
+        y: 120
+        width: parent.width
+        cardWidth: 156
+        cardGap: 16
+        shell: shellHost
+    }
+
     Component {
         id: rowStackComponent
 
@@ -167,6 +206,37 @@ TestCase {
         compare(libraryRow.currentCard().subtitleText(), "movies")
         compare(libraryRow.currentCard().showSubtitle, false)
         compare(libraryRow.currentCard().emphasizedTitle, true)
+    }
+
+    function test_recycledRowRebuildsCardsForANewKindOfModel() {
+        failOnWarning(/TypeError/)
+        const libraries = [
+                  {
+                      "name": "Movies",
+                      "libraryId": "aaaaaaaa:movies",
+                      "collectionType": "movies",
+                      "item": ({})
+                  },
+                  {
+                      "name": "Shows",
+                      "libraryId": "bbbbbbbb:shows",
+                      "collectionType": "tvshows",
+                      "item": ({})
+                  }
+              ]
+        for (let round = 0; round < 3; ++round) {
+            recycledRow.cardKind = "landscape"
+            recycledRow.model = episodeModel
+            tryCompare(recycledRow, "count", 6)
+            recycledRow.currentIndex = 5
+            tryVerify(() => recycledRow.currentCard() !== null)
+            recycledRow.cardKind = "library"
+            recycledRow.model = libraries
+            tryCompare(recycledRow, "count", 2)
+            recycledRow.currentIndex = 1
+            tryVerify(() => recycledRow.currentCard() !== null)
+            compare(recycledRow.currentCard().titleText(), "Shows")
+        }
     }
 
     function test_touchPressDoesNotMoveSelectionBeforeClick() {
