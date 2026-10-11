@@ -310,6 +310,24 @@ void LocalCommandServer::reject(QIODevice *socket, const QString& id, const QStr
     finish(socket, id, LocalControl::failure(id, code, message));
 }
 
+// Where keyboard input lands: the focused item's QML type, the nearest
+// ancestor with an objectName, and whether it can be seen. Types and object
+// names only, never text or bound values.
+QJsonObject LocalCommandServer::focusState() const
+{
+    QQuickItem *item = m_window->activeFocusItem();
+    if (!item)
+        return { { QStringLiteral("item"), QJsonValue::Null } };
+    QString named;
+    for (QQuickItem *ancestor = item; ancestor && named.isEmpty(); ancestor = ancestor->parentItem())
+        named = ancestor->objectName();
+    QString type = QString::fromLatin1(item->metaObject()->className());
+    type = type.section(QStringLiteral("_QML"), 0, 0);
+    return { { QStringLiteral("item"), type }, { QStringLiteral("named"), named },
+        { QStringLiteral("visible"), item->isVisible() },
+        { QStringLiteral("contentItem"), item == m_window->contentItem() } };
+}
+
 QJsonObject LocalCommandServer::state() const
 {
     const auto player = m_app->player();
@@ -321,6 +339,7 @@ QJsonObject LocalCommandServer::state() const
         { QStringLiteral("browseLoading"), m_app->browse()->loadingMore() },
         { QStringLiteral("homeLoading"), m_app->home()->loading() },
         { QStringLiteral("visual"), QJsonObject::fromVariantMap(m_window->automationVisualState()) },
+        { QStringLiteral("focus"), focusState() },
         { QStringLiteral("source"), QJsonObject::fromVariantMap(m_app->streamingQualitySource()) },
         { QStringLiteral("playback"),
             QJsonObject { { QStringLiteral("active"), player->sessionActive() },
