@@ -39,6 +39,7 @@ private:
     void finish(QIODevice *socket, const QString& id, const QJsonObject& result);
     void reject(QIODevice *socket, const QString& id, const QString& code, const QString& message);
     QJsonObject state() const;
+    QJsonObject focusState() const;
     QJsonObject items(const QJsonObject& args) const;
     void screenshot(QIODevice *socket, const QString& id, const QString& path);
     QString startCapture(const QJsonObject& args);
