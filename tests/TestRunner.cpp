@@ -619,6 +619,11 @@ int main(int argc, char **argv)
 #endif
     std::signal(SIGABRT, abortAsOsCrash);
 #endif
+    // Bundled QML carries reproducible resource timestamps, so the persistent
+    // QML cache cannot tell an edited test or component from the last build's
+    // and a direct run executes stale code. CTest sets this too; setting it
+    // here covers every way the binary is started, selectors included.
+    qputenv("QML_DISABLE_DISK_CACHE", "1");
     if (!initializeDiagnosticLog(argc, argv))
         return 2;
     if (!initializeReceipt(argc, argv))
