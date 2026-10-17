@@ -871,6 +871,19 @@ public:
             },
             "actual library-card activation did not navigate to its browse page");
     }
+    void openPlaybackSettings()
+    {
+        // Navigate the actual transport, including on TV/mobile where there
+        // is no desktop shortcut. Up saturates at Back; Down reaches the
+        // timeline and then the actions. Right saturates at Playback settings.
+        for (int step = 0; step < 3; ++step)
+            command({ "key", "up" });
+        command({ "key", "down" });
+        command({ "key", "down" });
+        for (int step = 0; step < 12; ++step)
+            command({ "key", "right" });
+        command({ "key", "ok" });
+    }
     void await(const std::function<bool()>& predicate, const char *message, int timeout = 30000)
     {
         QElapsedTimer clock;
@@ -1099,13 +1112,15 @@ SPOOL_TEST_MAIN("app-journey")
                 { "successfulLogins", fixture.successfulLogins }, { "rejectedLogins", fixture.rejectedLogins },
                 { "authenticatedViews", fixture.authenticatedViews },
                 { "authenticatedBrowse", fixture.authenticatedBrowse },
+                { "playedFilterRequests", fixture.playedFilterRequests },
                 { "authenticatedRequests", fixture.authenticatedRequests },
                 { "playbackNegotiations", fixture.playbackNegotiations }, { "mediaRequests", fixture.mediaRequests },
                 { "mediaBytes", fixture.mediaBytes }, { "detailRequests", fixture.detailRequests },
                 { "detailResponses", fixture.detailResponses }, { "episodeRequests", fixture.episodeRequests },
                 { "episodeDetailRequests", fixture.episodeDetailRequests },
                 { "episodeDetailResponses", fixture.episodeDetailResponses },
-                { "playbackReports", fixture.reports.size() }, { "unexpectedRequests", fixture.unexpected.size() } };
+                { "playedMutations", fixture.playedItems.size() }, { "playbackReports", fixture.reports.size() },
+                { "unexpectedRequests", fixture.unexpected.size() } };
             QSaveFile diagnostics(root.filePath("fixture-counters.json"));
             const QByteArray bytes = QJsonDocument(counters).toJson();
             const bool saved = diagnostics.open(QIODevice::WriteOnly)
@@ -1183,6 +1198,59 @@ SPOOL_TEST_MAIN("app-journey")
         const QString itemId = (*movieRow).toObject()["id"].toString();
         require(itemId != "journey-movie" && (*episodeRow).toObject()["id"].toString() != "journey-episode",
             "provider items lost account scoping");
+
+        fixturePhase = QStringLiteral("filter-empty-recovery");
+        const int filtersBefore = fixture.playedFilterRequests;
+        journey.click("Filter");
+        journey.click("Status");
+        journey.click("Played");
+        journey.await(
+            [&] {
+                return fixture.playedFilterRequests > filtersBefore && !journey.state()["browseLoading"].toBool()
+                    && journey.command({ "items", "browse" })["count"].toInt(-1) == 0;
+            },
+            "Played filter did not reach the provider and replace the library with its empty result");
+        require(journey.state()["route"] == "libraryGrid", "empty filtering abandoned the library route");
+        journey.click("Reset");
+        journey.await(
+            [&] {
+                return !journey.state()["browseLoading"].toBool()
+                    && journey.command({ "items", "browse" })["count"].toInt(-1) == 2;
+            },
+            "filter reset did not restore the server catalogue");
+        journey.command({ "key", "back" });
+        require(journey.state()["route"] == "libraryGrid", "Back from filters popped the library");
+        // No pointer refocus or explicit `open`: a remote must be able to use
+        // the grid immediately after its empty model was replaced.
+        journey.command({ "key", "ok" });
+        journey.await([&] { return journey.state()["route"] == "itemDetails"; },
+            "remote activation after filter reset remained stranded in the dismissed menu");
+        journey.label("Journey Film");
+
+        fixturePhase = QStringLiteral("nested-details-return");
+        const int nestedDetailsBefore = fixture.episodeDetailResponses;
+        journey.label("More Like This", true);
+        journey.click("Journey Series", true);
+        journey.await([&] { return fixture.episodeDetailResponses > nestedDetailsBefore; },
+            "related-item activation did not fetch the selected episode through the real provider");
+        journey.label("Journey Episode");
+        journey.command({ "key", "back" });
+        require(journey.state()["route"] == "itemDetails", "Back from related details skipped the parent details");
+        // Return to the parent heading through ordinary remote navigation;
+        // its identity must not still be bound to the child details/model.
+        for (int step = 0; step < 6; ++step)
+            journey.command({ "key", "up" });
+        journey.label("Journey Film");
+        journey.command({ "key", "back" });
+        journey.await([&] { return journey.state()["route"] == "libraryGrid"; },
+            "second Back did not return from retained parent details to the originating library");
+        journey.command({ "key", "ok" });
+        journey.await([&] { return journey.state()["route"] == "itemDetails"; },
+            "returning from nested details lost the library's remote selection");
+        journey.label("Journey Film");
+        journey.command({ "key", "back" });
+        journey.await([&] { return journey.state()["route"] == "libraryGrid"; },
+            "reopened movie did not return to the library before downloading");
 
         // Open and operate the real item-menu/download dialog; list is only an observer.
         fixturePhase = QStringLiteral("movie-download");
@@ -1496,10 +1564,88 @@ SPOOL_TEST_MAIN("app-journey")
                     && frameHasBands(journey.capture(true), 0);
             },
             "explicit episode restart did not decode the beginning");
-        journey.command({ "stop" });
+
+        // EOF is driven by the real finite media, not a synthetic controller
+        // signal. The decoded restart and server receipt prove repeat crossed
+        // QML -> application queue -> mpv -> production provider reporting.
+        fixturePhase = QStringLiteral("repeat-current-eof");
+        journey.openPlaybackSettings();
+        journey.click("Repeat");
+        journey.click("Repeat current item");
+        const qsizetype reportsBeforeRepeat = fixture.reports.size();
+        const int negotiationsBeforeRepeat = fixture.playbackNegotiations;
+        journey.command({ "seek", "88" });
+        journey.await([&] { return journey.state()["playback"].toObject()["position"].toDouble() > 87.5; },
+            "repeat journey did not reach the end of the paused item");
+        journey.command({ "resume" });
+        journey.await(
+            [&] {
+                return fixture.playbackNegotiations > negotiationsBeforeRepeat
+                    && journey.state()["playback"].toObject()["loaded"].toBool()
+                    && std::any_of(fixture.reports.cbegin() + reportsBeforeRepeat, fixture.reports.cend(),
+                        [](const QJsonObject& report) {
+                            return report["endpoint"] == "/Sessions/Playing" && report["ItemId"] == "journey-episode"
+                                && report["RepeatMode"] == "RepeatOne"
+                                && report["PositionTicks"].toVariant().toLongLong() == 0;
+                        });
+            },
+            "Repeat current item did not renegotiate and report an actual restart from zero");
+        journey.command({ "pause" });
+        journey.await(
+            [&] {
+                const auto playback = journey.state()["playback"].toObject();
+                return playback["loaded"].toBool() && playback["paused"].toBool()
+                    && playback["position"].toDouble() < 8.0 && frameHasBands(journey.capture(true), 0);
+            },
+            "repeated item did not decode its beginning");
+
+        // After-current has precedence over repeat-one. Leave repeat enabled:
+        // merely clearing the repeat setting would make this a false positive.
+        fixturePhase = QStringLiteral("sleep-after-current-eof");
+        journey.openPlaybackSettings();
+        journey.label("Current item");
+        journey.click("Sleep timer");
+        journey.click("15 minutes");
+        journey.openPlaybackSettings();
+        journey.label("remaining");
+        journey.click("Sleep timer");
+        journey.click("After current item");
+        journey.openPlaybackSettings();
+        journey.label("After current item");
+        journey.label("Current item");
+        journey.command({ "key", "back" });
+        journey.command({ "seek", "88" });
+        journey.await([&] { return journey.state()["playback"].toObject()["position"].toDouble() > 87.5; },
+            "sleep journey did not reach the end of the paused item");
+        const qsizetype reportsBeforeSleep = fixture.reports.size();
+        const int negotiationsBeforeSleep = fixture.playbackNegotiations;
+        journey.command({ "resume" });
+        journey.await(
+            [&] {
+                return !journey.state()["playback"].toObject()["active"].toBool()
+                    && std::any_of(fixture.reports.cbegin() + reportsBeforeSleep, fixture.reports.cend(),
+                        [](const QJsonObject& report) {
+                            return report["endpoint"] == "/Sessions/Playing/Stopped"
+                                && report["ItemId"] == "journey-episode"
+                                && report["PositionTicks"].toVariant().toLongLong() >= 880000000;
+                        });
+            },
+            "After current item did not stop real playback and report the completed item's position");
+        QElapsedTimer stoppedWindow;
+        stoppedWindow.start();
+        do {
+            require(!journey.state()["playback"].toObject()["active"].toBool(),
+                "sleep completion briefly stopped but repeat restarted playback");
+            require(fixture.playbackNegotiations == negotiationsBeforeSleep,
+                "sleep completion negotiated another item despite After current item");
+            turn();
+        } while (stoppedWindow.elapsed() < 1500);
+        require(fixture.playedItems.contains("journey-episode"),
+            "completed episode never persisted its watched state to the real provider");
         require(fixture.unexpected.isEmpty(), "fixture observed unexpected or unauthorized production traffic");
         fixturePhase = QStringLiteral("complete");
-        std::cout << "app-journey: real login/browse/settings/download/offline/online GPU journey completed\n";
+        std::cout << "app-journey: real login/filter/retained-details/settings/download/offline/online/repeat/sleep "
+                     "GPU journey completed\n";
         return 0;
     } catch (const std::exception& error) {
         if (root.isValid()) {
