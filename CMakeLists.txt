@@ -1121,6 +1121,8 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
                 "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/PackageAuditTest.py"
                 "${CMAKE_CURRENT_SOURCE_DIR}/tools/package-audit.py"
         )
+        add_test(NAME webos-tooling
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/WebosToolingTest.py")
     endif()
     add_test(NAME module-seam
         COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-module-seam.sh"
@@ -1139,8 +1141,6 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
     )
     add_test(NAME test-driver-ordering
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/TestDriverTest.py")
-    add_test(NAME webos-tooling
-        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/WebosToolingTest.py")
 
     # URL-only native playlists require real video-surface admission; the
     # desktop controller consumer therefore belongs to the serial GPU phase.
@@ -1303,9 +1303,9 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
                 INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL OFF)
         endforeach()
         set_tests_properties(provider-sdk-tool local-provider-overrides ffmpeg-capability-generator module-seam
-            network-shaper render-benchmark-report test-driver-ordering webos-tooling PROPERTIES LABELS traditional)
+            network-shaper render-benchmark-report test-driver-ordering PROPERTIES LABELS traditional)
         if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-            set_tests_properties(package-audit PROPERTIES LABELS traditional)
+            set_tests_properties(package-audit webos-tooling PROPERTIES LABELS traditional)
         endif()
     endif()
     if(SPOOL_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
