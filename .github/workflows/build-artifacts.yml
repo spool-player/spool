@@ -33,6 +33,11 @@ on:
         required: true
         default: false
         type: boolean
+      build_ios:
+        description: "Build unsigned iOS device IPA and smoke the simulator app"
+        required: true
+        default: true
+        type: boolean
       build_tvos:
         description: "Build unsigned Apple TV device IPA and simulator app"
         required: true
@@ -756,6 +761,14 @@ jobs:
             build/macos/app
             ~/Library/Caches/ccache
           key: ${{ steps.macos-build-cache.outputs.cache-primary-key }}
+
+  ios:
+    name: iOS
+    needs: [lint, toolchain]
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_ios }}
+    uses: ./.github/workflows/ios-review.yml
+    with:
+      release: ${{ inputs.release || false }}
 
   tvos:
     name: tvOS (${{ matrix.sdk }} arm64)

@@ -759,12 +759,17 @@ signature prevents launch. This requires no Apple developer certificate,
 exercises the real sandboxed Keychain consumer, and does not sign or provision
 the separately built device IPA.
 
-## iOS review build
+## iOS
 
-The iOS implementation is integrated on `big-refactor` for review, not released
-or App Store-approved. Its native build requires macOS, Xcode and
-matching host/iOS Qt kits at the version in `tools/manifests/toolchain.json`.
-Set `QT_HOST_PATH` and `QT_TARGET_PREFIX`, then run `tools/build-ios.sh`.
+iOS builds produce an unsigned ARM64 `.ipa` when that platform succeeds in CI.
+Installation requires your own Apple signing identity and provisioning profile;
+the download is not App Store- or TestFlight-distributed. Simulator startup is
+not proof of device playback.
+
+Native builds require macOS, Xcode, GNU patch (`brew install gpatch`) and matching
+host/iOS Qt kits at the version in `tools/manifests/toolchain.json`.
+Set `QT_HOST_PATH` and `QT_TARGET_PREFIX`, then run `tools/build-ios.sh`; it
+builds the patched host QML import scanner before configuring the app.
 `APPLE_SDK=iphonesimulator` selects the simulator; the default is `iphoneos`.
 The device architecture defaults to `arm64`, the official Qt simulator kit to
 `x86_64`. Apple Silicon Macs require Rosetta for this simulator kit; the review
@@ -804,6 +809,18 @@ builds are the default verification path. The privacy manifest declares local
 preferences, file metadata, free disk space and monotonic timing APIs; App
 Store submission still requires the developer's privacy/legal declarations,
 signing, entitlement review and device playback/route/lifecycle testing.
+
+Package an unsigned device bundle with:
+
+```sh
+bash tools/package-ios.sh \
+  build/apple/iphoneos-arm64/app/Release-iphoneos/Spool.app dist/ios
+```
+
+The packager verifies the embedded version and actual iOS ARM64 Mach-O closure;
+it does not sign the app. CI keeps the simulator archive internal and publishes
+only `spool-ios-device-arm64`. The reusable iOS workflow also accepts manual
+dispatch on `big-refactor`.
 
 ## Android development
 
@@ -1026,6 +1043,10 @@ and lavapipe Vulkan drivers. The nested compositor provides a real input seat
 and native foreground activation while the product still uses Wayland; a
 seatless headless compositor cannot exercise foreground-only behavior.
 Neither harness connects to the user's display.
+
+Repeatable isolated native profiling uses the same private graphics session.
+See [profiling workflows](docs/debug/memory-profiling.md) for benchmark captures,
+machine-readable summaries and the limits of software-renderer baselines.
 
 The isolated Linux CPU driver package includes a bounded Mesa Wayland WSI
 clock-domain correction. Automatic FIFO targets remain in the swapchain's

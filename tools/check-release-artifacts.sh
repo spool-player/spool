@@ -14,8 +14,10 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 build="$root/.github/workflows/build-artifacts.yml"
 release="$root/.github/workflows/release.yml"
+ios="$root/.github/workflows/ios-review.yml"
 status=0
 tvos_devices=0
+ios_devices=0
 
 # Artifact names, not the cachix action's own `name:` input, so only the lines
 # that sit under an upload-artifact step count.
@@ -28,7 +30,7 @@ names="$(awk '
     next
   }
   in_upload && /^[[:space:]]*-[[:space:]]/ { in_upload = 0 }
-' "$build")"
+' "$build" "$ios")"
 
 [[ -n "$names" ]] || {
   echo "error: found no uploaded artifacts to check in build-artifacts.yml" >&2
@@ -38,6 +40,11 @@ names="$(awk '
 while IFS= read -r name; do
   case "$name" in
     spool-tvos-device-arm64) tvos_devices=$((tvos_devices + 1)) ;;
+    spool-ios-device-arm64) ios_devices=$((ios_devices + 1)) ;;
+    spool-ios-*)
+      printf 'error: iOS simulator/build inputs must be internal-*, not %s\n' "$name" >&2
+      status=1
+      ;;
     spool-tvos-*)
       printf 'error: tvOS simulator/build inputs must be internal-*, not %s\n' "$name" >&2
       status=1
@@ -52,6 +59,10 @@ while IFS= read -r name; do
 done <<<"$names"
 [[ "$tvos_devices" -eq 1 ]] || {
   echo "error: expected exactly one spool-tvos-device-arm64 public artifact" >&2
+  status=1
+}
+[[ "$ios_devices" -eq 1 ]] || {
+  echo "error: expected exactly one spool-ios-device-arm64 public artifact" >&2
   status=1
 }
 

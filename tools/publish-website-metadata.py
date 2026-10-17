@@ -45,8 +45,9 @@ def release_version(manifest: bytes) -> tuple[int, int, int]:
         platforms = [platform["id"] for platform in document["release"]["platforms"]]
     except (KeyError, TypeError):
         raise ValueError("invalid release snapshot") from None
-    if platforms != ["webos", "android", "windows", "macos", "linux", "tvos"]:
-        raise ValueError("invalid release snapshot: expected all six release platforms")
+    required = ["webos", "android", "windows", "macos", "linux", "tvos"]
+    if platforms not in (required, required + ["ios"]):
+        raise ValueError("invalid release snapshot: expected all six release platforms, optionally followed by iOS")
     return version
 
 

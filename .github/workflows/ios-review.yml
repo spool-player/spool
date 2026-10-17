@@ -1,15 +1,26 @@
-name: iOS review build
+name: iOS device IPA and simulator smoke
 on:
   workflow_dispatch:
+    inputs:
+      release:
+        description: "Use release artifact retention; the device IPA remains unsigned"
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      release:
+        description: "Use release artifact retention; the device IPA remains unsigned"
+        type: boolean
+        default: false
   push:
     branches: [feature/ios]
 permissions:
   contents: read
 jobs:
   native:
-    if: github.ref == 'refs/heads/feature/ios'
+    name: iOS (${{ matrix.sdk }} ${{ matrix.arch }})
     runs-on: macos-15-intel
-    timeout-minutes: 90
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -19,16 +30,29 @@ jobs:
           - sdk: iphoneos
             arch: arm64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
         with:
+          persist-credentials: false
           submodules: recursive
+      - name: Validate immutable package version
+        shell: bash
+        run: |
+          source tools/lib/build-common.sh
+          version="$(read_project_version "$GITHUB_WORKSPACE")"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            [[ "$GITHUB_REF_NAME" == "v$version" ]] || {
+              echo "error: release tag must match VERSION ($version)" >&2
+              exit 1
+            }
+          fi
+          echo "Building source $GITHUB_SHA with bundle/package version $version"
       - name: Install native build tools
-        run: brew install cmake ninja meson pkg-config bash python imagemagick nasm
+        run: brew install cmake ninja meson pkg-config bash python imagemagick nasm gpatch
       - name: Install pinned Qt host and iOS kits
         shell: bash
         run: |
           python3 -m venv "$RUNNER_TEMP/aqt"
-          "$RUNNER_TEMP/aqt/bin/pip" install aqtinstall
+          "$RUNNER_TEMP/aqt/bin/pip" install aqtinstall==3.3.0
           qt_version="$(python3 -c 'import json; print(json.load(open("tools/manifests/toolchain.json"))["qt"]["version"])')"
           "$RUNNER_TEMP/aqt/bin/aqt" install-qt mac desktop "$qt_version" clang_64 -O "$RUNNER_TEMP/Qt" -m qtshadertools qtwebsockets qtimageformats qttasktree
           "$RUNNER_TEMP/aqt/bin/aqt" install-qt mac ios "$qt_version" ios -O "$RUNNER_TEMP/Qt" -m qtshadertools qtwebsockets qtimageformats qttasktree
@@ -39,8 +63,9 @@ jobs:
         env:
           APPLE_SDK: ${{ matrix.sdk }}
           APPLE_ARCH: ${{ matrix.arch }}
+          APPLE_CODE_SIGNING_ALLOWED: 'NO'
           BUILD_JOBS: '4'
-        run: tools/build-ios.sh
+        run: bash tools/build-ios.sh
       - name: Smoke native startup on simulator
         if: matrix.sdk == 'iphonesimulator'
         shell: bash
@@ -51,7 +76,35 @@ jobs:
           bundle="build/apple/iphonesimulator-x86_64/app/Release-iphonesimulator/Spool.app"
           xcrun simctl install "$device" "$bundle"
           xcrun simctl launch --console "$device" com.sachk.spool --launch-test
-      - uses: actions/upload-artifact@v4
+      - name: Package audited unsigned device IPA
+        if: matrix.sdk == 'iphoneos'
+        shell: bash
+        run: bash tools/package-ios.sh build/apple/iphoneos-arm64/app/Release-iphoneos/Spool.app dist/ios
+      - name: Upload only the unsigned device release package
+        if: matrix.sdk == 'iphoneos'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
         with:
-          name: ios-review-${{ matrix.sdk }}-${{ matrix.arch }}
-          path: build/apple/${{ matrix.sdk }}-${{ matrix.arch }}/app/Release-${{ matrix.sdk }}/Spool.app
+          name: spool-ios-device-arm64
+          path: dist/ios/Spool-*-iOS-arm64.ipa
+          if-no-files-found: error
+          retention-days: ${{ inputs.release && 1 || 7 }}
+      - name: Archive simulator bundle preserving executable permissions
+        if: matrix.sdk == 'iphonesimulator'
+        shell: bash
+        run: |
+          tar -czf "$RUNNER_TEMP/ios-simulator-x86_64.tar.gz" \
+            -C build/apple/iphonesimulator-x86_64/app/Release-iphonesimulator Spool.app
+      - name: Keep simulator build internal
+        if: matrix.sdk == 'iphonesimulator'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: internal-ios-simulator-x86_64
+          path: ${{ runner.temp }}/ios-simulator-x86_64.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+      - name: Document unsigned artifact boundary
+        if: matrix.sdk == 'iphoneos'
+        shell: bash
+        run: |
+          echo '### Unsigned iOS device IPA' >> "$GITHUB_STEP_SUMMARY"
+          echo 'The audited arm64 device bundle has matching VERSION metadata and a closed bundled Mach-O dependency graph. It is unsigned and unprovisioned: re-sign with your own Apple identity and provisioning profile before installation. Device playback, App Store approval and TestFlight distribution are not verified by this build.' >> "$GITHUB_STEP_SUMMARY"

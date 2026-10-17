@@ -248,7 +248,7 @@ def expand_macho_name(name: str, owner: MachOInfo, executable_dir: Path) -> Path
     return Path(name).resolve()
 
 
-def tvos_macho_info(path: Path) -> MachOInfo | None:
+def apple_mobile_macho_info(path: Path, platform: str) -> MachOInfo | None:
     """Read device load commands directly, including on Linux release runners."""
     with path.open("rb") as source:
         magic = source.read(4)
@@ -257,15 +257,15 @@ def tvos_macho_info(path: Path) -> MachOInfo | None:
                          b"\xca\xfe\xba\xbf", b"\xbf\xba\xfe\xca"):
             return None
         if magic != b"\xcf\xfa\xed\xfe":
-            raise AuditError(f"tvOS binary must be thin little-endian ARM64 Mach-O: {path}")
+            raise AuditError(f"{platform} binary must be thin little-endian ARM64 Mach-O: {path}")
         header = source.read(28)
         if len(header) != 28:
             raise AuditError(f"truncated Mach-O header: {path}")
         cpu, subtype, filetype, count, size, flags, reserved = struct.unpack("<7I", header)
         if cpu != 0x0100000C or subtype & 0x00FFFFFF != 0:
-            raise AuditError(f"wrong tvOS Mach-O architecture (expected arm64): {path}")
+            raise AuditError(f"wrong {platform} Mach-O architecture (expected arm64): {path}")
         if filetype not in (2, 6, 8):
-            raise AuditError(f"unsupported tvOS Mach-O file type: {path}")
+            raise AuditError(f"unsupported {platform} Mach-O file type: {path}")
         if size > path.stat().st_size - 32 or count > size // 8:
             raise AuditError(f"invalid Mach-O load command bounds: {path}")
         commands = source.read(size)
@@ -281,7 +281,7 @@ def tvos_macho_info(path: Path) -> MachOInfo | None:
         if length < 8 or length % 8 or offset + length > len(commands):
             raise AuditError(f"invalid Mach-O load command size: {path}")
         data = commands[offset:offset + length]
-        if command == 0x32:  # LC_BUILD_VERSION: tvOS device is 3, simulator is 8.
+        if command == 0x32:  # LC_BUILD_VERSION: iOS device is 2, tvOS device is 3.
             if length < 24:
                 raise AuditError(f"invalid LC_BUILD_VERSION: {path}")
             platforms.append(struct.unpack_from("<I", data, 8)[0])
@@ -304,19 +304,20 @@ def tvos_macho_info(path: Path) -> MachOInfo | None:
             else:
                 dependencies.append(value)
         offset += length
-    if offset != size or platforms != [3]:
-        raise AuditError(f"Mach-O must declare exactly one device tvOS LC_BUILD_VERSION: {path}")
+    if offset != size or platforms != [{"iOS": 2, "tvOS": 3}[platform]]:
+        raise AuditError(f"Mach-O must declare exactly one device {platform} LC_BUILD_VERSION: {path}")
     kind = {2: "executable", 6: "library", 8: "bundle"}[filetype]
     return MachOInfo(path, frozenset({"arm64"}), kind, install_name, tuple(dependencies), tuple(rpaths))
 
 
-def audit_tvos_ipa(args: argparse.Namespace) -> int:
+def audit_apple_mobile_ipa(args: argparse.Namespace) -> int:
     """Validate an unsigned/signable device IPA, not Apple signing or runtime."""
+    platform = args.mobile_platform
     if not re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", args.version):
-        raise AuditError("tvOS package version must be MAJOR.MINOR.PATCH")
-    expected = f"Spool-{args.version}-tvOS-arm64.ipa"
+        raise AuditError(f"{platform} package version must be MAJOR.MINOR.PATCH")
+    expected = f"Spool-{args.version}-{platform}-arm64.ipa"
     if args.ipa.name != expected or args.ipa.is_symlink() or not args.ipa.is_file():
-        raise AuditError(f"expected regular tvOS device package named {expected}")
+        raise AuditError(f"expected regular {platform} device package named {expected}")
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
         try:
@@ -326,7 +327,7 @@ def audit_tvos_ipa(args: argparse.Namespace) -> int:
                 kinds: dict[str, int] = {}
                 entries = archive.infolist()
                 if not entries:
-                    raise AuditError("empty tvOS IPA")
+                    raise AuditError(f"empty {platform} IPA")
                 for entry in entries:
                     name = entry.filename.rstrip("/")
                     parts = PurePosixPath(name).parts
@@ -338,7 +339,7 @@ def audit_tvos_ipa(args: argparse.Namespace) -> int:
                             or (parts == ("Payload", "Spool.app") and not entry.is_dir())):
                         raise AuditError(f"unsafe or unexpected IPA member: {entry.filename}")
                     if "_CodeSignature" in parts or "embedded.mobileprovision" in parts:
-                        raise AuditError(f"public tvOS IPA must be unsigned/unprovisioned: {name}")
+                        raise AuditError(f"public {platform} IPA must be unsigned/unprovisioned: {name}")
                     if name in names:
                         raise AuditError(f"duplicate IPA member: {name}")
                     names.add(name)
@@ -389,43 +390,47 @@ def audit_tvos_ipa(args: argparse.Namespace) -> int:
         except (OSError, ValueError, RuntimeError, zipfile.BadZipFile) as error:
             if isinstance(error, AuditError):
                 raise
-            raise AuditError(f"invalid tvOS IPA: {error}") from error
+            raise AuditError(f"invalid {platform} IPA: {error}") from error
         app = root / "Payload/Spool.app"
         try:
             with (app / "Info.plist").open("rb") as source:
                 metadata = plistlib.load(source)
         except (OSError, ValueError, plistlib.InvalidFileException) as error:
-            raise AuditError(f"missing or invalid tvOS Info.plist: {error}") from error
+            raise AuditError(f"missing or invalid {platform} Info.plist: {error}") from error
         if not isinstance(metadata, dict):
-            raise AuditError("tvOS Info.plist must be a dictionary")
+            raise AuditError(f"{platform} Info.plist must be a dictionary")
         if metadata.get("CFBundleExecutable") != "Spool" or metadata.get("CFBundlePackageType") != "APPL":
-            raise AuditError("tvOS Info.plist must describe the Spool application executable")
-        if (metadata.get("CFBundleSupportedPlatforms") != ["AppleTVOS"]
-                or metadata.get("UIDeviceFamily") != [3]):
-            raise AuditError("tvOS Info.plist must target AppleTVOS device family 3")
+            raise AuditError(f"{platform} Info.plist must describe the Spool application executable")
+        supported_platform, device_family = {
+            "tvOS": ("AppleTVOS", [3]), "iOS": ("iPhoneOS", [1, 2]),
+        }[platform]
+        if (metadata.get("CFBundleSupportedPlatforms") != [supported_platform]
+                or metadata.get("UIDeviceFamily") != device_family):
+            raise AuditError(f"{platform} Info.plist must target {supported_platform} device family {device_family}")
         if any(metadata.get(key) != args.version for key in ("CFBundleShortVersionString", "CFBundleVersion")):
-            raise AuditError(f"tvOS embedded bundle version must match {args.version}")
-        closure = argparse.Namespace(app=app, tvos=True, architecture=["arm64"], root_binary=[])
+            raise AuditError(f"{platform} embedded bundle version must match {args.version}")
+        closure = argparse.Namespace(app=app, mobile_platform=platform, architecture=["arm64"], root_binary=[])
         audit_macho(closure)
         if args.extract:
             args.extract.mkdir(parents=True, exist_ok=True)
             if any(args.extract.iterdir()):
                 raise AuditError("IPA extraction destination must be empty")
             shutil.copytree(root / "Payload", args.extract / "Payload", symlinks=True)
-    print(f"tvOS device IPA passed: {expected} (signing/provisioning and runtime not verified).")
+    print(f"{platform} device IPA passed: {expected} (signing/provisioning and runtime not verified).")
     return 0
 
 
 def audit_macho(args: argparse.Namespace) -> int:
     app = args.app.resolve()
-    tvos = getattr(args, "tvos", False)
-    executable = app / ("Spool" if tvos else "Contents/MacOS/Spool")
+    mobile_platform = getattr(args, "mobile_platform", None)
+    executable = app / ("Spool" if mobile_platform else "Contents/MacOS/Spool")
     if not executable.is_file():
         raise AuditError(f"main Mach-O executable is missing: {executable}")
     files: list[MachOInfo] = []
     for path in app.rglob("*"):
         if path.is_file() and not path.is_symlink():
-            info = tvos_macho_info(path) if tvos else macho_info(path, args.file_tool, args.lipo, args.otool)
+            info = (apple_mobile_macho_info(path, mobile_platform) if mobile_platform
+                    else macho_info(path, args.file_tool, args.lipo, args.otool))
             if info:
                 files.append(info)
     by_path = {info.path.resolve(): info for info in files}
@@ -443,7 +448,7 @@ def audit_macho(args: argparse.Namespace) -> int:
         if info.path.resolve() == executable.resolve()
         or info.kind == "executable"
         or relative(info.path, app).startswith(
-            ("PlugIns/", "qml/") if tvos else ("Contents/PlugIns/", "Contents/Resources/qml/")
+            ("PlugIns/", "qml/") if mobile_platform else ("Contents/PlugIns/", "Contents/Resources/qml/")
         )
     }
     for root in args.root_binary:
@@ -528,11 +533,12 @@ def parser() -> argparse.ArgumentParser:
     macho_parser.add_argument("--lipo", default="lipo")
     macho_parser.add_argument("--otool", default="otool")
     macho_parser.set_defaults(handler=audit_macho)
-    tvos_parser = commands.add_parser("tvos-ipa", help="Audit an unsigned/signable device tvOS IPA")
-    tvos_parser.add_argument("ipa", type=Path)
-    tvos_parser.add_argument("--version", required=True)
-    tvos_parser.add_argument("--extract", type=Path, help="Extract validated Payload into an empty directory")
-    tvos_parser.set_defaults(handler=audit_tvos_ipa)
+    for command, platform in (("tvos-ipa", "tvOS"), ("ios-ipa", "iOS")):
+        mobile_parser = commands.add_parser(command, help=f"Audit an unsigned/signable device {platform} IPA")
+        mobile_parser.add_argument("ipa", type=Path)
+        mobile_parser.add_argument("--version", required=True)
+        mobile_parser.add_argument("--extract", type=Path, help="Extract validated Payload into an empty directory")
+        mobile_parser.set_defaults(handler=audit_apple_mobile_ipa, mobile_platform=platform)
     return result
 
 
