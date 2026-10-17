@@ -3,12 +3,33 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+usage() {
+  cat <<EOF
+Usage: $0 [all|app|stage|package]
+
+The default and 'all' run the complete dependency, fresh app, stage and package
+pipeline. Individual phases are internal build/CI entry points, not deployment
+shortcuts. This command never connects to a TV.
+EOF
+}
+if (( $# > 1 )); then
+  usage >&2
+  exit 2
+fi
+PHASE="${1:-all}"
+case "$PHASE" in
+  -h|--help) usage; exit 0 ;;
+  all|app|stage|package) ;;
+  *) usage >&2; exit 2 ;;
+esac
+
+WORKSPACE_ROOT="$(cd "$ROOT/.." && pwd)"
+DEFAULT_SDK_ROOT="$ROOT/build/webos-sdk/arm-webos-linux-gnueabi_sdk-buildroot"
+if [[ -z "${WEBOS_SDK_ROOT:-}" && -d "$WORKSPACE_ROOT/build/webos-sdk/arm-webos-linux-gnueabi_sdk-buildroot" ]]; then
+  DEFAULT_SDK_ROOT="$WORKSPACE_ROOT/build/webos-sdk/arm-webos-linux-gnueabi_sdk-buildroot"
+fi
+export WEBOS_SDK_ROOT="${WEBOS_SDK_ROOT:-$DEFAULT_SDK_ROOT}"
 if [[ -z "${IN_NIX_SHELL:-}" && "${SPOOL_BUILD_IPK_ENTERED_NIX:-0}" != "1" ]]; then
-  WORKSPACE_ROOT="$(cd "$ROOT/.." && pwd)"
-  DEFAULT_SDK_ROOT="$ROOT/build/webos-sdk/arm-webos-linux-gnueabi_sdk-buildroot"
-  if [[ -z "${WEBOS_SDK_ROOT:-}" && -d "$WORKSPACE_ROOT/build/webos-sdk/arm-webos-linux-gnueabi_sdk-buildroot" ]]; then
-    DEFAULT_SDK_ROOT="$WORKSPACE_ROOT/build/webos-sdk/arm-webos-linux-gnueabi_sdk-buildroot"
-  fi
   cd "$ROOT"
   exec nix develop "$ROOT" -c env \
     SPOOL_BUILD_IPK_ENTERED_NIX=1 \
@@ -17,6 +38,10 @@ if [[ -z "${IN_NIX_SHELL:-}" && "${SPOOL_BUILD_IPK_ENTERED_NIX:-0}" != "1" ]]; t
 fi
 
 WEBOS_TOOLS_ROOT="${WEBOS_TOOLS_ROOT:-$ROOT/tools/webos-native}"
+if [[ "$PHASE" == "all" ]]; then
+  exec "$WEBOS_TOOLS_ROOT/build-webos.sh" all
+fi
+
 # shellcheck source=tools/lib/build-common.sh
 source "$ROOT/tools/lib/build-common.sh"
 # shellcheck source=tools/lib/manifest-sources.sh
@@ -24,10 +49,6 @@ source "$ROOT/tools/lib/manifest-sources.sh"
 # shellcheck source=tools/webos-native/nixos-sdk-compat.sh
 source "$ROOT/tools/webos-native/nixos-sdk-compat.sh"
 
-if (( $# == 0 )); then
-  exec "$ROOT/tools/webos-native/build-webos.sh" all
-fi
-PHASE="$1"
 DO_BUILD=0
 DO_STAGE=0
 DO_PACKAGE=0
@@ -35,15 +56,6 @@ case "$PHASE" in
   app) DO_BUILD=1 ;;
   stage) DO_STAGE=1 ;;
   package) DO_PACKAGE=1 ;;
-  all)
-    DO_BUILD=1
-    DO_STAGE=1
-    DO_PACKAGE=1
-    ;;
-  *)
-    echo "usage: $0 [app|stage|package|all]" >&2
-    exit 2
-    ;;
 esac
 
 SDK_ROOT="${WEBOS_SDK_ROOT:-$ROOT/build/webos-sdk/arm-webos-linux-gnueabi_sdk-buildroot}"
@@ -53,7 +65,11 @@ MPV_SRC="${MPV_SRC:-$ROOT/mpv}"
 MPV_BUILD="${MPV_BUILD:-$MPV_SRC/build/webos-libmpv}"
 WEBOS_CROSS_FILE="${WEBOS_CROSS_FILE:-$ROOT/build/webos-thirdparty-build/webos.cross.ini}"
 FFMPEG_CAPABILITY_MANIFEST="${FFMPEG_CAPABILITY_MANIFEST:-$ROOT/tools/manifests/ffmpeg-capabilities.json}"
-QT6_HOST_PREFIX="${QT6_HOST_PREFIX:-$ROOT/build/qt6-611-host-install}"
+QT_MANIFEST="${QT_MANIFEST:-$ROOT/tools/manifests/qt-webos-6.11.json}"
+QT_VERSION="$(manifest_qt_field "$QT_MANIFEST" qtVersion)"
+QT_BUILD_TAG="${QT_VERSION%.*}"
+QT_BUILD_TAG="${QT_BUILD_TAG//./}"
+QT6_HOST_PREFIX="${QT6_HOST_PREFIX:-$ROOT/build/qt6-$QT_BUILD_TAG-host-install}"
 APP_SOURCE_DIR="$ROOT/app"
 BUILD_DIR="$ROOT/build"
 CMAKE_BUILD_DIR="${WEBOS_APP_BUILD_DIR:-$ROOT/build/webos/app}"
@@ -80,7 +96,7 @@ else
 fi
 
 
-QT6_PREFIX="${QT6_PREFIX:-$ROOT/build/qt6-611-target-static-install}"
+QT6_PREFIX="${QT6_PREFIX:-$ROOT/build/qt6-$QT_BUILD_TAG-target-static-install}"
 if (( DO_BUILD || DO_STAGE )); then
   WEBOS_SDK_ROOT="$SDK_ROOT" "$WEBOS_TOOLS_ROOT/restore-toolchain.sh"
   ensure_webos_sdk_host_tools "$SDK_ROOT"
@@ -111,12 +127,6 @@ if (( DO_BUILD || DO_STAGE )); then
     exit 1
   fi
 
-  #QT_GUI_CONFIG="$QT6_PREFIX/include/QtGui/qtgui-config.h"
-  #if ! grep -q '^#define QT_FEATURE_accessibility 1$' "$QT_GUI_CONFIG" 2>/dev/null; then
-  #  echo "error: Qt at $QT6_PREFIX was built without accessibility support." >&2
-  #  echo "       Rerun: bash $WEBOS_TOOLS_ROOT/build-qt6-611.sh" >&2
-  #  exit 1
-  #fi
 
   if [[ ! -f "$QT6_PREFIX/lib/cmake/QCoro6/QCoro6Config.cmake" ]]; then
     echo "error: target QCoro is missing from $QT6_PREFIX." >&2
@@ -280,7 +290,7 @@ cp -f "$APP_SOURCE_DIR/icons/png/spool/130.png" "$APP_DIR/large-icon.png"
 # frame appinfo.json names, and the same block on its own for Qt to draw.
 SPLASH_DIR="${SPOOL_SPLASH_DIR:-$CMAKE_BUILD_DIR/splash/webos}"
 [[ -f "$SPLASH_DIR/splash.png" ]] || {
-  echo "error: launch screen missing at $SPLASH_DIR; run '$0 app' first" >&2
+  echo "error: launch screen missing at $SPLASH_DIR; rerun ./build-ipk.sh" >&2
   exit 1
 }
 cp -f "$SPLASH_DIR/splash.png" "$APP_DIR/splash.png"
@@ -295,7 +305,7 @@ cp -f "$ROOT/app/notices/OPEN_SOURCE_NOTICES.txt" "$ROOT/LICENSE" \
 PATCHELF_BIN="$(command -v patchelf)"
 
 [[ -x "$INSTALL_DIR/bin/spool" ]] || {
-  echo "error: app install missing; run '$0 app' first" >&2
+  echo "error: app install missing; rerun ./build-ipk.sh" >&2
   exit 1
 }
 cp -f "$INSTALL_DIR/bin/spool" "$STAGE_BIN/spool"
@@ -415,10 +425,11 @@ fi
 
 if (( DO_PACKAGE )); then
 [[ -f "$APP_DIR/appinfo.json" && -x "$STAGE_BIN/spool" ]] || {
-  echo "error: staged webOS app missing; run '$0 stage' first" >&2
+  echo "error: staged webOS app missing; rerun ./build-ipk.sh" >&2
   exit 1
 }
-rm -f "$BUILD_DIR"/*.ipk
+APP_ID="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["id"])' "$APP_DIR/appinfo.json")"
+rm -f "$BUILD_DIR/${APP_ID}_"*.ipk
 # Plain ares-package output, no maintainer scripts. Hardware decode LS2 access
 # comes from appinstalld's rolegen (/usr/share/rolegen/templates/NDK.*), which
 # generates media-client roles for every native dev app from appinfo's "main"

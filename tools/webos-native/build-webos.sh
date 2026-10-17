@@ -2,27 +2,24 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+usage() {
+  echo "Usage: $0 [all|fetch|qt-host|qt-target|dependencies|app|stage|package]"
+}
+if (( $# > 1 )); then
+  usage >&2
+  exit 2
+fi
+PHASE="${1:-all}"
+case "$PHASE" in
+  -h|--help) usage; exit 0 ;;
+  all|fetch|qt-host|qt-target|dependencies|app|stage|package) ;;
+  *) usage >&2; exit 2 ;;
+esac
+TOOLS_ROOT="${WEBOS_TOOLS_ROOT:-$ROOT/tools/webos-native}"
 # shellcheck source=tools/lib/manifest-sources.sh
 source "$ROOT/tools/lib/manifest-sources.sh"
-MANIFEST="${WEBOS_THIRD_PARTY_MANIFEST:-$ROOT/tools/manifests/webos-third-party.json}"
-PHASE="${1:-all}"
 SDK_ROOT="${WEBOS_SDK_ROOT:-$ROOT/build/webos-sdk/arm-webos-linux-gnueabi_sdk-buildroot}"
 
-case "$PHASE" in
-  all|qt-target|dependencies|app|stage)
-    WEBOS_SDK_ROOT="$SDK_ROOT" "$ROOT/tools/webos-native/restore-toolchain.sh"
-    ;;
-esac
-
-
-fetch_archive() {
-  local source_name="$1"
-  local filename="$2"
-  local url sha
-  url="$(manifest_source_field "$MANIFEST" "$source_name" url)"
-  sha="$(manifest_source_field "$MANIFEST" "$source_name" sha256)"
-  download_verified "$url" "$sha" "$ROOT/build/downloads/$filename"
-}
 
 fetch_toolchain_ffmpeg() {
   local version url sha
@@ -36,23 +33,25 @@ run_phase() {
   local phase="$1"
   case "$phase" in
     fetch)
-      "$ROOT/tools/webos-native/build-qt6-611.sh" fetch
-      "$ROOT/tools/webos-native/build-third-party.sh" fetch
-      "$ROOT/tools/webos-native/build-curl.sh" fetch
-      "$ROOT/tools/webos-native/build-qcoro.sh" fetch
+      "$TOOLS_ROOT/build-qt6-611.sh" fetch
+      "$TOOLS_ROOT/build-third-party.sh" fetch
+      "$TOOLS_ROOT/build-curl.sh" fetch
+      "$TOOLS_ROOT/build-qcoro.sh" fetch
       fetch_toolchain_ffmpeg
       ;;
     qt-host)
-      "$ROOT/tools/webos-native/build-qt6-611.sh" host
+      "$TOOLS_ROOT/build-qt6-611.sh" host
       ;;
     qt-target)
-      QT_STATIC="${QT_STATIC:-1}" "$ROOT/tools/webos-native/build-qt6-611.sh" target
+      WEBOS_SDK_ROOT="$SDK_ROOT" "$TOOLS_ROOT/restore-toolchain.sh"
+      QT_STATIC="${QT_STATIC:-1}" "$TOOLS_ROOT/build-qt6-611.sh" target
       ;;
     dependencies)
-      "$ROOT/tools/webos-native/build-third-party.sh" build
-      "$ROOT/tools/webos-native/build-curl.sh" build
-      QT_STATIC="${QT_STATIC:-1}" "$ROOT/tools/webos-native/build-qcoro.sh" build
-      "$ROOT/tools/webos-native/build-ffmpeg.sh"
+      WEBOS_SDK_ROOT="$SDK_ROOT" "$TOOLS_ROOT/restore-toolchain.sh"
+      "$TOOLS_ROOT/build-third-party.sh" build
+      "$TOOLS_ROOT/build-curl.sh" build
+      QT_STATIC="${QT_STATIC:-1}" "$TOOLS_ROOT/build-qcoro.sh" build
+      "$TOOLS_ROOT/build-ffmpeg.sh"
       ;;
     app|stage|package)
       "$ROOT/build-ipk.sh" "$phase"
