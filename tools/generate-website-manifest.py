@@ -36,7 +36,7 @@ PLATFORMS = (
     ("tvos", "Apple TV", (
         ("arm64", "Unsigned ARM64 IPA", "arm64", "ipa", "Spool-{version}-tvOS-arm64.ipa"),
     )),
-    ("ios", "iPhone and iPad", (
+    ("ios", "iOS", (
         ("arm64", "Unsigned ARM64 IPA", "arm64", "ipa", "Spool-{version}-iOS-arm64.ipa"),
     )),
 )
@@ -86,7 +86,7 @@ def generate_manifest(assets: Path, tag: str, repository: str) -> dict:
             if platform_id in ("tvos", "ios"):
                 # The archive audit verifies a device bundle, not Apple signing.
                 download["signing"] = "unsigned"
-                download["note"] = "Installing needs your own Apple signing and provisioning. It is not on the App Store."
+                download["note"] = "Installing needs Apple signing and provisioning. It is not on the App Store."
             downloads.append(download)
             selected.add(package)
         platforms.append({"id": platform_id, "label": platform_label, "downloads": downloads})
