@@ -209,6 +209,8 @@ private:
     void resetVisibleModels();
     void loadLibraries();
     void loadMoreCurrentItems();
+    void loadBrowseBlock(int start);
+    void loadBrowseIndex();
     void refreshHomeRows()
     {
         m_home->refresh(m_libraries.libraries());

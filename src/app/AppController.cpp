@@ -249,6 +249,8 @@ AppController::AppController(
     });
     connect(m_browse, &BrowseSessionController::reloadRequested, this, [this]() { beginBrowse(); });
     connect(m_browse, &BrowseSessionController::moreItemsRequested, this, &AppController::loadMoreCurrentItems);
+    connect(m_browse, &BrowseSessionController::blockRequested, this, &AppController::loadBrowseBlock);
+    connect(m_browse, &BrowseSessionController::indexRequested, this, &AppController::loadBrowseIndex);
     connect(m_database, &DatabaseManager::recoveryNotice, this, &AppController::showToast);
     {
         connect(m_group, &GroupPlayback::queuePlaybackRequested, this, [this](qint64 positionTicks) {
@@ -1077,6 +1079,43 @@ void AppController::loadMoreCurrentItems()
     Async::runLatest(this,
         m_catalog->fetchBrowsePage(descriptor, startIndex, kLibraryPageSize, query, m_browse->nextCursor()),
         m_libraryLoadGeneration, loadGeneration, onDone, onError);
+}
+
+void AppController::loadBrowseBlock(int start)
+{
+    const BrowseDescriptor descriptor = m_browse->descriptor();
+    if (!descriptor.isValid() || !m_catalog->signedIn()) {
+        m_browse->blockFailed(start);
+        return;
+    }
+    const RequestGeneration::Token loadGeneration = m_libraryLoadGeneration.current();
+    const QString cacheKey = m_browse->cacheKey();
+    const QVariantMap query = descriptor.kind == BrowseKind::Library ? m_browse->query() : QVariantMap {};
+    Async::runLatest(
+        this, m_catalog->fetchBrowsePage(descriptor, start, m_browse->blockSize(), query, std::nullopt),
+        m_libraryLoadGeneration, loadGeneration,
+        [this, start, cacheKey](const PagedMovieItems& page) { m_browse->applyBlock(start, page, cacheKey); },
+        [this, start](const std::exception_ptr& error) {
+            qWarning() << "browse block failed" << start << exceptionMessage(error);
+            m_browse->blockFailed(start);
+        });
+}
+
+void AppController::loadBrowseIndex()
+{
+    const BrowseDescriptor descriptor = m_browse->descriptor();
+    if (!descriptor.isValid() || !m_catalog->signedIn())
+        return;
+    const RequestGeneration::Token loadGeneration = m_libraryLoadGeneration.current();
+    const QString cacheKey = m_browse->cacheKey();
+    QVariantMap query = descriptor.kind == BrowseKind::Library ? m_browse->query() : QVariantMap {};
+    Async::runLatest(
+        this, m_catalog->fetchBrowseIndex(descriptor, std::move(query)), m_libraryLoadGeneration, loadGeneration,
+        [this, cacheKey](const std::vector<BrowseIndexEntry>& entries) { m_browse->setExactIndex(entries, cacheKey); },
+        [this, cacheKey](const std::exception_ptr& error) {
+            qWarning() << "browse index failed" << exceptionMessage(error);
+            m_browse->setExactIndex({}, cacheKey);
+        });
 }
 
 void AppController::playQueuedItems(

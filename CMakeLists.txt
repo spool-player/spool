@@ -237,6 +237,8 @@ set(SPOOL_SHELL_SOURCES
     src/app/TrickplayService.h
     src/app/TrickplayPreviewItem.cpp
     src/app/TrickplayPreviewItem.h
+    src/app/BrowseIndex.cpp
+    src/app/BrowseIndex.h
     src/app/BrowseSessionController.cpp
     src/app/BrowseSessionController.h
     src/app/ContentModelController.cpp
@@ -864,6 +866,7 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
 
     set(SPOOL_TESTS_app
         browse-session-controller tests/app/BrowseSessionControllerTest.cpp
+        browse-sparse-listing tests/app/BrowseSparseListingTest.cpp
         settings-schema tests/app/SettingsSchemaTest.cpp
         settings-controller tests/app/SettingsControllerTest.cpp
         settings-sync-controller tests/app/SettingsSyncControllerTest.cpp
