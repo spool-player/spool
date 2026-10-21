@@ -1228,7 +1228,8 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
         list(APPEND SPOOL_QML_TESTS
             extension-integration tests/qml/tst_ExtensionIntegration.qml
             provider-forms tests/qml/tst_ProviderForms.qml
-            artwork-integration tests/qml/tst_ArtworkIntegration.qml)
+            artwork-integration tests/qml/tst_ArtworkIntegration.qml
+            library-scale-profile tests/qml/tst_LibraryScaleProfile.qml)
         if(QT6_IS_SHARED_LIBS_BUILD)
             set_property(TARGET spool-e2e-tests PROPERTY QT_QML_MODULE_NO_IMPORT_SCAN TRUE)
         else()
@@ -1251,6 +1252,7 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
                 tests/qml/tst_ExtensionIntegration.qml
                 tests/qml/tst_ProviderForms.qml
                 tests/qml/tst_ArtworkIntegration.qml
+                tests/qml/tst_LibraryScaleProfile.qml
                 tests/qml/tst_PlayerSeekBarHover.qml
                 tests/qml/tst_OptionPickerInput.qml
         )
@@ -1263,7 +1265,7 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
             math(EXPR qml_source_index "${qml_index} + 1")
             list(GET SPOOL_QML_TESTS ${qml_index} qml_test_name)
             list(GET SPOOL_QML_TESTS ${qml_source_index} qml_test_source)
-            if(qml_test_name MATCHES "^(subtitle-settings-panel|remote-control-page|provider-install-dialog|provider-shell|player-seek-bar-hover|media-row|extension-integration|provider-forms|artwork-integration|option-picker-input)$")
+            if(qml_test_name MATCHES "^(subtitle-settings-panel|remote-control-page|provider-install-dialog|provider-shell|player-seek-bar-hover|media-row|extension-integration|provider-forms|artwork-integration|library-scale-profile|option-picker-input)$")
                 set(qml_input ":/qt/qml/Spool/${qml_test_source}")
             else()
                 set(qml_input "${CMAKE_CURRENT_SOURCE_DIR}/${qml_test_source}")
@@ -1271,7 +1273,7 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
             set(qml_environment "")
             if(qml_test_name MATCHES "^(extension-integration|provider-shell)$")
                 set(qml_environment "qputenv(\"SPOOL_EXTENSION_INTEGRATION\", \"1\");")
-            elseif(qml_test_name STREQUAL "artwork-integration")
+            elseif(qml_test_name MATCHES "^(artwork-integration|library-scale-profile)$")
                 set(qml_environment "qputenv(\"SPOOL_ARTWORK_INTEGRATION\", \"1\");")
             endif()
             file(APPEND "${qml_registry}" "int test${qml_index}(int argc, char **argv) { ${qml_environment} return spoolRunQml(argc, argv, \"${qml_input}\"); }\nconst bool registered${qml_index} = SpoolTests::registerTest(\"${qml_test_name}\", &test${qml_index});\n")
