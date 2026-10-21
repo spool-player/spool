@@ -9,6 +9,7 @@
 #include <QSGMaterialShader>
 #include <QSGTexture>
 #include <QVector4D>
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstring>
@@ -125,6 +126,11 @@ namespace {
         bool m_pending = false;
     };
 
+    struct PreviewTextures {
+        std::array<std::unique_ptr<PlaneTexture>, 3> planes;
+        std::shared_ptr<const TrickplayBenchFrame> frame;
+    };
+
     class PreviewMaterial;
     class PreviewShader final : public QSGMaterialShader {
     public:
@@ -141,9 +147,10 @@ namespace {
 
     class PreviewMaterial final : public QSGMaterial {
     public:
-        PreviewMaterial(bool planar, std::shared_ptr<RenderRecord> metrics)
+        PreviewMaterial(bool planar, std::shared_ptr<RenderRecord> metrics, std::shared_ptr<PreviewTextures> resources)
             : yuv(planar)
             , record(std::move(metrics))
+            , textures(std::move(resources))
         {
             // The benchmark draws an opaque JPEG at item/window opacity 1.
             // Neither path needs a destination blend read in this experiment.
@@ -168,7 +175,7 @@ namespace {
         }
         bool yuv;
         std::shared_ptr<RenderRecord> record;
-        std::array<std::unique_ptr<PlaneTexture>, 3> textures;
+        std::shared_ptr<PreviewTextures> textures;
         QVector4D options;
         QVector4D yBounds;
         QVector4D chromaBounds;
@@ -209,7 +216,7 @@ namespace {
         const int index = binding - 1;
         if (index < 0 || index >= (material->yuv ? 3 : 1))
             return;
-        auto *plane = material->textures[size_t(index)].get();
+        auto *plane = material->textures->planes[size_t(index)].get();
         plane->commitTextureOperations(state.rhi(), state.resourceUpdateBatch());
         QElapsedTimer timer;
         timer.start();
@@ -220,9 +227,10 @@ namespace {
 
     class PreviewNode final : public QSGGeometryNode {
     public:
-        PreviewNode(bool yuv, const std::shared_ptr<RenderRecord>& record)
+        PreviewNode(
+            bool yuv, const std::shared_ptr<RenderRecord>& record, const std::shared_ptr<PreviewTextures>& textures)
             : m_geometry(QSGGeometry::defaultAttributes_TexturedPoint2D(), 4)
-            , m_material(yuv, record)
+            , m_material(yuv, record, textures)
         {
             m_geometry.setDrawingMode(QSGGeometry::DrawTriangleStrip);
             m_geometry.setVertexDataPattern(QSGGeometry::DynamicPattern);
@@ -237,7 +245,7 @@ namespace {
             const bool yuv = frame->format == TrickplayBenchFormat::Yuv420;
             const int count = yuv ? 3 : 1;
             const QSize chroma((frame->size.width() + 1) / 2, (frame->size.height() + 1) / 2);
-            const bool newFrame = frame.get() != m_frame.get();
+            const bool newFrame = frame.get() != m_material.textures->frame.get();
             QRhiTexture::Format format = QRhiTexture::BGRA8;
             if (yuv) {
                 format = rhi->isTextureFormatSupported(QRhiTexture::R8) ? QRhiTexture::R8 : QRhiTexture::RED_OR_ALPHA8;
@@ -280,7 +288,7 @@ namespace {
                         = QStringLiteral("Decoded plane %1 has invalid stride or insufficient visible rows").arg(i);
                     return false;
                 }
-                auto& texture = m_material.textures[size_t(i)];
+                auto& texture = m_material.textures->planes[size_t(i)];
                 const bool recreate
                     = !texture || texture->textureSize() != size || texture->rhiTexture()->format() != format;
                 if (recreate) {
@@ -301,6 +309,7 @@ namespace {
                 record->textureBytes += quint64(size.width()) * quint64(size.height()) * quint64(bytesPerPixel);
                 record->sourceBytes += quint64(frame->planes[size_t(i)].size());
             }
+            m_material.textures->frame = frame;
             m_frame = std::move(frame);
             QElapsedTimer timer;
             timer.start();
@@ -334,6 +343,16 @@ namespace {
         std::shared_ptr<const TrickplayBenchFrame> m_frame;
     };
 
+    class PreviewRoot final : public QSGNode {
+    public:
+        explicit PreviewRoot(bool planar)
+            : yuv(planar)
+        {
+        }
+        bool yuv;
+        std::shared_ptr<PreviewTextures> textures = std::make_shared<PreviewTextures>();
+    };
+
     bool shadersAvailable(QString *error)
     {
         for (const char *name :
@@ -363,12 +382,14 @@ namespace {
 struct TrickplayBenchmarkItem::State {
     std::shared_ptr<const TrickplayBenchFrame> frame;
     QRect crop;
+    QList<TrickplayBenchPreview> previews;
     quint64 serial = 0;
     bool requested = false;
     bool checkedShaders = false;
     QString shaderError;
     std::shared_ptr<RenderRecord> record = std::make_shared<RenderRecord>();
     QList<QMetaObject::Connection> connections;
+    QMetaObject::Connection windowChangedConnection;
 };
 
 TrickplayBenchmarkItem::TrickplayBenchmarkItem(QQuickItem *parent)
@@ -541,7 +562,7 @@ TrickplayBenchmarkItem::TrickplayBenchmarkItem(QQuickItem *parent)
         connections.append(connect(window, &QQuickWindow::sceneGraphError, this,
             [this](QQuickWindow::SceneGraphError, const QString& message) { emit renderFailure(message); }));
     };
-    connect(this, &QQuickItem::windowChanged, this, attachWindow);
+    m_state->windowChangedConnection = connect(this, &QQuickItem::windowChanged, this, attachWindow);
     // A parent supplied to QQuickItem's constructor already has a window before
     // this subclass can connect windowChanged.
     attachWindow(window());
@@ -549,6 +570,9 @@ TrickplayBenchmarkItem::TrickplayBenchmarkItem(QQuickItem *parent)
 
 TrickplayBenchmarkItem::~TrickplayBenchmarkItem()
 {
+    // QQuickItem's base destructor emits windowChanged while detaching from its
+    // window, after this subclass's State has already been destroyed.
+    disconnect(m_state->windowChangedConnection);
     for (const auto& connection : m_state->connections)
         disconnect(connection);
 }
@@ -558,6 +582,18 @@ void TrickplayBenchmarkItem::setFrame(
 {
     m_state->frame = std::move(frame);
     m_state->crop = crop;
+    m_state->previews.clear();
+    m_state->serial = serial;
+    m_state->requested = true;
+    update();
+}
+
+void TrickplayBenchmarkItem::setPreviews(
+    std::shared_ptr<const TrickplayBenchFrame> frame, const QList<TrickplayBenchPreview>& previews, quint64 serial)
+{
+    m_state->frame = std::move(frame);
+    m_state->previews = previews;
+    m_state->crop = {};
     m_state->serial = serial;
     m_state->requested = true;
     update();
@@ -617,23 +653,41 @@ QSGNode *TrickplayBenchmarkItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNo
     }
 #endif
     const QRect visible(QPoint(0, 0), m_state->frame->size);
-    if (m_state->crop.isEmpty() || !visible.contains(m_state->crop) || width() <= 0 || height() <= 0) {
+    const auto previews = m_state->previews.isEmpty()
+        ? QList<TrickplayBenchPreview> { { m_state->crop, boundingRect() } }
+        : m_state->previews;
+    const bool invalid = std::any_of(previews.cbegin(), previews.cend(), [&visible](const auto& preview) {
+        return preview.crop.isEmpty() || !visible.contains(preview.crop) || preview.destination.isEmpty();
+    });
+    if (invalid || previews.size() > 3 || width() <= 0 || height() <= 0) {
         record->error = QStringLiteral("Invalid preview crop or destination dimensions");
         delete oldNode;
         record->itemSyncNs = timer.nsecsElapsed();
         return nullptr;
     }
-    auto *node = static_cast<PreviewNode *>(oldNode);
+    auto *node = static_cast<PreviewRoot *>(oldNode);
     const bool yuv = m_state->frame->format == TrickplayBenchFormat::Yuv420;
-    if (node && node->isYuv() != yuv) {
+    if (node && node->yuv != yuv) {
         delete node;
         node = nullptr;
     }
     if (!node)
-        node = new PreviewNode(yuv, record);
-    if (!node->configure(rhi, m_state->frame, m_state->crop, boundingRect())) {
-        delete node;
-        node = nullptr;
+        node = new PreviewRoot(yuv);
+    while (node->childCount() > previews.size())
+        delete node->lastChild();
+    QSGNode *child = node->firstChild();
+    for (const auto& preview : previews) {
+        auto *quad = static_cast<PreviewNode *>(child);
+        if (!quad) {
+            quad = new PreviewNode(yuv, record, node->textures);
+            node->appendChildNode(quad);
+        }
+        if (!quad->configure(rhi, m_state->frame, preview.crop, preview.destination)) {
+            delete node;
+            node = nullptr;
+            break;
+        }
+        child = quad->nextSibling();
     }
     record->itemSyncNs = timer.nsecsElapsed();
     return node;

@@ -2,6 +2,7 @@
 
 #include <QByteArray>
 #include <QImage>
+#include <QList>
 #include <QQuickItem>
 #include <QRect>
 #include <QSize>
@@ -25,6 +26,11 @@ struct TrickplayBenchFrame {
     std::array<int, 3> strides {};
 };
 
+struct TrickplayBenchPreview {
+    QRect crop;
+    QRectF destination;
+};
+
 class TrickplayBenchmarkItem final : public QQuickItem {
     Q_OBJECT
 public:
@@ -33,6 +39,10 @@ public:
     // GUI thread. A new frame pointer uploads pixels; crop-only changes do not.
     void setFrame(std::shared_ptr<const TrickplayBenchFrame> frame, const QRect& crop, quint64 serial);
     void clearFrame(quint64 serial);
+    // Untimed comparison sheets share one decoded atlas and one texture set per
+    // method. Each crop still uses that method's real scene-graph material.
+    void setPreviews(
+        std::shared_ptr<const TrickplayBenchFrame> frame, const QList<TrickplayBenchPreview>& previews, quint64 serial);
 
 signals:
     // One record per requested serial, after the scene graph records its frame.
