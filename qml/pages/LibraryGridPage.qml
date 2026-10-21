@@ -47,10 +47,20 @@ FocusScope {
     }
     // The letter rail: for a name-sorted list long enough to need one, whose
     // length is known (every row held, or a sparse listing of all of them).
-    readonly property bool alphabetRail: Boolean(Browse.alphabetical && (Browse.sparse || !Browse.hasMore) && grid.count
-                                                 >= 60)
+    // More than a couple of screens: worth telling where in it the view is.
+    readonly property bool longList: grid.contentHeight > grid.height * 2.5
+    // Space for the rail is kept whenever one could appear, so it showing up
+    // never reflows the grid under the viewer.
+    readonly property bool alphabetRailReserved: Boolean(Browse.alphabetical && grid.count >= 60)
+    readonly property bool alphabetRail: alphabetRailReserved && Boolean(Browse.sparse || !Browse.hasMore) && longList
 
     readonly property var alphabetLetters: alphabetRail && Browse.alphabetRevision >= 0 ? Browse.alphabet : []
+    // Moving faster than a few screens a second, by fling, wheel or scroll
+    // bar: nothing passing is seen long enough to be worth a request the
+    // server would only finish after the view has moved on.
+    property bool scrollingFast: false
+    property double lastScrollAt: 0
+    property real lastScrollY: 0
     // Remote focus has moved off the grid onto the rail.
     property bool railActive: false
     property int railIndex: -1
@@ -1340,9 +1350,8 @@ FocusScope {
                 boundsBehavior: Flickable.StopAtBounds
                 model: Browse.items
                 leftMargin: focusPadding
-                rightMargin: focusPadding + Math.max(Metrics.scaled(10), 10) + Metrics.scaled(6) + (root.alphabetRail
-                                                                                                    ? letterRail.restingWidth :
-                                                                                                      0)
+                rightMargin: focusPadding + Math.max(Metrics.scaled(10), 10) + Metrics.scaled(6) + (
+                                 root.alphabetRailReserved ? letterRail.restingWidth : 0)
                 // Each cell carries its own trailing gap (delegates are
                 // cellWidth - gapPx), so the track must not be charged for the
                 // gaps a second time: divide the whole run evenly and let the
@@ -1367,9 +1376,18 @@ FocusScope {
                     requestMoreIfNeeded()
                 }
                 onContentYChanged: {
+                    const now = Date.now()
+                    const elapsed = now - root.lastScrollAt
+                    if (elapsed > 0 && elapsed < 200 && Math.abs(contentY - root.lastScrollY) * 1000 / elapsed > height
+                            * 3)
+                        root.scrollingFast = true
+                    root.lastScrollAt = now
+                    root.lastScrollY = contentY
+                    if (root.scrollingFast)
+                        scrollSettle.restart()
                     requestPageIfNeeded()
                     artworkWindowDebounce.restart()
-                    if (Browse.sparse && !artworkWindowThrottle.running)
+                    if (Browse.sparse && !grid.racing && !root.scrollingFast && !artworkWindowThrottle.running)
                         artworkWindowThrottle.start()
                     alphabetFeedback.restart()
                 }
@@ -1412,10 +1430,7 @@ FocusScope {
                     anchors.rightMargin: -Math.max(Metrics.scaled(10), 10)
                     z: 5
                     visible: root.alphabetRail
-                    flickable: grid
                     letters: root.alphabetLetters
-                    columns: root.columns
-                    cellHeight: grid.cellHeight
                     active: root.railActive
                     currentIndex: root.railActive ? root.railIndex : root.viewLetterIndex
                     interactive: Platform.hasPointer
@@ -1424,6 +1439,9 @@ FocusScope {
                         root.jumpToLetter(index)
                     }
                 }
+                // Where a fast hold lets go is where loading starts.
+                onRacingChanged: if (!racing)
+                                     requestMoreIfNeeded()
                 onEdgeUp: root.focusToolbar()
                 onAccepted: root.activateCurrent()
                 onHoldStarted: Browse.prefetchNextPage()
@@ -1497,6 +1515,16 @@ FocusScope {
                     }
                 }
 
+                Timer {
+                    id: scrollSettle
+                    interval: 120
+                    repeat: false
+                    onTriggered: {
+                        root.scrollingFast = false
+                        grid.requestMoreIfNeeded()
+                    }
+                }
+
                 // While the view keeps moving, a sparse listing still loads
                 // what is under it a few times a second.
                 Timer {
@@ -1536,12 +1564,8 @@ FocusScope {
 
                     // With the letter rail it stands clear of the rail, open or not.
                     anchors.right: libraryScrollBar.right
-                    anchors.rightMargin: libraryScrollBar.visualWidth + (root.alphabetRail ? (letterRail.expanded
-                                                                                              ? letterRail.expandedWidth :
-                                                                                                letterRail.restingWidth)
-                                                                                             - Math.max(Metrics.scaled(
-                                                                                                            10), 10)
-                                                                                             + Metrics.scaled(4) : 0)
+                    anchors.rightMargin: libraryScrollBar.visualWidth + (root.alphabetRail ? letterRail.restingWidth :
+                                                                                             0)
                     y: Math.max(0, Math.min(grid.height - height, desiredY))
                     width: Metrics.scaled(52) + neckWidth
                     height: Metrics.scaled(48)
@@ -1549,8 +1573,10 @@ FocusScope {
                     // the bar, so the bar says where it has gone: the callout
                     // reads the same whether a remote walked the grid there or
                     // a pointer dragged the handle.
-                    opacity: alphabetFeedback.running || libraryScrollBar.pressed || root.railActive
-                             || letterRail.pointing ? 1 : 0
+                    // Only for lists long enough that the position needs
+                    // telling, and never beside the rail's own bubble.
+                    opacity: root.longList && !letterRail.engaged && (alphabetFeedback.running
+                                                                      || libraryScrollBar.pressed) ? 1 : 0
                     visible: opacity > 0
                     preferredRendererType: Shape.CurveRenderer
                     z: 21
@@ -1664,6 +1690,7 @@ FocusScope {
                         // Delegate y is initially zero while GridView lays out
                         // buffered/reused cells. Use the model row and origin
                         // instead so those transient positions cannot start IO.
+                        artworkDeferred: grid.racing || root.scrollingFast
                         artworkEnabled: loaded && !artworkPooled && grid.cellHeight > 0 && root.columns > 0 && (Math.floor(
                                                                                                                     index / root.columns)
                                                                                                                 + 1) * grid.cellHeight

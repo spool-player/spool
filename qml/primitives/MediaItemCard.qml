@@ -22,6 +22,8 @@ Item {
     property real progress: -1
     property bool artworkVisible: true
     property bool artworkEnabled: true
+    // Keep what is shown but start nothing new; see ImageCard.
+    property bool artworkDeferred: false
     // Where the item comes from, shown over its artwork when set.
     property url badgeIcon
     property string badgeText: ""
@@ -111,6 +113,7 @@ Item {
         bordered: false
         imageUrl: root.imageSource()
         artworkEnabled: root.artworkEnabled
+        artworkDeferred: root.artworkDeferred
         fallbackText: root.fallbackText()
         fallbackIcon: root.fallbackIcon.length > 0 ? root.fallbackIcon : root.posterKind ? "movie" : ""
         fallbackTint: root.fallbackTint

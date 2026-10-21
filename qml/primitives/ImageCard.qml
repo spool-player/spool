@@ -11,7 +11,23 @@ Item {
     property color fallbackTint: "transparent"
     property bool artworkVisible: true
     property bool artworkEnabled: true
+    // Hold off starting a load -- the view is racing past -- while keeping
+    // whatever this card already shows. A recycled card for another item
+    // shows its blank frame rather than the previous item's picture.
+    property bool artworkDeferred: false
     property bool bordered: true
+    readonly property string wantedSource: artworkEnabled && imageUrl.length > 0 ? artworkSource(imageUrl) : ""
+    property string appliedSource: ""
+
+    function syncSource() {
+        if (wantedSource.length === 0 || !artworkDeferred || appliedSource === wantedSource)
+            appliedSource = wantedSource
+        else
+            appliedSource = ""
+    }
+    onWantedSourceChanged: syncSource()
+    onArtworkDeferredChanged: syncSource()
+    Component.onCompleted: syncSource()
     readonly property bool artworkReady: !artworkEnabled || imageUrl.length === 0 || artwork.status === Image.Ready || artwork.status
                                          === Image.Error
 
@@ -60,7 +76,7 @@ Item {
             id: artwork
             anchors.fill: parent
             anchors.margins: frame.border.width
-            source: root.artworkEnabled && root.imageUrl.length > 0 ? root.artworkSource(root.imageUrl) : ""
+            source: root.appliedSource
             fillMode: Image.PreserveAspectCrop
             asynchronous: true
             // Never display the previous delegate's artwork after its source

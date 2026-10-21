@@ -345,6 +345,23 @@ TestCase {
         tryCompare(grid, "heldKey", 0, grid.holdReleaseTimeout + 1000)
     }
 
+    function test_appStallDoesNotEndHoldButSilenceStillDoes() {
+        grid.forceActiveFocus()
+        verify(grid.routeKey(Qt.Key_Down, "press", false))
+        verify(grid.routeKey(Qt.Key_Down, "press", true))
+        compare(grid.heldKey, Qt.Key_Down)
+        // The view is busy past the watchdog's deadline with the next repeat
+        // still queued: a late watchdog is a stall, not a release.
+        const blockedUntil = Date.now() + grid.holdReleaseTimeout + 200
+        while (Date.now() < blockedUntil) {}
+        wait(0)
+        compare(grid.heldKey, Qt.Key_Down)
+        verify(grid.routeKey(Qt.Key_Down, "press", true))
+        compare(grid.heldKey, Qt.Key_Down)
+        // Then the key genuinely goes quiet and the hold ends as before.
+        tryCompare(grid, "heldKey", 0, grid.holdReleaseTimeout + 1000)
+    }
+
     function test_topLeftVisibleIndexEmpty() {
         modelSize = 0
         compare(grid.topLeftVisibleIndex(), -1)
