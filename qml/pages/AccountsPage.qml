@@ -603,7 +603,9 @@ FocusScope {
             AppText {
                 Layout.fillWidth: true
                 Layout.topMargin: Metrics.scaled(12)
-                text: root.startupMode || root.onboardingId.length > 0 ? "Who's watching?" : "Profiles & servers"
+                text: root.onboardingId.length > 0 ? "Signing in…" : root.startupMode ? "Who's watching?" :
+                                                                                        "Profiles & servers"
+
                 font.pixelSize: Metrics.titleSizePx
                 font.weight: Font.DemiBold
                 horizontalAlignment: Text.AlignHCenter
@@ -611,7 +613,7 @@ FocusScope {
 
             AppText {
                 Layout.fillWidth: true
-                text: root.onboardingId.length > 0 ? "Select your watching profile, then choose how Spool starts." :
+                text: root.onboardingId.length > 0 ? "Your library opens as soon as the server answers." :
                                                      root.startupMode
                                                      ? "Choose a profile for each server that asks. Other servers are already open." :
                                                        "One person watches on each server at a time. Independent servers appear on Home together."

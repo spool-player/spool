@@ -1171,12 +1171,9 @@ SPOOL_TEST_MAIN("app-journey")
         journey.command({ "key", "ok" });
         journey.await([&] { return fixture.successfulLogins == 1 && fixture.authenticatedViews > 0; },
             "login did not activate an authenticated provider library");
-        journey.label("Who's watching?");
-        journey.click("Journey Viewer");
-        journey.label("When Spool starts");
-        journey.click("Always use Journey Viewer");
+        // A sign-in opens straight into Home: no profile or startup question.
         journey.await([&] { return journey.state()["route"] == "home"; },
-            "watching-profile onboarding did not enter the actual Home route");
+            "a finished sign-in did not open the actual Home route by itself");
         journey.openLibrary("Journey Library");
         journey.await([&] { return fixture.authenticatedBrowse > 0 && !journey.state()["browseLoading"].toBool(); },
             "browse did not request the selected library");

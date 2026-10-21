@@ -306,6 +306,9 @@ private:
     // Only endpoint hashes and bounded numeric observations, never URLs or credentials.
     QVariantMap m_networkProfiles;
     QVariantMap m_networkEndpoints;
+    // Providers the viewer has let search the local network once; a later
+    // sign-in with the same provider is not asked again.
+    QStringList m_lanApprovedModules;
     QHash<QString, QPair<quint64, quint64>> m_networkFeedback;
     QHash<QString, QHash<int, quint64>> m_networkPointSamples;
     QTimer m_networkSaveTimer;

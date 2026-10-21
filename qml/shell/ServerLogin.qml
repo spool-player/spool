@@ -117,6 +117,7 @@ FocusScope {
                                  validAddress = !!result.servers.length
                          }, () => {})
     }
+    property bool autoChosen: false
     function mergeServers(found) {
         const merged = servers.slice()
         for (const entry of found) {
@@ -146,8 +147,17 @@ FocusScope {
         const stamp = discoveryGeneration
         provider.request("discover").then(result => {
             discovering = false
-            if (stamp === discoveryGeneration && !closed)
-                mergeServers(result.servers || [])
+            if (stamp !== discoveryGeneration || closed)
+                return
+            mergeServers(result.servers || [])
+            // One server answering at home is almost always the one; open it
+            // unless the viewer has started typing another. Only once, so
+            // Back from its sign-in stays on the server list.
+            if (!autoChosen && servers.length === 1 && address.text.length === 0 && step === "server" && !busy
+                    && servers[0].address) {
+                autoChosen = true
+                connect(String(servers[0].address))
+            }
         }, () => {
             discovering = false
         })

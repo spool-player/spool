@@ -831,6 +831,15 @@ export function createSource(config, sourceHost) {
     require(failure(registry.allowLanDiscovery(extendedAlice, "lan")) == "unsupported_capability",
         "signed-in accounts cannot request subnet discovery");
     lanDraft->close();
+    // Approved once for this provider, a later sign-in searches without asking.
+    auto *laterDraft = qobject_cast<ProviderUiContext *>(registry.beginSetup("fixture.test"));
+    consentSettled = consentApproved = false;
+    registry.allowLanDiscovery(laterDraft->sourceId(), "lan")
+        .then([&] { consentSettled = consentApproved = true; }, [&](const std::exception&) { consentSettled = true; });
+    waitUntil([&] { return consentSettled; }, "a remembered approval settles without a prompt");
+    require(consentApproved && registry.networkConsent().isEmpty(),
+        "the same provider is not asked to search the local network twice");
+    laterDraft->close();
     bool pendingStarted = false;
     bool pendingSettled = false;
     bool pendingSucceeded = false;

@@ -333,6 +333,7 @@ QCoro::Task<void> ProviderRegistry::restore()
     m_startupChoices = root.value(QStringLiteral("startup")).toObject().toVariantMap();
     m_networkProfiles = root.value(QStringLiteral("networkProfiles")).toObject().toVariantMap();
     m_networkEndpoints = root.value(QStringLiteral("networkEndpoints")).toObject().toVariantMap();
+    m_lanApprovedModules = root.value(QStringLiteral("lanApproved")).toVariant().toStringList();
     std::vector<ProviderAccount> accounts;
     for (const QJsonValue& row : root.value(QStringLiteral("accounts")).toArray()) {
         ProviderAccount account = fromJson(row.toObject());
@@ -956,7 +957,8 @@ void ProviderRegistry::persist(bool credentials)
                               { QStringLiteral("activationOptions"), QJsonObject::fromVariantMap(m_activationOptions) },
                               { QStringLiteral("startup"), QJsonObject::fromVariantMap(m_startupChoices) },
                               { QStringLiteral("networkProfiles"), QJsonObject::fromVariantMap(m_networkProfiles) },
-                              { QStringLiteral("networkEndpoints"), QJsonObject::fromVariantMap(m_networkEndpoints) } })
+                              { QStringLiteral("networkEndpoints"), QJsonObject::fromVariantMap(m_networkEndpoints) },
+                              { QStringLiteral("lanApproved"), QJsonArray::fromStringList(m_lanApprovedModules) } })
                 .toJson(QJsonDocument::Compact)));
 }
 
@@ -1907,8 +1909,15 @@ QCoro::Task<void> ProviderRegistry::allowLanDiscovery(QString draftId, QString s
     const quint64 generation = running->generation;
     const quint64 revision = running->networkRevision;
     QPointer<ProviderRegistry> guard(this);
-    if (!co_await requestNetworkConsent(draftId, scope, QStringLiteral("lan")))
-        throw std::runtime_error("discovery_denied");
+    const QString moduleId = running->module;
+    if (!m_lanApprovedModules.contains(moduleId)) {
+        if (!co_await requestNetworkConsent(draftId, scope, QStringLiteral("lan")))
+            throw std::runtime_error("discovery_denied");
+        if (!guard)
+            co_return;
+        m_lanApprovedModules.append(moduleId);
+        persist();
+    }
     if (!guard || m_running.value(draftId).generation != generation
         || m_running.value(draftId).networkRevision != revision)
         throw std::runtime_error("source_changed");

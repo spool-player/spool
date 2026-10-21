@@ -393,11 +393,32 @@ KeyRouter {
                 root.applyInitializedRoute()
         }
         function onAccountSetupStarted(accountId) {
+            // The accounts page shows the new profile connecting, and keeps
+            // any failure beside it; success needs nothing from the viewer.
+            root.linkingAccountId = accountId
             Router.reset("accounts", {
                              "onboarding": accountId
                          })
             root.navigationTarget = routeStack
             InputKeys.focus(routeStack)
+        }
+        // A new sign-in opens straight into its library. The profile just
+        // signed in to is what Spool opens with from now on, unless this
+        // server was already set to ask who is watching; both are changed on
+        // the accounts page, not asked about after every sign-in.
+        function onAccountSelectionFinished(accountId, selected) {
+            if (accountId !== root.linkingAccountId)
+                return
+            root.linkingAccountId = ""
+            if (!selected)
+                return
+            const account = Providers.accounts.find(entry => entry.id === accountId)
+            if (!account || String(account.startupMode || "") !== "ask")
+                Providers.setStartupChoice(accountId, "always")
+            Providers.finishOnboarding(accountId)
+            root.goHome()
+            if (account)
+                toast.show("Signed in" + (account.detail ? " to " + account.detail : ""))
         }
         function onComponentRequested(context) {
             root.providerOverlay = context
@@ -417,6 +438,9 @@ KeyRouter {
         if (root.networkConsentPending)
             Providers.resolveNetworkConsent(String(root.networkConsent.id), false)
     }
+    // The account whose sign-in has just finished and is still connecting.
+    property string linkingAccountId: ""
+
     function showToastAction(message, actionText, callback) {
         toast.showAction(message, actionText, callback)
     }
