@@ -229,6 +229,8 @@ set(SPOOL_SHELL_SOURCES
     src/app/ArtworkImageProvider.cpp
     src/app/ArtworkImageProvider.h
     src/app/ArtworkPrefetcher.h
+    src/app/ArtworkConcurrency.cpp
+    src/app/ArtworkConcurrency.h
     src/app/ArtworkService.cpp
     src/app/ArtworkService.h
     src/app/TrickplayDecoder.cpp
@@ -868,6 +870,7 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
     set(SPOOL_TESTS_app
         browse-session-controller tests/app/BrowseSessionControllerTest.cpp
         browse-sparse-listing tests/app/BrowseSparseListingTest.cpp
+        artwork-concurrency tests/app/ArtworkConcurrencyTest.cpp
         settings-schema tests/app/SettingsSchemaTest.cpp
         settings-controller tests/app/SettingsControllerTest.cpp
         settings-sync-controller tests/app/SettingsSyncControllerTest.cpp

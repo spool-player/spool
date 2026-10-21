@@ -519,6 +519,8 @@ FocusScope {
             return SettingsSync.summary
         if (row.key === "action/connectionSpeed")
             return App.connectionSpeedDescription
+        if (row.key === "artwork/downloads" && Art.downloadStatus.length > 0)
+            return row.description + " · Now " + Art.downloadStatus
         if (row.key === "action/downloads")
             return Downloads.jobs.length ? Downloads.jobs.length + " downloads · Play saved files offline" :
                                            "Manage downloads and play saved files offline"
