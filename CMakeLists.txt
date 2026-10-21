@@ -625,6 +625,7 @@ qt_add_qml_module(spool
         qml/primitives/MetadataChip.qml
         qml/primitives/MenuListView.qml
         qml/primitives/ListScrollBar.qml
+        qml/primitives/AlphabetRail.qml
         qml/primitives/MenuRow.qml
         qml/primitives/SecondaryText.qml
         qml/primitives/NavGrid.qml

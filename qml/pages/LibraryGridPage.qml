@@ -30,6 +30,7 @@ FocusScope {
     property var filterEntries: []
     property var libraryEntries: []
     property string typeAheadBuffer: ""
+    property bool typeAheadMissed: false
     readonly property bool directionRelease: true
     readonly property int alphabetFeedbackIndex: {
         if (grid.heldKey && grid.currentIndex >= 0)
@@ -39,8 +40,26 @@ FocusScope {
     readonly property string currentAlphabetLabel: {
         if (!Browse.items || alphabetFeedbackIndex < 0 || alphabetFeedbackIndex >= Browse.items.count)
             return "#"
+        // By name the controller knows the letter even of rows not loaded yet.
+        if (Browse.alphabetical)
+            return Browse.alphabetRevision >= 0 ? Browse.labelAt(alphabetFeedbackIndex) : "#"
         return LibraryNavigation.sectionLabel(currentSortBy(), Browse.items.get(alphabetFeedbackIndex))
     }
+    // The letter rail: for a name-sorted list long enough to need one, whose
+    // length is known (every row held, or a sparse listing of all of them).
+    readonly property bool alphabetRail: Boolean(Browse.alphabetical && (Browse.sparse || !Browse.hasMore) && grid.count
+                                                 >= 60)
+
+    readonly property var alphabetLetters: alphabetRail && Browse.alphabetRevision >= 0 ? Browse.alphabet : []
+    // Remote focus has moved off the grid onto the rail.
+    property bool railActive: false
+    property int railIndex: -1
+    readonly property int viewLetterIndex: {
+        const label = currentAlphabetLabel
+        return alphabetLetters.findIndex(letter => letter.label === label)
+    }
+    onAlphabetRailChanged: if (!alphabetRail)
+                               railActive = false
     readonly property var libraryList: libraryPanel.menuList
     readonly property var sortList: sortPanel.menuList
     readonly property var filterList: filterPanel.menuList
@@ -615,16 +634,92 @@ FocusScope {
         const code = character.charCodeAt(0)
         if (code < 32 || code === 127 || character === "/" || (character === " " && typeAheadBuffer.length <= 0))
             return false
+        railActive = false
         const previous = typeAheadBuffer
         const repeatedSingle = previous.length === 1 && previous === character
+        // Pressing one letter again walks through that letter's titles.
+        if (repeatedSingle && Browse.alphabetical && grid.currentIndex + 1 < grid.count && Browse.labelAt(
+                    grid.currentIndex + 1).toLocaleLowerCase() === character) {
+            jumpToRow(grid.currentIndex + 1)
+            typeAheadReset.restart()
+            return true
+        }
+        // By name the list is a dictionary: each key refines the prefix and
+        // the controller finds it, loading only the rows it has to.
+        if (Browse.seekPrefix(previous + character)) {
+            typeAheadBuffer = previous + character
+            typeAheadMissed = false
+            typeAheadReset.restart()
+            return true
+        }
         const candidate = repeatedSingle ? character : previous + character
         typeAheadBuffer = candidate
-        if (!selectTypeAheadMatch(candidate, previous.length > 0 && !repeatedSingle) && candidate.length > 1) {
-            typeAheadBuffer = character
-            selectTypeAheadMatch(character, false)
+        typeAheadMissed = false
+        if (!selectTypeAheadMatch(candidate, previous.length > 0 && !repeatedSingle)) {
+            if (candidate.length > 1 && selectTypeAheadMatch(character, false))
+                typeAheadBuffer = character
+            else
+                typeAheadMissed = true
         }
+        // A miss in a list not sorted by name can still be found by search.
+        typeAheadReset.interval = typeAheadMissed ? 4000 : 1250
         typeAheadReset.restart()
         return true
+    }
+
+    function searchTypedText() {
+        const text = typeAheadBuffer
+        typeAheadBuffer = ""
+        typeAheadMissed = false
+        typeAheadReset.stop()
+        if (!hasShell() || text.length <= 0)
+            return
+        Search.setQuery(text)
+        shell.pushRoute("search")
+    }
+
+    function jumpToRow(row) {
+        if (grid.count <= 0)
+            return
+        const target = Math.max(0, Math.min(grid.count - 1, row))
+        grid.currentIndex = target
+        grid.positionViewAtIndex(target, GridView.Beginning)
+        grid.requestMoreIfNeeded()
+    }
+
+    function jumpToLetter(index) {
+        if (index < 0 || index >= alphabetLetters.length)
+            return
+        railIndex = index
+        jumpToRow(alphabetLetters[index].row)
+    }
+
+    // Channel up/down, page up/down: the letter before or after this one.
+    function stepLetter(delta) {
+        if (!alphabetRail || alphabetLetters.length <= 0)
+            return false
+        const from = viewLetterIndex >= 0 ? viewLetterIndex : 0
+        const next = Math.max(0, Math.min(alphabetLetters.length - 1, from + delta))
+        // Already inside a letter, page up returns to its first title.
+        if (delta < 0 && grid.currentIndex > alphabetLetters[from].row)
+            jumpToLetter(from)
+        else
+            jumpToLetter(next)
+        return true
+    }
+
+    function enterRail() {
+        if (!alphabetRail)
+            return false
+        railIndex = Math.max(0, viewLetterIndex)
+        railActive = true
+        return true
+    }
+
+    function leaveRail() {
+        railActive = false
+        InputKeys.focus(grid)
+        grid.ensureCurrentVisible()
     }
 
     function activateLibraryIndex(index) {
@@ -746,6 +841,9 @@ FocusScope {
 
     Connections {
         target: Browse
+        function onSeekMoved(row, settled) {
+            root.jumpToRow(row)
+        }
         function onChanged() {
             if (root.filtersOpen)
                 root.filterEntries = root.buildFilterEntries()
@@ -818,6 +916,28 @@ FocusScope {
     }
 
     function routeKey(key, phase, repeat) {
+        if (railActive) {
+            if (phase === "release")
+                return InputKeys.isDirection(key)
+            if (key === Qt.Key_Up || key === Qt.Key_Down) {
+                jumpToLetter(Math.max(0, Math.min(alphabetLetters.length - 1, railIndex + (key === Qt.Key_Up ? -1 :
+                                                                                                               1))))
+
+                return true
+            }
+            if (key === Qt.Key_Left) {
+                leaveRail()
+                return true
+            }
+            return InputKeys.isDirection(key)
+        }
+        if (phase === "press" && grid.activeFocus && (key === Qt.Key_PageUp || key === Qt.Key_PageDown))
+            return stepLetter(key === Qt.Key_PageUp ? -1 : 1)
+        // Right from the last column steps onto the letter rail.
+        if (phase === "press" && !repeat && key === Qt.Key_Right && grid.activeFocus && alphabetRail
+                && grid.currentIndex >= 0 && (grid.currentIndex % root.columns === root.columns - 1
+                                              || grid.currentIndex === grid.count - 1) && !pointerNavigationPending)
+            return enterRail()
         if (phase === "release" && InputKeys.isDirection(key)) {
             InputKeys.consumeRecoveryGesture(recoveryGesture, key, phase, repeat, false)
             return grid.routeKey(key, phase, repeat)
@@ -896,6 +1016,14 @@ FocusScope {
     }
 
     function activate() {
+        if (railActive) {
+            leaveRail()
+            return
+        }
+        if (typeAheadMissed && typeAheadBuffer.length > 0 && grid.activeFocus) {
+            searchTypedText()
+            return
+        }
         if (libraryList && libraryList.activeFocus)
             libraryList.activate()
         else if (sortList && sortList.activeFocus)
@@ -931,8 +1059,14 @@ FocusScope {
     }
 
     function back() {
+        if (railActive) {
+            leaveRail()
+            return true
+        }
         if (typeAheadBuffer.length > 0) {
             typeAheadBuffer = ""
+            typeAheadMissed = false
+            Browse.cancelSeek()
             typeAheadReset.stop()
             return true
         }
@@ -1206,7 +1340,9 @@ FocusScope {
                 boundsBehavior: Flickable.StopAtBounds
                 model: Browse.items
                 leftMargin: focusPadding
-                rightMargin: focusPadding + Math.max(Metrics.scaled(10), 10) + Metrics.scaled(6)
+                rightMargin: focusPadding + Math.max(Metrics.scaled(10), 10) + Metrics.scaled(6) + (root.alphabetRail
+                                                                                                    ? letterRail.restingWidth :
+                                                                                                      0)
                 // Each cell carries its own trailing gap (delegates are
                 // cellWidth - gapPx), so the track must not be charged for the
                 // gaps a second time: divide the whole run evenly and let the
@@ -1233,6 +1369,8 @@ FocusScope {
                 onContentYChanged: {
                     requestPageIfNeeded()
                     artworkWindowDebounce.restart()
+                    if (Browse.sparse && !artworkWindowThrottle.running)
+                        artworkWindowThrottle.start()
                     alphabetFeedback.restart()
                 }
                 onCurrentIndexChanged: {
@@ -1265,6 +1403,26 @@ FocusScope {
                     interactive: Platform.hasPointer
                     minimumSize: 0.04
                     onScrolled: root.beginPointerNavigation(null)
+                }
+                AlphabetRail {
+                    id: letterRail
+                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
+                    anchors.right: libraryScrollBar.left
+                    anchors.rightMargin: -Math.max(Metrics.scaled(10), 10)
+                    z: 5
+                    visible: root.alphabetRail
+                    flickable: grid
+                    letters: root.alphabetLetters
+                    columns: root.columns
+                    cellHeight: grid.cellHeight
+                    active: root.railActive
+                    currentIndex: root.railActive ? root.railIndex : root.viewLetterIndex
+                    interactive: Platform.hasPointer
+                    onLetterChosen: (index, final) => {
+                        root.beginPointerNavigation(null)
+                        root.jumpToLetter(index)
+                    }
                 }
                 onEdgeUp: root.focusToolbar()
                 onAccepted: root.activateCurrent()
@@ -1339,6 +1497,15 @@ FocusScope {
                     }
                 }
 
+                // While the view keeps moving, a sparse listing still loads
+                // what is under it a few times a second.
+                Timer {
+                    id: artworkWindowThrottle
+                    interval: 350
+                    repeat: false
+                    onTriggered: grid.requestMoreIfNeeded()
+                }
+
                 Timer {
                     id: routeCheckpoint
                     interval: 250
@@ -1367,8 +1534,14 @@ FocusScope {
                     readonly property real midY: height / 2
                     readonly property real desiredY: libraryScrollBar.handleCenterY - height / 2
 
+                    // With the letter rail it stands clear of the rail, open or not.
                     anchors.right: libraryScrollBar.right
-                    anchors.rightMargin: libraryScrollBar.visualWidth
+                    anchors.rightMargin: libraryScrollBar.visualWidth + (root.alphabetRail ? (letterRail.expanded
+                                                                                              ? letterRail.expandedWidth :
+                                                                                                letterRail.restingWidth)
+                                                                                             - Math.max(Metrics.scaled(
+                                                                                                            10), 10)
+                                                                                             + Metrics.scaled(4) : 0)
                     y: Math.max(0, Math.min(grid.height - height, desiredY))
                     width: Metrics.scaled(52) + neckWidth
                     height: Metrics.scaled(48)
@@ -1376,7 +1549,8 @@ FocusScope {
                     // the bar, so the bar says where it has gone: the callout
                     // reads the same whether a remote walked the grid there or
                     // a pointer dragged the handle.
-                    opacity: alphabetFeedback.running || libraryScrollBar.pressed ? 1 : 0
+                    opacity: alphabetFeedback.running || libraryScrollBar.pressed || root.railActive
+                             || letterRail.pointing ? 1 : 0
                     visible: opacity > 0
                     preferredRendererType: Shape.CurveRenderer
                     z: 21
@@ -1470,6 +1644,7 @@ FocusScope {
                         id: gridDelegate
 
                         required property int index
+                        required property bool loaded
                         property bool artworkPooled: false
                         GridView.onPooled: artworkPooled = true
                         GridView.onReused: artworkPooled = false
@@ -1480,8 +1655,8 @@ FocusScope {
                         kind: root.squareArtwork ? "square" : "poster"
                         preferEpisodeTitle: false
                         useSeriesPoster: true
-                        focused: Metrics.keyboardFocusActive && root.navigationFocusVisible && grid.activeFocus
-                                 && gridDelegate.GridView.isCurrentItem
+                        focused: Metrics.keyboardFocusActive && root.navigationFocusVisible && grid.activeFocus &&
+                                 !root.railActive && gridDelegate.GridView.isCurrentItem
                         artworkVisible: true
                         // Buffered delegates must not enter the render queue:
                         // scrolling cancels old requests and loads the viewport
@@ -1489,14 +1664,43 @@ FocusScope {
                         // Delegate y is initially zero while GridView lays out
                         // buffered/reused cells. Use the model row and origin
                         // instead so those transient positions cannot start IO.
-                        artworkEnabled: !artworkPooled && grid.cellHeight > 0 && root.columns > 0 && (Math.floor(index
-                                                                                                                 / root.columns)
-                                                                                                      + 1) * grid.cellHeight
+                        artworkEnabled: loaded && !artworkPooled && grid.cellHeight > 0 && root.columns > 0 && (Math.floor(
+                                                                                                                    index / root.columns)
+                                                                                                                + 1) * grid.cellHeight
                                         > grid.contentY - grid.originY && Math.floor(index / root.columns)
                                         * grid.cellHeight < grid.contentY - grid.originY + grid.height
 
                         Component.onCompleted: gridReveal.schedule()
                         onArtworkReadyChanged: gridReveal.schedule()
+
+                        // A row not fetched yet: the letter it is under, so a
+                        // fling across an unloaded stretch still reads as A..Z.
+                        Rectangle {
+                            width: parent.width
+                            height: parent.artHeight
+                            radius: Theme.radiusMedium
+                            color: Theme.bgRaised
+                            border.width: 1
+                            border.color: Theme.border
+                            opacity: gridDelegate.loaded ? 0 : 1
+                            visible: opacity > 0
+
+                            Behavior on opacity {
+                                NumberAnimation {
+                                    duration: Theme.reducedMotion ? 0 : 160
+                                }
+                            }
+
+                            AppText {
+                                anchors.centerIn: parent
+                                text: !gridDelegate.loaded && Browse.alphabetical && Browse.alphabetRevision >= 0
+                                      ? Browse.labelAt(gridDelegate.index) : ""
+                                font.pixelSize: Math.round(parent.width * 0.42)
+                                font.weight: Font.Bold
+                                color: Theme.textMuted
+                                opacity: 0.35
+                            }
+                        }
                     }
                 }
 
@@ -1507,6 +1711,7 @@ FocusScope {
                         id: listRow
 
                         required property int index
+                        required property bool loaded
                         required property string displayTitle
                         required property string displaySubtitle
 
@@ -1522,7 +1727,10 @@ FocusScope {
                             anchors.right: rowSubtitle.left
                             anchors.rightMargin: Metrics.scaled(16)
                             anchors.verticalCenter: parent.verticalCenter
-                            text: listRow.displayTitle
+                            text: listRow.loaded ? listRow.displayTitle : Browse.alphabetical
+                                                   && Browse.alphabetRevision >= 0 ? Browse.labelAt(listRow.index)
+                                                                                     + "…" : "…"
+                            opacity: listRow.loaded ? 1 : 0.4
                             font.pixelSize: Metrics.bodySizePx + Metrics.scaled(2)
                             font.weight: listRow.GridView.isCurrentItem ? Font.DemiBold : Font.Medium
                             color: listRow.GridView.isCurrentItem ? Theme.textPrimary : Theme.textSecondary
@@ -1556,13 +1764,16 @@ FocusScope {
                         color: "transparent"
                         radius: Math.max(0, Theme.radiusMedium - Theme.focusBorderWidth)
                         border.width: Theme.focusBorderWidth
-                        border.color: root.navigationFocusVisible && ((Metrics.keyboardFocusActive && grid.activeFocus)
-                                                                      || (root.listMode && Metrics.coarsePointer
-                                                                          && root.touchPreviewItemId.length > 0
-                                                                          && root.touchPreviewItemId === String(
-                                                                              root.paneItem ? root.paneItem.movieId :
-                                                                                              ""))) ? Theme.accent :
-                                                                                                      "transparent"
+                        border.color: root.navigationFocusVisible && ((Metrics.keyboardFocusActive && grid.activeFocus
+                                                                       && !root.railActive) || (root.listMode
+                                                                                                && Metrics.coarsePointer
+                                                                                                && root.touchPreviewItemId.length
+                                                                                                > 0 && root.touchPreviewItemId
+                                                                                                === String(
+                                                                                                    root.paneItem
+                                                                                                    ? root.paneItem.movieId :
+                                                                                                      ""))) ? Theme.accent :
+                                                                                                              "transparent"
                     }
                 }
 
@@ -1587,21 +1798,40 @@ FocusScope {
         anchors.top: parent.top
         anchors.rightMargin: Metrics.pageMarginPx
         anchors.topMargin: root.contentTopMargin + 54
-        width: typeAheadText.implicitWidth + 30
+        width: typeAheadRow.implicitWidth + 30
         height: 40
         radius: height / 2
         visible: root.typeAheadBuffer.length > 0
         color: Theme.floatingPanel
         border.width: 1
-        border.color: Theme.accent
+        border.color: root.typeAheadMissed ? Theme.border : Theme.accent
         z: 30
 
-        AppText {
-            id: typeAheadText
+        Row {
+            id: typeAheadRow
             anchors.centerIn: parent
-            text: root.typeAheadBuffer
-            font.pixelSize: Metrics.bodySizePx
-            font.weight: Font.DemiBold
+            spacing: Metrics.scaled(10)
+
+            AppText {
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.typeAheadBuffer
+                font.pixelSize: Metrics.bodySizePx
+                font.weight: Font.DemiBold
+            }
+            // Finding a title in rows not loaded yet takes a fetch or two.
+            BusySpinner {
+                anchors.verticalCenter: parent.verticalCenter
+                width: Metrics.scaled(18)
+                height: width
+                running: Boolean(Browse.seeking)
+                visible: running
+            }
+            SecondaryText {
+                anchors.verticalCenter: parent.verticalCenter
+                visible: root.typeAheadMissed
+                text: Platform.isTV ? "OK to search" : "Enter to search"
+                font.pixelSize: Metrics.metaSizePx
+            }
         }
     }
 
@@ -1609,7 +1839,10 @@ FocusScope {
         id: typeAheadReset
         interval: 1250
         repeat: false
-        onTriggered: root.typeAheadBuffer = ""
+        onTriggered: {
+            root.typeAheadBuffer = ""
+            root.typeAheadMissed = false
+        }
     }
 
     // Kodi-style single-line media info for the focused item.
