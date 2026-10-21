@@ -450,7 +450,7 @@ void ScriptRequests::speedTest(const QVariantMap& options, QJSValue resolve, QJS
         return rejectWith(m_access->engine, reject, "request_denied");
     auto *test = new SpeedTest(
         m_access,
-        [this, resolve, reject](QString error, qint64 bitrate, int parallelRequests) mutable {
+        [this, resolve, reject](QString error, QVariantMap result) mutable {
             SpeedTest *test = std::exchange(m_speedTest, nullptr);
             m_pending.remove(test);
             test->deleteLater();
@@ -459,10 +459,7 @@ void ScriptRequests::speedTest(const QVariantMap& options, QJSValue resolve, QJS
                 reject.call({ engine->toScriptValue(error) });
                 return;
             }
-            QJSValue result = engine->newObject();
-            result.setProperty(QStringLiteral("bitrate"), static_cast<double>(bitrate));
-            result.setProperty(QStringLiteral("parallelRequests"), parallelRequests);
-            resolve.call({ result });
+            resolve.call({ engine->toScriptValue(result) });
         },
         this);
     m_speedTest = test;

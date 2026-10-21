@@ -12,6 +12,7 @@
 #include <QPromise>
 #include <QSet>
 #include <QThreadPool>
+#include <QTimer>
 #include <QUrl>
 #include <QVariantList>
 
@@ -134,6 +135,10 @@ public:
         return m_device.value(QStringLiteral("id")).toString();
     }
     QVariantMap activationConfiguration(const QString& accountId) const;
+    QVariantMap playbackNetworkProfile(const QString& accountId, const QUrl& origin = {}) const;
+    void rememberPlaybackOrigin(const QString& accountId, const QUrl& origin);
+    bool updatePlaybackNetworkProfile(const QString& accountId, const QUrl& origin, const QVariantMap& metrics);
+    bool recordSpeedTest(const QString& accountId, const QVariantMap& result);
 
     QVariantList modules() const;
     QVariantList accounts() const;
@@ -298,6 +303,12 @@ private:
     quint64 m_nextGeneration = 0;
     quint64 m_nextCapabilityCall = 0;
     QVariantMap m_networkConsent;
+    // Only endpoint hashes and bounded numeric observations, never URLs or credentials.
+    QVariantMap m_networkProfiles;
+    QVariantMap m_networkEndpoints;
+    QHash<QString, QPair<quint64, quint64>> m_networkFeedback;
+    QHash<QString, QHash<int, quint64>> m_networkPointSamples;
+    QTimer m_networkSaveTimer;
     QSet<QString> m_removingAccounts;
     std::shared_ptr<QPromise<bool>> m_consentPromise;
     QString m_consentSource;

@@ -341,6 +341,7 @@ QJsonObject LocalCommandServer::state() const
         { QStringLiteral("visual"), QJsonObject::fromVariantMap(m_window->automationVisualState()) },
         { QStringLiteral("focus"), focusState() },
         { QStringLiteral("source"), QJsonObject::fromVariantMap(m_app->streamingQualitySource()) },
+        { QStringLiteral("network"), QJsonObject::fromVariantMap(player->networkMetrics()) },
         { QStringLiteral("playback"),
             QJsonObject { { QStringLiteral("active"), player->sessionActive() },
                 { QStringLiteral("loaded"), player->fileLoaded() }, { QStringLiteral("paused"), player->paused() },
@@ -926,7 +927,9 @@ void LocalCommandServer::dispatch(QIODevice *socket, const QJsonObject& request)
             { QStringLiteral("completion"), QStringLiteral("Playback starts asynchronously; poll status") } });
     } else if (command == QStringLiteral("pause") || command == QStringLiteral("resume")
         || command == QStringLiteral("stop") || command == QStringLiteral("seek")) {
-        if (!m_app->player()->sessionActive()) {
+        // Stop also retires asynchronous item lookup/negotiation. Requiring an
+        // adopted player here could let a timed-out control request start later.
+        if (command != QStringLiteral("stop") && !m_app->player()->sessionActive()) {
             reject(socket, id, QStringLiteral("no_playback"), QStringLiteral("No active local playback session"));
             return;
         }

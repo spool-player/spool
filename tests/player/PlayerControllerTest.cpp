@@ -382,7 +382,7 @@ void localPlaylistLifecycle(const QString& directory, NativeAppWindow& window)
     require(empty.write("#EXTM3U\n") == 8, "empty native playlist fixture writes");
     empty.close();
     player.playLocalFiles({ QUrl::fromLocalFile(empty.fileName()) });
-    require(!player.sessionActive() && !player.errorText().isEmpty(),
+    waitUntil([&] { return !player.sessionActive() && !player.errorText().isEmpty(); },
         "a real zero-entry playlist is rejected with an error instead of remaining active and preparing");
     player.teardownMpv();
 }

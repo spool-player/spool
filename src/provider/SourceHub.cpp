@@ -278,7 +278,16 @@ public:
     }
     int playbackParallelRequests() const override
     {
-        return active() ? active()->playbackParallelRequests() : 2;
+        return active() ? active()->playbackParallelRequests() : 4;
+    }
+    QVariantMap playbackNetworkProfile() const override
+    {
+        return active() ? active()->playbackNetworkProfile() : QVariantMap();
+    }
+    void updatePlaybackNetworkProfile(const QUrl& origin, const QVariantMap& metrics) override
+    {
+        if (PlaybackSource *playback = active())
+            playback->updatePlaybackNetworkProfile(origin, metrics);
     }
     bool signedIn() const override
     {
@@ -310,6 +319,7 @@ public:
         item.seriesId = rawId(item.seriesId);
         item.seasonId = rawId(item.seasonId);
         item.albumId = rawId(item.albumId);
+        m_hub->pushPlaybackContext();
         PlaybackSession session = co_await playback->resolvePlayback(std::move(item), forceTranscode);
         session.itemId = m_hub->scoped(account, session.itemId);
         auto& entry = m_hub->m_entries[prefixOf(account)];
@@ -528,6 +538,12 @@ void SourceHub::addSource(Provider *provider)
     const QString accountId = provider->id();
     const bool browse = accountEnabled(accountId);
     m_entries.insert(prefixOf(accountId), { accountId, provider, browse });
+    const auto profile = m_registry->playbackNetworkProfile(accountId);
+    auto& restored = m_entries[prefixOf(accountId)];
+    restored.measuredBitrate = profile.value(QStringLiteral("measured-bitrate")).toLongLong();
+    restored.parallelRequests = profile.value(QStringLiteral("initial-requests"), 1).toInt();
+    if (restored.measuredBitrate > 0)
+        restored.speedState = Entry::SpeedState::Complete;
     connect(provider, &Provider::capabilitiesChanged, this, [this, accountId, provider] {
         if (!provider->capabilities().testFlag(Provider::SpeedTest)) {
             if (m_speedTestAccount == accountId)
@@ -536,7 +552,7 @@ void SourceHub::addSource(Provider *provider)
             if (entry != m_entries.end()) {
                 entry->speedState = Entry::SpeedState::Pending;
                 entry->measuredBitrate = 0;
-                entry->parallelRequests = 2;
+                entry->parallelRequests = 1;
             }
             pushPlaybackContext();
         }
@@ -1184,8 +1200,9 @@ void SourceHub::pushPlaybackContext()
     context.insert(QStringLiteral("videoPreviews"), m_videoPreviewsEnabled);
     for (const Entry& entry : std::as_const(m_entries)) {
         if (auto *portable = qobject_cast<PortableProvider *>(entry.provider.data())) {
-            context.insert(QStringLiteral("measuredBitrate"), entry.measuredBitrate);
-            context.insert(QStringLiteral("parallelRequests"), entry.parallelRequests);
+            const auto learned = m_registry->playbackNetworkProfile(entry.accountId);
+            context.insert(QStringLiteral("measuredBitrate"), learned.value(QStringLiteral("measured-bitrate")));
+            context.insert(QStringLiteral("parallelRequests"), learned.value(QStringLiteral("initial-requests"), 1));
             portable->setPlaybackContext(context);
             portable->setPlaybackQueueContext(
                 m_queueSnapshots.value(entry.accountId), m_queueIndexes.value(entry.accountId, -1));
@@ -1211,10 +1228,9 @@ void SourceHub::setPlaybackActive(bool active)
     if (m_playbackActive == active)
         return;
     m_playbackActive = active;
-    // A started bounded probe is allowed to finish; cancelling it here made
-    // every quick Play leave Auto permanently without a measurement.
+    // A probe competes with playback and cannot be learned as clean capacity.
     if (active)
-        m_speedTestTimer.stop();
+        cancelSpeedTest();
     else if (m_speedTestAccount.isEmpty())
         m_speedTestTimer.start(5000);
     emit streamingQualityChanged();
@@ -1232,7 +1248,7 @@ void SourceHub::refreshSpeedTests()
 
 void SourceHub::startNextSpeedTest()
 {
-    if ((m_playbackActive && !m_explicitSpeedTest) || !m_speedTestAccount.isEmpty())
+    if (m_playbackActive || !m_speedTestAccount.isEmpty())
         return;
     for (Provider *provider : sources()) {
         if (!provider->capabilities().testFlag(Provider::SpeedTest))
@@ -1251,14 +1267,12 @@ void SourceHub::startNextSpeedTest()
             m_speedTestAccount.clear();
             auto entry = m_entries.find(prefixOf(account));
             if (entry != m_entries.end()) {
-                const qint64 bitrate = result.value(QStringLiteral("bitrate")).toLongLong();
-                const int lanes = result.value(QStringLiteral("parallelRequests")).toInt();
-                const bool valid
-                    = bitrate >= 1'000'000 && bitrate <= 1'000'000'000 && (lanes == 1 || lanes == 2 || lanes == 4);
+                const bool valid = m_registry->recordSpeedTest(account, result);
+                const auto profile = m_registry->playbackNetworkProfile(account);
                 entry->speedState = valid ? Entry::SpeedState::Complete : Entry::SpeedState::Failed;
                 if (valid) {
-                    entry->measuredBitrate = bitrate;
-                    entry->parallelRequests = lanes;
+                    entry->measuredBitrate = profile.value(QStringLiteral("measured-bitrate")).toLongLong();
+                    entry->parallelRequests = profile.value(QStringLiteral("initial-requests"), 1).toInt();
                     pushPlaybackContext();
                 }
             }

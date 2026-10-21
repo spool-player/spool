@@ -367,6 +367,29 @@ jobs:
           nix develop .#native -c python tools/run-tests.py \
             --build-dir build/linux-release/app --workers "$(nproc)"
 
+      # The GUI phase measures real cold/prepared controller setup on every
+      # run. Keep its history longer than the large transient test artifacts.
+      - name: Report player setup latency
+        if: ${{ always() }}
+        run: |
+          mkdir -p dist/player-setup-benchmark
+          if [[ -f build/linux-release/app/player-setup-benchmark.json ]]; then
+            cp build/linux-release/app/player-setup-benchmark.json dist/player-setup-benchmark/timings.json
+          fi
+          status=0
+          python3 tools/report-player-setup.py dist/player-setup-benchmark/timings.json \
+            --markdown dist/player-setup-benchmark/summary.md || status=$?
+          cat dist/player-setup-benchmark/summary.md >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+      - name: Retain player setup history
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: internal-player-setup-benchmark
+          path: dist/player-setup-benchmark
+          retention-days: 90
+
       - name: Retain internal native phase results after failures
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0

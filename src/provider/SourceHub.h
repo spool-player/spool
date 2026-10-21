@@ -225,7 +225,7 @@ private:
         enum class SpeedState { Pending, Running, Complete, Failed };
         SpeedState speedState = SpeedState::Pending;
         qint64 measuredBitrate = 0;
-        int parallelRequests = 2;
+        int parallelRequests = 1;
         struct RemotePreview {
             QString urlTemplate;
             QByteArray headers;

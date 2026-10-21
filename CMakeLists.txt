@@ -1139,6 +1139,10 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/RenderBenchmarkReportTest.py"
             "${CMAKE_CURRENT_SOURCE_DIR}/tools/compare-render-benchmark.py"
     )
+    add_test(NAME player-setup-report
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/PlayerSetupReportTest.py"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools/report-player-setup.py")
     add_test(NAME test-driver-ordering
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/TestDriverTest.py")
 
@@ -1146,7 +1150,7 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
     # desktop controller consumer therefore belongs to the serial GPU phase.
     set(SPOOL_E2E_SOURCES tests/TestRunner.cpp tests/QmlTestRunner.cpp tests/ExtensionIntegration.h
         tests/ArtworkIntegration.h tests/player/MpvVideoItemTest.cpp tests/player/MpvFullscreenTest.cpp
-        tests/player/PlayerControllerTest.cpp
+        tests/player/PlayerControllerTest.cpp tests/player/PlayerSetupBenchmark.cpp
         tests/e2e/AppJourneyTest.cpp tests/e2e/JellyfinFixture.cpp)
     if(APPLE AND NOT SPOOL_APPLE_MOBILE)
         set_source_files_properties(tests/player/MpvFullscreenTest.cpp PROPERTIES LANGUAGE OBJCXX)
@@ -1272,6 +1276,10 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
         endif()
         add_test(NAME gui-e2e-native COMMAND ${SPOOL_E2E_SESSION} $<TARGET_FILE:spool-e2e-tests> --run-all --workers 1 --timeout-ms 600000 --results "${CMAKE_CURRENT_BINARY_DIR}/e2e-results.json")
         set_tests_properties(gui-e2e-native PROPERTIES LABELS e2e ENVIRONMENT "${SPOOL_TEST_ENV}" TIMEOUT 0)
+        add_test(NAME player-setup-performance
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/report-player-setup.py"
+                "${CMAKE_CURRENT_BINARY_DIR}/player-setup-benchmark.json")
+        set_tests_properties(player-setup-performance PROPERTIES LABELS e2e DEPENDS gui-e2e-native)
         # Exercise the event-thread lifecycle with a controllable client API.
         # Keep this separate from the core targets so the fake symbols cannot
         # interpose on the real libmpv used by the other player tests.
@@ -1303,9 +1311,16 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
                 INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL OFF)
         endforeach()
         set_tests_properties(provider-sdk-tool local-provider-overrides ffmpeg-capability-generator module-seam
-            network-shaper render-benchmark-report test-driver-ordering PROPERTIES LABELS traditional)
+            network-shaper render-benchmark-report player-setup-report test-driver-ordering PROPERTIES LABELS traditional)
         if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
             set_tests_properties(package-audit webos-tooling PROPERTIES LABELS traditional)
+            # Exercise the actual curl scheduler/counters, not just its exposed
+            # option values. Meson tests are disabled in packaged native builds.
+            find_library(SPOOL_CURL_TEST_MPV NAMES mpv HINTS ${MPV_LIBRARY_DIRS} REQUIRED)
+            add_test(NAME curl-transport
+                COMMAND "${Python3_EXECUTABLE}" "${MPV_ACTIVE_SOURCE_DIR}/test/curl_transport.py"
+                    --libmpv "${SPOOL_CURL_TEST_MPV}" -v)
+            set_tests_properties(curl-transport PROPERTIES LABELS traditional TIMEOUT 180)
         endif()
     endif()
     if(SPOOL_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")

@@ -4,6 +4,7 @@
 #include <QElapsedTimer>
 #include <QSet>
 #include <QStringList>
+#include <QThread>
 
 #include <atomic>
 #include <functional>
@@ -22,6 +23,7 @@
 
 extern "C" {
 #include "video/out/starfish/starfish_ctx.h"
+#include <alsa/asoundlib.h>
 }
 
 // Every mpv_*/starfish_* function the app calls. The list must stay in sync
@@ -228,6 +230,12 @@ bool loadNow()
         g_api.starfish_exported_set_crop_cb(g_cropCb, g_cropOpaque);
     }
 
+    // Parse/cache ALSA's routing configuration without opening a PCM, playing
+    // silence, or taking the TV audio output away from another application.
+    // Loading a media file merely to prime audio would have those side effects.
+    const int audioResult = snd_config_update();
+    if (audioResult < 0)
+        qWarning() << "MpvRuntime: ALSA configuration preparation failed:" << snd_strerror(audioResult);
     qInfo() << "MpvRuntime: libmpv loaded in" << timer.elapsed() << "ms from" << path.c_str();
     return true;
 }
@@ -286,7 +294,12 @@ void runAfterLoaded(std::function<void()> callback)
 
 void preloadAsync()
 {
-    std::thread([] { ensureLoaded(); }).detach();
+    static std::atomic_bool started { false };
+    if (started.exchange(true))
+        return;
+    auto *worker = QThread::create([] { ensureLoaded(); });
+    QObject::connect(worker, &QThread::finished, worker, &QObject::deleteLater);
+    worker->start(QThread::LowPriority);
 }
 
 void probeStarfishVideoCodecsAsync(std::function<void(QStringList)> callback)
@@ -305,8 +318,8 @@ void probeStarfishVideoCodecsAsync(std::function<void(QStringList)> callback)
 // ---------------------------------------------------------------------------
 // mpv client API entry points. Declarations come from the real headers, so
 // signatures cannot drift. All of them funnel through ensureLoaded(): the
-// common case is a no-op atomic load; the cold case (playback started before
-// the post-first-frame preload finished) blocks on the dlopen.
+// common case is a no-op atomic load; controller creation/initialization runs
+// off the GUI thread, including a cold play before the delayed preload.
 
 mpv_handle *mpv_create(void)
 {

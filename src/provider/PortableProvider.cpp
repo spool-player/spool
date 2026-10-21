@@ -121,7 +121,16 @@ public:
     }
     int playbackParallelRequests() const override
     {
-        return m_owner->m_playbackContext.value(QStringLiteral("parallelRequests"), 2).toInt();
+        return 4;
+    }
+    QVariantMap playbackNetworkProfile() const override
+    {
+        return m_owner->m_registry->playbackNetworkProfile(m_owner->m_accountId, m_origin);
+    }
+    void updatePlaybackNetworkProfile(const QUrl& origin, const QVariantMap& metrics) override
+    {
+        if (origin == m_origin)
+            m_owner->m_registry->updatePlaybackNetworkProfile(m_owner->m_accountId, origin, metrics);
     }
     bool signedIn() const override
     {
@@ -227,6 +236,7 @@ public:
             m_origin = origin;
             emit credentialsChanged();
         }
+        m_owner->m_registry->rememberPlaybackOrigin(m_owner->m_accountId, m_origin);
         co_return session;
     }
 
@@ -305,9 +315,9 @@ private:
 
 void PortableProvider::setPlaybackContext(QVariantMap context)
 {
-    const int previous = m_playback->playbackParallelRequests();
+    const int previous = m_playbackContext.value(QStringLiteral("parallelRequests"), 1).toInt();
     m_playbackContext = std::move(context);
-    if (previous != m_playback->playbackParallelRequests())
+    if (previous != m_playbackContext.value(QStringLiteral("parallelRequests"), 1).toInt())
         emit m_playback->playbackNetworkProfileChanged();
 }
 

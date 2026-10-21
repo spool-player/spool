@@ -14,6 +14,7 @@
 #include <QByteArrayList>
 #include <QHash>
 #include <QObject>
+#include <QSslCertificate>
 #include <QStringList>
 #include <QTimer>
 #include <QUrl>
@@ -24,6 +25,8 @@
 #endif
 
 #include <atomic>
+#include <functional>
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -119,6 +122,10 @@ public:
     {
         return m_containerFps;
     }
+    QVariantMap networkMetrics() const
+    {
+        return m_networkMetrics;
+    }
     bool subtitlesEnabled() const;
     QStringList subtitleTracks() const;
     int selectedSubtitleIndex() const;
@@ -209,7 +216,10 @@ public:
     void setRenderQuality(MpvOptionProfile::RenderQuality quality);
     void setHardwareDecoding(bool enabled)
     {
+        if (m_hardwareDecoding == enabled)
+            return;
         m_hardwareDecoding = enabled;
+        discardPreparedMpvForOptionChange("hardware decoding change");
     }
     void setSoftwareRenderer(const QByteArray& backend)
     {
@@ -292,6 +302,8 @@ public:
 private:
     QHash<int, QByteArray> m_mpvKeys;
     void playSession(const PlaybackSession& session, bool startPaused, const QList<QUrl>& localFiles);
+    void finishPlaySession(
+        const PlaybackSession& session, bool startPaused, const QList<QUrl>& localFiles, quint64 generation);
     void refreshLocalPlaylist();
     void beginLocalEntry(qint64 entryId);
     bool loadLocalFiles(const QList<QUrl>& urls);
@@ -299,7 +311,7 @@ private:
     bool m_localEntryStarted = false;
     qint64 m_localEntryId = -1;
     QVariantList m_localPlaylistEntries;
-    void logColorDiagnostics(mpv_handle *handle);
+    static void logColorDiagnostics(mpv_handle *handle);
     bool usesUserMpvConfig() const;
     int uiTrackIndexForStream(const QString& type, int streamIndex, int firstUiIndex) const;
     int streamIndexForUiTrack(const QString& type, int uiIndex, int firstUiIndex) const;
@@ -322,8 +334,12 @@ private:
     void prepareIdleMpv();
     void destroyIdleMpv(const char *reason);
     mpv_handle *takeIdleMpvHandle();
-    bool configureAndInitializeMpv(mpv_handle *handle, bool needsVideoSurface, bool embeddedVideo);
+    struct MpvPreparation;
+    void prepareMpvAsync(bool needsVideoSurface, bool embeddedVideo);
+    static bool configureAndInitializeMpv(mpv_handle *handle, const MpvPreparation& preparation);
     void observeMpvProperties(mpv_handle *handle);
+    void updateNetworkTransport();
+    double networkMediaBitrate() const;
     void synchronizeWindowFullscreen(mpv_handle *handle);
     void scheduleMpvTeardown();
     void handleMpvEvent(mpv_event *event, quint64 generation, mpv_handle *handle);
@@ -393,7 +409,22 @@ private:
     mpv_handle *m_idleMpvHandle = nullptr;
     bool m_idleMpvPreparationScheduled = false;
     bool m_idleMpvPreparationEnabled = true;
+    bool m_firstFramePresented = false;
+    bool m_idleMpvNeedsVideoSurface = true;
+    bool m_idleMpvEmbeddedVideo = false;
+    std::shared_ptr<MpvPreparation> m_mpvPreparation;
+    std::function<void()> m_mpvPreparationContinuation;
     QTimer m_progressTimer;
+    QTimer m_networkTimer;
+    QVariantMap m_networkMetrics;
+    QUrl m_networkOrigin;
+    QByteArray m_sessionRequestHeaders;
+    QVariantMap m_sessionNetworkProfile;
+    QSslCertificate m_sessionTrustCertificate;
+    bool m_networkQueryPending = false;
+    double m_networkBufferSeconds = 0;
+    double m_networkVideoBitrate = 0;
+    double m_networkAudioBitrate = 0;
     QTimer m_backGuardTimer;
     QTimer m_uiPositionTimer;
     QTimer m_seekWatchdogTimer;
