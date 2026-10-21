@@ -185,47 +185,10 @@ FocusScope {
                     wrapMode: Text.WordWrap
                 }
             }
-            AppText {
-                Layout.fillWidth: true
-                visible: Boolean(root.installedModule)
-                text: root.installedModule ? "Installed provider version " + root.installedModule.version : ""
-                font.weight: Font.DemiBold
-                wrapMode: Text.WordWrap
-            }
-            SecondaryText {
-                Layout.fillWidth: true
-                visible: Boolean(root.installedModule)
-                text: root.provenanceText + "\nProvider ID: " + root.moduleId
-                wrapMode: Text.WordWrap
-            }
-            SecondaryText {
-                Layout.fillWidth: true
-                visible: Boolean(root.installedModule && root.installedModule.publisher)
-                text: root.installedModule ? "Declared publisher: " + root.installedModule.publisher : ""
-                wrapMode: Text.WordWrap
-            }
             SecondaryText {
                 Layout.fillWidth: true
                 visible: Boolean(root.installedModule && root.installedModule.summary)
                 text: root.installedModule ? root.installedModule.summary : ""
-                wrapMode: Text.WordWrap
-            }
-            AppText {
-                Layout.fillWidth: true
-                visible: Boolean(root.installedModule)
-                text: root.busy ? "Updating provider…" : root.updateEntry ? "Update available: "
-                                                                            + root.updateEntry.version :
-                                                                            root.provenance === "native"
-                                                                            ? "Updated with Spool" : root.provenance
-                                                                              === "file"
-                                                                              ? "File updates require a new inspection and explicit trust." :
-                                                                                !Store.storeAvailable
-                                                                                ? "Provider downloads are disabled in this build." :
-                                                                                  Store.loading
-                                                                                  ? "Checking provider catalog…" :
-                                                                                    Store.error.length > 0
-                                                                                    ? Store.error :
-                                                                                      "No newer provider version listed."
                 wrapMode: Text.WordWrap
             }
             Flow {
@@ -234,12 +197,14 @@ FocusScope {
                 ActionButton {
                     id: updateButton
                     readonly property string focusKey: "update"
+                    // Updates arrive on their own unless the viewer chose
+                    // otherwise in advanced settings.
                     visible: Boolean(root.installedModule && root.updateEntry && Store.storeAvailable && root.provenance
-                                     !== "file")
+                                     !== "file") && Settings.value("providers/updates") !== "auto"
                     enabled: !root.busy
                     kind: "primary"
                     iconName: "system_update"
-                    text: root.updateEntry ? "Update to " + root.updateEntry.version : "Update"
+                    text: root.busy ? "Updating…" : "Update now"
                     onClicked: {
                         root.focusControl(updateButton)
                         Store.update(root.moduleId)
@@ -265,7 +230,7 @@ FocusScope {
                     visible: Boolean(root.installedModule && root.installedModule.removable)
                     enabled: !root.busy
                     kind: "flat"
-                    text: "Remove provider"
+                    text: "Remove from this device"
                     onClicked: {
                         root.focusControl(removeButton)
                         root.removingModule = true
@@ -274,14 +239,14 @@ FocusScope {
             }
             AppText {
                 Layout.fillWidth: true
-                text: "Accounts & servers"
+                text: "Accounts"
                 font.pixelSize: Metrics.bodySizePx + Metrics.scaled(4)
                 font.weight: Font.DemiBold
             }
             SecondaryText {
                 Layout.fillWidth: true
-                text: root.accounts.length === 0 ? "No saved accounts. Add an account to configure this provider." :
-                                                   "Settings belong to each account. A locked profile must be opened deliberately before its settings are available."
+                text: root.accounts.length === 0 ? "No accounts yet." :
+                                                   "Each account has its own settings. A profile with a PIN has to be opened first."
                 wrapMode: Text.WordWrap
             }
             Repeater {
@@ -320,7 +285,7 @@ FocusScope {
                     SecondaryText {
                         Layout.fillWidth: true
                         visible: !accountRow.modelData.hasSettings
-                        text: "This provider does not offer a separate account settings screen."
+                        text: "No settings for this account."
                         wrapMode: Text.WordWrap
                     }
                     AppText {
@@ -412,6 +377,22 @@ FocusScope {
                 text: root.notice
                 wrapMode: Text.WordWrap
                 Accessible.role: Accessible.AlertMessage
+            }
+            // For support and the curious: what exactly is installed, kept
+            // out of the way of everyone else.
+            SecondaryText {
+                Layout.fillWidth: true
+                Layout.topMargin: Metrics.scaled(24)
+                visible: Boolean(root.installedModule)
+                text: root.installedModule ? [root.installedModule.name + " " + root.installedModule.version, root.provenanceText,
+                                              root.installedModule.publisher ? "by " + root.installedModule.publisher :
+                                                                               "", root.moduleId].filter(part
+                                                                                                         => part.length
+                                                                                                            > 0).join(
+                                                 " · ") : ""
+                color: Theme.textMuted
+                font.pixelSize: Metrics.metaSizePx
+                wrapMode: Text.WordWrap
             }
         }
     }

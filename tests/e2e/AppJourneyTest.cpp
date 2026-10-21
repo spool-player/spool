@@ -376,7 +376,7 @@ private:
             const QImage image(screenshot);
             require(!image.isNull(), "actual mobile normal-startup screenshot was not an image");
             const QByteArray text = run(ocr, { screenshot, "stdout", "-l", "eng", "--psm", "11" }, environment);
-            if (QString::fromUtf8(text).contains("Add a provider", Qt::CaseInsensitive)) {
+            if (QString::fromUtf8(text).contains("Welcome to Spool", Qt::CaseInsensitive)) {
                 rendered = true;
                 break;
             }
@@ -1145,7 +1145,7 @@ SPOOL_TEST_MAIN("app-journey")
         require(fixture.listening(), "isolated loopback fixture could not listen");
         Journey journey(control, environment, root.path());
         journey.launch(app, fixture.origin(), deviceKind);
-        journey.label("Add a provider");
+        journey.label("Welcome to Spool");
         journey.assertControlBoundaries();
         const bool television
             = deviceKind == "tvos" || (deviceKind == "android" && qEnvironmentVariable("SPOOL_E2E_ANDROID_TV") == "1");

@@ -522,7 +522,6 @@ FocusScope {
                         providerName: root.installedModule ? root.installedModule.name : ""
                         providerId: root.provider ? root.provider.moduleId : ""
                         providerIcon: root.installedModule ? root.installedModule.iconUrl : ""
-                        providerVersion: root.installedModule ? root.installedModule.version : ""
                         badgeIcon: modelData.hasPassword ? "lock" : ""
                         onAccepted: {
                             usernameField.text = modelData.name

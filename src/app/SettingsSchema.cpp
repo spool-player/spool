@@ -576,9 +576,12 @@ const QVector<SettingSpec>& settingSpecs()
                 .advanced(),
 
             pageSpec("action/accounts", "Accounts", "Accounts", "", SettingType::Action),
-            pageSpec("action/providers", "Accounts", "Providers", "", SettingType::Action),
-            selectSpec("providers/updates", "Accounts", "Provider updates", "", "ask", kProviderUpdateChoices,
-                SettingTarget::External),
+            pageSpec("action/providers", "Accounts", "Add an account", "", SettingType::Action),
+            // Providers keep themselves current; asking first is for people
+            // who want to know.
+            selectSpec("providers/updates", "Accounts", "Provider updates", "", "auto", kProviderUpdateChoices,
+                SettingTarget::External)
+                .advanced(),
             pageSpec("action/manageCertificates", "Accounts", "Remembered certificates", "", SettingType::Action),
             // Comma-separated provider ids turned off for Home. The settings
             // page opens the Home provider picker rather than editing text.

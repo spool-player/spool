@@ -318,11 +318,6 @@ FocusScope {
             if (tiles.length)
                 rows.push(tiles)
         }
-        for (let i = 0; i < providerRepeater.count; ++i) {
-            const provider = providerRepeater.itemAt(i)
-            if (provider)
-                rows.push([provider])
-        }
         rows.push([addServerButton])
         return rows
     }
@@ -717,7 +712,7 @@ FocusScope {
                                                           root.lastFocus = focusKey
                                 kind: "flat"
                                 iconName: "settings"
-                                text: "Provider settings"
+                                text: "Settings"
                                 onClicked: {
                                     root.focusStop(providerSettingsButton)
                                     root.shell.pushRoute("providerDetails", {
@@ -781,7 +776,6 @@ FocusScope {
                                 providerId: modelData.moduleId
                                 providerName: installedModule ? installedModule.name : ""
                                 providerIcon: installedModule ? installedModule.iconUrl : ""
-                                providerVersion: installedModule ? installedModule.version : ""
                                 errorText: root.errorOf(modelData)
                                 detail: {
                                     const label = root.stateLabel(tile.profileState)
@@ -814,43 +808,6 @@ FocusScope {
                 }
             }
 
-            AppText {
-                Layout.fillWidth: true
-                visible: !root.startupMode && root.onboardingId.length === 0
-                text: "Installed providers"
-                font.pixelSize: Metrics.bodySizePx + Metrics.scaled(4)
-                font.weight: Font.DemiBold
-            }
-
-            Repeater {
-                id: providerRepeater
-                model: !root.startupMode && root.onboardingId.length === 0 ? Providers.modules : []
-                delegate: ServerCard {
-                    id: moduleCard
-                    required property var modelData
-                    readonly property string focusKey: "module:" + modelData.id
-                    Layout.fillWidth: true
-                    title: modelData.name
-                    serverAddress: "Installed provider version " + modelData.version
-                    providerName: modelData.name
-                    providerId: modelData.id
-                    providerIcon: modelData.iconUrl
-                    providerVersion: modelData.version
-                    focused: activeFocus && Metrics.keyboardFocusActive
-                    onActiveFocusChanged: if (activeFocus)
-                                              root.lastFocus = focusKey
-                    function clicked() {
-                        accepted()
-                    }
-                    onAccepted: {
-                        root.focusStop(moduleCard)
-                        root.shell.pushRoute("providerDetails", {
-                                                 moduleId: modelData.id
-                                             })
-                    }
-                }
-            }
-
             ActionButton {
                 id: addServerButton
                 readonly property string focusKey: "addServer"
@@ -860,7 +817,7 @@ FocusScope {
                 Layout.topMargin: Metrics.scaled(8)
                 kind: "secondary"
                 iconName: "add"
-                text: "Add a server or service"
+                text: "Add an account"
                 onClicked: root.shell.pushRoute("addProvider")
             }
         }
