@@ -339,6 +339,11 @@ public:
         co_return QVariantMap {};
     }
 
+    QCoro::Task<std::vector<Spool::BrowseIndexEntry>> fetchBrowseIndex(Spool::BrowseDescriptor, QVariantMap) override
+    {
+        co_return std::vector<Spool::BrowseIndexEntry> {};
+    }
+
     QCoro::Task<std::vector<MovieItem>> fetchItemsByIds(QStringList itemIds) override
     {
         Q_UNUSED(itemIds);

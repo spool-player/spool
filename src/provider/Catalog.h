@@ -51,6 +51,12 @@ public:
     // The genres, years and the like a library can be filtered by; empty
     // when the source offers no filtering.
     virtual QCoro::Task<QVariantMap> fetchLibraryFilterOptions(QString libraryId, QString collectionType = {}) = 0;
+    // How a name-sorted library, genre or studio listing divides by first
+    // character, in ascending order. Optional: a source without one returns
+    // an empty list and the letters are estimated instead.
+    virtual QCoro::Task<std::vector<BrowseIndexEntry>> fetchBrowseIndex(
+        BrowseDescriptor descriptor, QVariantMap queryOptions)
+        = 0;
     virtual QCoro::Task<std::vector<MovieItem>> fetchItemsByIds(QStringList itemIds) = 0;
 
     // Locally observed user state outranks asynchronously hydrated snapshots

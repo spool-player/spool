@@ -167,6 +167,8 @@ public:
     QCoro::Task<PersonCredits> fetchItemsByPerson(QString personId, int maximumItems = 4000) override;
     QCoro::Task<std::vector<LibraryItem>> fetchLibraries() override;
     QCoro::Task<QVariantMap> fetchLibraryFilterOptions(QString libraryId, QString collectionType = {}) override;
+    QCoro::Task<std::vector<BrowseIndexEntry>> fetchBrowseIndex(
+        BrowseDescriptor descriptor, QVariantMap queryOptions) override;
     QCoro::Task<std::vector<MovieItem>> fetchItemsByIds(QStringList itemIds) override;
 
     // SearchSource: the selected viewer on every independent server, ranked

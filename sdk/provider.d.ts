@@ -151,8 +151,12 @@ export type CreateSource = (configuration: Record<string, Value>, host: SourceHo
 /** Throw `new Error('code')` with a short snake_case code; Spool shows no provider text. `http_401` marks the account as needing sign-in. */
 export type Operation<A, R> = (args: A, host: OperationHost) => R | Promise<R>;
 
-export interface Page { items: Item[]; cursor: string | null; total?: number | null; exhausted: boolean }
-export interface PageArgs { cursor?: string; limit: number }
+export interface Page { items: Item[]; cursor: string | null; total?: number | null; exhausted: boolean;
+    /** `browse` only: this listing is positional. Spool may then ask for any row with `offset`, and `total` is exact. */
+    seekable?: boolean }
+export interface PageArgs { cursor?: string; limit: number;
+    /** Row to start at, sent instead of `cursor` only to a listing whose first page said `seekable: true`. */
+    offset?: number }
 
 export type SortBy = 'SortName' | 'Random' | 'CommunityRating' | 'CriticRating' | 'DateCreated' | 'DateLastContentAdded'
     | 'OfficialRating' | 'PremiereDate' | 'PlayCount' | 'Runtime' | 'DatePlayed' | string;
@@ -393,6 +397,11 @@ export interface Source extends CatalogueOperations, PreferenceOperations, Appli
     latest?: Operation<PageArgs & { parentId?: string }, Page>;
     similar?: Operation<PageArgs & { itemId: string }, Page>;
     personItems?: Operation<PageArgs & { personId: string }, Page>;
+    /** How a `SortName` listing divides by leading character, so a long library can show and jump to letters
+     *  before those rows are loaded. Takes the same arguments as `browse` without paging; `entries` run in
+     *  ascending order with '#' first for anything before A. Optional: Spool estimates without it. */
+    browseIndex?: Operation<{ parentId?: string; collectionType?: string; genre?: string; studio?: string;
+        filters?: BrowseFilters }, { entries: { label: string; count: number }[] }>;
     /** `supported` names the BrowseFilters this library honours, as a key or `key:value`
      *  (`filters:IsPlayed`). When present Spool offers only those; when absent it offers
      *  every filter except `isHdr`, which is offered only where declared. */

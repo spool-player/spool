@@ -18,6 +18,8 @@ struct ProviderMediaPage {
     std::optional<QString> cursor;
     std::optional<qint64> total;
     bool exhausted = false;
+    // The listing accepts any start row (`offset`), and `total` is exact.
+    bool seekable = false;
 };
 
 namespace Detail {

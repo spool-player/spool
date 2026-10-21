@@ -392,6 +392,18 @@ struct PagedMovieItems {
     int limit = 0;
     std::optional<QString> nextCursor;
     bool exhausted = true;
+    // Any row can be fetched by number and totalRecordCount is exact, so a
+    // browse can load only what is on screen instead of walking from the top.
+    bool seekable = false;
+};
+
+// How a name-sorted listing divides by leading character, in listing order:
+// "#" for anything before A, then the letters. Counts, not offsets.
+struct BrowseIndexEntry {
+    QString label;
+    int count = 0;
+
+    friend bool operator==(const BrowseIndexEntry&, const BrowseIndexEntry&) = default;
 };
 
 struct PlaybackQueueItem {

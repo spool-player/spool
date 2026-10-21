@@ -94,6 +94,8 @@ public:
     QCoro::Task<PersonCredits> fetchItemsByPerson(QString personId, int maximumItems = 4000) override;
     QCoro::Task<std::vector<LibraryItem>> fetchLibraries() override;
     QCoro::Task<QVariantMap> fetchLibraryFilterOptions(QString libraryId, QString collectionType = {}) override;
+    QCoro::Task<std::vector<BrowseIndexEntry>> fetchBrowseIndex(
+        BrowseDescriptor descriptor, QVariantMap queryOptions) override;
     QCoro::Task<std::vector<MovieItem>> fetchItemsByIds(QStringList itemIds) override;
 
     QCoro::Task<std::vector<MovieItem>> searchItems(QString searchTerm, int limit = 80) override;

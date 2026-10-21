@@ -463,6 +463,29 @@ QCoro::Task<std::vector<MovieItem>> PortableProvider::list(
     throw std::runtime_error("response_limit");
 }
 
+namespace {
+    // A library, genre or studio listing: sorting travels on its own and every
+    // other option is one of the viewer's filters (sdk/provider.d.ts BrowseFilters).
+    QVariantMap filteredBrowseArguments(const BrowseDescriptor& descriptor, QVariantMap queryOptions)
+    {
+        QVariantMap args;
+        if (!descriptor.id.isEmpty() && descriptor.kind == BrowseKind::Library)
+            args.insert(QStringLiteral("parentId"), descriptor.id);
+        args.insert(QStringLiteral("collectionType"), descriptor.collectionType);
+        if (descriptor.kind == BrowseKind::Genre)
+            args.insert(QStringLiteral("genre"), descriptor.name);
+        if (descriptor.kind == BrowseKind::Studio)
+            args.insert(QStringLiteral("studio"), descriptor.name);
+        for (const char *key : { "sortBy", "sortOrder" }) {
+            if (const QString name = QLatin1String(key); queryOptions.contains(name))
+                args.insert(name, queryOptions.take(name));
+        }
+        if (!queryOptions.isEmpty())
+            args.insert(QStringLiteral("filters"), queryOptions);
+        return args;
+    }
+}
+
 QCoro::Task<PagedMovieItems> PortableProvider::fetchBrowsePage(
     BrowseDescriptor descriptor, int startIndex, int limit, QVariantMap queryOptions, std::optional<QString> cursor)
 {
@@ -474,21 +497,7 @@ QCoro::Task<PagedMovieItems> PortableProvider::fetchBrowsePage(
     case BrowseKind::Library:
     case BrowseKind::Genre:
     case BrowseKind::Studio:
-        if (!descriptor.id.isEmpty() && descriptor.kind == BrowseKind::Library)
-            args.insert(QStringLiteral("parentId"), descriptor.id);
-        args.insert(QStringLiteral("collectionType"), descriptor.collectionType);
-        if (descriptor.kind == BrowseKind::Genre)
-            args.insert(QStringLiteral("genre"), descriptor.name);
-        if (descriptor.kind == BrowseKind::Studio)
-            args.insert(QStringLiteral("studio"), descriptor.name);
-        // Sorting travels on its own; every other option is one of the
-        // viewer's filters (sdk/provider.d.ts BrowseFilters).
-        for (const char *key : { "sortBy", "sortOrder" }) {
-            if (const QString name = QLatin1String(key); queryOptions.contains(name))
-                args.insert(name, queryOptions.take(name));
-        }
-        if (!queryOptions.isEmpty())
-            args.insert(QStringLiteral("filters"), queryOptions);
+        args = filteredBrowseArguments(descriptor, std::move(queryOptions));
         break;
     case BrowseKind::FolderChildren:
     case BrowseKind::BoxSet:
@@ -514,13 +523,46 @@ QCoro::Task<PagedMovieItems> PortableProvider::fetchBrowsePage(
         co_return PagedMovieItems { {}, 0, startIndex, limit };
     }
 
+    // A row number stands in for the cursor only when the caller jumps; the
+    // caller knows from an earlier page that this listing is seekable.
+    if (!cursor && startIndex > 0)
+        args.insert(QStringLiteral("offset"), startIndex);
     ProviderMediaPage page = co_await listPage(operation, std::move(args), limit, std::move(cursor));
     if (!page.exhausted && (!page.cursor || page.cursor->isEmpty()))
         throw std::runtime_error("invalid_pagination");
     const int count = static_cast<int>(page.items.size());
     const int total = page.total ? static_cast<int>(*page.total) : startIndex + count + (page.exhausted ? 0 : 1);
-    co_return PagedMovieItems { std::move(page.items), total, startIndex, limit, std::move(page.cursor),
-        page.exhausted };
+    PagedMovieItems result { std::move(page.items), total, startIndex, limit, std::move(page.cursor), page.exhausted };
+    result.seekable = page.seekable && operation == QLatin1String("browse");
+    co_return result;
+}
+
+QCoro::Task<std::vector<BrowseIndexEntry>> PortableProvider::fetchBrowseIndex(
+    BrowseDescriptor descriptor, QVariantMap queryOptions)
+{
+    if (descriptor.kind != BrowseKind::Library && descriptor.kind != BrowseKind::Genre
+        && descriptor.kind != BrowseKind::Studio)
+        co_return {};
+    QVariantMap args = filteredBrowseArguments(descriptor, std::move(queryOptions));
+    args.remove(QStringLiteral("sortBy"));
+    args.remove(QStringLiteral("sortOrder"));
+    QVariantMap result;
+    try {
+        result = co_await call(QStringLiteral("browseIndex"), args);
+    } catch (const std::exception& error) {
+        if (QByteArray(error.what()) != "unsupported_operation")
+            throw;
+        co_return {};
+    }
+    std::vector<BrowseIndexEntry> entries;
+    for (const QVariant& value : result.value(QStringLiteral("entries")).toList()) {
+        const QVariantMap row = value.toMap();
+        const QString label = row.value(QStringLiteral("label")).toString().left(8);
+        const int count = row.value(QStringLiteral("count")).toInt();
+        if (!label.isEmpty() && count > 0 && entries.size() < 256)
+            entries.push_back({ label, count });
+    }
+    co_return entries;
 }
 
 QCoro::Task<MovieItem> PortableProvider::fetchItemDetails(QString itemId)
