@@ -18,9 +18,9 @@
     {
       "id": "spool.plex",
       "appleAppStore": true,
-      "version": "0.1.11",
-      "archive": "bundled/spool.plex-0.1.11.szo",
-      "sha256": "ed744e0a98cf0bf7bbade4818c65ad778568a671a058fc1fd5bdff9a10e9edc1"
+      "version": "0.1.12",
+      "archive": "bundled/spool.plex-0.1.12.szo",
+      "sha256": "10c055f0342aff065033cae9e2c3a34d460dd06ec30b9696524ceb6baa2a5a7f"
     },
     {
       "id": "spool.stremio",
