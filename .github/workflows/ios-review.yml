@@ -64,6 +64,10 @@ jobs:
           APPLE_SDK: ${{ matrix.sdk }}
           APPLE_ARCH: ${{ matrix.arch }}
           APPLE_CODE_SIGNING_ALLOWED: 'NO'
+          # The published IPA is unsigned, for sideloading, so it is the open
+          # build (all providers, provider downloads); the simulator smoke
+          # starts the same flavour.
+          SPOOL_APPLE_APP_STORE: 'OFF'
           BUILD_JOBS: '4'
         run: bash tools/build-ios.sh
       - name: Smoke native startup on simulator

@@ -1146,6 +1146,11 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/RenderBenchmarkReportTest.py"
             "${CMAKE_CURRENT_SOURCE_DIR}/tools/compare-render-benchmark.py"
     )
+    add_test(NAME altstore-source
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/AltStoreSourceTest.py"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools/apple/altstore-source.py"
+    )
     add_test(NAME player-setup-report
         COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/PlayerSetupReportTest.py"
@@ -1318,7 +1323,7 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
                 INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL OFF)
         endforeach()
         set_tests_properties(provider-sdk-tool local-provider-overrides ffmpeg-capability-generator module-seam
-            network-shaper render-benchmark-report player-setup-report test-driver-ordering PROPERTIES LABELS traditional)
+            network-shaper render-benchmark-report altstore-source player-setup-report test-driver-ordering PROPERTIES LABELS traditional)
         if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
             set_tests_properties(package-audit webos-tooling PROPERTIES LABELS traditional)
             # Exercise the actual curl scheduler/counters, not just its exposed

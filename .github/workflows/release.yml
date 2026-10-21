@@ -138,7 +138,7 @@ jobs:
           add_row 'macOS — Apple Silicon' '*-macOS-arm64.dmg'
           add_row 'macOS — Intel' '*-macOS-x86_64.dmg'
           add_row 'Apple TV — unsigned (re-sign required)' '*-tvOS-arm64.ipa'
-          add_row 'iPhone and iPad — unsigned (re-sign required)' '*-iOS-arm64.ipa'
+          add_row 'iPhone and iPad — sideload with SideStore or AltStore' '*-iOS-arm64.ipa'
           add_row 'Windows — installer' '*-Windows-x64-Setup.exe'
           add_row 'Windows — portable' '*-Windows-x64-Portable.exe'
           add_row 'Linux — AppImage' '*-x86_64.AppImage'
@@ -176,7 +176,8 @@ jobs:
             echo "Build and sign from source with your own Apple Account, or use your own tvOS re-signing setup. See [Apple TV build and signing directions](https://github.com/$REPO/tree/$TAG#apple-tv)."
             if compgen -G 'release-assets/*-iOS-arm64.ipa' >/dev/null; then
               echo
-              echo 'The iPhone/iPad IPA is also **unsigned** and requires your own Apple signing identity and provisioning profile before installation. It is not distributed through the App Store or TestFlight; simulator startup does not certify device playback.'
+              echo 'The iPhone/iPad IPA is **unsigned**, for sideloading: SideStore or AltStore re-sign it with your own free Apple ID. Add the source `https://spool-player.github.io/spool/altstore.json` once and updates arrive there. It is not distributed through the App Store or TestFlight; simulator startup does not certify device playback.'
+              echo "See [installing on iPhone and iPad](https://github.com/$REPO/blob/$TAG/docs/install/ios.md)."
             fi
           } >release-notes.md
       - name: Publish GitHub prerelease
@@ -255,6 +256,21 @@ jobs:
           test -f release-assets/spool-universal.apk
           ! jq -e '[.releases[].assets[].url] | any(endswith("spool-universal.apk"))' \
             update-pages/updates/android.json >/dev/null
+      - name: Publish the SideStore/AltStore source
+        env:
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          ipa="release-assets/Spool-$version-iOS-arm64.ipa"
+          test -f "$ipa"
+          cp app/icons/png/spool/1024.png update-pages/altstore-icon.png
+          python3 tools/apple/altstore-source.py "$ipa" \
+            --download-url "https://github.com/$REPO/releases/download/$TAG/$(basename "$ipa")" \
+            --icon-url "https://spool-player.github.io/spool/altstore-icon.png" \
+            --date "$(date -u +%Y-%m-%d)" --notes generated-notes.md >update-pages/altstore.json
+          jq -e '.apps[0].versions[0].version == "'"$version"'"' update-pages/altstore.json
       - name: Include exact release manifest in Pages
         run: cp release-assets/website-release.json update-pages/updates/latest.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0

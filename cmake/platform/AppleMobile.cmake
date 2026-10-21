@@ -1,6 +1,9 @@
 function(spool_resolve_apple_mobile_dependencies)
-    if(NOT SPOOL_APPLE_APP_STORE)
-        message(FATAL_ERROR "Apple mobile builds require SPOOL_APPLE_APP_STORE=ON")
+    # App Store review limits what a build may bundle and download. An
+    # unsigned build for sideloading never goes through review, so it may be
+    # an ordinary open build; tvOS and signed builds keep the store's rules.
+    if(NOT SPOOL_APPLE_APP_STORE AND NOT IOS)
+        message(FATAL_ERROR "Apple TV builds require SPOOL_APPLE_APP_STORE=ON")
     endif()
     set(PKG_CONFIG_ARGN --static)
     pkg_check_modules(MPV REQUIRED IMPORTED_TARGET GLOBAL mpv)
