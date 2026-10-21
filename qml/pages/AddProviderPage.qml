@@ -78,7 +78,11 @@ FocusScope {
 
     function beginSetup(id) {
         pendingSetup = ""
-        const context = Providers.beginSetup(id)
+        // A service already signed in to starts from that sign-in, the way a
+        // Plex app lists the account's other servers; a provider that cannot
+        // reuse it just asks again.
+        const signedIn = Providers.accounts.find(account => account.moduleId === id)
+        const context = signedIn ? Providers.beginSetup(id, signedIn.id, "addServer") : Providers.beginSetup(id)
         if (context)
             shell.openProviderScreen(context)
     }

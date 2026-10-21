@@ -12,7 +12,9 @@ FocusScope {
     property string providerName: ""
     property string providerId: ""
     property url providerIcon
-    property string providerVersion: ""
+    property string iconName: "dns"
+    // A short state shown at the end of the row, such as "Added".
+    property string badge: ""
     readonly property int brandingHeight: providerName.length > 0 ? Metrics.scaled(30) : 0
 
     signal accepted
@@ -25,10 +27,7 @@ FocusScope {
     focusPolicy: Qt.StrongFocus
     Accessible.role: Accessible.Button
     Accessible.name: title
-    Accessible.description: [serverAddress, providerName.length > 0 ? providerName + (providerVersion.length > 0 ? ", installed provider version "
-                                                                                                                   + providerVersion :
-                                                                                                                   "") : ""].filter(
-        part => part.length > 0).join(". ")
+    Accessible.description: [serverAddress, badge, providerName].filter(part => part.length > 0).join(". ")
     Accessible.onPressAction: root.accepted()
 
     Rectangle {
@@ -49,7 +48,7 @@ FocusScope {
         anchors.bottomMargin: root.brandingHeight
 
         MaterialIcon {
-            name: "dns"
+            name: root.iconName
             iconSize: Metrics.scaled(22)
             iconColor: root.focused ? Theme.accent : Theme.textMuted
         }
@@ -77,6 +76,25 @@ FocusScope {
                 elide: Text.ElideRight
             }
         }
+
+        Rectangle {
+            visible: root.badge.length > 0
+            Layout.preferredHeight: Metrics.scaled(28)
+            Layout.preferredWidth: badgeText.implicitWidth + Metrics.scaled(22)
+            radius: height / 2
+            color: Theme.bgPanel
+            border.width: 1
+            border.color: Theme.border
+
+            AppText {
+                id: badgeText
+                anchors.centerIn: parent
+                text: root.badge
+                color: Theme.textSecondary
+                font.pixelSize: Metrics.metaSizePx
+                font.weight: Font.DemiBold
+            }
+        }
     }
 
     ProviderIcon {
@@ -92,20 +110,6 @@ FocusScope {
         seed: root.providerId
         Accessible.ignored: true
     }
-    SecondaryText {
-        anchors.right: parent.right
-        anchors.bottom: parent.bottom
-        anchors.rightMargin: Metrics.scaled(14)
-        anchors.bottomMargin: Metrics.scaled(6)
-        width: Math.max(0, parent.width - Metrics.scaled(60))
-        visible: root.providerVersion.length > 0
-        text: root.providerVersion
-        horizontalAlignment: Text.AlignRight
-        font.pixelSize: Metrics.metaSizePx
-        elide: Text.ElideRight
-        Accessible.ignored: true
-    }
-
     TapHandler {
         onTapped: root.accepted()
     }

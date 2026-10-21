@@ -659,7 +659,8 @@ FocusScope {
                     spacing: Metrics.scaled(12)
 
                     function headerStops() {
-                        return [providerSettingsButton, startupButton, addProfileButton].filter(item => item.visible)
+                        return [providerSettingsButton, startupButton, addProfileButton,
+                                addServerButtonInSection].filter(item => item.visible)
                     }
                     function tileStops() {
                         const tiles = []
@@ -746,6 +747,25 @@ FocusScope {
                                     root.focusStop(addProfileButton)
                                     root.shell.openProviderScreen(Providers.beginSetup(sectionItem.modelData.moduleId,
                                                                                        sectionItem.modelData.people[0].accounts[0].id))
+                                }
+                            }
+                            ActionButton {
+                                id: addServerButtonInSection
+                                readonly property string focusKey: "addServer:" + sectionItem.modelData.key
+                                readonly property var installedModule: root.moduleFor(sectionItem.modelData.moduleId)
+                                onActiveFocusChanged: if (activeFocus)
+                                                          root.lastFocus = focusKey
+                                visible: Boolean(installedModule && installedModule.needsAccount)
+                                kind: "flat"
+                                iconName: "dns"
+                                text: "Add a server"
+                                onClicked: {
+                                    root.focusStop(addServerButtonInSection)
+                                    const context = Providers.beginSetup(sectionItem.modelData.moduleId,
+                                                                         sectionItem.modelData.people[0].accounts[0].id,
+                                                                         "addServer")
+                                    if (context)
+                                        root.shell.openProviderScreen(context)
                                 }
                             }
                         }

@@ -361,7 +361,9 @@ FocusScope {
     }
     Component.onCompleted: {
         const context = provider && provider.arguments ? provider.arguments.setupContext : null
-        if (context && context.accountId && setupContextOperation.length > 0) {
+        // Adding another server starts blank; adding a profile or signing in
+        // again starts from the saved one.
+        if (context && context.accountId && context.purpose !== "addServer" && setupContextOperation.length > 0) {
             provider.request(setupContextOperation).then(result => {
                 if (!closed && result.server) {
                     address.text = String(result.server)

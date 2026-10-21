@@ -1716,6 +1716,18 @@ QObject *ProviderRegistry::beginSetup(const QString& moduleId, const QString& ac
         setupConfiguration = { { QStringLiteral("setupContext"), setupContext },
             { QStringLiteral("setupAccount"), existingAccount->configuration } };
     }
+    // What is already added from this provider, so its sign-in can say so
+    // (a server already in Spool) instead of adding it twice. Identities
+    // only; never another account's configuration.
+    QVariantList existing;
+    for (const ProviderAccount& added : m_accounts) {
+        if (added.module == moduleId)
+            existing.push_back(
+                QVariantMap { { QStringLiteral("account"), added.key }, { QStringLiteral("group"), added.group },
+                    { QStringLiteral("label"), added.label }, { QStringLiteral("detail"), added.detail } });
+    }
+    setupContext.insert(QStringLiteral("existing"), existing);
+    setupConfiguration.insert(QStringLiteral("setupContext"), setupContext);
     if (!owner->manifest.needsAccount()) {
         const auto existing = std::find_if(
             m_accounts.begin(), m_accounts.end(), [&](const auto& account) { return account.module == moduleId; });

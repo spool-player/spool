@@ -116,6 +116,9 @@ FocusScope {
                 width: ListView.view.width
                 title: modelData.title || modelData.name || ""
                 serverAddress: modelData.address || ""
+                iconName: modelData.icon || "dns"
+                badge: modelData.badge || ""
+                opacity: modelData.badge ? 0.75 : 1
                 providerName: root.installedModule ? root.installedModule.name : ""
                 providerId: root.provider ? root.provider.moduleId : ""
                 providerIcon: root.installedModule ? root.installedModule.iconUrl : ""
