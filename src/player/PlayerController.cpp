@@ -2910,6 +2910,13 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_
         if (strcmp(property->name, "pause") == 0 && property->format == MPV_FORMAT_FLAG) {
             const bool paused = *static_cast<int *>(property->data);
             postMpvEvent(generation, [this, paused]() {
+                // Until a file has loaded, mpv's pause is only ever what was
+                // set or is about to be: an adopted idle core reports its own
+                // initial state as it is observed, and that report lands
+                // while setup waits for the surface. Taking it would overwrite
+                // the requested start (or a pause pressed during setup).
+                if (!m_fileLoaded)
+                    return;
                 if (m_paused != paused)
                     qInfo() << "player: pause state changed" << paused;
                 m_paused = paused;
