@@ -235,6 +235,9 @@ private:
     struct Origin {
         ArtworkConcurrency control;
         int inFlight = 0;
+        // Per open fetch, the most fetches open to this server at once
+        // while it ran: what it shared the server with.
+        QHash<int, int> peakOpen;
         // Early round trips: time to first byte of the first fetches.
         int seedSamples = 0;
         double fastestFirstByteMs = -1;
@@ -278,7 +281,8 @@ private:
             return;
         origin.lastLoggedLimit = limit;
         qInfo() << "artwork: downloads at once" << limit << "fastest" << qRound(origin.control.fastestMs())
-                << "ms recent" << qRound(origin.control.recentMs()) << "ms";
+                << "ms recent" << qRound(origin.control.recentMs()) << "ms server parallelism"
+                << QString::number(origin.control.serverParallelism(), 'f', 1);
         publishStatus();
     }
 
@@ -349,7 +353,10 @@ private:
             }
             const RenderRequest request = m_renderQueue.takeAt(index);
             const QString originKey = originOf(request.url);
-            const int inFlight = ++origin.inFlight;
+            ++origin.inFlight;
+            origin.peakOpen.insert(request.requestId, 0);
+            for (int& peak : origin.peakOpen)
+                peak = std::max(peak, origin.inFlight);
             const qint64 fetchStartedNs = monotonicNs();
             QNetworkReply *reply = m_network->get(cachedRequest(request.url, request.headers));
             m_renderReplies.insert(request.requestId, reply);
@@ -361,17 +368,18 @@ private:
             });
             connect(reply, &QNetworkReply::finished, this,
                 [this, reply, requestId = request.requestId, key, queuedNs = request.queuedNs, fetchStartedNs,
-                    originKey, inFlight, firstByteNs]() {
+                    originKey, firstByteNs]() {
                     m_renderReplies.remove(requestId);
                     const bool diskCache = reply->attribute(QNetworkRequest::SourceIsFromCacheAttribute).toBool();
                     const qint64 finishedNs = monotonicNs();
                     if (const auto origin = m_origins.find(originKey); origin != m_origins.end()) {
+                        const int sharedWith = origin->peakOpen.take(requestId);
                         origin->inFlight = std::max(0, origin->inFlight - 1);
                         // Cache hits and failures say nothing about the network.
                         if (!diskCache && reply->error() == QNetworkReply::NoError) {
                             if (origin->control.automatic())
                                 noteFirstByte(*origin, static_cast<double>(*firstByteNs) / 1e6);
-                            origin->control.record(static_cast<double>(finishedNs - fetchStartedNs) / 1e6, inFlight);
+                            origin->control.record(static_cast<double>(finishedNs - fetchStartedNs) / 1e6, sharedWith);
                             noteLimit(*origin);
                         }
                     }
