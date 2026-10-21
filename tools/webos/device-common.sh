@@ -36,5 +36,7 @@ webos_quote() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
 webos_luna() {
   local host="$1" uri="$2" payload="${3:-\{\}}" bin="${LUNA_BIN:-luna-send}"
   [[ "$bin" =~ ^[a-zA-Z0-9_./-]+$ && "$bin" != -* ]] || webos_error 'invalid LUNA_BIN'
-  webos_ssh -n "$host" "$bin -n 1 $(webos_quote "$uri") $(webos_quote "$payload")"
+  # luna-send on current firmware prints nothing without a terminal, even
+  # though it exits 0, so give it one; luna-response.py skips tty chatter.
+  webos_ssh -tt "$host" "$bin -n 1 $(webos_quote "$uri") $(webos_quote "$payload")" </dev/null
 }

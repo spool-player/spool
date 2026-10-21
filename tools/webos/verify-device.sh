@@ -144,8 +144,10 @@ PY
   luna_bin="${LUNA_BIN:-luna-send}"
   [[ "$luna_bin" =~ ^[a-zA-Z0-9_./-]+$ && "$luna_bin" != -* ]] || webos_error 'invalid LUNA_BIN'
   : >"$outdir/install.log"
-  timeout --signal=TERM --kill-after=5s "${install_timeout}s" "${WEBOS_SSH[@]}" -n -- "$host" \
-    "$luna_bin -i -f 'luna://org.webosbrew.hbchannel.service/install' $(webos_quote "$payload")" >"$outdir/install.log" 2>&1 &
+  # A terminal, as in webos_luna: without one luna-send never makes the call.
+  timeout --signal=TERM --kill-after=5s "${install_timeout}s" "${WEBOS_SSH[@]}" -tt -- "$host" \
+    "$luna_bin -i -f 'luna://org.webosbrew.hbchannel.service/install' $(webos_quote "$payload")" \
+    </dev/null >"$outdir/install.log" 2>&1 &
   install_pid="$!"
   deadline=$(( SECONDS + 10#$install_timeout ))
   while :; do
