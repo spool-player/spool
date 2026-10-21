@@ -1205,7 +1205,11 @@ int main(int argc, char **argv)
     // with what each one cost written out, so page-switch cost is a number in
     // CI rather than an impression.
     Spool::RenderBenchmarkHooks benchmarkHooks;
-    benchmarkHooks.providerId = QStringList(providers.moduleIds()).join(QLatin1Char(','));
+    // Sorted: module ids come from a hash, and two runs of one build must
+    // report the same runtime to be comparable.
+    QStringList benchmarkProviders = providers.moduleIds();
+    benchmarkProviders.sort();
+    benchmarkHooks.providerId = benchmarkProviders.join(QLatin1Char(','));
     benchmarkHooks.providerRuntime = QStringLiteral("js");
     benchmarkHooks.libraries = controller->libraries();
     benchmarkHooks.openLibrary = [controller = controller.get()](int index) { controller->openLibrary(index); };
