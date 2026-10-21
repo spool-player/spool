@@ -21,6 +21,9 @@
     <name>Spool</name>
   </developer>
   <releases>
+    <release version="0.9.2" date="2026-10-22">
+      <description><p>Browse very large libraries smoothly: only the rows on screen are loaded, an alphabet index jumps to any letter, and typing finds a title the way a file browser does. Artwork downloads adapt to each server's capacity. Adding an account is one step, with no provider versions or update prompts, Plex servers can be added from an existing sign-in, and a new sign-in opens straight into its library. The iPhone build installs through SideStore or AltStore. Fixes held navigation stalling while rows load, speed tests losing their measurements, and prepared playback ignoring a paused start.</p></description>
+    </release>
     <release version="0.9.1" date="2026-10-17">
       <description><p>Improve retained-page navigation, remote focus recovery, provider lifecycle safety, and playback controls. Add repeatable isolated performance profiling and extend real-application end-to-end journeys. Clean up webOS packaging and require explicit launch for device verification. Bundle updated providers using the source-only socket host contract.</p></description>
     </release>
