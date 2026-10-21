@@ -955,7 +955,12 @@ FocusScope {
         if (InputKeys.isDirection(key) && grid.activeFocus) {
             if (InputKeys.consumeRecoveryGesture(recoveryGesture, key, phase, repeat, false))
                 return true
-            if (pointerNavigationPending || !InputKeys.selectionVisiblyUsable(grid, root)) {
+            // A hold the grid is driving moves the selection between frames,
+            // so its next card may not be laid out when the next repeat
+            // arrives. That is not a lost selection, and treating it as one
+            // swallowed the rest of the hold.
+            const holding = grid.heldKey === key
+            if (pointerNavigationPending || (!holding && !InputKeys.selectionVisiblyUsable(grid, root))) {
                 InputKeys.consumeRecoveryGesture(recoveryGesture, key, phase, repeat, true)
                 return applyPendingPointerNavigation()
             }
