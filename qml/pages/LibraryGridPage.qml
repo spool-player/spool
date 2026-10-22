@@ -2,7 +2,6 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Layouts
-import QtQuick.Shapes
 import "../theme"
 import "../primitives"
 import "LibraryNavigation.js" as LibraryNavigation
@@ -45,31 +44,28 @@ FocusScope {
             return Browse.alphabetRevision >= 0 ? Browse.labelAt(alphabetFeedbackIndex) : "#"
         return LibraryNavigation.sectionLabel(currentSortBy(), Browse.items.get(alphabetFeedbackIndex))
     }
-    // The letter rail: for a name-sorted list long enough to need one, whose
-    // length is known (every row held, or a sparse listing of all of them).
     // More than a couple of screens: worth telling where in it the view is.
     readonly property bool longList: grid.contentHeight > grid.height * 2.5
-    // Space for the rail is kept whenever one could appear, so it showing up
-    // never reflows the grid under the viewer.
-    readonly property bool alphabetRailReserved: Boolean(Browse.alphabetical && grid.count >= 60)
-    readonly property bool alphabetRail: alphabetRailReserved && Boolean(Browse.sparse || !Browse.hasMore) && longList
+    // The scroll bar doubles as a letter index for a long name-sorted list
+    // whose length is known (every row held, or a sparse listing of them all).
+    readonly property bool letterIndex: Boolean(Browse.alphabetical && (Browse.sparse || !Browse.hasMore)) && longList
 
-    readonly property var alphabetLetters: alphabetRail && Browse.alphabetRevision >= 0 ? Browse.alphabet : []
+    readonly property var alphabetLetters: letterIndex && Browse.alphabetRevision >= 0 ? Browse.alphabet : []
     // Moving faster than a few screens a second, by fling, wheel or scroll
     // bar: nothing passing is seen long enough to be worth a request the
     // server would only finish after the view has moved on.
     property bool scrollingFast: false
     property double lastScrollAt: 0
     property real lastScrollY: 0
-    // Remote focus has moved off the grid onto the rail.
-    property bool railActive: false
-    property int railIndex: -1
+    // Remote focus has moved off the grid onto the letter bar.
+    property bool barActive: false
+    property int barIndex: -1
     readonly property int viewLetterIndex: {
         const label = currentAlphabetLabel
         return alphabetLetters.findIndex(letter => letter.label === label)
     }
-    onAlphabetRailChanged: if (!alphabetRail)
-                               railActive = false
+    onLetterIndexChanged: if (!letterIndex)
+                              barActive = false
     readonly property var libraryList: libraryPanel.menuList
     readonly property var sortList: sortPanel.menuList
     readonly property var filterList: filterPanel.menuList
@@ -644,7 +640,7 @@ FocusScope {
         const code = character.charCodeAt(0)
         if (code < 32 || code === 127 || character === "/" || (character === " " && typeAheadBuffer.length <= 0))
             return false
-        railActive = false
+        barActive = false
         const previous = typeAheadBuffer
         const repeatedSingle = previous.length === 1 && previous === character
         // Pressing one letter again walks through that letter's titles.
@@ -700,13 +696,14 @@ FocusScope {
     function jumpToLetter(index) {
         if (index < 0 || index >= alphabetLetters.length)
             return
-        railIndex = index
+        barIndex = index
         jumpToRow(alphabetLetters[index].row)
+        letterBar.reveal()
     }
 
     // Channel up/down, page up/down: the letter before or after this one.
     function stepLetter(delta) {
-        if (!alphabetRail || alphabetLetters.length <= 0)
+        if (!letterIndex || alphabetLetters.length <= 0)
             return false
         const from = viewLetterIndex >= 0 ? viewLetterIndex : 0
         const next = Math.max(0, Math.min(alphabetLetters.length - 1, from + delta))
@@ -718,16 +715,19 @@ FocusScope {
         return true
     }
 
-    function enterRail() {
-        if (!alphabetRail)
+    // From the remote the bar is a column of letters: Up and Down step
+    // through them with the grid following, and Left, OK or Back return to
+    // the grid at the first title of the letter reached.
+    function enterLetterBar() {
+        if (!letterIndex)
             return false
-        railIndex = Math.max(0, viewLetterIndex)
-        railActive = true
+        barIndex = Math.max(0, viewLetterIndex)
+        barActive = true
         return true
     }
 
-    function leaveRail() {
-        railActive = false
+    function leaveLetterBar() {
+        barActive = false
         InputKeys.focus(grid)
         grid.ensureCurrentVisible()
     }
@@ -926,28 +926,26 @@ FocusScope {
     }
 
     function routeKey(key, phase, repeat) {
-        if (railActive) {
+        if (barActive) {
             if (phase === "release")
                 return InputKeys.isDirection(key)
             if (key === Qt.Key_Up || key === Qt.Key_Down) {
-                jumpToLetter(Math.max(0, Math.min(alphabetLetters.length - 1, railIndex + (key === Qt.Key_Up ? -1 :
-                                                                                                               1))))
-
+                jumpToLetter(Math.max(0, Math.min(alphabetLetters.length - 1, barIndex + (key === Qt.Key_Up ? -1 : 1))))
                 return true
             }
             if (key === Qt.Key_Left) {
-                leaveRail()
+                leaveLetterBar()
                 return true
             }
             return InputKeys.isDirection(key)
         }
         if (phase === "press" && grid.activeFocus && (key === Qt.Key_PageUp || key === Qt.Key_PageDown))
             return stepLetter(key === Qt.Key_PageUp ? -1 : 1)
-        // Right from the last column steps onto the letter rail.
-        if (phase === "press" && !repeat && key === Qt.Key_Right && grid.activeFocus && alphabetRail
+        // Right from the last column steps onto the letter bar.
+        if (phase === "press" && !repeat && key === Qt.Key_Right && grid.activeFocus && letterIndex
                 && grid.currentIndex >= 0 && (grid.currentIndex % root.columns === root.columns - 1
                                               || grid.currentIndex === grid.count - 1) && !pointerNavigationPending)
-            return enterRail()
+            return enterLetterBar()
         if (phase === "release" && InputKeys.isDirection(key)) {
             InputKeys.consumeRecoveryGesture(recoveryGesture, key, phase, repeat, false)
             return grid.routeKey(key, phase, repeat)
@@ -1031,8 +1029,8 @@ FocusScope {
     }
 
     function activate() {
-        if (railActive) {
-            leaveRail()
+        if (barActive) {
+            leaveLetterBar()
             return
         }
         if (typeAheadMissed && typeAheadBuffer.length > 0 && grid.activeFocus) {
@@ -1074,8 +1072,8 @@ FocusScope {
     }
 
     function back() {
-        if (railActive) {
-            leaveRail()
+        if (barActive) {
+            leaveLetterBar()
             return true
         }
         if (typeAheadBuffer.length > 0) {
@@ -1355,8 +1353,7 @@ FocusScope {
                 boundsBehavior: Flickable.StopAtBounds
                 model: Browse.items
                 leftMargin: focusPadding
-                rightMargin: focusPadding + Math.max(Metrics.scaled(10), 10) + Metrics.scaled(6) + (
-                                 root.alphabetRailReserved ? letterRail.restingWidth : 0)
+                rightMargin: focusPadding + letterBar.width
                 // Each cell carries its own trailing gap (delegates are
                 // cellWidth - gapPx), so the track must not be charged for the
                 // gaps a second time: divide the whole run evenly and let the
@@ -1394,12 +1391,11 @@ FocusScope {
                     artworkWindowDebounce.restart()
                     if (Browse.sparse && !grid.racing && !root.scrollingFast && !artworkWindowThrottle.running)
                         artworkWindowThrottle.start()
-                    alphabetFeedback.restart()
                 }
                 onCurrentIndexChanged: {
                     if (currentIndex >= 0)
                         root.savedIndex = currentIndex
-                    alphabetFeedback.restart()
+                    letterBar.reveal()
                     requestPageIfNeeded()
                     routeCheckpoint.restart()
                 }
@@ -1411,35 +1407,31 @@ FocusScope {
                 }
                 onDraggingChanged: if (dragging)
                                        root.beginPointerNavigation(null)
-                ListScrollBar {
-                    id: libraryScrollBar
+                LetterScrollBar {
+                    id: letterBar
                     anchors.top: parent.top
                     anchors.right: parent.right
                     anchors.bottom: parent.bottom
-                    width: Math.ceil(Math.max(Metrics.scaled(10), 10) * 3)
+                    // Wide enough to aim at: a finger, a magic remote across
+                    // the room, or a mouse.
+                    width: Metrics.coarsePointer ? Math.round(Metrics.touchTargetPx * 0.75) : Platform.isTV
+                                                   ? Metrics.scaled(28) : Metrics.scaled(20)
                     // Above the delegate MouseArea below, which fills the view
                     // and would otherwise grab every press over the bar.
                     z: 4
                     flickable: grid
+                    letters: root.alphabetLetters
+                    columns: root.columns
+                    rowHeight: grid.cellHeight
+                    label: root.currentAlphabetLabel
+                    labelEnabled: root.longList
+                    active: root.barActive
+                    activeIndex: root.barIndex
                     // The magic remote points and drags, so a television is
                     // not on its own a reason to make the bar inert.
                     interactive: Platform.hasPointer
-                    minimumSize: 0.04
                     onScrolled: root.beginPointerNavigation(null)
-                }
-                AlphabetRail {
-                    id: letterRail
-                    anchors.top: parent.top
-                    anchors.bottom: parent.bottom
-                    anchors.right: libraryScrollBar.left
-                    anchors.rightMargin: -Math.max(Metrics.scaled(10), 10)
-                    z: 5
-                    visible: root.alphabetRail
-                    letters: root.alphabetLetters
-                    active: root.railActive
-                    currentIndex: root.railActive ? root.railIndex : root.viewLetterIndex
-                    interactive: Platform.hasPointer
-                    onLetterChosen: (index, final) => {
+                    onLetterChosen: index => {
                         root.beginPointerNavigation(null)
                         root.jumpToLetter(index)
                     }
@@ -1546,126 +1538,6 @@ FocusScope {
                     onTriggered: root.checkpointRoute()
                 }
 
-                Timer {
-                    id: alphabetFeedback
-                    interval: 700
-                    repeat: false
-                }
-
-                // Scrub letter callout: rounded on its left, top and bottom, with
-                // no right edge — the top-right and bottom-right shoulders funnel
-                // into the scroll bar so the tag reads as emanating from it.
-                Shape {
-                    id: alphabetCallout
-
-                    readonly property real stroke: Math.max(2, Metrics.scaled(2))
-                    readonly property real inset: stroke / 2
-                    readonly property real cornerRadius: Metrics.scaled(12)
-                    readonly property real neckWidth: Metrics.scaled(16)
-                    readonly property real mouthHalf: Metrics.scaled(13)
-                    readonly property real bodyRight: width - neckWidth
-                    readonly property real midY: height / 2
-                    readonly property real desiredY: libraryScrollBar.handleCenterY - height / 2
-
-                    // With the letter rail it stands clear of the rail, open or not.
-                    anchors.right: libraryScrollBar.right
-                    anchors.rightMargin: libraryScrollBar.visualWidth + (root.alphabetRail ? letterRail.restingWidth :
-                                                                                             0)
-                    y: Math.max(0, Math.min(grid.height - height, desiredY))
-                    width: Metrics.scaled(52) + neckWidth
-                    height: Metrics.scaled(48)
-                    // Directional navigation scrolls the view without touching
-                    // the bar, so the bar says where it has gone: the callout
-                    // reads the same whether a remote walked the grid there or
-                    // a pointer dragged the handle.
-                    // Only for lists long enough that the position needs
-                    // telling, and never beside the rail's own bubble.
-                    opacity: root.longList && !letterRail.engaged && (alphabetFeedback.running
-                                                                      || libraryScrollBar.pressed) ? 1 : 0
-                    visible: opacity > 0
-                    preferredRendererType: Shape.CurveRenderer
-                    z: 21
-
-                    // The stroke runs mouth -> top -> left -> bottom -> mouth and
-                    // stops there; only the fill closes the contour across the
-                    // bar, which is what leaves the right edge open.
-                    ShapePath {
-                        fillColor: Theme.accentPanel
-                        strokeColor: Theme.accent
-                        strokeWidth: alphabetCallout.stroke
-                        capStyle: ShapePath.FlatCap
-                        joinStyle: ShapePath.RoundJoin
-                        startX: alphabetCallout.width
-                        startY: alphabetCallout.midY - alphabetCallout.mouthHalf
-
-                        PathCubic {
-                            control1X: alphabetCallout.width - alphabetCallout.neckWidth * 0.35
-                            control1Y: alphabetCallout.midY - alphabetCallout.mouthHalf
-                            control2X: alphabetCallout.bodyRight + alphabetCallout.neckWidth * 0.55
-                            control2Y: alphabetCallout.inset
-                            x: alphabetCallout.bodyRight
-                            y: alphabetCallout.inset
-                        }
-                        PathLine {
-                            x: alphabetCallout.cornerRadius + alphabetCallout.inset
-                            y: alphabetCallout.inset
-                        }
-                        PathArc {
-                            radiusX: alphabetCallout.cornerRadius
-                            radiusY: alphabetCallout.cornerRadius
-                            direction: PathArc.Counterclockwise
-                            x: alphabetCallout.inset
-                            y: alphabetCallout.cornerRadius + alphabetCallout.inset
-                        }
-                        PathLine {
-                            x: alphabetCallout.inset
-                            y: alphabetCallout.height - alphabetCallout.cornerRadius - alphabetCallout.inset
-                        }
-                        PathArc {
-                            radiusX: alphabetCallout.cornerRadius
-                            radiusY: alphabetCallout.cornerRadius
-                            direction: PathArc.Counterclockwise
-                            x: alphabetCallout.cornerRadius + alphabetCallout.inset
-                            y: alphabetCallout.height - alphabetCallout.inset
-                        }
-                        PathLine {
-                            x: alphabetCallout.bodyRight
-                            y: alphabetCallout.height - alphabetCallout.inset
-                        }
-                        PathCubic {
-                            control1X: alphabetCallout.bodyRight + alphabetCallout.neckWidth * 0.55
-                            control1Y: alphabetCallout.height - alphabetCallout.inset
-                            control2X: alphabetCallout.width - alphabetCallout.neckWidth * 0.35
-                            control2Y: alphabetCallout.midY + alphabetCallout.mouthHalf
-                            x: alphabetCallout.width
-                            y: alphabetCallout.midY + alphabetCallout.mouthHalf
-                        }
-                    }
-
-                    AppText {
-                        anchors.verticalCenter: parent.verticalCenter
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        anchors.horizontalCenterOffset: -alphabetCallout.neckWidth / 2
-                        width: alphabetCallout.bodyRight - Metrics.scaled(8)
-                        height: alphabetCallout.height - Metrics.scaled(8)
-                        text: root.currentAlphabetLabel
-                        font.pixelSize: Metrics.scaled(26)
-                        fontSizeMode: Text.Fit
-                        minimumPixelSize: Metrics.scaled(8)
-                        elide: Text.ElideRight
-                        font.weight: Font.Bold
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                        color: Theme.textPrimary
-                    }
-
-                    Behavior on opacity {
-                        NumberAnimation {
-                            duration: Theme.reducedMotion ? 0 : 100
-                        }
-                    }
-                }
-
                 delegate: root.listMode ? listRowComponent : posterCardComponent
 
                 Component {
@@ -1687,7 +1559,7 @@ FocusScope {
                         preferEpisodeTitle: false
                         useSeriesPoster: true
                         focused: Metrics.keyboardFocusActive && root.navigationFocusVisible && grid.activeFocus &&
-                                 !root.railActive && gridDelegate.GridView.isCurrentItem
+                                 !root.barActive && gridDelegate.GridView.isCurrentItem
                         artworkVisible: true
                         // Buffered delegates must not enter the render queue:
                         // scrolling cancels old requests and loads the viewport
@@ -1797,15 +1669,14 @@ FocusScope {
                         radius: Math.max(0, Theme.radiusMedium - Theme.focusBorderWidth)
                         border.width: Theme.focusBorderWidth
                         border.color: root.navigationFocusVisible && ((Metrics.keyboardFocusActive && grid.activeFocus
-                                                                       && !root.railActive) || (root.listMode
-                                                                                                && Metrics.coarsePointer
-                                                                                                && root.touchPreviewItemId.length
-                                                                                                > 0 && root.touchPreviewItemId
-                                                                                                === String(
-                                                                                                    root.paneItem
-                                                                                                    ? root.paneItem.movieId :
-                                                                                                      ""))) ? Theme.accent :
-                                                                                                              "transparent"
+                                                                       && !root.barActive) || (root.listMode
+                                                                                               && Metrics.coarsePointer
+                                                                                               && root.touchPreviewItemId.length
+                                                                                               > 0 && root.touchPreviewItemId
+                                                                                               === String(root.paneItem
+                                                                                                          ? root.paneItem.movieId :
+                                                                                                            ""))) ? Theme.accent :
+                                                                                                                    "transparent"
                     }
                 }
 

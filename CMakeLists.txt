@@ -627,7 +627,8 @@ qt_add_qml_module(spool
         qml/primitives/MetadataChip.qml
         qml/primitives/MenuListView.qml
         qml/primitives/ListScrollBar.qml
-        qml/primitives/AlphabetRail.qml
+        qml/primitives/LetterScrollBar.qml
+        qml/primitives/LetterScale.js
         qml/primitives/MenuRow.qml
         qml/primitives/SecondaryText.qml
         qml/primitives/NavGrid.qml
@@ -1218,6 +1219,7 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
             input-latency-warning tests/qml/tst_InputLatencyWarning.qml
             player-seek-bar-hover tests/qml/tst_PlayerSeekBarHover.qml
             list-scroll-bar tests/qml/tst_ListScrollBar.qml
+            letter-scroll-bar tests/qml/tst_LetterScrollBar.qml
             inline-slider tests/qml/tst_InlineSlider.qml
         )
         list(APPEND SPOOL_QML_TESTS
@@ -1255,6 +1257,7 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
                 tests/qml/tst_LibraryScaleProfile.qml
                 tests/qml/tst_PlayerSeekBarHover.qml
                 tests/qml/tst_OptionPickerInput.qml
+                tests/qml/tst_LetterScrollBar.qml
         )
 
         set(qml_registry "${CMAKE_CURRENT_BINARY_DIR}/generated/QmlTestSelectors.cpp")
