@@ -88,6 +88,7 @@
 #include <QStandardPaths>
 #include <QSysInfo>
 #include <QThread>
+#include <QThreadPool>
 #include <QTimer>
 #include <QWebSocket>
 #include <qqml.h>
@@ -259,13 +260,30 @@ void setIdentity()
 #endif
 }
 
+QString qmlDiskCacheName()
+{
+    return QStringLiteral("qmlcache-") + QString::fromLatin1(kAppVersion) + QLatin1Char('-')
+        + QStringLiteral(SPOOL_PROVIDER_BUNDLE_DIGEST);
+}
+
+// Every release compiles its QML into a directory of its own; the ones left
+// by earlier releases are never read again.
+void pruneStaleQmlCaches(const QString& cacheRoot)
+{
+    const QString current = qmlDiskCacheName();
+    for (const QString& name :
+        QDir(cacheRoot).entryList({ QStringLiteral("qmlcache-*") }, QDir::Dirs | QDir::NoDotAndDotDot)) {
+        if (name != current)
+            QDir(QDir(cacheRoot).filePath(name)).removeRecursively();
+    }
+}
+
 void configurePersistentStartupCaches(const QString& cacheRoot)
 {
     const QString qtShaderCache = QDir(cacheRoot).filePath(QStringLiteral("qtshadercache"));
     // Resource timestamps are fixed in reproducible builds, so compiled QML
     // and provider modules are only valid for this exact version and bundle.
-    const QString qmlDiskCache = QDir(cacheRoot).filePath(QStringLiteral("qmlcache-") + QString::fromLatin1(kAppVersion)
-        + QLatin1Char('-') + QStringLiteral(SPOOL_PROVIDER_BUNDLE_DIGEST));
+    const QString qmlDiskCache = QDir(cacheRoot).filePath(qmlDiskCacheName());
     QDir().mkpath(qtShaderCache);
     QDir().mkpath(qmlDiskCache);
 
@@ -1304,6 +1322,8 @@ int main(int argc, char **argv)
     }
 
     QTimer::singleShot(1000, router.get(), [router = router.get()] { router->beginSession(false); });
+    QTimer::singleShot(15'000, &app,
+        [cachePath] { QThreadPool::globalInstance()->start([cachePath] { pruneStaleQmlCaches(cachePath); }); });
 #if !defined(SPOOL_WEBOS)
     Spool::LocalCommandServer localCommands(controller.get(), router.get(), &window, &downloads, &hub);
     const bool controlDisabled = app.arguments().contains(QStringLiteral("--no-local-control"));
