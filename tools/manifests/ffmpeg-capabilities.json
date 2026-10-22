@@ -167,6 +167,7 @@
     "abuffer",
     "abuffersink",
     "alimiter",
+    "aresample",
     "buffer",
     "buffersink",
     "bwdif",
