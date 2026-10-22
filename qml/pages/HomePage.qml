@@ -16,17 +16,7 @@ FocusScope {
     // An all-hidden library row has management controls instead of cards.
     readonly property bool contentReady: rows.firstRowReady || !Providers.hasAccounts || (homeLibraries.length === 0 &&
                                                                                           !Home.loading)
-    property bool providerChooserOpen: false
-    readonly property bool modalVisible: providerChooserOpen
     property int libraryRevision: 0
-    // What the provider button says Home is showing right now.
-    readonly property string providerSummary: {
-        const choices = Home.providerChoices
-        const shown = choices.filter(choice => choice.shown)
-        if (!Home.providerFilterActive || shown.length === choices.length)
-            return "All providers"
-        return shown.length === 1 ? String(shown[0].name) : shown.length + " of " + choices.length + " providers"
-    }
     readonly property var homeLibraries: {
         // Read the signals' properties so scoped identity/visibility changes
         // rebuild the array without mutating the global Libraries model.
@@ -63,15 +53,6 @@ FocusScope {
         const destination = homeLibraries[to]
         return source && destination ? Libraries.moveLibrary(libraryIndex(source.libraryId), libraryIndex(
                                                                  destination.libraryId)) : false
-    }
-
-    function closeProviderChooser() {
-        providerChooserOpen = false
-        InputKeys.focus(providerButton)
-    }
-
-    function openProviderChooser() {
-        providerChooserOpen = true
     }
 
     focus: true
@@ -173,22 +154,22 @@ FocusScope {
                             }, App, shell, section ? section.model : null, index)
     }
 
+    // With nothing on Home, or when Home providers are filtered, the only
+    // control above the rows is "Show all".
+    function edgeUp() {
+        if (allProvidersButton.visible)
+            InputKeys.focus(allProvidersButton)
+        else if (root.shell)
+            root.shell.focusNavBar()
+    }
+
     function routeKey(key, phase, repeat) {
-        if (providerChooserOpen) {
-            if (InputKeys.isBack(key, false, false))
-                return false
-            return providerPicker.item ? providerPicker.item.routeKey(key, phase, repeat) : true
-        }
-        if (providerButton.activeFocus || allProvidersButton.activeFocus) {
+        if (allProvidersButton.activeFocus) {
             if (phase === "press" && key === Qt.Key_Down)
                 return rows.focusPreferred("libraries")
             if (phase === "press" && key === Qt.Key_Up) {
                 if (root.shell)
                     root.shell.focusNavBar()
-                return true
-            }
-            if (phase === "press" && (key === Qt.Key_Left || key === Qt.Key_Right) && allProvidersButton.visible) {
-                InputKeys.focus(providerButton.activeFocus ? allProvidersButton : providerButton)
                 return true
             }
             return InputKeys.isDirection(key) || InputKeys.isAccept(key)
@@ -198,46 +179,30 @@ FocusScope {
                                                                                       && Home.nextUpItems.count === 0
                                                                                       && Home.latestLibraryRows.length
                                                                                       === 0))) {
-            InputKeys.focus(providerButton)
+            edgeUp()
             return true
         }
         return rows.routeKey(key, phase, repeat)
     }
 
     function activate() {
-        if (providerChooserOpen) {
-            if (providerPicker.item)
-                providerPicker.item.activate()
-            return
-        }
-        if (providerButton.activeFocus) {
-            openProviderChooser()
-            return
-        }
         if (allProvidersButton.activeFocus) {
             Home.showAllProviders()
             return
         }
         if (!rows.activeFocus) {
-            InputKeys.focus(providerButton)
+            edgeUp()
             return
         }
         rows.activate()
     }
 
-    function back() {
-        if (!providerChooserOpen)
-            return false
-        closeProviderChooser()
-        return true
-    }
-
     function longPress() {
-        return !providerChooserOpen && rows.activeFocus && rows.longPress()
+        return rows.activeFocus && rows.longPress()
     }
 
     function currentMediaItem() {
-        return !providerChooserOpen && rows.activeFocus ? rows.currentItem() : ({})
+        return rows.activeFocus ? rows.currentItem() : ({})
     }
     Connections {
         target: Libraries
@@ -277,15 +242,6 @@ FocusScope {
                 Layout.fillWidth: true
             }
             ActionButton {
-                id: providerButton
-                objectName: "homeProviderChooserButton"
-                iconName: "filter_list"
-                text: root.providerSummary
-                Accessible.name: "Providers on Home: " + root.providerSummary
-                Accessible.description: "Turn providers on or off for Home only. Search and playback remain unchanged."
-                onClicked: root.openProviderChooser()
-            }
-            ActionButton {
                 id: allProvidersButton
                 visible: Home.providerScopeMessage.length > 0
                 text: "Show all"
@@ -320,20 +276,9 @@ FocusScope {
         measureFirstRow: true
         focus: true
 
-        onEdgeUp: InputKeys.focus(providerButton)
+        onEdgeUp: root.edgeUp()
         onActivated: (section, index, item) => root.activateAt(section, index, item)
         onFirstRowReadyChanged: if (firstRowReady)
                                     InputLatency.mark(root.uiTransitionToken, "first_delegate")
-    }
-
-    Loader {
-        id: providerPicker
-        anchors.fill: parent
-        active: root.providerChooserOpen
-        z: 200
-        sourceComponent: HomeProviderPicker {
-            anchorItem: providerButton
-            onDismissed: root.closeProviderChooser()
-        }
     }
 }
