@@ -250,6 +250,8 @@ AppController::AppController(
     connect(m_browse, &BrowseSessionController::reloadRequested, this, [this]() { beginBrowse(); });
     connect(m_browse, &BrowseSessionController::moreItemsRequested, this, &AppController::loadMoreCurrentItems);
     connect(m_browse, &BrowseSessionController::blockRequested, this, &AppController::loadBrowseBlock);
+    connect(m_browse, &BrowseSessionController::blockAbandoned, this,
+        [this](int start) { m_catalog->cancelBrowseJump(m_browse->descriptor(), start); });
     connect(m_browse, &BrowseSessionController::indexRequested, this, &AppController::loadBrowseIndex);
     connect(m_database, &DatabaseManager::recoveryNotice, this, &AppController::showToast);
     {
@@ -1096,7 +1098,8 @@ void AppController::loadBrowseBlock(int start)
         m_libraryLoadGeneration, loadGeneration,
         [this, start, cacheKey](const PagedMovieItems& page) { m_browse->applyBlock(start, page, cacheKey); },
         [this, start](const std::exception_ptr& error) {
-            qWarning() << "browse block failed" << start << exceptionMessage(error);
+            if (const QString message = exceptionMessage(error); message != QLatin1String("action_cancelled"))
+                qWarning() << "browse block failed" << start << message;
             m_browse->blockFailed(start);
         });
 }

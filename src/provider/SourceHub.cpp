@@ -1409,6 +1409,19 @@ QCoro::Task<PagedMovieItems> SourceHub::fetchBrowsePage(
     co_return page;
 }
 
+void SourceHub::cancelBrowseJump(const BrowseDescriptor& descriptor, int startIndex)
+{
+    QString account = accountOf(descriptor.id.isEmpty() ? descriptor.seriesId : descriptor.id);
+    if (account.isEmpty())
+        account = m_lastDetailsAccount;
+    if (Provider *provider = source(account)) {
+        BrowseDescriptor raw = descriptor;
+        raw.id = rawId(raw.id);
+        raw.seriesId = rawId(raw.seriesId);
+        provider->catalog()->cancelBrowseJump(raw, startIndex);
+    }
+}
+
 QCoro::Task<std::vector<BrowseIndexEntry>> SourceHub::fetchBrowseIndex(
     BrowseDescriptor descriptor, QVariantMap queryOptions)
 {

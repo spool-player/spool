@@ -4,13 +4,16 @@
 
 #include <QCoreApplication>
 #include <QDebug>
+#include <QElapsedTimer>
 #include <QSettings>
 #include <QTemporaryDir>
+#include <QThread>
 
 #include <algorithm>
 #include <cstdlib>
 #include <deque>
 #include <random>
+#include <set>
 
 using Spool::BrowseIndexEntry;
 using Spool::BrowseSessionController;
@@ -103,8 +106,19 @@ struct FakeServer {
         QObject::connect(&session, &BrowseSessionController::blockRequested, &session,
             [this](int start) { requests.push_back(start); });
     }
+    // A view that jumped waits a moment for its next move before asking.
+    void waitForRequests()
+    {
+        QElapsedTimer waited;
+        waited.start();
+        while (requests.empty() && waited.elapsed() < 400) {
+            QCoreApplication::processEvents();
+            QThread::msleep(5);
+        }
+    }
     void deliverAll()
     {
+        waitForRequests();
         while (!requests.empty()) {
             const int start = requests.front();
             requests.pop_front();
@@ -191,6 +205,7 @@ SPOOL_TEST_MAIN("browse-sparse-listing")
 
         // Jumping deep asks for the rows on screen first.
         session.prefetchVisibleRange(1210, 1245);
+        server.waitForRequests();
         require(!server.requests.empty() && server.requests.front() == 1200, "viewport block requested first");
         server.deliverAll();
         require(session.items()->movieAt(1222).title == titles[1222], "block lands on its own rows");
@@ -232,6 +247,32 @@ SPOOL_TEST_MAIN("browse-sparse-listing")
             require(letter.value(QStringLiteral("exact")).toBool(), "letters seen on both sides are exact");
             require(letter.value(QStringLiteral("row")).toInt() == expected, "learnt letter starts match the listing");
         }
+    }
+
+    // A jump the view has left gives up its fetches, so the next jump is not
+    // queued behind rows nobody is looking at any more.
+    {
+        BrowseSessionController session(nullptr);
+        const auto titles = libraryTitles(false);
+        FakeServer server(session, titles);
+        openLibrary(session, titles, false);
+        std::set<int> abandoned;
+        QObject::connect(
+            &session, &BrowseSessionController::blockAbandoned, [&abandoned](int start) { abandoned.insert(start); });
+        session.prefetchVisibleRange(1210, 1245);
+        server.waitForRequests();
+        const std::deque<int> left = std::exchange(server.requests, {});
+        require(left.size() == 3, "a jump fills every fetch slot");
+        session.prefetchVisibleRange(2210, 2245);
+        require(abandoned == std::set<int>(left.begin(), left.end()), "every fetch for the old jump is given up");
+        server.waitForRequests();
+        require(!server.requests.empty() && server.requests.front() == 2200, "the new viewport is fetched at once");
+        // The given-up fetches report back as failures, as cancelled ones do.
+        for (const int start : left)
+            session.blockFailed(start);
+        server.deliverAll();
+        require(session.items()->isLoaded(2222), "the new viewport loads");
+        require(!session.items()->isLoaded(1222), "the abandoned rows were never applied");
     }
 
     // The server's counts place every letter, ascending or descending.

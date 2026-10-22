@@ -464,6 +464,11 @@ QCoro::Task<std::vector<MovieItem>> PortableProvider::list(
 }
 
 namespace {
+    QString browseJumpScope(int startIndex)
+    {
+        return QStringLiteral("browse-jump:") + QString::number(startIndex);
+    }
+
     // A library, genre or studio listing: sorting travels on its own and every
     // other option is one of the viewer's filters (sdk/provider.d.ts BrowseFilters).
     QVariantMap filteredBrowseArguments(const BrowseDescriptor& descriptor, QVariantMap queryOptions)
@@ -524,10 +529,14 @@ QCoro::Task<PagedMovieItems> PortableProvider::fetchBrowsePage(
     }
 
     // A row number stands in for the cursor only when the caller jumps; the
-    // caller knows from an earlier page that this listing is seekable.
-    if (!cursor && startIndex > 0)
+    // caller knows from an earlier page that this listing is seekable. Each
+    // jump has a scope of its own so the view can give up on it.
+    QString scope;
+    if (!cursor && startIndex > 0) {
         args.insert(QStringLiteral("offset"), startIndex);
-    ProviderMediaPage page = co_await listPage(operation, std::move(args), limit, std::move(cursor));
+        scope = browseJumpScope(startIndex);
+    }
+    ProviderMediaPage page = co_await listPage(operation, std::move(args), limit, std::move(cursor), std::move(scope));
     if (!page.exhausted && (!page.cursor || page.cursor->isEmpty()))
         throw std::runtime_error("invalid_pagination");
     const int count = static_cast<int>(page.items.size());
@@ -535,6 +544,11 @@ QCoro::Task<PagedMovieItems> PortableProvider::fetchBrowsePage(
     PagedMovieItems result { std::move(page.items), total, startIndex, limit, std::move(page.cursor), page.exhausted };
     result.seekable = page.seekable && operation == QLatin1String("browse");
     co_return result;
+}
+
+void PortableProvider::cancelBrowseJump(const BrowseDescriptor&, int startIndex)
+{
+    m_registry->cancelSourceScope(m_accountId, browseJumpScope(startIndex));
 }
 
 QCoro::Task<std::vector<BrowseIndexEntry>> PortableProvider::fetchBrowseIndex(

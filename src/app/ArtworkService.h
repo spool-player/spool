@@ -66,7 +66,7 @@ public:
     // the server's own encoded-image cache is shared rather than duplicated.
     void setArtworkEncoding(const QString& format, int webpQuality, int jpegQuality);
     QQuickImageResponse *requestImageResponse(const QString& id, const QSize& requestedSize);
-    void prefetch(const QStringList& urls) override;
+    void prefetch(const QStringList& urls, bool retarget = false) override;
     void cancelPrefetches() override;
     void releaseMemory(bool aggressive);
     // Artwork downloads open at once per server: zero adapts to the server's

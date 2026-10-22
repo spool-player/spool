@@ -14,6 +14,7 @@
 
 #include <deque>
 #include <map>
+#include <set>
 #include <vector>
 
 namespace Spool {
@@ -195,6 +196,8 @@ signals:
     void moreItemsRequested();
     // Fetch rows [start, start + blockSize) of the current listing.
     void blockRequested(int start);
+    // The view left a requested block behind; give up on fetching it.
+    void blockAbandoned(int start);
     void indexRequested();
     void alphabetChanged();
     void seekingChanged();
@@ -243,7 +246,10 @@ private:
     int m_viewLast = 0;
     std::map<int, quint64> m_loadedBlocks; // start row -> last use
     std::vector<int> m_pendingBlocks;
+    // Given up on, until their cancelled fetch reports back.
+    std::set<int> m_abandonedBlocks;
     std::deque<int> m_wantedBlocks;
+    int m_lastScheduledBlock = 0;
     quint64 m_useClock = 0;
     QTimer m_blockTimer;
     BrowseIndex m_index;

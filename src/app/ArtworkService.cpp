@@ -161,9 +161,16 @@ public:
         drainPrefetch();
     }
 
-    void prefetch(QStringList urls)
+    void prefetch(QStringList urls, bool retarget)
     {
         ensureNetwork();
+        if (retarget) {
+            // Fetches already under way finish; only the waiting ones go.
+            m_prefetchQueue.clear();
+            m_prefetchSeen.clear();
+            for (const QNetworkReply *reply : std::as_const(m_prefetchReplies))
+                m_prefetchSeen.insert(cacheKeyForUrl(reply->request().url()));
+        }
         for (const QString& urlString : urls) {
             const QUrl url(urlString);
             const QString key = cacheKeyForUrl(url);
@@ -824,7 +831,7 @@ QQuickImageResponse *ArtworkService::requestImageResponse(const QString& id, con
     return new ArtworkImageResponse(this, QUrl(urlString), requestedSize);
 }
 
-void ArtworkService::prefetch(const QStringList& urls)
+void ArtworkService::prefetch(const QStringList& urls, bool retarget)
 {
     QStringList uncached;
     uncached.reserve(urls.size());
@@ -839,10 +846,10 @@ void ArtworkService::prefetch(const QStringList& urls)
             continue;
         uncached.push_back(url);
     }
-    if (uncached.isEmpty())
+    if (uncached.isEmpty() && !retarget)
         return;
-    invokeWorker(
-        [urls = std::move(uncached)](ArtworkFetchWorker *worker) mutable { worker->prefetch(std::move(urls)); });
+    invokeWorker([urls = std::move(uncached), retarget](
+                     ArtworkFetchWorker *worker) mutable { worker->prefetch(std::move(urls), retarget); });
 }
 
 ArtworkService::DecodeTotals ArtworkService::decodeTotals() const

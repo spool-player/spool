@@ -33,6 +33,11 @@ public:
     virtual QCoro::Task<PagedMovieItems> fetchBrowsePage(
         BrowseDescriptor descriptor, int startIndex, int limit, QVariantMap queryOptions, std::optional<QString> cursor)
         = 0;
+    // Gives up on a jump into a seekable listing (a fetchBrowsePage at
+    // startIndex without a cursor) that the view has since left, so it stops
+    // holding a request slot. The fetch then fails; a source that cannot
+    // cancel lets it finish.
+    virtual void cancelBrowseJump(const BrowseDescriptor&, int) { }
     virtual QCoro::Task<MovieItem> fetchItemDetails(QString itemId) = 0;
     virtual QCoro::Task<std::vector<MovieItem>> fetchSeasons(QString seriesId) = 0;
     virtual QCoro::Task<std::vector<MovieItem>> fetchEpisodes(QString seriesId, QString seasonId = {}) = 0;

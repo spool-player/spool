@@ -17,6 +17,10 @@ namespace {
     // Block fetches in flight at once. Providers allow eight operations per
     // account; leaving room keeps artwork, details and search responsive.
     constexpr int kMaxPendingBlocks = 3;
+    // A view that has just jumped waits this long for its next move before
+    // loading, so stepping through letters loads only where it stops.
+    constexpr int kJumpSettleMs = 150;
+    constexpr int kLeadBlockDelayMs = 90;
     // Guesses a type-to-seek makes before settling on the nearest row.
     constexpr int kMaxSeekSteps = 10;
 
@@ -54,7 +58,6 @@ BrowseSessionController::BrowseSessionController(LibraryPrefetchController *pref
     // Lead blocks wait for scrolling to pause; a fling across a library must
     // not queue a fetch for every block it passes.
     m_blockTimer.setSingleShot(true);
-    m_blockTimer.setInterval(90);
     connect(&m_blockTimer, &QTimer::timeout, this, &BrowseSessionController::pumpBlocks);
 }
 
@@ -175,7 +178,9 @@ void BrowseSessionController::resetSparseState()
     m_blockTimer.stop();
     m_loadedBlocks.clear();
     m_pendingBlocks.clear();
+    m_abandonedBlocks.clear();
     m_wantedBlocks.clear();
+    m_lastScheduledBlock = 0;
     m_viewFirst = 0;
     m_viewLast = 0;
     m_index.reset(0, false);
@@ -281,6 +286,7 @@ void BrowseSessionController::setPage(const PagedMovieItems& page, const QString
 void BrowseSessionController::applyBlock(int start, const PagedMovieItems& page, const QString& cacheKey)
 {
     m_pendingBlocks.erase(std::remove(m_pendingBlocks.begin(), m_pendingBlocks.end(), start), m_pendingBlocks.end());
+    m_abandonedBlocks.erase(start);
     if (!m_items.isSparse() || cacheKey != m_cacheKey)
         return;
     if (page.totalRecordCount > 0 && page.totalRecordCount != m_items.rowCount()) {
@@ -314,6 +320,9 @@ void BrowseSessionController::applyBlock(int start, const PagedMovieItems& page,
 
 void BrowseSessionController::blockFailed(int start)
 {
+    // The fetch given up on, not one asked for again since.
+    if (m_abandonedBlocks.erase(start) > 0)
+        return;
     m_pendingBlocks.erase(std::remove(m_pendingBlocks.begin(), m_pendingBlocks.end(), start), m_pendingBlocks.end());
     if (!m_seekKey.isEmpty() && m_seekWaitingFor == start)
         cancelSeek();
@@ -378,12 +387,28 @@ void BrowseSessionController::scheduleBlocks()
         if (const auto loaded = m_loadedBlocks.find(block * m_blockSize); loaded != m_loadedBlocks.end())
             loaded->second = ++m_useClock;
     }
+    // Fetches the view has left by more than a couple of blocks give up their
+    // slots, so a jump is not stuck behind rows nobody is looking at any more.
+    const int anchor = (count - 1) / m_blockSize * m_blockSize;
+    for (auto it = m_pendingBlocks.begin(); it != m_pendingBlocks.end();) {
+        const int block = *it / m_blockSize;
+        if (*it > 0 && (block < firstBlock - 2 || block > lastBlock + 2) && *it != m_seekWaitingFor && *it != anchor) {
+            const int start = *it;
+            it = m_pendingBlocks.erase(it);
+            m_abandonedBlocks.insert(start);
+            emit blockAbandoned(start);
+        } else {
+            ++it;
+        }
+    }
+    const bool jumped = std::abs(firstBlock - m_lastScheduledBlock) > lastBlock - firstBlock + 2;
+    m_lastScheduledBlock = firstBlock;
     const bool viewportMissing = std::any_of(m_wantedBlocks.begin(), m_wantedBlocks.end(),
         [&](int start) { return start / m_blockSize >= firstBlock && start / m_blockSize <= lastBlock; });
-    if (viewportMissing)
+    if (viewportMissing && !jumped)
         pumpBlocks();
     else
-        m_blockTimer.start();
+        m_blockTimer.start(jumped ? kJumpSettleMs : kLeadBlockDelayMs);
 }
 
 void BrowseSessionController::pumpBlocks()
@@ -563,12 +588,14 @@ void BrowseSessionController::prefetchVisibleRange(int firstIndex, int lastIndex
         scheduleBlocks();
         if (m_prefetch) {
             const std::vector<MovieItem> visible = m_items.loadedRange(firstIndex, lastIndex + 16);
-            m_prefetch->prefetchPosters(visible, 0, static_cast<int>(visible.size()));
+            m_prefetch->prefetchPosters(
+                visible, 0, static_cast<int>(visible.size()), LibraryPrefetchController::ImageKind::Poster, true);
         }
         return;
     }
     if (m_prefetch)
-        m_prefetch->prefetchPosters(m_items.movies(), firstIndex, lastIndex - firstIndex + 1);
+        m_prefetch->prefetchPosters(m_items.movies(), firstIndex, lastIndex - firstIndex + 1,
+            LibraryPrefetchController::ImageKind::Poster, true);
     prefetchPageForIndex(lastIndex);
 }
 
