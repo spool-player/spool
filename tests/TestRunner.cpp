@@ -34,6 +34,9 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
+#ifdef Q_OS_LINUX
+#include <sys/prctl.h>
+#endif
 
 namespace SpoolTests {
 namespace {
@@ -198,6 +201,14 @@ private:
 // They exercise OS exit/crash semantics rather than mocking QProcess results.
 int fixture(const QString& name, int argc, char **argv)
 {
+#ifdef Q_OS_LINUX
+    // The crash selectors crash on purpose. Keep them out of systemd-coredump,
+    // which otherwise files each one as a desktop crash report. The supervisor
+    // still sees the signal, which is all it asserts.
+    if (name == QStringLiteral("fixture-crash") || name == QStringLiteral("fixture-access-violation")
+        || name == QStringLiteral("fixture-forward-crash"))
+        ::prctl(PR_SET_DUMPABLE, 0);
+#endif
     if (name == QStringLiteral("fixture-crash"))
         std::abort();
     if (name == QStringLiteral("fixture-access-violation")) {
