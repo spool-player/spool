@@ -1117,7 +1117,7 @@ void AppController::loadBrowseIndex()
         [this, cacheKey](const std::vector<BrowseIndexEntry>& entries) { m_browse->setExactIndex(entries, cacheKey); },
         [this, cacheKey](const std::exception_ptr& error) {
             qWarning() << "browse index failed" << exceptionMessage(error);
-            m_browse->setExactIndex({}, cacheKey);
+            m_browse->indexFailed(cacheKey);
         });
 }
 

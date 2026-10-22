@@ -168,6 +168,9 @@ public:
     void applyBlock(int start, const PagedMovieItems& page, const QString& cacheKey);
     void blockFailed(int start);
     void setExactIndex(const std::vector<BrowseIndexEntry>& entries, const QString& cacheKey);
+    // The server's letter counts could not be had; asks again a couple of
+    // times before settling for estimates.
+    void indexFailed(const QString& cacheKey);
     // Most rows a sparse listing keeps loaded at once.
     void setLoadedRowBudget(int rows);
     Q_INVOKABLE void prefetchVisibleRange(int firstIndex, int lastIndex);
@@ -248,6 +251,9 @@ private:
     std::vector<int> m_pendingBlocks;
     // Given up on, until their cancelled fetch reports back.
     std::set<int> m_abandonedBlocks;
+    // Failed fetches of blocks still on screen, retried a few times.
+    std::map<int, int> m_blockFailures;
+    int m_indexFailures = 0;
     std::deque<int> m_wantedBlocks;
     int m_lastScheduledBlock = 0;
     quint64 m_useClock = 0;

@@ -107,11 +107,11 @@ struct FakeServer {
             [this](int start) { requests.push_back(start); });
     }
     // A view that jumped waits a moment for its next move before asking.
-    void waitForRequests()
+    void waitForRequests(int timeoutMs = 400)
     {
         QElapsedTimer waited;
         waited.start();
-        while (requests.empty() && waited.elapsed() < 400) {
+        while (requests.empty() && waited.elapsed() < timeoutMs) {
             QCoreApplication::processEvents();
             QThread::msleep(5);
         }
@@ -273,6 +273,23 @@ SPOOL_TEST_MAIN("browse-sparse-listing")
         server.deliverAll();
         require(session.items()->isLoaded(2222), "the new viewport loads");
         require(!session.items()->isLoaded(1222), "the abandoned rows were never applied");
+    }
+
+    // A block on screen that fails is asked for again without the view moving.
+    {
+        BrowseSessionController session(nullptr);
+        const auto titles = libraryTitles(false);
+        FakeServer server(session, titles);
+        openLibrary(session, titles, false);
+        session.prefetchVisibleRange(1210, 1245);
+        server.waitForRequests();
+        for (const int start : std::exchange(server.requests, {}))
+            session.blockFailed(start);
+        server.waitForRequests(1500);
+        require(!server.requests.empty() && server.requests.front() == 1200,
+            "the failed block on screen is fetched again first");
+        server.deliverAll();
+        require(session.items()->isLoaded(1222), "the retried block fills the screen");
     }
 
     // The server's counts place every letter, ascending or descending.

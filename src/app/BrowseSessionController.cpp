@@ -21,6 +21,10 @@ namespace {
     // loading, so stepping through letters loads only where it stops.
     constexpr int kJumpSettleMs = 150;
     constexpr int kLeadBlockDelayMs = 90;
+    // A fetch that fails (the source busy, the network blinking) is asked for
+    // again this many times, a second further apart each time.
+    constexpr int kMaxFetchRetries = 3;
+    constexpr int kRetryDelayMs = 1000;
     // Guesses a type-to-seek makes before settling on the nearest row.
     constexpr int kMaxSeekSteps = 10;
 
@@ -179,6 +183,8 @@ void BrowseSessionController::resetSparseState()
     m_loadedBlocks.clear();
     m_pendingBlocks.clear();
     m_abandonedBlocks.clear();
+    m_blockFailures.clear();
+    m_indexFailures = 0;
     m_wantedBlocks.clear();
     m_lastScheduledBlock = 0;
     m_viewFirst = 0;
@@ -287,6 +293,7 @@ void BrowseSessionController::applyBlock(int start, const PagedMovieItems& page,
 {
     m_pendingBlocks.erase(std::remove(m_pendingBlocks.begin(), m_pendingBlocks.end(), start), m_pendingBlocks.end());
     m_abandonedBlocks.erase(start);
+    m_blockFailures.erase(start);
     if (!m_items.isSparse() || cacheKey != m_cacheKey)
         return;
     if (page.totalRecordCount > 0 && page.totalRecordCount != m_items.rowCount()) {
@@ -330,6 +337,30 @@ void BrowseSessionController::blockFailed(int start)
         m_loadingMore = false;
         emit pagingChanged();
     }
+    // Rows still on screen would otherwise stay blank until the view moves.
+    const bool onScreen = start + m_blockSize > m_viewFirst && start <= m_viewLast;
+    if (onScreen && m_items.isSparse()) {
+        const int attempt = ++m_blockFailures[start];
+        if (attempt <= kMaxFetchRetries)
+            QTimer::singleShot(kRetryDelayMs * attempt, this, [this, key = m_cacheKey] {
+                if (key == m_cacheKey)
+                    scheduleBlocks();
+            });
+    }
+}
+
+void BrowseSessionController::indexFailed(const QString& cacheKey)
+{
+    if (cacheKey != m_cacheKey)
+        return;
+    if (++m_indexFailures < kMaxFetchRetries) {
+        QTimer::singleShot(kRetryDelayMs * m_indexFailures, this, [this, cacheKey] {
+            if (cacheKey == m_cacheKey && alphabetical() && !m_index.exact())
+                emit indexRequested();
+        });
+        return;
+    }
+    setExactIndex({}, cacheKey);
 }
 
 void BrowseSessionController::setExactIndex(const std::vector<BrowseIndexEntry>& entries, const QString& cacheKey)
