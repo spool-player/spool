@@ -16,6 +16,10 @@ FocusScope {
     property bool pinRequired: false
     property string pinLabel: "PIN"
     property alias pinText: pin.text
+    // Offered beside the PIN when non-empty, such as skipping it at startup.
+    property string rememberLabel: ""
+    property string rememberDescription: ""
+    property bool remember: false
     property var choices: []
     property bool retryVisible: true
     property string backText: "Back"
@@ -142,6 +146,14 @@ FocusScope {
             echoMode: TextInput.Password
             inputMethodHints: Qt.ImhDigitsOnly | Qt.ImhNoPredictiveText
             onAccepted: root.submitPin()
+        }
+        ToggleRow {
+            Layout.fillWidth: true
+            visible: root.pinRequired && !!root.rememberLabel
+            title: root.rememberLabel
+            description: root.rememberDescription
+            checked: root.remember
+            onToggled: checked => root.remember = checked
         }
         ActionButton {
             Layout.fillWidth: true

@@ -102,6 +102,9 @@ a group, a label, the origins it may reach and its configuration. Metadata lives
 database (`providers/accounts/2`); configuration, which holds tokens, lives in the platform credential
 store and is read off the GUI thread. Accounts in the same group (users of one server) are
 alternatives: using one sets the others aside. Accounts in different groups are shown together.
+The app shows an account's address as its configuration's `serverAddress` when the provider sets
+one (a readable name for the address in use, such as `Local · 192.168.1.5`), else as the host and
+port of its `server`.
 
 Viewers that are alternatives to one another form a **profile set**: one
 provider activation family (such as a Plex Home, which spans its servers) or,
