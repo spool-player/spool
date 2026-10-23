@@ -239,7 +239,14 @@ export interface Resolved {
      */
     timelineOriginTicks?: string;
     /** Fresh original-edition analysis, never the negotiated output or an automatic ceiling. */
-    source?: { bitrate: number; width: number; height: number };
+    source?: { bitrate: number; width: number; height: number;
+               /** Selected edition's file size, when known; positive integer or unsigned decimal string. */
+               sizeBytes?: number | string;
+               /** Selected edition's duration in 100 ns ticks, when known. */
+               runtimeTicks?: number | string };
+    /** The representation actually resolved (not a quality ceiling). DirectPlay may repeat source;
+     * remux/transcode must not assume the original's size. Omit what is unknown; bitrate 0 is unknown. */
+    delivery?: { bitrate?: number; sizeBytes?: number | string; runtimeTicks?: number | string };
     streams?: Stream[]; segments?: Segment[];
     /** Native preview loader fetches/caches sheets or one BIF sequence using this account's headers. */
     trickplay?: { width: number; height: number; columns: number; rows: number; count: number; intervalMs: number;

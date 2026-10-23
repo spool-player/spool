@@ -75,6 +75,44 @@ SPOOL_TEST_MAIN("script-runtime")
         require(events == QList<QVariantMap> { QVariantMap { { "capabilities", newOffer } } },
             "queued capability events from a removed generation cannot change a replacement account");
     }
+    {
+        // Resolve's media facts are admitted at the script boundary: whole
+        // numbers or unsigned decimal strings, normalized, never coerced.
+        ScriptRuntime runtime(SpoolTests::fixturePath("tests/providers/fixtures/resolve-metadata.mjs"), QVariantMap {});
+        QCoro::waitFor(runtime.addSource("media", {}, {}));
+        const auto resolve = [&runtime](const QVariantMap& result) {
+            return runtime.call("media", "resolve", { { "result", result } });
+        };
+        const QVariantMap admitted = QCoro::waitFor(resolve({ { "url", "http://127.0.0.1/a.mkv" },
+            { "source",
+                QVariantMap { { "bitrate", 80000000 }, { "width", 3840 }, { "height", 2160 },
+                    { "sizeBytes", "68719476736" }, { "runtimeTicks", 72000000000.0 } } },
+            { "delivery", QVariantMap { { "bitrate", 0 }, { "sizeBytes", 5000000000.0 } } } }));
+        const QVariantMap source = admitted.value("source").toMap();
+        const QVariantMap delivery = admitted.value("delivery").toMap();
+        require(source.value("sizeBytes").typeId() == QMetaType::LongLong
+                && source.value("sizeBytes").toLongLong() == 68719476736LL
+                && source.value("runtimeTicks").toLongLong() == 72000000000LL
+                && source.value("bitrate").toLongLong() == 80000000 && delivery.value("bitrate").toLongLong() == 0
+                && delivery.value("sizeBytes").toLongLong() == 5000000000LL,
+            "resolve normalizes sizes, durations and bitrates losslessly beyond 32 bits");
+        for (const QVariant& bad : QVariantList { true, 1.5, 0, -5, "-5", "12a", "", "99999999999999999999",
+                 QVariant::fromValue(nullptr), QVariantList { 1 } }) {
+            rejects(resolve({ { "url", "u" }, { "source", QVariantMap { { "sizeBytes", bad } } } }),
+                "a size must be a positive whole number or unsigned decimal string");
+            rejects(resolve({ { "url", "u" }, { "delivery", QVariantMap { { "runtimeTicks", bad } } } }),
+                "a delivered duration must be a positive whole number or unsigned decimal string");
+        }
+        rejects(resolve({ { "url", "u" }, { "delivery", QVariantMap { { "bitrate", 2e12 } } } }),
+            "a delivered bitrate above 1 Tbit/s is rejected");
+        rejects(resolve({ { "url", "u" }, { "source", QVariantMap { { "width", 1.5 } } } }),
+            "dimensions stay whole numbers");
+        rejects(resolve({ { "url", "u" }, { "delivery", "fast" } }), "delivery must be an object");
+        rejects(resolve({ { "url", "u" }, { "source", QVariantList {} } }), "source must be an object");
+        const QVariantMap picked
+            = QCoro::waitFor(resolve({ { "pick", QVariantMap { { "quality", "4k" } } }, { "source", "not yet" } }));
+        require(picked.contains("pick"), "a picker answer is admitted until its follow-up resolve");
+    }
     QTcpServer server;
     require(server.listen(QHostAddress::LocalHost), "fixture server listens");
     const QString origin = QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort());

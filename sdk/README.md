@@ -193,6 +193,16 @@ Preserve an explicitly selected edition rather than silently substituting one.
 `Resolved.source` can supply fresh selected-edition bitrate and pixel dimensions
 from playback negotiation. Quality menus use this original analysis rather than
 a stale catalogue summary, a measured automatic limit, or transcoded output.
+It may also carry the selected edition's `sizeBytes` and `runtimeTicks` (100 ns
+units). `Resolved.delivery` describes the representation actually returned:
+`bitrate` (bits/s, 0 unknown), `sizeBytes` and `runtimeTicks`. Direct play may
+repeat the source values; remux and transcode must not assume the original
+file's size, and a multipart item reports the resolved part, never one part's
+bytes over the whole film's duration. Sizes and durations are positive integers
+or unsigned decimal strings (for values beyond 2^53); omit what is unknown.
+Spool rejects the resolve result if any of these is a boolean, fraction,
+negative, null or malformed; a `pick` answer is checked on its follow-up resolve.
+The player uses these facts as streaming demand priors only.
 
 
 `Resolved.timelineOriginTicks` identifies the source position represented by
