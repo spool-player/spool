@@ -348,6 +348,10 @@ private:
     void prepareMpvAsync(bool needsVideoSurface, bool embeddedVideo);
     static bool configureAndInitializeMpv(mpv_handle *handle, const MpvPreparation& preparation);
     void observeMpvProperties(mpv_handle *handle);
+    void configureTransportForLoad(QByteArrayList loadCommand);
+    void submitTransportLoad(quint64 serial);
+    void failTransportLoad(bool configuration);
+    void updateBackgroundNetwork();
     void updateNetworkTransport();
     double networkMediaBitrate() const;
     void logStreamingPerformance(qint64 inputBytesPerSecond);
@@ -436,7 +440,17 @@ private:
     bool m_networkQueryPending = false;
     double m_networkBufferSeconds = 0;
     qint64 m_transportEpoch = 0; // curl-transport-control playback epoch, per load
+    struct PendingTransportLoad {
+        quint64 coreGeneration;
+        quint64 playGeneration;
+        qint64 epoch;
+        QByteArrayList command;
+    };
+    QHash<quint64, PendingTransportLoad> m_pendingTransportLoads;
+    quint64 m_transportReplySerial = 0;
     double m_networkVideoBitrate = 0;
+    bool m_backgroundNetwork = false;
+    bool m_trickplayNetwork = false;
     double m_networkAudioBitrate = 0;
     bool m_cacheSpeedQueryPending = false;
     bool m_sessionThreadedStreaming = true;

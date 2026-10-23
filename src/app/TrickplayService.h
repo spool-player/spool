@@ -46,6 +46,10 @@ public:
     void setAccurateDecoding(bool accurate);
     void setEnabled(bool enabled);
     bool available() const;
+    bool fetching() const
+    {
+        return m_fetching;
+    }
     QVariantMap frame(double seconds);
     QQuickImageResponse *requestImageResponse(const QString& id);
 signals:

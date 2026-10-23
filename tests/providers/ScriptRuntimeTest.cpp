@@ -386,7 +386,7 @@ SPOOL_TEST_MAIN("script-runtime")
         const auto sample = curve[index].toMap();
         const double seconds = sample.value("elapsed-seconds").toDouble();
         const double rate = sample.value("capacity-bytes-per-second").toDouble();
-        const double latencyMs = sample.value("latency-ms").toDouble();
+        const double latencyMs = sample.value("ttfb-ms").toDouble();
         require(sample.value("requests").toInt() == (1 << index) && sample.value("received-bytes").toLongLong() > 0
                 && sample.value("received-bytes").toLongLong() <= 64 * 1024 * 1024 && seconds > 0 && latencyMs >= 35
                 && latencyMs <= seconds * 1000

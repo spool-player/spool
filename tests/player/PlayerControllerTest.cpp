@@ -346,6 +346,35 @@ void watchedStopPolicy(const QString& directory, NativeAppWindow& window)
     }
 }
 
+void transportLoadLifecycle(const QString& directory, NativeAppWindow& window)
+{
+    PlayerController player(&window, nullptr, nullptr, {});
+    player.setMpvConfigPolicy({ MpvConfigPolicy::Mode::Custom, directory });
+    PlaybackSession rejected = audioSession(directory, QStringLiteral("rejected-policy"), 8);
+    rejected.sourceBitrate = 1'000'000'000'001LL;
+    player.play(rejected);
+    waitUntil([&] { return !player.sessionActive() && !player.errorText().isEmpty(); },
+        "a rejected transport configure ends the pending load");
+    require(!player.fileLoaded() && player.errorText().contains(QStringLiteral("streaming policy")),
+        "failed policy installation cannot load a playable file");
+
+    const PlaybackSession replacement = audioSession(directory, QStringLiteral("replacement-policy"), 8);
+    player.play(rejected);
+    player.play(replacement);
+    waitUntil([&] { return player.fileLoaded() && player.positionSeconds() > 0.1; },
+        "a current successful configure releases the replacement load");
+    require(player.title() == replacement.title && player.errorText().isEmpty(),
+        "a superseded configure failure cannot reject a replacement playback");
+    player.stop();
+
+    player.play(replacement);
+    player.stop();
+    processFor(500);
+    require(!player.sessionActive() && !player.fileLoaded(),
+        "stopping a pending configure cannot be undone by its acknowledgement");
+    player.teardownMpv();
+}
+
 #if !defined(Q_OS_ANDROID) && !defined(SPOOL_APPLE_MOBILE)
 void localPlaylistLifecycle(const QString& directory, NativeAppWindow& window)
 {
@@ -459,6 +488,7 @@ SPOOL_TEST_MAIN("player-controller")
     player.stop();
     player.teardownMpv();
     watchedStopPolicy(directory.path(), window);
+    transportLoadLifecycle(directory.path(), window);
 #if !defined(Q_OS_ANDROID) && !defined(SPOOL_APPLE_MOBILE)
     localPlaylistLifecycle(directory.path(), window);
 #endif

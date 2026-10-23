@@ -75,20 +75,36 @@ def main() -> int:
         # The production snapshot is already credential-free. Keep this second
         # numeric allowlist so future diagnostics cannot expand report contents.
         keys = ("received-bytes", "current-received-bytes-per-second", "average-received-bytes-per-second",
-                "peak-received-bytes-per-second", "elapsed-seconds", "selected-requests", "latency-ms",
+                "peak-received-bytes-per-second", "elapsed-seconds", "selected-requests", "ttfb-ms",
                 "capacity-bytes-per-second", "capacity-samples", "active-requests", "peak-active-requests",
                 "failed-requests", "retry-attempts", "stream-id", "range-bytes", "ring-bytes",
                 "consumer-wait-seconds", "ring-wait-seconds", "head-of-line-seconds", "peak-reorder-bytes",
-                "physical-connections", "curl-thread-cpu-seconds", "curl-thread-wall-seconds",
+                "physical-connections", "streams-per-connection", "curl-thread-cpu-seconds", "curl-thread-wall-seconds",
                 "tcp-rtt-min-ms", "tcp-rtt-max-ms", "max-socket-receive-buffer-bytes",
                 "recent-scheduling-lateness-ms", "peak-scheduling-lateness-ms",
-                "playback-buffer-seconds", "playback-demand-bits-per-second")
-        result = {key: raw[key] for key in keys if isinstance(raw.get(key), (int, float)) and not isinstance(raw[key], bool)
-                  and math.isfinite(raw[key])}
-        for key in ("lane-samples", "concurrency-samples"):
-            result[key] = [{field: value for field, value in row.items()
-                            if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)}
-                           for row in raw.get(key, []) if isinstance(row, dict)]
+                "playback-buffer-seconds", "playback-demand-bits-per-second", "ordered-available-bytes",
+                "consumer-delivered-bytes", "readable-bytes", "retained-bytes", "reorder-bytes", "copy-in-bytes",
+                "copy-out-bytes", "reorder-copy-bytes", "body-callbacks", "worker-iterations", "coalesced-wakeups",
+                "head-of-line-events", "reorder-wait-seconds", "oldest-gap-seconds",
+                "perform-wall-seconds", "dispatch-wall-seconds", "poll-wall-seconds")
+        def numeric(fields, row):
+            return {field: row[field] for field in fields
+                    if isinstance(row.get(field), (int, float)) and not isinstance(row[field], bool)
+                    and math.isfinite(row[field])}
+        result = numeric(keys, raw)
+        samples = {
+            "lane-samples": ("lane", "received-bytes", "active-seconds", "average-bytes-per-second",
+                             "current-bytes-per-second", "peak-bytes-per-second", "capacity-bytes-per-second", "samples"),
+            "concurrency-samples": ("requests", "capacity-bytes-per-second", "ttfb-ms", "samples"),
+            "streams": ("stream-id", "readable-bytes", "retained-bytes", "reorder-bytes"),
+            "connections": ("connection-id", "socket-generation", "http-version", "transport", "active-requests",
+                             "socket-receive-buffer-bytes", "receive-window-bytes", "tcp-rtt-ms"),
+            "protocol-samples": ("http-version", "ordered-available-bytes", "cpu-ns-per-ordered-byte"),
+        }
+        for key, fields in samples.items():
+            rows = raw.get(key, [])
+            if isinstance(rows, list):
+                result[key] = [numeric(fields, row) for row in rows[:64] if isinstance(row, dict)]
         return result
 
     touched = ("playback/threadedStreaming", "playback/maxStreamingThreads", "playback/forceStreamingThreads")
@@ -113,11 +129,11 @@ def main() -> int:
             raise RuntimeError("instance is already playing; refusing to interrupt it")
         values = call("settings", "get").get("values", {})
         saved = {key: values[key] for key in touched if key in values}
-        runs = [(item, count) for item in args.item for count in counts]
-        for item, count in runs:
+        runs = [(item, repeat) for item in args.item for repeat in range(args.repeats)]
+        for item, repeat in runs:
             account = item.split(":", 1)[0]
-            configure(count)
-            for repeat in range(args.repeats):
+            for count in counts:
+                configure(count)
                 # Let deferred teardown finish: repeats include true core setup,
                 # but intentionally retain learned per-server transport history.
                 time.sleep(1.5)
@@ -180,6 +196,9 @@ def main() -> int:
                     received = rows[-1].get("received-bytes", 0) - rows[0].get("received-bytes", 0)
                     waited = rows[-1].get("consumer-wait-seconds", 0) - rows[0].get("consumer-wait-seconds", 0)
                     blocked = rows[-1].get("head-of-line-seconds", 0) - rows[0].get("head-of-line-seconds", 0)
+                    ordered = (rows[-1].get("ordered-available-bytes", 0)
+                               - rows[0].get("ordered-available-bytes", 0))
+                    sample["orderedMbps"] = ordered * 8 / span / 1e6
                     sample["receivedMbps"] = received * 8 / span / 1e6
                     sample["consumerWaitFraction"] = waited / span
                     sample["headOfLineFraction"] = blocked / span

@@ -42,7 +42,7 @@ QVariantMap feedback(quint64 stream, double rate, int requests = 1)
         { "observed-at-ms", QDateTime::currentMSecsSinceEpoch() }, { "media-bitrate", 80'000'000 },
         { "concurrency-samples",
             QVariantList { QVariantMap { { "requests", requests }, { "capacity-bytes-per-second", rate },
-                { "latency-ms", 120.0 }, { "samples", 1 } } } } };
+                { "ttfb-ms", 120.0 }, { "samples", 1 } } } } };
 }
 }
 
@@ -69,7 +69,7 @@ export function createSource(configuration) {
                 return {bitrate:126000000, parallelRequests:1, origin:configuration.origin,
                     'concurrency-samples':[1,2,4].map(function(requests, index) {
                         return {requests:requests, 'capacity-bytes-per-second':[10000000,20000000,21000000][index],
-                            'latency-ms':120, 'elapsed-seconds':0.4, 'received-bytes':4194304};
+                            'ttfb-ms':120, 'elapsed-seconds':0.4, 'received-bytes':4194304};
                     })};
             });
         },
@@ -165,11 +165,11 @@ export function createSource(configuration) {
                 { { "origin", njOrigin.toString() },
                     { "concurrency-samples",
                         QVariantList { QVariantMap { { "requests", 1 }, { "capacity-bytes-per-second", singleRate },
-                                           { "latency-ms", 5.0 } },
-                            QVariantMap { { "requests", 2 }, { "capacity-bytes-per-second", 12'000'000.0 },
-                                { "latency-ms", 5.0 } },
+                                           { "ttfb-ms", 5.0 } },
+                            QVariantMap {
+                                { "requests", 2 }, { "capacity-bytes-per-second", 12'000'000.0 }, { "ttfb-ms", 5.0 } },
                             QVariantMap { { "requests", 4 }, { "capacity-bytes-per-second", 10'000'000.0 },
-                                { "latency-ms", 5.0 } } } } });
+                                { "ttfb-ms", 5.0 } } } } });
         };
         require(probe(40'000'000), "negative-scaling probe records");
         auto impossibleDemand = feedback(3, 8'000'000, 4);

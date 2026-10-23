@@ -83,6 +83,12 @@ public:
     // Zero means everything asked for has arrived, which is what "wait until
     // the pictures are there" means for an automated run.
     int outstandingRequests() const;
+    // Conservative: includes an HTTP request until Qt resolves its disk-cache
+    // status. Memory-cache hits and local-file decoding do not enter this state.
+    bool fetching() const
+    {
+        return m_fetching;
+    }
     // Cumulative decode work since the process started: how long decoding has
     // taken on the pool threads, and how many pixels came out of it. Both are
     // what a source size actually changes, and unlike wall-clock settle time
@@ -101,6 +107,14 @@ public:
     void handlePrefetched(QString key, QByteArray bytes);
 
 private:
+    friend class ArtworkFetchWorker;
+    void setFetching(bool active)
+    {
+        if (m_fetching == active)
+            return;
+        m_fetching = active;
+        emit fetchingChanged(active);
+    }
     struct Timing {
         bool memoryCache = false;
         bool diskCache = false;
@@ -157,9 +171,11 @@ private:
     int m_deliveredThisTick = 0;
     int m_nextRequestId = 1;
     QString m_downloadStatus;
+    bool m_fetching = false;
 
 signals:
     void downloadStatusChanged();
+    void fetchingChanged(bool active);
 };
 
 } // namespace Spool

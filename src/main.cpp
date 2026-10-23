@@ -857,6 +857,9 @@ int main(int argc, char **argv)
     auto player = std::make_unique<Spool::PlayerController>(
         &window, hub.playback(), &tlsTrust, Spool::bundledFontsPath(appRootPath));
     player->setTrickplayService(&trickplay);
+    QObject::connect(artworkService.get(), &Spool::ArtworkService::fetchingChanged, player.get(),
+        &Spool::PlayerController::setBackgroundNetwork);
+    player->setBackgroundNetwork(artworkService->fetching());
     player->setDemuxerBudget(memoryBudget.mpvDemuxerMaxBytes, memoryBudget.mpvDemuxerMaxBackBytes);
     Spool::ScreenSaverInhibitor screenSaverInhibitor;
     const auto updateScreenSaver = [&screenSaverInhibitor, player = player.get()] {

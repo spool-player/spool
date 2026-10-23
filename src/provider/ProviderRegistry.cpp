@@ -1009,10 +1009,10 @@ QVariantMap ProviderRegistry::playbackNetworkProfile(const QString& accountId, c
         const auto sample = value.toMap();
         if (sample.value(QStringLiteral("requests")).toInt() == selected) {
             capacity = sample.value(QStringLiteral("capacity-bytes-per-second")).toDouble();
-            latency = sample.value(QStringLiteral("latency-ms")).toDouble();
+            latency = sample.value(QStringLiteral("ttfb-ms")).toDouble();
         }
     }
-    return { { QStringLiteral("initial-requests"), selected }, { QStringLiteral("latency-ms"), latency },
+    return { { QStringLiteral("initial-requests"), selected }, { QStringLiteral("ttfb-ms"), latency },
         { QStringLiteral("capacity-bytes-per-second"), capacity },
         { QStringLiteral("measured-bitrate"), qint64(best * 8 * 0.75) },
         { QStringLiteral("concurrency-samples"), samples } };
@@ -1061,7 +1061,7 @@ bool ProviderRegistry::updatePlaybackNetworkProfile(
         const auto point = value.toMap();
         const int lanes = point.value(QStringLiteral("requests")).toInt();
         const double rate = point.value(QStringLiteral("capacity-bytes-per-second")).toDouble();
-        const double latency = point.value(QStringLiteral("latency-ms")).toDouble();
+        const double latency = point.value(QStringLiteral("ttfb-ms")).toDouble();
         const quint64 samples = point.value(QStringLiteral("samples")).toULongLong();
         if (lanes < 1 || lanes > 16 || !networkRate(rate) || !std::isfinite(latency) || latency < 0 || latency > 60000
             || !samples)
@@ -1072,11 +1072,10 @@ bool ProviderRegistry::updatePlaybackNetworkProfile(
         points.insert(lanes,
             { { QStringLiteral("requests"), lanes },
                 { QStringLiteral("capacity-bytes-per-second"), networkRate(old) ? old * 0.5 + rate * 0.5 : rate },
-                { QStringLiteral("latency-ms"), latency }, { QStringLiteral("updated-at-ms"), now } });
+                { QStringLiteral("ttfb-ms"), latency }, { QStringLiteral("updated-at-ms"), now } });
         seen.insert(lanes, samples);
         changed = true;
-        qInfo(
-            "streaming profile sample source=2 requests=%d capacity_bytes_per_second=%.0f latency_ms=%.3f samples=%llu",
+        qInfo("streaming profile sample source=2 requests=%d capacity_bytes_per_second=%.0f ttfb_ms=%.3f samples=%llu",
             lanes, points.value(lanes).value(QStringLiteral("capacity-bytes-per-second")).toDouble(), latency,
             static_cast<unsigned long long>(samples));
     }
@@ -1126,14 +1125,14 @@ bool ProviderRegistry::recordSpeedTest(const QString& accountId, const QVariantM
     for (const QVariant& value : input) {
         const auto sample = value.toMap();
         const double rate = sample.value(QStringLiteral("capacity-bytes-per-second")).toDouble();
-        const double latency = sample.value(QStringLiteral("latency-ms")).toDouble();
+        const double latency = sample.value(QStringLiteral("ttfb-ms")).toDouble();
         if (sample.value(QStringLiteral("requests")).toInt() != expected || !networkRate(rate)
             || !std::isfinite(latency) || latency < 0 || latency > 60000)
             return false;
         samples.append(QVariantMap { { QStringLiteral("requests"), expected },
-            { QStringLiteral("capacity-bytes-per-second"), rate }, { QStringLiteral("latency-ms"), latency },
+            { QStringLiteral("capacity-bytes-per-second"), rate }, { QStringLiteral("ttfb-ms"), latency },
             { QStringLiteral("updated-at-ms"), now } });
-        qInfo("streaming profile sample source=1 requests=%d capacity_bytes_per_second=%.0f latency_ms=%.3f", expected,
+        qInfo("streaming profile sample source=1 requests=%d capacity_bytes_per_second=%.0f ttfb_ms=%.3f", expected,
             rate, latency);
         expected *= 2;
     }

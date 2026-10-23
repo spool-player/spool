@@ -433,6 +433,14 @@ pending probes resume when idle. Account removal/restart discards its result.
 Probe and playback evidence is persisted per origin and expires after 30 days.
 Failure leaves playback usable and keeps earlier valid evidence.
 
+Native optimized playback installs its per-playback transport facts before loading
+the media. Only a successful asynchronous configuration acknowledgement for the
+current core, play request and epoch releases that load; stop/replacement discards
+pending loads. Policy rejection reports a playback error rather than starting
+with another session's facts. Trickplay and artwork HTTP activity jointly mark
+capacity windows as contaminated; either source remaining active keeps that flag
+set. Memory-cache artwork hits and local-file decoding do not set it.
+
 The benchmark warms 512 KiB and always measures one, two and four requests.
 Generated endpoints use adaptive 4/8/16/32 MiB batches, preserving common server
 buffer size classes; Range endpoints use 4 MiB batches.

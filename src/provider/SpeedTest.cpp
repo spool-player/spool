@@ -95,9 +95,9 @@ void SpeedTest::finish(QString error, qint64 bitrate)
         for (int i = 0; i < 3; ++i) {
             samples.append(QVariantMap { { QStringLiteral("requests"), 1 << i },
                 { QStringLiteral("capacity-bytes-per-second"), m_rates[i] / 8 },
-                { QStringLiteral("latency-ms"), m_latencies[i] }, { QStringLiteral("elapsed-seconds"), m_durations[i] },
+                { QStringLiteral("ttfb-ms"), m_latencies[i] }, { QStringLiteral("elapsed-seconds"), m_durations[i] },
                 { QStringLiteral("received-bytes"), m_received[i] } });
-            qInfo("streaming probe sample requests=%d capacity_bytes_per_second=%.0f latency_ms=%.3f "
+            qInfo("streaming probe sample requests=%d capacity_bytes_per_second=%.0f ttfb_ms=%.3f "
                   "elapsed_seconds=%.3f received_bytes=%lld",
                 1 << i, m_rates[i] / 8, m_latencies[i], m_durations[i], static_cast<long long>(m_received[i]));
         }
