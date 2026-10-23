@@ -447,9 +447,9 @@ it still chooses the near-fastest measured configuration, not a previously
 slower high count. Fresh actual curl evidence overrides probe evidence at the
 same concurrency. The complete curve and conservative ceiling reach native
 playback; providers receive `measuredBitrate` and `parallelRequests`.
-The player reselects within **Maximum streaming threads** (default 4), using
+The player reselects within **Maximum concurrent requests** (default 4), using
 the current file's bitrate. Forced counts bypass adaptation; disabling
-**Threaded streaming** uses stock mpv networking. Explicit quality choices
+**Optimized streaming** uses stock mpv networking. Explicit quality choices
 still override the measurement.
 
 During playback, upward trials require a measured throughput gain, not merely
