@@ -17,6 +17,7 @@
 #include <functional>
 #include <iostream>
 #include <stdexcept>
+#include <utility>
 
 namespace {
 void require(bool condition, const char *message)
@@ -129,7 +130,7 @@ SPOOL_TEST_MAIN("script-runtime")
                 if (target.path().startsWith(QStringLiteral("/speed"))) {
                     const QUrlQuery query(target);
                     const int bytes = query.queryItemValue(QStringLiteral("bytes")).toInt();
-                    require(bytes > 0 && bytes <= 4 * 1024 * 1024, "benchmark requests bounded samples");
+                    require(bytes > 0 && bytes <= 32 * 1024 * 1024, "benchmark requests bounded samples");
                     speedSizes.append(bytes);
                     const QString nonce = query.queryItemValue(QStringLiteral("nonce"));
                     const auto requireNonce = [&](bool condition, const char *message) {
@@ -191,12 +192,17 @@ SPOOL_TEST_MAIN("script-runtime")
                         socket->disconnectFromHost();
                         return;
                     }
-                    // First-byte warmup exceeds 20 ms; larger samples take longer,
-                    // so simultaneous lanes have a real wall-clock benefit.
-                    QTimer::singleShot(40 + bytes / (32 * 1024), socket, [socket, bytes] {
-                        socket->write("HTTP/1.1 200 OK\r\nContent-Length: " + QByteArray::number(bytes)
+                    // Generated endpoints may return a pooled size-class buffer
+                    // instead of trimming the rented allocation to the request.
+                    int responseBytes = 1;
+                    while (responseBytes < bytes)
+                        responseBytes *= 2;
+                    // Warmup is quick enough to exercise adaptive larger batches;
+                    // measured larger samples still have a real parallel benefit.
+                    QTimer::singleShot(20 + bytes / (32 * 1024), socket, [socket, responseBytes] {
+                        socket->write("HTTP/1.1 200 OK\r\nContent-Length: " + QByteArray::number(responseBytes)
                             + "\r\nSet-Cookie: speed=private\r\nConnection: close\r\n\r\n");
-                        socket->write(QByteArray(bytes, 'x'));
+                        socket->write(QByteArray(responseBytes, 'x'));
                         socket->disconnectFromHost();
                     });
                     return;
@@ -333,8 +339,9 @@ SPOOL_TEST_MAIN("script-runtime")
     speedResponsiveness.stop();
     waitForSpeedAbort();
     require(measurement.value("bitrate").toLongLong() > 0, "successful benchmark returns a usable streaming ceiling");
-    require(measurement.value("parallelRequests").toInt() == 1,
-        "without playback demand a benchmark does not blindly select maximum throughput");
+    const int selectedRequests = measurement.value("parallelRequests").toInt();
+    double bestCapacity = 0;
+    double selectedCapacity = 0;
     const QVariantList curve = measurement.value("concurrency-samples").toList();
     require(curve.size() == 3, "native result preserves every concurrency operating point");
     for (int index = 0; index < 3; ++index) {
@@ -342,13 +349,30 @@ SPOOL_TEST_MAIN("script-runtime")
         const double seconds = sample.value("elapsed-seconds").toDouble();
         const double rate = sample.value("capacity-bytes-per-second").toDouble();
         const double latencyMs = sample.value("latency-ms").toDouble();
-        require(sample.value("requests").toInt() == (1 << index)
-                && sample.value("received-bytes").toLongLong() == 4194304 && seconds > 0 && latencyMs >= 35
-                && latencyMs <= seconds * 1000 && std::abs(rate * seconds - 4194304.0) < 1,
-            "per-concurrency raw capacity divides actual payload by full measured wall time including TTFB");
+        require(sample.value("requests").toInt() == (1 << index) && sample.value("received-bytes").toLongLong() > 0
+                && sample.value("received-bytes").toLongLong() <= 64 * 1024 * 1024 && seconds > 0 && latencyMs >= 35
+                && latencyMs <= seconds * 1000
+                && std::abs(rate * seconds - sample.value("received-bytes").toDouble()) < 1,
+            "per-concurrency raw capacity accounts actual bounded payload and full wall time including TTFB");
+        require(seconds >= 0.4 || sample.value("received-bytes").toLongLong() == 64 * 1024 * 1024,
+            "fast transfers accumulate a useful measurement duration rather than one noisy tiny sample");
+        bestCapacity = std::max(bestCapacity, rate);
+        if (sample.value("requests").toInt() == selectedRequests)
+            selectedCapacity = rate;
     }
-    require(speedSizes == QList<int> { 524288, 4194304, 2097152, 2097152, 1048576, 1048576, 1048576, 1048576 },
-        "warmup and completed 1/2/4 lane rounds use the intended byte budgets");
+    require(selectedCapacity >= bestCapacity * 0.85,
+        "without demand startup uses measured capacity, not an unconditional single lane");
+    for (const QVariant& value : curve) {
+        const auto sample = value.toMap();
+        require(sample.value("requests").toInt() >= selectedRequests
+                || sample.value("capacity-bytes-per-second").toDouble() < bestCapacity * 0.85,
+            "additional lanes must improve capacity beyond the measurement noise band");
+    }
+    qint64 probeBytes = 0;
+    for (int bytes : std::as_const(speedSizes))
+        probeBytes += bytes;
+    require(speedSizes.front() == 512 * 1024 && probeBytes <= 512 * 1024 + 3 * 64 * 1024 * 1024,
+        "warmup and adaptive complete-curve measurements have a bounded total byte budget");
     require(speedMaximum == 4 && speedGuiTurns >= 5, "lane requests overlap without blocking GUI events");
     require(received.back().contains("Authorization: a-token"), "benchmark passes source authentication headers");
     const auto overlapping = QCoro::waitFor(runtime->call("a", "overlappingSpeedTests"));

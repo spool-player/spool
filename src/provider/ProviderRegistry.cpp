@@ -7,11 +7,13 @@
 #include "ProviderCapabilityContract.h"
 #include "ProviderExtensionData.h"
 #include "ProviderUiContext.h"
+#include "SpeedTest.h"
 
 #include <QCoroFuture>
 #include <QCoroSignal>
 #include <QCryptographicHash>
 #include <QDateTime>
+#include <QDebug>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
@@ -982,42 +984,25 @@ QVariantMap ProviderRegistry::playbackNetworkProfile(const QString& accountId, c
             const QVariantMap sample = value.toMap();
             const int requests = sample.value(QStringLiteral("requests")).toInt();
             const double capacity = sample.value(QStringLiteral("capacity-bytes-per-second")).toDouble();
-            if (requests >= 1 && requests <= 4 && networkRate(capacity)
+            if (requests >= 1 && requests <= 16 && networkRate(capacity)
                 && freshNetworkSample(sample.value(QStringLiteral("updated-at-ms")).toLongLong(), now))
                 estimates.insert(requests, sample);
         }
     }
-    for (int requests : { 1, 2, 3, 4 }) {
+    for (int requests = 1; requests <= 16; ++requests) {
         if (estimates.contains(requests)) {
             const auto sample = estimates.value(requests);
             samples.append(sample);
             best = std::max(best, sample.value(QStringLiteral("capacity-bytes-per-second")).toDouble());
         }
     }
-    int selected = 1;
     const bool recentPlayback
         = !samples.isEmpty() && freshNetworkSample(saved.value(QStringLiteral("playback-at-ms")).toLongLong(), now);
     const double mediaBitrate = recentPlayback ? saved.value(QStringLiteral("media-bitrate")).toDouble() : 0;
-    if (recentPlayback)
-        selected = saved.value(QStringLiteral("initial-requests"), 1).toInt();
-    if (selected < 1 || selected > 4)
-        selected = 1;
-    if (mediaBitrate > 0) {
-        // Keep substantial headroom without rewarding more sockets for a tiny gain.
-        for (int requests : { 1, 2, 3, 4 }) {
-            const auto enough
-                = std::find_if(samples.cbegin(), samples.cend(), [requests, mediaBitrate](const QVariant& v) {
-                      const auto sample = v.toMap();
-                      return sample.value(QStringLiteral("requests")).toInt() == requests
-                          && sample.value(QStringLiteral("capacity-bytes-per-second")).toDouble() * 8
-                          >= mediaBitrate * 1.75;
-                  });
-            if (enough != samples.cend()) {
-                selected = requests;
-                break;
-            }
-        }
-    }
+    const auto selection = selectNetworkLanes(samples, mediaBitrate);
+    const int selected = selection.requests;
+    qInfo("streaming profile selection requests=%d reason=%d media_bitrate=%.0f best_capacity_bytes_per_second=%.0f",
+        selected, selection.reason, mediaBitrate, best);
     double capacity = 0;
     double latency = 0;
     for (const QVariant& value : samples) {
@@ -1056,7 +1041,7 @@ bool ProviderRegistry::updatePlaybackNetworkProfile(
     const auto previous = m_networkFeedback.value(key);
     if (key.isEmpty() || !sourceRunning(accountId) || !accountOriginAllowed(accountId, origin) || observed <= 0
         || observed > now + 5000 || now - observed > 5 * 60 * 1000 || !stream || !count || stream < previous.first
-        || (stream == previous.first && count <= previous.second) || requests < 1 || requests > 4)
+        || (stream == previous.first && count <= previous.second) || requests < 1 || requests > 16)
         return false;
     // Only curl's unthrottled capacity observations are accepted; lifetime
     // average/current rates include cache backpressure and must not enter here.
@@ -1070,7 +1055,7 @@ bool ProviderRegistry::updatePlaybackNetworkProfile(
     auto seen = stream == previous.first ? m_networkPointSamples.value(key) : QHash<int, quint64>();
     bool changed = false;
     const QVariantList incoming = metrics.value(QStringLiteral("concurrency-samples")).toList();
-    if (incoming.isEmpty() || incoming.size() > 4)
+    if (incoming.isEmpty() || incoming.size() > 16)
         return false;
     for (const QVariant& value : incoming) {
         const auto point = value.toMap();
@@ -1078,7 +1063,7 @@ bool ProviderRegistry::updatePlaybackNetworkProfile(
         const double rate = point.value(QStringLiteral("capacity-bytes-per-second")).toDouble();
         const double latency = point.value(QStringLiteral("latency-ms")).toDouble();
         const quint64 samples = point.value(QStringLiteral("samples")).toULongLong();
-        if (lanes < 1 || lanes > 4 || !networkRate(rate) || !std::isfinite(latency) || latency < 0 || latency > 60000
+        if (lanes < 1 || lanes > 16 || !networkRate(rate) || !std::isfinite(latency) || latency < 0 || latency > 60000
             || !samples)
             return false;
         if (samples <= seen.value(lanes))
@@ -1090,15 +1075,18 @@ bool ProviderRegistry::updatePlaybackNetworkProfile(
                 { QStringLiteral("latency-ms"), latency }, { QStringLiteral("updated-at-ms"), now } });
         seen.insert(lanes, samples);
         changed = true;
+        qInfo(
+            "streaming profile sample source=2 requests=%d capacity_bytes_per_second=%.0f latency_ms=%.3f samples=%llu",
+            lanes, points.value(lanes).value(QStringLiteral("capacity-bytes-per-second")).toDouble(), latency,
+            static_cast<unsigned long long>(samples));
     }
     if (!changed)
         return false;
     QVariantList merged;
-    for (int lanes : { 1, 2, 3, 4 })
+    for (int lanes = 1; lanes <= 16; ++lanes)
         if (points.contains(lanes))
             merged.append(points.value(lanes));
     saved.insert(QStringLiteral("concurrency-samples"), merged);
-    saved.insert(QStringLiteral("initial-requests"), requests);
     saved.insert(QStringLiteral("playback-at-ms"), now);
     const double bitrate = metrics.value(QStringLiteral("media-bitrate")).toDouble();
     if (std::isfinite(bitrate) && bitrate > 0 && bitrate <= 800.0e9)
@@ -1145,6 +1133,8 @@ bool ProviderRegistry::recordSpeedTest(const QString& accountId, const QVariantM
         samples.append(QVariantMap { { QStringLiteral("requests"), expected },
             { QStringLiteral("capacity-bytes-per-second"), rate }, { QStringLiteral("latency-ms"), latency },
             { QStringLiteral("updated-at-ms"), now } });
+        qInfo("streaming profile sample source=1 requests=%d capacity_bytes_per_second=%.0f latency_ms=%.3f", expected,
+            rate, latency);
         expected *= 2;
     }
     auto saved = m_networkProfiles.value(key).toMap();

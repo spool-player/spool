@@ -4,6 +4,7 @@
 #include <QNetworkRequest>
 #include <QObject>
 #include <QString>
+#include <QTimer>
 #include <QVariantMap>
 
 #include <array>
@@ -14,6 +15,14 @@ class QNetworkReply;
 namespace Spool {
 
 struct ScriptAccess;
+
+// Minimum measured concurrency within 15% of peak capacity, or sufficient
+// playback headroom. Reason: 0 = unmeasured, 1 = capacity, 2 = playback demand.
+struct NetworkLaneSelection {
+    int requests = 1;
+    int reason = 0;
+};
+NetworkLaneSelection selectNetworkLanes(const QVariantList& samples, double mediaBitrate, int maxRequests = 16);
 
 // A worker-local benchmark. Destruction disconnects and aborts every lane;
 // the owning ScriptOperation supplies the shared 15-second deadline.
@@ -35,7 +44,8 @@ private:
     bool drain(int lane);
     bool checkResponse(int lane);
     void finished(int lane);
-    void finish(QString error = {}, qint64 bitrate = 0, int lanes = 1);
+    void completeRound();
+    void finish(QString error = {}, qint64 bitrate = 0);
     void abort();
 
     ScriptAccess *m_access;
@@ -47,12 +57,17 @@ private:
     std::array<double, 3> m_rates {};
     std::array<double, 3> m_latencies {};
     std::array<double, 3> m_durations {};
+    std::array<qint64, 3> m_received {};
     std::array<char, 64 * 1024> m_buffer;
     QElapsedTimer m_elapsed;
+    QElapsedTimer m_pointElapsed;
+    QTimer m_roundDeadline;
     qint64 m_expected = 0;
     int m_count = 0;
     int m_remaining = 0;
     int m_round = -1;
+    int m_transfer = 0;
+    qint64 m_chunkBytes = 4 * 1024 * 1024;
     bool m_done = false;
     bool m_range = false;
     double m_targetBitrate = 0;

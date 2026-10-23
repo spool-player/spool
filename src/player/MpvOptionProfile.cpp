@@ -382,7 +382,7 @@ QByteArray MpvOptionProfile::preloadedSubtitleStreams(const PlaybackSession& ses
 
 MpvOptionProfile::NetworkProfile MpvOptionProfile::networkProfile(Platform platform, int parallelRequests)
 {
-    const int requests = std::clamp(parallelRequests, 1, 4);
+    const int requests = std::clamp(parallelRequests, 1, 16);
     return platform == Platform::WebOS ? NetworkProfile { 2 * 1024 * 1024, 512 * 1024, requests }
                                        : NetworkProfile { 4 * 1024 * 1024, 1024 * 1024, requests };
 }
@@ -482,7 +482,7 @@ QByteArray MpvOptionProfile::systemCertificateBundle()
 std::vector<MpvOption> MpvOptionProfile::applicationOptions(Platform platform, bool needsVideoSurface,
     const QString& audioOutputMode, const QByteArray& logPath, const QByteArray& demuxerMaxBytes,
     const QByteArray& demuxerMaxBackBytes, int parallelRequests, bool embeddedVideo, const QByteArray& shaderCachePath,
-    const QByteArray& certificateBundlePath, RenderQuality quality)
+    const QByteArray& certificateBundlePath, RenderQuality quality, bool threadedStreaming, bool forceStreamingThreads)
 {
     const bool webOS = platform == Platform::WebOS;
     const bool android = platform == Platform::Android;
@@ -505,10 +505,12 @@ std::vector<MpvOption> MpvOptionProfile::applicationOptions(Platform platform, b
         { "cache-pause", "no" },
         { "demuxer-max-bytes", demuxerMaxBytes },
         { "demuxer-max-back-bytes", demuxerMaxBackBytes },
-        { "curl-enabled", "yes" },
+        { "curl-enabled", threadedStreaming ? "yes" : "no" },
         { "curl-buffer-size", QByteArray::number(network.ringBytes) },
         { "curl-max-request-size", QByteArray::number(network.rangeBytes) },
         { "curl-parallel-requests", QByteArray::number(network.parallelRequests) },
+        { "curl-adaptive", forceStreamingThreads ? "no" : "yes" },
+        { "curl-initial-requests", forceStreamingThreads ? QByteArray::number(network.parallelRequests) : "1" },
         // A connection that goes quiet without closing is retried after this
         // long rather than mpv's 60 s, which outlasts any demuxer cache.
         { "network-timeout", "15" },

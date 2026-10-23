@@ -430,16 +430,36 @@ file when a server ignores Range.
 `SourceHub` probes enabled accounts one at a time after five idle seconds.
 Starting playback or other foreground loading cancels an in-flight probe;
 pending probes resume when idle. Account removal/restart discards its result.
-Measurements are session-local. Failure leaves playback usable and keeps any
-earlier successful measurement for that running account.
+Probe and playback evidence is persisted per origin and expires after 30 days.
+Failure leaves playback usable and keeps earlier valid evidence.
 
-The benchmark warms 512 KiB and compares 4 MiB transfers over one and two
-connections, adding four when latency or dual-connection improvement warrants
-it. It chooses the fewest connections within 85% of the best rate, then reserves
-25% headroom on that connection count. The conservative ceiling and lane count
-reach `resolve` as `measuredBitrate` and `parallelRequests`; the native player
-uses the same lane count. Providers must let explicit quality choices override
-the measurement.
+The benchmark warms 512 KiB and always measures one, two and four requests.
+Generated endpoints use adaptive 4/8/16/32 MiB batches, preserving common server
+buffer size classes; Range endpoints use 4 MiB batches.
+Each operating point repeats until 400 ms or 64 MiB, with a 2.5-second cap inside
+the shared 15-second operation deadline. Rates use actual received bytes and
+elapsed wall time, including connection/setup costs. The quality ceiling is
+75% of the best measured rate.
+
+Selection prefers the fewest requests within 15% of peak capacity, or providing
+1.75× media demand when that requires less capacity. If no count meets demand,
+it still chooses the near-fastest measured configuration, not a previously
+slower high count. Fresh actual curl evidence overrides probe evidence at the
+same concurrency. The complete curve and conservative ceiling reach native
+playback; providers receive `measuredBitrate` and `parallelRequests`.
+The player reselects within **Maximum streaming threads** (default 4), using
+the current file's bitrate. Forced counts bypass adaptation; disabling
+**Threaded streaming** uses stock mpv networking. Explicit quality choices
+still override the measurement.
+
+During playback, upward trials require a measured throughput gain, not merely
+meeting demand; downward trials can recover from negative scaling even when
+demand is unattainable. **Log streaming performance** optionally logs numeric
+input/wire/capacity rates, buffers, CPU and waits once per second. Wire rates
+include cache backpressure; capacity samples exclude it. Curl CPU is measured
+worker CPU time, not elapsed network time. `ring-wait-seconds` sums producer
+backpressure across streams; `consumer-wait-seconds` sums completed empty-ring
+waits. These counters and actual throughput are available through spoolet.
 
 The player's Quality → Auto detail shows the active account's measured limit.
 Settings → Streaming → Connection speed shows each enabled account and offers

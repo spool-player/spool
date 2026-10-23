@@ -276,10 +276,6 @@ public:
     {
         return active() ? active()->mediaOrigin() : QUrl();
     }
-    int playbackParallelRequests() const override
-    {
-        return active() ? active()->playbackParallelRequests() : 4;
-    }
     QVariantMap playbackNetworkProfile() const override
     {
         return active() ? active()->playbackNetworkProfile() : QVariantMap();
@@ -1316,6 +1312,43 @@ QString SourceHub::speedTestDescription() const
                 + speedDescription(m_entries.value(prefixOf(provider->id()))));
     }
     return descriptions.join(QLatin1Char('\n'));
+}
+
+QVariantMap SourceHub::speedTestStatus() const
+{
+    QVariantList accounts;
+    for (Provider *provider : sources()) {
+        if (!provider->capabilities().testFlag(Provider::SpeedTest))
+            continue;
+        const auto entry = m_entries.constFind(prefixOf(provider->id()));
+        if (entry == m_entries.cend())
+            continue;
+        const QVariantMap profile = m_registry->playbackNetworkProfile(provider->id());
+        QString moduleId;
+        for (const ProviderAccount& account : m_registry->accountList()) {
+            if (account.id == provider->id()) {
+                moduleId = account.module;
+                break;
+            }
+        }
+        QVariantList curve;
+        for (const QVariant& value : profile.value(QStringLiteral("concurrency-samples")).toList()) {
+            const QVariantMap sample = value.toMap();
+            curve.append(QVariantMap { { QStringLiteral("requests"), sample.value(QStringLiteral("requests")).toInt() },
+                { QStringLiteral("mbps"),
+                    sample.value(QStringLiteral("capacity-bytes-per-second")).toDouble() * 8.0 / 1'000'000.0 } });
+        }
+        accounts.append(QVariantMap { { QStringLiteral("index"), int(accounts.size()) },
+            { QStringLiteral("measuredMbps"),
+                profile.value(QStringLiteral("measured-bitrate")).toDouble() / 1'000'000.0 },
+            { QStringLiteral("accountId"), provider->id() }, { QStringLiteral("moduleId"), moduleId },
+            { QStringLiteral("selectedRequests"), profile.value(QStringLiteral("initial-requests"), 1).toInt() },
+            { QStringLiteral("laneMbps"), curve },
+            { QStringLiteral("running"), entry->speedState == Entry::SpeedState::Running },
+            { QStringLiteral("pending"), entry->speedState == Entry::SpeedState::Pending },
+            { QStringLiteral("failed"), entry->speedState == Entry::SpeedState::Failed } });
+    }
+    return { { QStringLiteral("pausedForPlayback"), m_playbackActive }, { QStringLiteral("accounts"), accounts } };
 }
 
 QString SourceHub::autoDescription() const

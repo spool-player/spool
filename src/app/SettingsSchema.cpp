@@ -362,6 +362,27 @@ const QVector<SettingSpec>& settingSpecs()
                 "%", SettingTarget::External)
                 .advanced()
                 .whenSetTo("playback/seekPreviews", "true"),
+            toggleSpec("playback/threadedStreaming", "Playback", "Threaded streaming",
+                "Download with parallel network requests. Off uses standard mpv networking. "
+                "Applies to the next playback",
+                true, SettingTarget::ThreadedStreaming)
+                .advanced(),
+            sliderSpec("playback/maxStreamingThreads", "Playback", "Maximum streaming threads",
+                "Maximum concurrent network requests, not decoding threads. Adapts up to this limit. "
+                "Applies to the next playback",
+                "4", 1, 16, 1, "", SettingTarget::MaxStreamingThreads)
+                .advanced()
+                .whenSetTo("playback/threadedStreaming", "true"),
+            toggleSpec("playback/forceStreamingThreads", "Playback", "Force streaming thread count",
+                "Use the selected request count instead of adapting it. Applies to the next playback", false,
+                SettingTarget::ForceStreamingThreads)
+                .advanced()
+                .whenSetTo("playback/threadedStreaming", "true"),
+            toggleSpec("playback/logStreamingPerformance", "Playback", "Log streaming performance",
+                "Log actual playback download speed, buffering and CPU usage once per second. "
+                "Off by default; does not log media URLs or credentials",
+                false, SettingTarget::LogStreamingPerformance)
+                .advanced(),
             selectSpec("playback/videoOutput", "Playback", "Video output",
                 "Enhanced processes each frame on the GPU. Direct sends it straight to the display", "enhanced",
                 kVideoOutputChoices, SettingTarget::VideoOutputMode)
@@ -643,13 +664,14 @@ const QVector<SettingSpec>& settingSpecs()
             QStringLiteral("playback/autoAdjustQuality"), QStringLiteral("playback/graphicsApi"),
             QStringLiteral("playback/hdrOutput"), QStringLiteral("playback/hdrPeakNits"),
             QStringLiteral("settings/audioOutputMode"), QStringLiteral("playback/forwardCacheSizeMiB"),
-            QStringLiteral("subtitles/hdrBrightnessPercent"), QStringLiteral("input/redButton"),
-            QStringLiteral("input/greenButton"), QStringLiteral("input/yellowButton"),
-            QStringLiteral("input/blueButton"), QStringLiteral("updates/automatic"),
-            QStringLiteral("providers/updates"), QStringLiteral("shell/diagnostics"),
-            QStringLiteral("settings/toneMappingVisualization"), QStringLiteral("shell/latencyGuard"),
-            QStringLiteral("shell/latencyOverlay"), QStringLiteral("theme/antialiasedText"),
-            QStringLiteral("theme/renderMode") };
+            QStringLiteral("playback/threadedStreaming"), QStringLiteral("playback/maxStreamingThreads"),
+            QStringLiteral("playback/forceStreamingThreads"), QStringLiteral("subtitles/hdrBrightnessPercent"),
+            QStringLiteral("input/redButton"), QStringLiteral("input/greenButton"),
+            QStringLiteral("input/yellowButton"), QStringLiteral("input/blueButton"),
+            QStringLiteral("updates/automatic"), QStringLiteral("providers/updates"),
+            QStringLiteral("shell/diagnostics"), QStringLiteral("settings/toneMappingVisualization"),
+            QStringLiteral("shell/latencyGuard"), QStringLiteral("shell/latencyOverlay"),
+            QStringLiteral("theme/antialiasedText"), QStringLiteral("theme/renderMode") };
         for (SettingSpec& spec : rows) {
             const QString key = QString::fromLatin1(spec.key);
             const QLatin1String group(spec.group);

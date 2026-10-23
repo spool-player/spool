@@ -50,10 +50,6 @@ public:
     {
         return {};
     }
-    int playbackParallelRequests() const override
-    {
-        return 1;
-    }
     bool signedIn() const override
     {
         return true;

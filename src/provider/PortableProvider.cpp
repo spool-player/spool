@@ -119,10 +119,6 @@ public:
     {
         return m_origin;
     }
-    int playbackParallelRequests() const override
-    {
-        return 4;
-    }
     QVariantMap playbackNetworkProfile() const override
     {
         return m_owner->m_registry->playbackNetworkProfile(m_owner->m_accountId, m_origin);

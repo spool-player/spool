@@ -106,10 +106,6 @@ public:
     {
         return m_source->mediaOrigin();
     }
-    int playbackParallelRequests() const override
-    {
-        return m_source->playbackParallelRequests();
-    }
     bool signedIn() const override
     {
         return m_source->signedIn();

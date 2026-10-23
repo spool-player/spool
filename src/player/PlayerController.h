@@ -38,6 +38,7 @@ class NativeAppWindow;
 class PlaybackSource;
 class TlsTrustController;
 class TrickplayService;
+class PlatformPerformanceSampler;
 
 class PlayerController final : public QObject {
     Q_OBJECT
@@ -124,7 +125,10 @@ public:
     }
     QVariantMap networkMetrics() const
     {
-        return m_networkMetrics;
+        QVariantMap metrics = m_networkMetrics;
+        for (auto it = m_streamingPerformanceMetrics.cbegin(); it != m_streamingPerformanceMetrics.cend(); ++it)
+            metrics.insert(it.key(), it.value());
+        return metrics;
     }
     bool subtitlesEnabled() const;
     QStringList subtitleTracks() const;
@@ -247,6 +251,10 @@ public:
     void previewSubtitlePreferences(const Spool::SubtitlePreferences& preferences);
     void setDemuxerBudget(const QByteArray& maxBytes, const QByteArray& maxBackBytes);
     void setForwardCacheSizeMiB(int sizeMiB);
+    void setThreadedStreaming(bool enabled);
+    void setMaxStreamingThreads(int threads);
+    void setForceStreamingThreads(bool force);
+    void setLogStreamingPerformance(bool enabled);
     void setMpvConfigPolicy(const MpvConfigPolicy& policy);
 
 signals:
@@ -340,6 +348,7 @@ private:
     void observeMpvProperties(mpv_handle *handle);
     void updateNetworkTransport();
     double networkMediaBitrate() const;
+    void logStreamingPerformance(qint64 inputBytesPerSecond);
     void synchronizeWindowFullscreen(mpv_handle *handle);
     void scheduleMpvTeardown();
     void handleMpvEvent(mpv_event *event, quint64 generation, mpv_handle *handle);
@@ -417,6 +426,7 @@ private:
     QTimer m_progressTimer;
     QTimer m_networkTimer;
     QVariantMap m_networkMetrics;
+    QVariantMap m_streamingPerformanceMetrics;
     QUrl m_networkOrigin;
     QByteArray m_sessionRequestHeaders;
     QVariantMap m_sessionNetworkProfile;
@@ -425,6 +435,13 @@ private:
     double m_networkBufferSeconds = 0;
     double m_networkVideoBitrate = 0;
     double m_networkAudioBitrate = 0;
+    bool m_cacheSpeedQueryPending = false;
+    bool m_sessionThreadedStreaming = true;
+    std::unique_ptr<PlatformPerformanceSampler> m_streamingPerformanceSampler;
+    double m_previousCurlCpuSeconds = -1;
+    double m_previousCurlWallSeconds = -1;
+    double m_previousRingWaitSeconds = 0;
+    double m_previousConsumerWaitSeconds = 0;
     QTimer m_backGuardTimer;
     QTimer m_uiPositionTimer;
     QTimer m_seekWatchdogTimer;
@@ -456,6 +473,10 @@ private:
     bool m_directVideoOutput = false;
     bool m_hardwareDecoding = true;
     QByteArray m_softwareRenderer;
+    bool m_threadedStreaming = true;
+    int m_maxStreamingThreads = 4;
+    bool m_forceStreamingThreads = false;
+    bool m_logStreamingPerformance = false;
     // The opening seconds are where a device that cannot keep up says so:
     // the picture is being scaled and tone-mapped from the first frame, and
     // nothing has warmed a cache yet.

@@ -72,6 +72,26 @@ Back restores the query, selection and scroll position. **Ctrl+F** searches
 Settings when that page owns input; text composition and modal editors keep
 their existing ownership.
 
+Advanced **Playback** settings include **Threaded streaming** (on by default).
+Turning it off uses stock mpv networking (`curl-enabled=no`). While it is on,
+**Maximum streaming threads** sets the concurrent network-request limit from
+1–16 (default 4 on every platform), not the number of decoding or operating-system
+threads. Requests adapt up to that limit unless **Force streaming thread count**
+is enabled (off by default). Forced counts still require server support for
+parallel range requests. All three settings apply to the next playback,
+persist on this device, and sync only with device-setting opt-in.
+
+The maximum is a ceiling, not a target. Automatic selection prefers the fewest
+requests within 15% of the best measured capacity, or enough for 1.75× playback
+demand. Actual playback measurements override probe estimates at the same
+concurrency; slower extra requests are not retained just because demand is high.
+
+**Log streaming performance** is an independent, device-local opt-in in advanced
+Playback settings. It logs once per second while playing, including with stock
+networking: demuxer input rate, curl wire/capacity rates, buffer duration, process
+and curl-worker CPU, and producer/consumer waits. CPU percentages use one core
+as 100%; idle/full-cache time is not link capacity. Logs omit URLs and credentials.
+
 Mouse scrolling and keyboard navigation can coexist. If the selected card is
 offscreen, the first direction selects the top-left usable visible card without
 scrolling back. That complete held gesture is consumed until physical release;

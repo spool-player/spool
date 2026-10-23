@@ -30,8 +30,6 @@ public:
     virtual QByteArray mediaRequestHeaders() const = 0;
     // The origin whose remembered TLS trust decision covers media URLs.
     virtual QUrl mediaOrigin() const = 0;
-    // Hard range-request cap; the learned initial count lives in the profile.
-    virtual int playbackParallelRequests() const = 0;
     // Native-only transport learning. Rates are bytes/s; media bitrate is bits/s.
     // {initial-requests:1..4, latency-ms, capacity-bytes-per-second,
     //  measured-bitrate:bits/s, concurrency-samples:[{requests, capacity-bytes-per-second,

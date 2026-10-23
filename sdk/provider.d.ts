@@ -133,8 +133,8 @@ export interface OperationHost extends ProviderHost {
      * Same origin/TLS policy as http; no redirects or cookies. Cancelled with
      * this operation. Generated endpoints return exactly the requested bytes;
      * range endpoints must honor the native Range header and Content-Range.
-     * Warms 512 KiB, then compares 4 MiB totals over one, two and optionally
-     * four connections. Result reserves 25% headroom and is bounded to 1–1000 Mbps.
+     * Warms 512 KiB, then measures one, two and four connections with bounded
+     * repeated batches. Result reserves 25% headroom from peak capacity.
      */
     speedTest(endpoint: SpeedTestEndpoint): Promise<SpeedTestResult>;
 }
@@ -225,8 +225,8 @@ export interface PlaybackContext {
     videoCodecs: string[]; restrictVideoCodecs: boolean;
     /** This account's measured conservative ceiling; zero until a successful idle probe. */
     measuredBitrate: number;
-    /** Native playback range-request budget selected by the probe; two before measurement. */
-    parallelRequests: 1 | 2 | 4;
+    /** Learned starting range-request count, integer 1–16; one before measurement. The native player applies its own cap. */
+    parallelRequests: number;
     /** Global seek-preview preference, default true. When false, omit preview descriptors and skip preview-only metadata requests/prefetch. */
     videoPreviews: boolean;
 }
