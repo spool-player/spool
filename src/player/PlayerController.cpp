@@ -65,6 +65,49 @@ namespace {
 
     constexpr uint64_t kTimePosRefreshReply = 0x6a666e7074730001ULL;
     constexpr uint64_t kNetworkMetricsReply = 0x6375726c73746174ULL;
+
+    // One playback's media facts, the transport's demand prior. Asynchronous:
+    // the core applies requests in submission order, so it lands before the
+    // loadfile that follows it.
+    void configureTransport(mpv_handle *handle, const PlaybackSession& session, qint64 epoch)
+    {
+        char *keys[10];
+        mpv_node values[10] {};
+        int count = 0;
+        const auto integer = [&](const char *key, qint64 value) {
+            keys[count] = const_cast<char *>(key);
+            values[count].format = MPV_FORMAT_INT64;
+            values[count++].u.int64 = value;
+        };
+        const auto number = [&](const char *key, double value) {
+            keys[count] = const_cast<char *>(key);
+            values[count].format = MPV_FORMAT_DOUBLE;
+            values[count++].u.double_ = value;
+        };
+        integer("format", 2);
+        integer("op", 0);
+        integer("playback-epoch", epoch);
+        if (session.sourceBitrate > 0)
+            number("source-bitrate", static_cast<double>(session.sourceBitrate));
+        if (session.deliveryBitrate > 0)
+            number("delivery-bitrate", static_cast<double>(session.deliveryBitrate));
+        if (session.sourceSizeBytes > 0)
+            integer("source-size-bytes", session.sourceSizeBytes);
+        if (session.deliverySizeBytes > 0)
+            integer("delivery-size-bytes", session.deliverySizeBytes);
+        if (session.sourceRuntimeTicks > 0)
+            number("source-duration-seconds", session.sourceRuntimeTicks / 1e7);
+        if (session.deliveryRuntimeTicks > 0)
+            number("delivery-duration-seconds", session.deliveryRuntimeTicks / 1e7);
+        keys[count] = const_cast<char *>("direct-file");
+        values[count].format = MPV_FORMAT_FLAG;
+        values[count++].u.flag = session.playMethod.compare(QStringLiteral("DirectPlay"), Qt::CaseInsensitive) == 0;
+        mpv_node_list list { count, values, keys };
+        mpv_node control {};
+        control.format = MPV_FORMAT_NODE_MAP;
+        control.u.list = &list;
+        mpv_set_property_async(handle, 0, "curl-transport-control", MPV_FORMAT_NODE, &control);
+    }
     constexpr uint64_t kCacheSpeedReply = 0x6375726c73706565ULL;
     constexpr uint64_t kFullscreenSetReply = 0x6673000000000000ULL;
     constexpr uint64_t kFullscreenObservation = 0x666f000000000000ULL;
@@ -1647,6 +1690,8 @@ void PlayerController::finishPlaySession(
                           << " capacityMbps=" << capacity * 8 / 1e6 << " mediaMbps=" << networkMediaBitrate() / 1e6;
         addOption("curl-media-bitrate", QByteArray::number(networkMediaBitrate(), 'f', 0));
     }
+    if (m_sessionThreadedStreaming)
+        configureTransport(handle, session, ++m_transportEpoch);
     if (m_sessionThreadedStreaming || m_logStreamingPerformance)
         m_networkTimer.start();
     const char *loadCommand[] = { "loadfile", urlBytes.constData(), "replace", "-1",
@@ -2561,24 +2606,8 @@ void PlayerController::updateNetworkTransport()
     }
     if (!m_sessionThreadedStreaming)
         return;
-    char bitrateKey[] = "media-bitrate";
-    char bufferKey[] = "buffer-seconds";
-    char pausedKey[] = "paused";
-    char *keys[] = { bitrateKey, bufferKey, pausedKey };
-    mpv_node values[3] {};
-    values[0].format = MPV_FORMAT_DOUBLE;
-    values[0].u.double_ = networkMediaBitrate();
-    values[1].format = MPV_FORMAT_DOUBLE;
-    values[1].u.double_ = m_networkBufferSeconds;
-    values[2].format = MPV_FORMAT_FLAG;
-    values[2].u.flag = m_paused || m_seeking;
-    mpv_node_list list { 3, values, keys };
-    mpv_node control {};
-    control.format = MPV_FORMAT_NODE_MAP;
-    control.u.list = &list;
-    // Async APIs copy their arguments. Neither operation waits for curl/the core
-    // while Qt needs the GUI thread for rendering.
-    mpv_set_property_async(handle, 0, "curl-transport-control", MPV_FORMAT_NODE, &control);
+    // mpv reports pause, buffer and demand to its transport itself; this only
+    // reads metrics, asynchronously, so Qt never waits on curl or the core.
     if (!m_networkQueryPending) {
         m_networkQueryPending
             = mpv_get_property_async(handle, kNetworkMetricsReply, "curl-transport-metrics", MPV_FORMAT_NODE) >= 0;

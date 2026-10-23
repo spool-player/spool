@@ -433,6 +433,7 @@ private:
     QSslCertificate m_sessionTrustCertificate;
     bool m_networkQueryPending = false;
     double m_networkBufferSeconds = 0;
+    qint64 m_transportEpoch = 0; // curl-transport-control playback epoch, per load
     double m_networkVideoBitrate = 0;
     double m_networkAudioBitrate = 0;
     bool m_cacheSpeedQueryPending = false;
