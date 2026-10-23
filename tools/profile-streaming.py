@@ -4,6 +4,10 @@
 Use the normal credential restoration path; this driver never handles media URLs,
 headers or account configuration. Playback updates normal server watch progress.
 The report contains only numeric source/transport data and account ID prefixes.
+
+--request-counts compares fixed request counts (forced) with automatic selection
+on the same items; touched streaming settings are restored afterwards. --host
+drives a remote instance (for example a TV) through spoolet's SSH transport.
 """
 from __future__ import annotations
 
@@ -26,15 +30,26 @@ def main() -> int:
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--seconds", type=float, default=20, help="observed playback seconds after loading")
     parser.add_argument("--timeout", type=float, default=90, help="per-play startup deadline")
+    parser.add_argument("--host", help="USER@HOST of a remote instance, passed to spoolet --host")
+    parser.add_argument("--request-counts", default="auto",
+                        help="comma list of fixed counts 1-16 and/or 'auto', e.g. 1,4,auto")
+    parser.add_argument("--from-start", action="store_true", help="play every run from the beginning")
+    parser.add_argument("--seek-seconds", type=float, help="seek to this position once loaded")
     args = parser.parse_args()
     if args.repeats < 1 or any(not math.isfinite(value) or value <= 0 for value in (args.seconds, args.timeout)):
         parser.error("counts and durations must be positive and finite")
+    if args.seek_seconds is not None and (not math.isfinite(args.seek_seconds) or args.seek_seconds < 0):
+        parser.error("--seek-seconds must be a finite position")
+    counts = [part.strip() for part in args.request_counts.split(",") if part.strip()]
+    if not counts or any(part != "auto" and not (part.isdigit() and 1 <= int(part) <= 16) for part in counts):
+        parser.error("--request-counts takes 1-16 and/or auto")
     cli = args.spoolet.resolve()
     if not cli.is_file() or not os.access(cli, os.X_OK):
         parser.error("--spoolet must be an executable")
     os.umask(0o077)
     args.output.mkdir(parents=True, exist_ok=False, mode=0o700)
-    report = {"schemaVersion": 1, "complete": False, "scope": "real-server-auto-playback", "samples": []}
+    report = {"schemaVersion": 2, "complete": False, "scope": "real-server-playback", "requestCounts": counts,
+              "samples": []}
 
     def save():
         destination = args.output / "streaming.json"
@@ -43,8 +58,9 @@ def main() -> int:
         temporary.replace(destination)
 
     def call(command, *values):
-        result = subprocess.run([str(cli), "--instance", args.instance, command, *map(str, values)],
-                                capture_output=True, text=True, timeout=15)
+        remote = ["--host", args.host] if args.host else []
+        result = subprocess.run([str(cli), *remote, "--instance", args.instance, command, *map(str, values)],
+                                capture_output=True, text=True, timeout=30 if args.host else 15)
         try:
             reply = json.loads(result.stdout)
         except (ValueError, TypeError):
@@ -61,7 +77,12 @@ def main() -> int:
         keys = ("received-bytes", "current-received-bytes-per-second", "average-received-bytes-per-second",
                 "peak-received-bytes-per-second", "elapsed-seconds", "selected-requests", "latency-ms",
                 "capacity-bytes-per-second", "capacity-samples", "active-requests", "peak-active-requests",
-                "failed-requests", "retry-attempts", "stream-id", "range-bytes", "ring-bytes")
+                "failed-requests", "retry-attempts", "stream-id", "range-bytes", "ring-bytes",
+                "consumer-wait-seconds", "ring-wait-seconds", "head-of-line-seconds", "peak-reorder-bytes",
+                "physical-connections", "curl-thread-cpu-seconds", "curl-thread-wall-seconds",
+                "tcp-rtt-min-ms", "tcp-rtt-max-ms", "max-socket-receive-buffer-bytes",
+                "recent-scheduling-lateness-ms", "peak-scheduling-lateness-ms",
+                "playback-buffer-seconds", "playback-demand-bits-per-second")
         result = {key: raw[key] for key in keys if isinstance(raw.get(key), (int, float)) and not isinstance(raw[key], bool)
                   and math.isfinite(raw[key])}
         for key in ("lane-samples", "concurrency-samples"):
@@ -70,22 +91,40 @@ def main() -> int:
                            for row in raw.get(key, []) if isinstance(row, dict)]
         return result
 
+    touched = ("playback/threadedStreaming", "playback/maxStreamingThreads", "playback/forceStreamingThreads")
+    saved = {}
+
+    def configure(count):
+        # Fixed counts force the request count; auto uses the saved ceiling.
+        call("settings", "set", "playback/threadedStreaming", "true")
+        if count == "auto":
+            call("settings", "set", "playback/forceStreamingThreads", "false")
+            call("settings", "set", "playback/maxStreamingThreads",
+                 json.dumps(saved.get("playback/maxStreamingThreads") or 4))
+        else:
+            call("settings", "set", "playback/forceStreamingThreads", "true")
+            call("settings", "set", "playback/maxStreamingThreads", count)
+
     save()
     active = False
     try:
         initial = call("status")
         if initial.get("playback", {}).get("active"):
             raise RuntimeError("instance is already playing; refusing to interrupt it")
-        for item in args.item:
+        values = call("settings", "get").get("values", {})
+        saved = {key: values[key] for key in touched if key in values}
+        runs = [(item, count) for item in args.item for count in counts]
+        for item, count in runs:
             account = item.split(":", 1)[0]
+            configure(count)
             for repeat in range(args.repeats):
                 # Let deferred teardown finish: repeats include true core setup,
                 # but intentionally retain learned per-server transport history.
                 time.sleep(1.5)
                 start = time.monotonic()
-                call("play", item)
+                call("play", item, *(["--from-start"] if args.from_start else []))
                 active = True
-                sample = {"account": account, "repeat": repeat + 1, "loadedMs": None,
+                sample = {"account": account, "requests": count, "repeat": repeat + 1, "loadedMs": None,
                           "advancingMs": None, "bufferingSeconds": 0, "network": []}
                 report["samples"].append(sample)
                 last_tick = start
@@ -110,6 +149,9 @@ def main() -> int:
                         source = state.get("source", {})
                         sample["source"] = {key: source[key] for key in ("bitrate", "width", "height", "qualityHeight")
                                             if isinstance(source.get(key), (int, float))}
+                        if args.seek_seconds is not None:
+                            call("seek", args.seek_seconds)
+                            initial_position = args.seek_seconds
                     if loaded is not None and sample["advancingMs"] is None:
                         if playback.get("position", 0) > initial_position + 0.1 and not playback.get("paused"):
                             sample["advancingMs"] = (now - start) * 1000
@@ -128,19 +170,43 @@ def main() -> int:
                     time.sleep(0.05)
                 call("stop")
                 active = False
+                rows = sample["network"]
+                sample["peakPhysicalConnections"] = max((row.get("physical-connections", 0) for row in rows), default=0)
+                sample["peakActiveRequests"] = max((row.get("peak-active-requests", 0) for row in rows), default=0)
+                # A fixed count the transport could not reach is not that count.
+                sample["countReached"] = count == "auto" or sample["peakActiveRequests"] >= int(count)
+                if len(rows) >= 2 and rows[-1]["atSeconds"] > rows[0]["atSeconds"]:
+                    span = rows[-1]["atSeconds"] - rows[0]["atSeconds"]
+                    received = rows[-1].get("received-bytes", 0) - rows[0].get("received-bytes", 0)
+                    waited = rows[-1].get("consumer-wait-seconds", 0) - rows[0].get("consumer-wait-seconds", 0)
+                    blocked = rows[-1].get("head-of-line-seconds", 0) - rows[0].get("head-of-line-seconds", 0)
+                    sample["receivedMbps"] = received * 8 / span / 1e6
+                    sample["consumerWaitFraction"] = waited / span
+                    sample["headOfLineFraction"] = blocked / span
                 save()
         report["complete"] = True
         lines = ["# Real-server automatic streaming profile", "",
                  "Observed on this client/network, not a TV or a guarantee of globally fastest startup.",
                  "Startup includes provider negotiation, player setup, container probing and rendering.",
                  "Repeats retain learned server history; playback updates normal watch progress.", "",
-                 "| Account | Runs | Median loaded | Median advancing | Buffering total |",
-                 "|---|---:|---:|---:|---:|"]
-        for account in dict.fromkeys(row["account"] for row in report["samples"]):
-            rows = [row for row in report["samples"] if row["account"] == account]
-            lines.append(f"| {account} | {len(rows)} | {statistics.median(row['loadedMs'] for row in rows):.0f} ms | "
-                         f"{statistics.median(row['advancingMs'] for row in rows):.0f} ms | "
-                         f"{sum(row['bufferingSeconds'] for row in rows):.2f} s |")
+                 "Received rate includes full-cache idle time; compare counts on the same item and offset.", "",
+                 "| Account | Requests | Runs | Median loaded | Median advancing | Buffering total | "
+                 "Median received | Median consumer wait | Median head-of-line | Peak connections | Count reached |",
+                 "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|"]
+
+        def median(rows, key, scale=1.0):
+            values = [row[key] * scale for row in rows if isinstance(row.get(key), (int, float))]
+            return statistics.median(values) if values else float("nan")
+
+        for account, count in dict.fromkeys((row["account"], row["requests"]) for row in report["samples"]):
+            rows = [row for row in report["samples"] if row["account"] == account and row["requests"] == count]
+            lines.append(f"| {account} | {count} | {len(rows)} | {median(rows, 'loadedMs'):.0f} ms | "
+                         f"{median(rows, 'advancingMs'):.0f} ms | "
+                         f"{sum(row['bufferingSeconds'] for row in rows):.2f} s | "
+                         f"{median(rows, 'receivedMbps'):.1f} Mbps | {median(rows, 'consumerWaitFraction', 100):.0f}% | "
+                         f"{median(rows, 'headOfLineFraction', 100):.0f}% | "
+                         f"{max(row['peakPhysicalConnections'] for row in rows)} | "
+                         f"{'yes' if all(row['countReached'] for row in rows) else 'NO'} |")
         text = "\n".join(lines) + "\n"
         (args.output / "streaming.md").write_text(text)
         print(text, end="")
@@ -155,6 +221,11 @@ def main() -> int:
                 call("stop")
             except (OSError, RuntimeError, subprocess.TimeoutExpired):
                 pass
+        for key, value in saved.items():
+            try:
+                call("settings", "set", key, json.dumps(value))
+            except (OSError, RuntimeError, subprocess.TimeoutExpired):
+                report.setdefault("restoreFailed", []).append(key)
         save()
 
 
