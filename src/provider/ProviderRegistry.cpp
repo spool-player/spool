@@ -366,6 +366,7 @@ QCoro::Task<void> ProviderRegistry::restore()
     m_accounts = std::move(restored.accounts);
     for (const ProviderAccount& account : m_accounts) {
         if (restored.unavailableConfigurations.contains(account.id) && !module(account.module)->native) {
+            qWarning("providers: %s account has no readable configuration", qPrintable(account.module));
             m_unavailableConfigurations.insert(account.id);
             m_failedAccounts.insert(account.id);
         }
@@ -735,6 +736,7 @@ QCoro::Task<void> ProviderRegistry::start(
                         // Background restore never interrupts Home with a profile/PIN
                         // chooser. Protected viewers stay locked until explicitly chosen.
                         if (reason == QStringLiteral("startup")) {
+                            qInfo("providers: %s account waits to be unlocked", qPrintable(candidate.module));
                             m_lockedAccounts.insert(accountId);
                             co_return;
                         }
@@ -793,7 +795,10 @@ QCoro::Task<void> ProviderRegistry::start(
             else
                 m_failedAccounts.insert(accountId);
         }
-        // Provider errors may contain credentials; do not log candidate failures.
+        // Provider errors may contain credentials; log only that it happened,
+        // so a source that never opens is not silent in a device log.
+        qWarning("providers: %s account did not open (%s)", qPrintable(candidate.module),
+            signIn ? "sign-in required" : "failed");
         // Explicit setup and switches report beside their actionable profile tile.
         if (!select)
             emit problem(QStringLiteral("%1: %2").arg(candidate.label, message));
