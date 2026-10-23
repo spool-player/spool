@@ -96,7 +96,8 @@ def main() -> int:
             "lane-samples": ("lane", "received-bytes", "active-seconds", "average-bytes-per-second",
                              "current-bytes-per-second", "peak-bytes-per-second", "capacity-bytes-per-second", "samples"),
             "concurrency-samples": ("requests", "capacity-bytes-per-second", "ttfb-ms", "samples"),
-            "streams": ("stream-id", "readable-bytes", "retained-bytes", "reorder-bytes"),
+            "streams": ("stream-id", "readable-bytes", "retained-bytes", "reorder-bytes",
+                        "prefix-publication-available"),
             "connections": ("connection-id", "socket-generation", "http-version", "transport", "active-requests",
                              "socket-receive-buffer-bytes", "receive-window-bytes", "tcp-rtt-ms"),
             "protocol-samples": ("http-version", "ordered-available-bytes", "cpu-ns-per-ordered-byte"),
@@ -104,7 +105,14 @@ def main() -> int:
         for key, fields in samples.items():
             rows = raw.get(key, [])
             if isinstance(rows, list):
-                result[key] = [numeric(fields, row) for row in rows[:64] if isinstance(row, dict)]
+                result[key] = []
+                for row in rows[:64]:
+                    if not isinstance(row, dict):
+                        continue
+                    selected = numeric(fields, row)
+                    if key == "streams" and isinstance(row.get("prefix-publication-available"), bool):
+                        selected["prefix-publication-available"] = row["prefix-publication-available"]
+                    result[key].append(selected)
         return result
 
     touched = ("playback/threadedStreaming", "playback/maxStreamingThreads", "playback/forceStreamingThreads")
@@ -231,8 +239,12 @@ def main() -> int:
         print(text, end="")
         return 0
     except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
-        report["failure"] = str(error)
-        print("streaming profile: " + str(error))
+        category = ("control-timeout" if isinstance(error, subprocess.TimeoutExpired)
+                    else "local-io" if isinstance(error, OSError)
+                    else "invalid-control-data" if isinstance(error, ValueError)
+                    else "playback-or-control-rejected")
+        report["failure"] = category
+        print("streaming profile: " + category)
         return 1
     finally:
         if active:
