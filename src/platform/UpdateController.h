@@ -10,14 +10,13 @@
 
 #include <memory>
 
-class QCryptographicHash;
 class QNetworkAccessManager;
 class QNetworkReply;
-class QSaveFile;
 class QTemporaryDir;
 
 namespace Spool {
 
+class RangedDownload;
 #if defined(SPOOL_WEBOS)
 class WebOSUpdateInstaller;
 #endif
@@ -86,8 +85,8 @@ private:
     void requestMetadata(const QUrl& url);
     void consumeMetadata();
     void offerRelease();
-    void consumeDownloadData();
-    void finishDownload();
+    void finishDownload(const QString& error);
+    void verifyPackage(quint64 verification, const QByteArray& digest);
     void setStage(Stage stage);
     void fail(QString message);
     void resetDownload();
@@ -103,8 +102,9 @@ private:
     QString m_errorText;
     QByteArray m_manifestBytes;
     QPointer<QNetworkReply> m_reply;
-    std::unique_ptr<QSaveFile> m_output;
-    std::unique_ptr<QCryptographicHash> m_hash;
+    QPointer<RangedDownload> m_download;
+    quint64 m_verification = 0;
+    bool m_verifying = false;
     QElapsedTimer m_speedClock;
     QTimer m_speedTimer;
     qint64 m_receivedBytes = 0;

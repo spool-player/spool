@@ -296,6 +296,8 @@ set(SPOOL_SHELL_SOURCES
     src/common/AsyncTask.h
     src/common/LogRotation.h
     src/common/MetaJson.h
+    src/common/RangedDownload.cpp
+    src/common/RangedDownload.h
     src/common/RequestGeneration.h
     src/common/TlsTrust.cpp
     src/common/TlsTrust.h
@@ -897,6 +899,7 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
         request-generation tests/common/RequestGenerationTest.cpp
         diagnostic-redaction tests/common/DiagnosticRedactionTest.cpp
         tls-trust tests/common/TlsTrustTest.cpp
+        ranged-download tests/common/RangedDownloadTest.cpp
         browse-descriptor tests/common/BrowseDescriptorTest.cpp
         meta-json tests/common/MetaJsonTest.cpp
         bounded-zstd tests/common/BoundedZstdTest.cpp
