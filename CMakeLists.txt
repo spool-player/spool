@@ -1342,7 +1342,8 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
             add_test(NAME curl-transport
                 COMMAND "${Python3_EXECUTABLE}" "${MPV_ACTIVE_SOURCE_DIR}/test/curl_transport.py"
                     --libmpv "${SPOOL_CURL_TEST_MPV}" -v)
-            set_tests_properties(curl-transport PROPERTIES LABELS traditional TIMEOUT 300)
+            # The real-HTTP suite runs about 330 s of playback serially.
+            set_tests_properties(curl-transport PROPERTIES LABELS traditional TIMEOUT 600)
         endif()
     endif()
     if(SPOOL_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
