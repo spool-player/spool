@@ -48,7 +48,7 @@ def main() -> int:
         parser.error("--spoolet must be an executable")
     os.umask(0o077)
     args.output.mkdir(parents=True, exist_ok=False, mode=0o700)
-    report = {"schemaVersion": 2, "complete": False, "scope": "real-server-playback", "requestCounts": counts,
+    report = {"schemaVersion": 3, "complete": False, "scope": "real-server-playback", "requestCounts": counts,
               "samples": []}
 
     def save():
@@ -180,7 +180,10 @@ def main() -> int:
                         if playback.get("position", 0) > initial_position + 0.1 and not playback.get("paused"):
                             sample["advancingMs"] = (now - start) * 1000
                     if now >= next_snapshot:
-                        sample["network"].append({"atSeconds": now - start, **transport(state)})
+                        sample["network"].append({"atSeconds": now - start,
+                            "eligible": bool(playback.get("loaded")) and not playback.get("paused")
+                                        and not playback.get("seeking"),
+                            **transport(state)})
                         next_snapshot = now + 1
                         save()
                     if loaded is None and now - start > args.timeout:
@@ -199,27 +202,38 @@ def main() -> int:
                 sample["peakActiveRequests"] = max((row.get("peak-active-requests", 0) for row in rows), default=0)
                 # A fixed count the transport could not reach is not that count.
                 sample["countReached"] = count == "auto" or sample["peakActiveRequests"] >= int(count)
-                if len(rows) >= 2 and rows[-1]["atSeconds"] > rows[0]["atSeconds"]:
-                    span = rows[-1]["atSeconds"] - rows[0]["atSeconds"]
-                    received = rows[-1].get("received-bytes", 0) - rows[0].get("received-bytes", 0)
-                    waited = rows[-1].get("consumer-wait-seconds", 0) - rows[0].get("consumer-wait-seconds", 0)
-                    blocked = rows[-1].get("head-of-line-seconds", 0) - rows[0].get("head-of-line-seconds", 0)
-                    ordered = (rows[-1].get("ordered-available-bytes", 0)
-                               - rows[0].get("ordered-available-bytes", 0))
-                    sample["orderedMbps"] = ordered * 8 / span / 1e6
-                    sample["receivedMbps"] = received * 8 / span / 1e6
-                    sample["consumerWaitFraction"] = waited / span
-                    sample["headOfLineFraction"] = blocked / span
+                eligible = [(before, after) for before, after in zip(rows, rows[1:])
+                            if before["eligible"] and after["eligible"]
+                            and after["atSeconds"] > before["atSeconds"]
+                            and before.get("stream-id") == after.get("stream-id")]
+                span = sum(after["atSeconds"] - before["atSeconds"] for before, after in eligible)
+                sample["eligibleSeconds"] = span
+                for field, output, scale in (
+                    ("ordered-available-bytes", "orderedMbps", 8e-6),
+                    ("received-bytes", "receivedMbps", 8e-6),
+                    ("consumer-wait-seconds", "consumerWaitFraction", 1),
+                    ("head-of-line-seconds", "headOfLineFraction", 1),
+                ):
+                    intervals = [(before, after) for before, after in eligible
+                                 if field in before and field in after and after[field] >= before[field]]
+                    duration = sum(after["atSeconds"] - before["atSeconds"] for before, after in intervals)
+                    if duration:
+                        sample[output] = scale * sum(after[field] - before[field]
+                                                     for before, after in intervals) / duration
+                sample["effectiveHttpVersions"] = sorted({connection["http-version"]
+                    for row in rows for connection in row.get("connections", [])
+                    if connection.get("http-version") in (10, 11, 20, 30)})
                 save()
         report["complete"] = True
         lines = ["# Real-server automatic streaming profile", "",
                  "Observed on this client/network, not a TV or a guarantee of globally fastest startup.",
                  "Startup includes provider negotiation, player setup, container probing and rendering.",
                  "Repeats retain learned server history; playback updates normal watch progress.", "",
-                 "Received rate includes full-cache idle time; compare counts on the same item and offset.", "",
+                 "Ordered/received rates exclude paused/seeking intervals but include full-cache idle time; "
+                 "they are not isolated capacity estimates. Compare the same item and offset.", "",
                  "| Account | Requests | Runs | Median loaded | Median advancing | Buffering total | "
-                 "Median received | Median consumer wait | Median head-of-line | Peak connections | Count reached |",
-                 "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|"]
+                 "Median ordered | Median received | Median consumer wait | Median head-of-line | Peak connections | Count reached |",
+                 "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|"]
 
         def median(rows, key, scale=1.0):
             values = [row[key] * scale for row in rows if isinstance(row.get(key), (int, float))]
@@ -230,6 +244,7 @@ def main() -> int:
             lines.append(f"| {account} | {count} | {len(rows)} | {median(rows, 'loadedMs'):.0f} ms | "
                          f"{median(rows, 'advancingMs'):.0f} ms | "
                          f"{sum(row['bufferingSeconds'] for row in rows):.2f} s | "
+                         f"{median(rows, 'orderedMbps'):.1f} Mbps | "
                          f"{median(rows, 'receivedMbps'):.1f} Mbps | {median(rows, 'consumerWaitFraction', 100):.0f}% | "
                          f"{median(rows, 'headOfLineFraction', 100):.0f}% | "
                          f"{max(row['peakPhysicalConnections'] for row in rows)} | "

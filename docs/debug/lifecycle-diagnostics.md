@@ -86,6 +86,18 @@ margin), selected logical request counts, and the per-request throughput curve
 headers, or provider configuration. Actual playback remains separate evidence:
 poll `status` for playback progress and numeric network metrics.
 
+`tools/profile-streaming.py --spoolet PATH --instance ID --item QUALIFIED_ID
+--output NEW_PRIVATE_DIR --request-counts 1,4,auto --repeats 5 --seconds 60
+--from-start` compares counts in paired repeat order; add `--host USER@HOST`
+for a remote instance. It refuses existing playback and restores changed
+streaming controls in `finally`. Schema-3 reports keep explicit bounded numeric
+transport fields and protocol identities. Ordered/received rates omit intervals
+whose endpoints are paused or seeking, but include full-cache idle time:
+they are observed playback delivery rates, not isolated network capacity.
+`countReached=false` invalidates a fixed-count comparison; it is not a slower
+result for that count. HTTP/protocol and receive-window controls are only
+available when their transport consumers ship.
+
 SSH must already have a trusted host key and noninteractive authentication.
 The CLI uses `BatchMode=yes`, strict host-key checking, no SSH configuration or
 connection sharing, and `ssh -W` encrypted stdio forwarding directly to the TV's
