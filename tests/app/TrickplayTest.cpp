@@ -368,6 +368,8 @@ SPOOL_TEST_MAIN("trickplay")
     });
     info.thumbnailCount = 200;
     info.urlTemplate = QStringLiteral("http://127.0.0.1:%1/sheet/{index}.jpg").arg(server.serverPort());
+    QList<bool> fetching;
+    QObject::connect(&service, &TrickplayService::fetchingChanged, [&](bool active) { fetching.append(active); });
     service.setSession(info, 0);
     color(frame(service, 0), Qt::green);
     const QString delayedId = QUrl(service.frame(100).value("url").toString()).path().mid(1);
@@ -375,11 +377,13 @@ SPOOL_TEST_MAIN("trickplay")
     bool interruptedFinished = false;
     QObject::connect(interrupted.get(), &QQuickImageResponse::finished, [&] { interruptedFinished = true; });
     waitUntil([&] { return secondSheetRequests == 1; });
+    require(!fetching.isEmpty() && fetching.last(), "an in-flight preview fetch is reported as network activity");
     color(frame(service, 25), Qt::blue); // CPU-cached sheet, not a cached frame.
     waitUntil([&] { return interruptedFinished; });
     require(!interrupted->errorString().isEmpty(), "returning to a cached sheet supersedes its pending fetch");
     waitUntil([&] { return !delayed || delayed->state() == QAbstractSocket::UnconnectedState; },
         "cached-sheet return must abort the stale HTTP transfer");
+    require(!fetching.last(), "an aborted preview fetch ends its network activity");
     color(frame(service, 100), Qt::red);
     color(frame(service, 26), Qt::green); // The encoded cache must not be poisoned.
     require(secondSheetRequests == 2, "cancelled sheet is fetched anew, never misfiled as another sheet");
@@ -403,6 +407,9 @@ SPOOL_TEST_MAIN("trickplay")
     serve(delayed, secondSheet);
     waitUntil([&] { return currentFinished; });
     require(currentResponse->errorString().isEmpty(), "latest selection completes despite late provider delivery");
+    require(!fetching.last(), "a completed preview fetch ends its network activity");
+    for (qsizetype n = 1; n < fetching.size(); ++n)
+        require(fetching[n] != fetching[n - 1], "network activity is reported only on changes");
     std::unique_ptr<QQuickTextureFactory> currentTexture(currentResponse->textureFactory());
     require(bool(currentTexture), "latest selection delivers its texture");
     color(currentTexture->image(), Qt::red);

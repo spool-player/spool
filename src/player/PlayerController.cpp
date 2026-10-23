@@ -3498,11 +3498,38 @@ void PlayerController::skipActiveSegment()
     seek(activeSegmentEndSeconds());
 }
 
+void PlayerController::setBackgroundNetwork(bool active)
+{
+    auto *handle = m_mpvLifecycle.handle();
+    if (!handle || !m_sessionThreadedStreaming || m_transportEpoch <= 0)
+        return;
+    char formatKey[] = "format";
+    char opKey[] = "op";
+    char epochKey[] = "playback-epoch";
+    char backgroundKey[] = "background-network";
+    char *keys[] = { formatKey, opKey, epochKey, backgroundKey };
+    mpv_node values[4] {};
+    values[0].format = values[1].format = values[2].format = MPV_FORMAT_INT64;
+    values[0].u.int64 = 2;
+    values[1].u.int64 = 1;
+    values[2].u.int64 = m_transportEpoch;
+    values[3].format = MPV_FORMAT_FLAG;
+    values[3].u.flag = active;
+    mpv_node_list list { 4, values, keys };
+    mpv_node control {};
+    control.format = MPV_FORMAT_NODE_MAP;
+    control.u.list = &list;
+    // An update for an older epoch is ignored by mpv, so a late signal is harmless.
+    mpv_set_property_async(handle, 0, "curl-transport-control", MPV_FORMAT_NODE, &control);
+}
+
 void PlayerController::setTrickplayService(TrickplayService *service)
 {
     m_trickplay = service;
-    if (service)
+    if (service) {
         connect(service, &TrickplayService::changed, this, &PlayerController::trickplayChanged);
+        connect(service, &TrickplayService::fetchingChanged, this, &PlayerController::setBackgroundNetwork);
+    }
 }
 
 QVariantMap PlayerController::trickplayForSeconds(double seconds) const

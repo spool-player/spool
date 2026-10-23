@@ -159,6 +159,8 @@ public:
     Q_INVOKABLE void skipActiveSegment();
     Q_INVOKABLE QVariantMap trickplayForSeconds(double seconds) const;
     void setTrickplayService(TrickplayService *service);
+    // Tell the transport that the host is fetching other network data.
+    void setBackgroundNetwork(bool active);
 
     Q_INVOKABLE void play(const Spool::PlaybackSession& session, bool startPaused = false);
     void playLocalFiles(const QList<QUrl>& urls);
