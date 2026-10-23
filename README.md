@@ -214,6 +214,12 @@ and playback method. For example, a 3840×1608 edition is a 2160-class source
 despite its cropped pixel height; the CLI never reconstructs quality choices
 from the negotiated output or invents a source ladder.
 
+For webOS, opt in to the loopback control server on launch and use the desktop
+CLI's `--host root@TV` SSH transport; no separate TV executable or LAN listener
+is needed. `speed-test` starts the normal idle probe, `speed-test status` exposes
+its numeric lane curve, and `status` includes actual playback metrics.
+See [remote spoolet setup and security](docs/debug/lifecycle-diagnostics.md#remote-spoolet-on-webos).
+
 Preview inspection uses real window input, without seeking the video. For this
 latency-sensitive sequence, invoke the installed `spoolet` binary directly:
 the Nix wrapper can take about three seconds to start, enough for playback

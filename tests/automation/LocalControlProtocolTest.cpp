@@ -11,6 +11,7 @@
 #include <QJsonDocument>
 #include <QLocalServer>
 #include <QLocalSocket>
+#include <QProcess>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QTemporaryDir>
@@ -21,6 +22,8 @@
 #include <memory>
 #include <thread>
 #ifdef Q_OS_UNIX
+#include <cerrno>
+#include <csignal>
 #include <unistd.h>
 #endif
 
@@ -194,5 +197,166 @@ SPOOL_TEST_MAIN("spoolet-protocol")
                 require(code(reply) == QStringLiteral("timeout") && duration < 1000, "silent peer cannot hang the CLI");
         }
     }
+#ifdef Q_OS_UNIX
+    // Exercise the same script used by remote CLI discovery and diagnose.sh.
+    const QString discoveryPath = temporary.filePath(QStringLiteral("remote.json"));
+    QFile discovery(discoveryPath);
+    const QByteArray discoveryBytes = QJsonDocument(
+        QJsonObject { { "instance", "remote-test" }, { "transport", "tcp" }, { "endpoint", "127.0.0.1" },
+            { "port", 12345 }, { "token", QString(64, QLatin1Char('b')) } })
+                                          .toJson(QJsonDocument::Compact);
+    require(discovery.open(QIODevice::WriteOnly) && discovery.write(discoveryBytes) == discoveryBytes.size(),
+        "create remote capability fixture");
+    discovery.close();
+    require(QFile::setPermissions(discoveryPath, QFileDevice::ReadOwner | QFileDevice::WriteOwner),
+        "remote capability is owner-only");
+    const auto discover = [&](const QString& path) {
+        QProcess process;
+        process.start(QStringLiteral("sh"),
+            { QStringLiteral(TEST_SOURCE_DIR "/src/automation/RemoteDiscovery.sh"), QStringLiteral("descriptors"),
+                QString(), path });
+        require(process.waitForFinished(2000) && process.exitCode() == 0,
+            "shared remote discovery is bounded and completes");
+        return process.readAllStandardOutput().trimmed();
+    };
+    require(discover(discoveryPath) == discoveryBytes, "shared discovery reads the explicit private remote capability");
+    require(
+        QFile::setPermissions(discoveryPath, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ReadOther),
+        "make remote capability publicly readable");
+    require(discover(discoveryPath).isEmpty(), "remote discovery rejects publicly readable capabilities");
+    require(QFile::setPermissions(discoveryPath, QFileDevice::ReadOwner | QFileDevice::WriteOwner),
+        "restore private remote capability");
+    const QString remoteLink = temporary.filePath(QStringLiteral("remote-link.json"));
+    require(::symlink(QFile::encodeName(discoveryPath).constData(), QFile::encodeName(remoteLink).constData()) == 0,
+        "create remote descriptor symlink");
+    require(discover(remoteLink).isEmpty(), "remote discovery rejects descriptor symlinks");
+    if (::geteuid() == 0) {
+        const QString sandbox = temporary.filePath(QStringLiteral("app-sandbox"));
+        require(QDir().mkdir(sandbox)
+                && QFile::setPermissions(
+                    sandbox, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner),
+            "create private app-owned descriptor directory");
+        const QString sandboxDescriptor = QDir(sandbox).filePath(QStringLiteral("app.json"));
+        QFile sandboxFile(sandboxDescriptor);
+        require(sandboxFile.open(QIODevice::WriteOnly) && sandboxFile.write(discoveryBytes) == discoveryBytes.size(),
+            "create app sandbox capability");
+        sandboxFile.close();
+        require(QFile::setPermissions(sandboxDescriptor, QFileDevice::ReadOwner | QFileDevice::WriteOwner)
+                && ::chown(QFile::encodeName(sandboxDescriptor).constData(), 65534, 65534) == 0
+                && ::chown(QFile::encodeName(sandbox).constData(), 65534, 65534) == 0,
+            "stage the real root-to-app-UID ownership boundary");
+        require(discover(sandboxDescriptor) == discoveryBytes,
+            "root can discover an app-owned private capability without changing ownership");
+        require(::chown(QFile::encodeName(sandboxDescriptor).constData(), 65533, 65533) == 0,
+            "stage mismatched descriptor and registry owners");
+        require(discover(sandboxDescriptor).isEmpty(),
+            "root discovery still rejects descriptor and registry owner mismatch");
+        require(::chown(QFile::encodeName(sandboxDescriptor).constData(), 0, 0) == 0
+                && ::chown(QFile::encodeName(sandbox).constData(), 0, 0) == 0,
+            "restore test-created sandbox ownership");
+    } else {
+        std::cout << "SKIP subcase: root-to-app-UID discovery requires uid0\n";
+    }
+    // Fake only the external SSH peer; production owns framing and child lifecycle.
+    const QString sshPath = temporary.filePath(QStringLiteral("ssh"));
+    QFile ssh(sshPath);
+    require(ssh.open(QIODevice::WriteOnly), "create external SSH transport fixture");
+    const QByteArray fixture = R"PY(#!/usr/bin/env python3
+import json, os, select, sys, time
+token = "b" * 64
+assert all(token not in argument for argument in sys.argv)
+mode = os.environ.get("SPOOL_TEST_SSH_MODE", "")
+if mode == "silent":
+    with open(os.environ["SPOOL_TEST_SSH_PID"], "w") as file:
+        file.write(str(os.getpid()))
+    time.sleep(20)
+elif mode == "failure":
+    sys.stderr.write(token)
+    sys.exit(1)
+elif "-W" not in sys.argv:
+    sys.stdin.buffer.read()
+    print(json.dumps(dict(instance="remote-test", transport="tcp", endpoint="127.0.0.1", port=12345, token=token)))
+else:
+    assert sys.argv[sys.argv.index("-W") + 1] == "127.0.0.1:12345"
+    request = json.loads(sys.stdin.buffer.readline())
+    assert request["token"] == token
+    if mode == "async":
+        # Like an asynchronous server operation, cancellation follows peer EOF.
+        readable, _, _ = select.select([sys.stdin.buffer], [], [], 0.15)
+        if readable and sys.stdin.buffer.read(1) == b"":
+            sys.exit(2)
+    print(json.dumps(dict(id="wrong" if mode == "wrong-id" else request["id"], ok=True,
+                          result=dict(command=request["command"], args=request["args"], authenticated=True))))
+)PY";
+    require(ssh.write(fixture) == fixture.size(), "write complete transport fixture");
+    ssh.close();
+    require(QFile::setPermissions(sshPath, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner),
+        "external SSH fixture is executable");
+    const QByteArray previousPath = qgetenv("PATH");
+    qputenv("PATH", temporary.path().toUtf8() + ':' + previousPath);
+    QJsonObject remoteDescriptor { { "instance", "remote-test" }, { "transport", "tcp" }, { "endpoint", "127.0.0.1" },
+        { "port", 12345 }, { "token", QString(64, QLatin1Char('b')) } };
+    const auto remote = [&](int timeoutMs = 2000) {
+        return Spool::LocalControl::requestSsh(
+            QStringLiteral("root@device.test"), remoteDescriptor, QStringLiteral("status"), {}, timeoutMs);
+    };
+    require(remote()["result"].toObject()["authenticated"].toBool(),
+        "SSH stdio framing authenticates using stdin, never argv");
+    qputenv("SPOOL_TEST_SSH_MODE", "async");
+    require(remote()["result"].toObject()["authenticated"].toBool(),
+        "forwarded request remains open until the asynchronous reply is complete");
+    qputenv("SPOOL_TEST_SSH_MODE", "wrong-id");
+    require(code(remote()) == QStringLiteral("invalid_response"), "SSH replies require matching request identity");
+    qputenv("SPOOL_TEST_SSH_MODE", "failure");
+    const auto failed = remote();
+    require(
+        code(failed) == QStringLiteral("ssh_failed") && !QJsonDocument(failed).toJson().contains(QByteArray(64, 'b')),
+        "SSH stderr containing a capability is not exposed in errors");
+    qunsetenv("SPOOL_TEST_SSH_MODE");
+    for (const QString& host : { QStringLiteral("-oProxyCommand=bad"), QStringLiteral("root@host;bad"),
+             QStringLiteral("host\nbad"), QStringLiteral("root@host name") }) {
+        require(code(Spool::LocalControl::requestSsh(host, remoteDescriptor, QStringLiteral("status"), {}, 100))
+                == QStringLiteral("ssh_failed"),
+            "SSH destination cannot inject shell syntax or options");
+    }
+    const QString pidFile = temporary.filePath(QStringLiteral("ssh.pid"));
+    qputenv("SPOOL_TEST_SSH_PID", pidFile.toUtf8());
+    qputenv("SPOOL_TEST_SSH_MODE", "silent");
+    QElapsedTimer sshDeadline;
+    sshDeadline.start();
+    require(code(remote(1000)) == QStringLiteral("ssh_failed") && sshDeadline.elapsed() < 2500,
+        "silent SSH transport has a bounded deadline");
+    QFile pidInput(pidFile);
+    require(pidInput.open(QIODevice::ReadOnly), "timed-out SSH peer started");
+    const int childPid = pidInput.readAll().trimmed().toInt();
+    require(childPid > 0 && ::kill(childPid, 0) == -1 && errno == ESRCH, "timed-out SSH child is killed and reaped");
+    qunsetenv("SPOOL_TEST_SSH_MODE");
+    qunsetenv("SPOOL_TEST_SSH_PID");
+    const auto cli = [&](QStringList arguments) {
+        QProcess process;
+        process.start(QStringLiteral(SPOOL_TEST_SPOOLET), arguments);
+        require(process.waitForFinished(5000), "remote CLI completes within its deadline");
+        const QByteArray output = process.readAllStandardOutput();
+        require(!output.contains(QByteArray(64, 'b')) && process.readAllStandardError().isEmpty(),
+            "remote CLI never prints the capability or SSH stderr");
+        return QJsonDocument::fromJson(output).object();
+    };
+    const QStringList target { QStringLiteral("--host"), QStringLiteral("root@device.test"),
+        QStringLiteral("--instance"), QStringLiteral("remote-test") };
+    const auto measured = cli(target + QStringList { QStringLiteral("speed-test") });
+    require(measured["ok"].toBool() && measured["result"].toObject()["command"] == "speed-test"
+            && measured["result"].toObject()["args"].toObject()["refresh"].toBool(),
+        "remote speed-test starts measurement through the real CLI");
+    const auto status = cli(target + QStringList { QStringLiteral("speed-test"), QStringLiteral("status") });
+    require(status["ok"].toBool() && !status["result"].toObject()["args"].toObject()["refresh"].toBool(),
+        "remote speed-test status does not restart measurement");
+    require(!cli({ "--host", "root@device.test", "--descriptor", "relative.json", "status" })["ok"].toBool(),
+        "remote explicit descriptor must be an absolute remote path");
+    require(!cli({ "--host", "root@device.test", "--instance", "remote-test", "--descriptor", "/private/test.json",
+                "status" })["ok"]
+                .toBool(),
+        "instance and explicit remote descriptor remain mutually exclusive");
+    qputenv("PATH", previousPath);
+#endif
     return 0;
 }
