@@ -29,6 +29,13 @@ TestCase {
             activeTarget: target
         }
 
+        // What a text row is to the router: the focused item, asking for
+        // its activation on the key's release.
+        Item {
+            id: textRow
+            readonly property bool activatesOnRelease: true
+        }
+
         QtObject {
             id: target
             property bool directionRelease: true
@@ -241,6 +248,16 @@ TestCase {
         compare(activateCalls, 1)
         verify(keyRouter.releaseAccept(Qt.Key_Return, false))
         compare(activateCalls, 1)
+    }
+
+    function test_acceptOnARowThatOpensAKeyboardWaitsForRelease() {
+        textRow.forceActiveFocus()
+        compare(keyRouter.Window.activeFocusItem, textRow)
+        verify(keyRouter.pressAccept(Qt.Key_Return, false))
+        compare(activateCalls, 0)
+        verify(keyRouter.releaseAccept(Qt.Key_Return, false))
+        compare(activateCalls, 1)
+        textRow.focus = false
     }
 
     function test_remoteSelectRemainsImmediate_data() {

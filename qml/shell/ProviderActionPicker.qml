@@ -44,6 +44,10 @@ FocusScope {
     }
     function submitPin() {
         const value = pin.text
+        // No PIN is empty; an empty answer is a stray Enter, and a provider
+        // may take it as consent rather than refuse it.
+        if (!value)
+            return
         pin.text = ""
         const answers = {
             pin: value

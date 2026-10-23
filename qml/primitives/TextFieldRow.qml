@@ -34,6 +34,10 @@ T.Control {
     // restored focus — passes straight through to the field. That removes the
     // state that looks focused, draws a focus ring, and eats every keystroke.
     property bool focusEntersField: Theme.textEntryFollowsFocus
+    // Read by the key router. Opening the on-screen keyboard while the
+    // remote's OK is still down hands its release to the keyboard, which
+    // takes it for its own Enter and closes again before anything is typed.
+    readonly property bool activatesOnRelease: !focusEntersField
 
     signal textEdited(string text)
     signal accepted

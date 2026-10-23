@@ -48,6 +48,9 @@ FocusScope {
     }
     function submitPin() {
         const value = pin.text
+        // An empty answer is a stray Enter, never a PIN.
+        if (!value)
+            return
         pin.text = ""
         pinSubmitted(value)
     }
