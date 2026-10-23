@@ -80,8 +80,10 @@ def main() -> int:
                 "failed-requests", "retry-attempts", "stream-id", "range-bytes", "ring-bytes",
                 "consumer-wait-seconds", "ring-wait-seconds", "head-of-line-seconds", "peak-reorder-bytes",
                 "physical-connections", "streams-per-connection", "curl-thread-cpu-seconds", "curl-thread-wall-seconds",
+                "consumer-thread-cpu-seconds",
                 "tcp-rtt-min-ms", "tcp-rtt-max-ms", "max-socket-receive-buffer-bytes",
                 "recent-scheduling-lateness-ms", "peak-scheduling-lateness-ms",
+                "scheduling-lateness-p50-ms", "scheduling-lateness-p99-ms",
                 "playback-buffer-seconds", "playback-demand-bits-per-second", "ordered-available-bytes",
                 "consumer-delivered-bytes", "readable-bytes", "retained-bytes", "reorder-bytes", "copy-in-bytes",
                 "copy-out-bytes", "reorder-copy-bytes", "body-callbacks", "worker-iterations", "coalesced-wakeups",
@@ -92,6 +94,9 @@ def main() -> int:
                     if isinstance(row.get(field), (int, float)) and not isinstance(row[field], bool)
                     and math.isfinite(row[field])}
         result = numeric(keys, raw)
+        for field in ("consumer-thread-cpu-available", "curl-thread-cpu-available", "scheduling-lateness-available"):
+            if isinstance(raw.get(field), bool):
+                result[field] = raw[field]
         samples = {
             "lane-samples": ("lane", "received-bytes", "active-seconds", "average-bytes-per-second",
                              "current-bytes-per-second", "peak-bytes-per-second", "capacity-bytes-per-second", "samples"),
