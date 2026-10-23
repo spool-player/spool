@@ -40,6 +40,8 @@ public:
         int ringBytes;
         int rangeBytes;
         int parallelRequests;
+        // libcurl receive buffer per transfer; each active request holds one.
+        int readBytes;
     };
 
     static NetworkProfile networkProfile(Platform platform, int parallelRequests = 1);

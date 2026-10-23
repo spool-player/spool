@@ -383,8 +383,8 @@ QByteArray MpvOptionProfile::preloadedSubtitleStreams(const PlaybackSession& ses
 MpvOptionProfile::NetworkProfile MpvOptionProfile::networkProfile(Platform platform, int parallelRequests)
 {
     const int requests = std::clamp(parallelRequests, 1, 16);
-    return platform == Platform::WebOS ? NetworkProfile { 2 * 1024 * 1024, 512 * 1024, requests }
-                                       : NetworkProfile { 4 * 1024 * 1024, 1024 * 1024, requests };
+    return platform == Platform::WebOS ? NetworkProfile { 2 * 1024 * 1024, 512 * 1024, requests, 128 * 1024 }
+                                       : NetworkProfile { 4 * 1024 * 1024, 1024 * 1024, requests, 256 * 1024 };
 }
 
 QByteArray MpvOptionProfile::loadFileOptions(const PlaybackSession& session)
@@ -508,6 +508,7 @@ std::vector<MpvOption> MpvOptionProfile::applicationOptions(Platform platform, b
         { "curl-enabled", threadedStreaming ? "yes" : "no" },
         { "curl-buffer-size", QByteArray::number(network.ringBytes) },
         { "curl-max-request-size", QByteArray::number(network.rangeBytes) },
+        { "curl-read-size", QByteArray::number(network.readBytes) },
         { "curl-parallel-requests", QByteArray::number(network.parallelRequests) },
         { "curl-adaptive", forceStreamingThreads ? "no" : "yes" },
         { "curl-initial-requests", forceStreamingThreads ? QByteArray::number(network.parallelRequests) : "1" },
