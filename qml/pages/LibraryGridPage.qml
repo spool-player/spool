@@ -2,7 +2,6 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Layouts
-import QtQuick.Shapes
 import "../theme"
 import "../primitives"
 import "LibraryNavigation.js" as LibraryNavigation
@@ -30,6 +29,7 @@ FocusScope {
     property var filterEntries: []
     property var libraryEntries: []
     property string typeAheadBuffer: ""
+    property bool typeAheadMissed: false
     readonly property bool directionRelease: true
     readonly property int alphabetFeedbackIndex: {
         if (grid.heldKey && grid.currentIndex >= 0)
@@ -39,8 +39,33 @@ FocusScope {
     readonly property string currentAlphabetLabel: {
         if (!Browse.items || alphabetFeedbackIndex < 0 || alphabetFeedbackIndex >= Browse.items.count)
             return "#"
+        // By name the controller knows the letter even of rows not loaded yet.
+        if (Browse.alphabetical)
+            return Browse.alphabetRevision >= 0 ? Browse.labelAt(alphabetFeedbackIndex) : "#"
         return LibraryNavigation.sectionLabel(currentSortBy(), Browse.items.get(alphabetFeedbackIndex))
     }
+    // More than a couple of screens: worth telling where in it the view is.
+    readonly property bool longList: grid.contentHeight > grid.height * 2.5
+    // The scroll bar doubles as a letter index for a long name-sorted list
+    // whose length is known (every row held, or a sparse listing of them all).
+    readonly property bool letterIndex: Boolean(Browse.alphabetical && (Browse.sparse || !Browse.hasMore)) && longList
+
+    readonly property var alphabetLetters: letterIndex && Browse.alphabetRevision >= 0 ? Browse.alphabet : []
+    // Moving faster than a few screens a second, by fling, wheel or scroll
+    // bar: nothing passing is seen long enough to be worth a request the
+    // server would only finish after the view has moved on.
+    property bool scrollingFast: false
+    property double lastScrollAt: 0
+    property real lastScrollY: 0
+    // Remote focus has moved off the grid onto the letter bar.
+    property bool barActive: false
+    property int barIndex: -1
+    readonly property int viewLetterIndex: {
+        const label = currentAlphabetLabel
+        return alphabetLetters.findIndex(letter => letter.label === label)
+    }
+    onLetterIndexChanged: if (!letterIndex)
+                              barActive = false
     readonly property var libraryList: libraryPanel.menuList
     readonly property var sortList: sortPanel.menuList
     readonly property var filterList: filterPanel.menuList
@@ -76,10 +101,15 @@ FocusScope {
     property bool navigationFocusVisible: true
     property bool pointerNavigationPending: false
     property var pendingScrollController: null
+    property var recoveryGesture: ({
+                                       "key": 0
+                                   })
     Component.onCompleted: if (activeFocus)
                                InputKeys.focus(grid)
     onActiveFocusChanged: {
         clearPendingPointerNavigation()
+        if (!activeFocus)
+            recoveryGesture.key = 0
         if (activeFocus)
             InputKeys.focus(grid)
     }
@@ -151,6 +181,19 @@ FocusScope {
 
     function libraryCount() {
         return Libraries.rowCount()
+    }
+
+    function checkpointRoute() {
+        if (!visible || !shell || shell.route !== "libraryGrid")
+            return
+        const libraryId = String(Browse.libraryId || "")
+        const routeLibraryId = String(shell.routeArgs.libraryId || "")
+        if (routeLibraryId.length > 0 && routeLibraryId !== libraryId)
+            return
+        Router.checkpoint({
+                              libraryId: libraryId,
+                              focusIndex: Math.max(0, grid.currentIndex)
+                          })
     }
 
     function currentLibraryModelIndex() {
@@ -580,29 +623,14 @@ FocusScope {
 
     function selectTypeAheadMatch(query, includeCurrent) {
         const count = Browse.items ? Browse.items.count : 0
-        if (count <= 0 || query.length <= 0)
+        const index = LibraryNavigation.typeAheadIndex(count, grid.currentIndex, query, includeCurrent,
+                                                       root.typeAheadTitle)
+        if (index < 0)
             return false
-        const start = Math.max(0, grid.currentIndex)
-        const firstOffset = includeCurrent ? 0 : 1
-        for (let offset = firstOffset; offset < firstOffset + count; ++offset) {
-            const index = (start + offset) % count
-            if (typeAheadTitle(index).indexOf(query) === 0) {
-                grid.currentIndex = index
-                grid.ensureCurrentVisible()
-                grid.requestMoreIfNeeded()
-                return true
-            }
-        }
-        for (let offset = firstOffset; offset < firstOffset + count; ++offset) {
-            const index = (start + offset) % count
-            if (typeAheadTitle(index).indexOf(query) >= 0) {
-                grid.currentIndex = index
-                grid.ensureCurrentVisible()
-                grid.requestMoreIfNeeded()
-                return true
-            }
-        }
-        return false
+        grid.currentIndex = index
+        grid.ensureCurrentVisible()
+        grid.requestMoreIfNeeded()
+        return true
     }
 
     function typeAhead(text) {
@@ -612,16 +640,96 @@ FocusScope {
         const code = character.charCodeAt(0)
         if (code < 32 || code === 127 || character === "/" || (character === " " && typeAheadBuffer.length <= 0))
             return false
+        barActive = false
         const previous = typeAheadBuffer
         const repeatedSingle = previous.length === 1 && previous === character
+        // Pressing one letter again walks through that letter's titles.
+        if (repeatedSingle && Browse.alphabetical && grid.currentIndex + 1 < grid.count && Browse.labelAt(
+                    grid.currentIndex + 1).toLocaleLowerCase() === character) {
+            jumpToRow(grid.currentIndex + 1)
+            typeAheadReset.restart()
+            return true
+        }
+        // By name the list is a dictionary: each key refines the prefix and
+        // the controller finds it, loading only the rows it has to.
+        if (Browse.seekPrefix(previous + character)) {
+            typeAheadBuffer = previous + character
+            typeAheadMissed = false
+            typeAheadReset.restart()
+            return true
+        }
         const candidate = repeatedSingle ? character : previous + character
         typeAheadBuffer = candidate
-        if (!selectTypeAheadMatch(candidate, previous.length > 0 && !repeatedSingle) && candidate.length > 1) {
-            typeAheadBuffer = character
-            selectTypeAheadMatch(character, false)
+        typeAheadMissed = false
+        if (!selectTypeAheadMatch(candidate, previous.length > 0 && !repeatedSingle)) {
+            if (candidate.length > 1 && selectTypeAheadMatch(character, false))
+                typeAheadBuffer = character
+            else
+                typeAheadMissed = true
         }
+        // A miss in a list not sorted by name can still be found by search.
+        typeAheadReset.interval = typeAheadMissed ? 4000 : 1250
         typeAheadReset.restart()
         return true
+    }
+
+    function searchTypedText() {
+        const text = typeAheadBuffer
+        typeAheadBuffer = ""
+        typeAheadMissed = false
+        typeAheadReset.stop()
+        if (!hasShell() || text.length <= 0)
+            return
+        Search.setQuery(text)
+        shell.pushRoute("search")
+    }
+
+    function jumpToRow(row) {
+        if (grid.count <= 0)
+            return
+        const target = Math.max(0, Math.min(grid.count - 1, row))
+        grid.currentIndex = target
+        grid.positionViewAtIndex(target, GridView.Beginning)
+        grid.requestMoreIfNeeded()
+    }
+
+    function jumpToLetter(index) {
+        if (index < 0 || index >= alphabetLetters.length)
+            return
+        barIndex = index
+        jumpToRow(alphabetLetters[index].row)
+        letterBar.reveal()
+    }
+
+    // Channel up/down, page up/down: the letter before or after this one.
+    function stepLetter(delta) {
+        if (!letterIndex || alphabetLetters.length <= 0)
+            return false
+        const from = viewLetterIndex >= 0 ? viewLetterIndex : 0
+        const next = Math.max(0, Math.min(alphabetLetters.length - 1, from + delta))
+        // Already inside a letter, page up returns to its first title.
+        if (delta < 0 && grid.currentIndex > alphabetLetters[from].row)
+            jumpToLetter(from)
+        else
+            jumpToLetter(next)
+        return true
+    }
+
+    // From the remote the bar is a column of letters: Up and Down step
+    // through them with the grid following, and Left, OK or Back return to
+    // the grid at the first title of the letter reached.
+    function enterLetterBar() {
+        if (!letterIndex)
+            return false
+        barIndex = Math.max(0, viewLetterIndex)
+        barActive = true
+        return true
+    }
+
+    function leaveLetterBar() {
+        barActive = false
+        InputKeys.focus(grid)
+        grid.ensureCurrentVisible()
     }
 
     function activateLibraryIndex(index) {
@@ -679,6 +787,12 @@ FocusScope {
         filterEntries = buildFilterEntries()
     }
 
+    function clearFilters() {
+        savedIndex = 0
+        gridReveal.reset()
+        Browse.clearFilters()
+    }
+
     function focusToolbar() {
         InputKeys.focus(libraryButton)
     }
@@ -731,11 +845,15 @@ FocusScope {
         if (grid.currentIndex < 0 || grid.count <= 0)
             return null
         const smart = String(Settings.values["audio/trackMode"] || "Default") === "Smart"
-        return Browse.mediaInfoFor(grid.currentIndex, smart ? String(Settings.values["subtitles/language"] || "") : "")
+        const language = Settings.values["audio/language"] || Settings.values["subtitles/language"] || ""
+        return Browse.mediaInfoFor(grid.currentIndex, smart ? String(language) : "")
     }
 
     Connections {
         target: Browse
+        function onSeekMoved(row, settled) {
+            root.jumpToRow(row)
+        }
         function onChanged() {
             if (root.filtersOpen)
                 root.filterEntries = root.buildFilterEntries()
@@ -808,10 +926,43 @@ FocusScope {
     }
 
     function routeKey(key, phase, repeat) {
-        if (phase === "release" && InputKeys.isDirection(key))
+        if (barActive) {
+            if (phase === "release")
+                return InputKeys.isDirection(key)
+            if (key === Qt.Key_Up || key === Qt.Key_Down) {
+                jumpToLetter(Math.max(0, Math.min(alphabetLetters.length - 1, barIndex + (key === Qt.Key_Up ? -1 : 1))))
+                return true
+            }
+            if (key === Qt.Key_Left) {
+                leaveLetterBar()
+                return true
+            }
+            return InputKeys.isDirection(key)
+        }
+        if (phase === "press" && grid.activeFocus && (key === Qt.Key_PageUp || key === Qt.Key_PageDown))
+            return stepLetter(key === Qt.Key_PageUp ? -1 : 1)
+        // Right from the last column steps onto the letter bar.
+        if (phase === "press" && !repeat && key === Qt.Key_Right && grid.activeFocus && letterIndex
+                && grid.currentIndex >= 0 && (grid.currentIndex % root.columns === root.columns - 1
+                                              || grid.currentIndex === grid.count - 1) && !pointerNavigationPending)
+            return enterLetterBar()
+        if (phase === "release" && InputKeys.isDirection(key)) {
+            InputKeys.consumeRecoveryGesture(recoveryGesture, key, phase, repeat, false)
             return grid.routeKey(key, phase, repeat)
-        if (phase !== "release" && InputKeys.isDirection(key) && grid.activeFocus && pointerNavigationPending)
-            return applyPendingPointerNavigation()
+        }
+        if (InputKeys.isDirection(key) && grid.activeFocus) {
+            if (InputKeys.consumeRecoveryGesture(recoveryGesture, key, phase, repeat, false))
+                return true
+            // A hold the grid is driving moves the selection between frames,
+            // so its next card may not be laid out when the next repeat
+            // arrives. That is not a lost selection, and treating it as one
+            // swallowed the rest of the hold.
+            const holding = grid.heldKey === key
+            if (pointerNavigationPending || (!holding && !InputKeys.selectionVisiblyUsable(grid, root))) {
+                InputKeys.consumeRecoveryGesture(recoveryGesture, key, phase, repeat, true)
+                return applyPendingPointerNavigation()
+            }
+        }
         if (libraryList && libraryList.activeFocus)
             return libraryList.routeKey(key, phase, repeat)
         if (sortList && sortList.activeFocus)
@@ -878,6 +1029,14 @@ FocusScope {
     }
 
     function activate() {
+        if (barActive) {
+            leaveLetterBar()
+            return
+        }
+        if (typeAheadMissed && typeAheadBuffer.length > 0 && grid.activeFocus) {
+            searchTypedText()
+            return
+        }
         if (libraryList && libraryList.activeFocus)
             libraryList.activate()
         else if (sortList && sortList.activeFocus)
@@ -893,7 +1052,7 @@ FocusScope {
         else if (filterButton.activeFocus)
             openFilterMenu()
         else if (clearFiltersButton.activeFocus)
-            Browse.clearFilters()
+            clearFilters()
         else
             grid.activate()
     }
@@ -913,8 +1072,14 @@ FocusScope {
     }
 
     function back() {
+        if (barActive) {
+            leaveLetterBar()
+            return true
+        }
         if (typeAheadBuffer.length > 0) {
             typeAheadBuffer = ""
+            typeAheadMissed = false
+            Browse.cancelSeek()
             typeAheadReset.stop()
             return true
         }
@@ -1054,11 +1219,13 @@ FocusScope {
                 iconName: "close"
                 label: "Clear"
                 visible: !root.isFixedBrowseView && root.activeFilterCount > 0 && root.lane !== "compact"
-                onActivated: {
-                    root.savedIndex = 0
-                    gridReveal.reset()
-                    Browse.clearFilters()
-                }
+                // Clearing removes this button. Focus left on it stayed on an
+                // invisible item: no ring, arrows fell through to scrolling,
+                // and Enter only cleared again, so a remote could no longer
+                // open anything.
+                onVisibleChanged: if (!visible && activeFocus)
+                                      InputKeys.focus(grid)
+                onActivated: root.clearFilters()
             }
         }
 
@@ -1186,7 +1353,7 @@ FocusScope {
                 boundsBehavior: Flickable.StopAtBounds
                 model: Browse.items
                 leftMargin: focusPadding
-                rightMargin: focusPadding + Math.max(Metrics.scaled(10), 10) + Metrics.scaled(6)
+                rightMargin: focusPadding + letterBar.width
                 // Each cell carries its own trailing gap (delegates are
                 // cellWidth - gapPx), so the track must not be charged for the
                 // gaps a second time: divide the whole run evenly and let the
@@ -1211,14 +1378,24 @@ FocusScope {
                     requestMoreIfNeeded()
                 }
                 onContentYChanged: {
+                    const now = Date.now()
+                    const elapsed = now - root.lastScrollAt
+                    if (elapsed > 0 && elapsed < 200 && Math.abs(contentY - root.lastScrollY) * 1000 / elapsed > height
+                            * 3)
+                        root.scrollingFast = true
+                    root.lastScrollAt = now
+                    root.lastScrollY = contentY
+                    if (root.scrollingFast)
+                        scrollSettle.restart()
                     requestPageIfNeeded()
                     artworkWindowDebounce.restart()
-                    alphabetFeedback.restart()
+                    if (Browse.sparse && !grid.racing && !root.scrollingFast && !artworkWindowThrottle.running)
+                        artworkWindowThrottle.start()
                 }
                 onCurrentIndexChanged: {
                     if (currentIndex >= 0)
                         root.savedIndex = currentIndex
-                    alphabetFeedback.restart()
+                    letterBar.reveal()
                     requestPageIfNeeded()
                     routeCheckpoint.restart()
                 }
@@ -1230,22 +1407,38 @@ FocusScope {
                 }
                 onDraggingChanged: if (dragging)
                                        root.beginPointerNavigation(null)
-                ListScrollBar {
-                    id: libraryScrollBar
+                LetterScrollBar {
+                    id: letterBar
                     anchors.top: parent.top
                     anchors.right: parent.right
                     anchors.bottom: parent.bottom
-                    width: Math.ceil(Math.max(Metrics.scaled(10), 10) * 3)
+                    // Wide enough to aim at: a finger, a magic remote across
+                    // the room, or a mouse.
+                    width: Metrics.coarsePointer ? Math.round(Metrics.touchTargetPx * 0.75) : Platform.isTV
+                                                   ? Metrics.scaled(28) : Metrics.scaled(20)
                     // Above the delegate MouseArea below, which fills the view
                     // and would otherwise grab every press over the bar.
                     z: 4
                     flickable: grid
+                    letters: root.alphabetLetters
+                    columns: root.columns
+                    rowHeight: grid.cellHeight
+                    label: root.currentAlphabetLabel
+                    labelEnabled: root.longList
+                    active: root.barActive
+                    activeIndex: root.barIndex
                     // The magic remote points and drags, so a television is
                     // not on its own a reason to make the bar inert.
                     interactive: Platform.hasPointer
-                    minimumSize: 0.04
                     onScrolled: root.beginPointerNavigation(null)
+                    onLetterChosen: index => {
+                        root.beginPointerNavigation(null)
+                        root.jumpToLetter(index)
+                    }
                 }
+                // Where a fast hold lets go is where loading starts.
+                onRacingChanged: if (!racing)
+                                     requestMoreIfNeeded()
                 onEdgeUp: root.focusToolbar()
                 onAccepted: root.activateCurrent()
                 onHoldStarted: Browse.prefetchNextPage()
@@ -1320,129 +1513,29 @@ FocusScope {
                 }
 
                 Timer {
-                    id: routeCheckpoint
-                    interval: 250
+                    id: scrollSettle
+                    interval: 120
                     repeat: false
-                    onTriggered: if (root.shell)
-                                     Router.checkpoint({
-                                                           libraryId: Browse.libraryId,
-                                                           focusIndex: Math.max(0, grid.currentIndex)
-                                                       })
+                    onTriggered: {
+                        root.scrollingFast = false
+                        grid.requestMoreIfNeeded()
+                    }
+                }
+
+                // While the view keeps moving, a sparse listing still loads
+                // what is under it a few times a second.
+                Timer {
+                    id: artworkWindowThrottle
+                    interval: 350
+                    repeat: false
+                    onTriggered: grid.requestMoreIfNeeded()
                 }
 
                 Timer {
-                    id: alphabetFeedback
-                    interval: 700
+                    id: routeCheckpoint
+                    interval: 250
                     repeat: false
-                }
-
-                // Scrub letter callout: rounded on its left, top and bottom, with
-                // no right edge — the top-right and bottom-right shoulders funnel
-                // into the scroll bar so the tag reads as emanating from it.
-                Shape {
-                    id: alphabetCallout
-
-                    readonly property real stroke: Math.max(2, Metrics.scaled(2))
-                    readonly property real inset: stroke / 2
-                    readonly property real cornerRadius: Metrics.scaled(12)
-                    readonly property real neckWidth: Metrics.scaled(16)
-                    readonly property real mouthHalf: Metrics.scaled(13)
-                    readonly property real bodyRight: width - neckWidth
-                    readonly property real midY: height / 2
-                    readonly property real desiredY: libraryScrollBar.handleCenterY - height / 2
-
-                    anchors.right: libraryScrollBar.right
-                    anchors.rightMargin: libraryScrollBar.visualWidth
-                    y: Math.max(0, Math.min(grid.height - height, desiredY))
-                    width: Metrics.scaled(52) + neckWidth
-                    height: Metrics.scaled(48)
-                    // Directional navigation scrolls the view without touching
-                    // the bar, so the bar says where it has gone: the callout
-                    // reads the same whether a remote walked the grid there or
-                    // a pointer dragged the handle.
-                    opacity: alphabetFeedback.running || libraryScrollBar.pressed ? 1 : 0
-                    visible: opacity > 0
-                    preferredRendererType: Shape.CurveRenderer
-                    z: 21
-
-                    // The stroke runs mouth -> top -> left -> bottom -> mouth and
-                    // stops there; only the fill closes the contour across the
-                    // bar, which is what leaves the right edge open.
-                    ShapePath {
-                        fillColor: Theme.accentPanel
-                        strokeColor: Theme.accent
-                        strokeWidth: alphabetCallout.stroke
-                        capStyle: ShapePath.FlatCap
-                        joinStyle: ShapePath.RoundJoin
-                        startX: alphabetCallout.width
-                        startY: alphabetCallout.midY - alphabetCallout.mouthHalf
-
-                        PathCubic {
-                            control1X: alphabetCallout.width - alphabetCallout.neckWidth * 0.35
-                            control1Y: alphabetCallout.midY - alphabetCallout.mouthHalf
-                            control2X: alphabetCallout.bodyRight + alphabetCallout.neckWidth * 0.55
-                            control2Y: alphabetCallout.inset
-                            x: alphabetCallout.bodyRight
-                            y: alphabetCallout.inset
-                        }
-                        PathLine {
-                            x: alphabetCallout.cornerRadius + alphabetCallout.inset
-                            y: alphabetCallout.inset
-                        }
-                        PathArc {
-                            radiusX: alphabetCallout.cornerRadius
-                            radiusY: alphabetCallout.cornerRadius
-                            direction: PathArc.Counterclockwise
-                            x: alphabetCallout.inset
-                            y: alphabetCallout.cornerRadius + alphabetCallout.inset
-                        }
-                        PathLine {
-                            x: alphabetCallout.inset
-                            y: alphabetCallout.height - alphabetCallout.cornerRadius - alphabetCallout.inset
-                        }
-                        PathArc {
-                            radiusX: alphabetCallout.cornerRadius
-                            radiusY: alphabetCallout.cornerRadius
-                            direction: PathArc.Counterclockwise
-                            x: alphabetCallout.cornerRadius + alphabetCallout.inset
-                            y: alphabetCallout.height - alphabetCallout.inset
-                        }
-                        PathLine {
-                            x: alphabetCallout.bodyRight
-                            y: alphabetCallout.height - alphabetCallout.inset
-                        }
-                        PathCubic {
-                            control1X: alphabetCallout.bodyRight + alphabetCallout.neckWidth * 0.55
-                            control1Y: alphabetCallout.height - alphabetCallout.inset
-                            control2X: alphabetCallout.width - alphabetCallout.neckWidth * 0.35
-                            control2Y: alphabetCallout.midY + alphabetCallout.mouthHalf
-                            x: alphabetCallout.width
-                            y: alphabetCallout.midY + alphabetCallout.mouthHalf
-                        }
-                    }
-
-                    AppText {
-                        anchors.verticalCenter: parent.verticalCenter
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        anchors.horizontalCenterOffset: -alphabetCallout.neckWidth / 2
-                        width: alphabetCallout.bodyRight - Metrics.scaled(8)
-                        height: alphabetCallout.height - Metrics.scaled(8)
-                        text: root.currentAlphabetLabel
-                        font.pixelSize: Metrics.scaled(26)
-                        fontSizeMode: Text.Fit
-                        minimumPixelSize: Metrics.scaled(8)
-                        elide: Text.ElideRight
-                        font.weight: Font.Bold
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                        color: Theme.textPrimary
-                    }
-
-                    Behavior on opacity {
-                        NumberAnimation {
-                            duration: Theme.reducedMotion ? 0 : 100
-                        }
-                    }
+                    onTriggered: root.checkpointRoute()
                 }
 
                 delegate: root.listMode ? listRowComponent : posterCardComponent
@@ -1454,6 +1547,7 @@ FocusScope {
                         id: gridDelegate
 
                         required property int index
+                        required property bool loaded
                         property bool artworkPooled: false
                         GridView.onPooled: artworkPooled = true
                         GridView.onReused: artworkPooled = false
@@ -1464,8 +1558,8 @@ FocusScope {
                         kind: root.squareArtwork ? "square" : "poster"
                         preferEpisodeTitle: false
                         useSeriesPoster: true
-                        focused: Metrics.keyboardFocusActive && root.navigationFocusVisible && grid.activeFocus
-                                 && gridDelegate.GridView.isCurrentItem
+                        focused: Metrics.keyboardFocusActive && root.navigationFocusVisible && grid.activeFocus &&
+                                 !root.barActive && gridDelegate.GridView.isCurrentItem
                         artworkVisible: true
                         // Buffered delegates must not enter the render queue:
                         // scrolling cancels old requests and loads the viewport
@@ -1473,14 +1567,44 @@ FocusScope {
                         // Delegate y is initially zero while GridView lays out
                         // buffered/reused cells. Use the model row and origin
                         // instead so those transient positions cannot start IO.
-                        artworkEnabled: !artworkPooled && grid.cellHeight > 0 && root.columns > 0 && (Math.floor(index
-                                                                                                                 / root.columns)
-                                                                                                      + 1) * grid.cellHeight
+                        artworkDeferred: grid.racing || root.scrollingFast
+                        artworkEnabled: loaded && !artworkPooled && grid.cellHeight > 0 && root.columns > 0 && (Math.floor(
+                                                                                                                    index / root.columns)
+                                                                                                                + 1) * grid.cellHeight
                                         > grid.contentY - grid.originY && Math.floor(index / root.columns)
                                         * grid.cellHeight < grid.contentY - grid.originY + grid.height
 
                         Component.onCompleted: gridReveal.schedule()
                         onArtworkReadyChanged: gridReveal.schedule()
+
+                        // A row not fetched yet: the letter it is under, so a
+                        // fling across an unloaded stretch still reads as A..Z.
+                        Rectangle {
+                            width: parent.width
+                            height: parent.artHeight
+                            radius: Theme.radiusMedium
+                            color: Theme.bgRaised
+                            border.width: 1
+                            border.color: Theme.border
+                            opacity: gridDelegate.loaded ? 0 : 1
+                            visible: opacity > 0
+
+                            Behavior on opacity {
+                                NumberAnimation {
+                                    duration: Theme.reducedMotion ? 0 : 160
+                                }
+                            }
+
+                            AppText {
+                                anchors.centerIn: parent
+                                text: !gridDelegate.loaded && Browse.alphabetical && Browse.alphabetRevision >= 0
+                                      ? Browse.labelAt(gridDelegate.index) : ""
+                                font.pixelSize: Math.round(parent.width * 0.42)
+                                font.weight: Font.Bold
+                                color: Theme.textMuted
+                                opacity: 0.35
+                            }
+                        }
                     }
                 }
 
@@ -1491,6 +1615,7 @@ FocusScope {
                         id: listRow
 
                         required property int index
+                        required property bool loaded
                         required property string displayTitle
                         required property string displaySubtitle
 
@@ -1506,7 +1631,10 @@ FocusScope {
                             anchors.right: rowSubtitle.left
                             anchors.rightMargin: Metrics.scaled(16)
                             anchors.verticalCenter: parent.verticalCenter
-                            text: listRow.displayTitle
+                            text: listRow.loaded ? listRow.displayTitle : Browse.alphabetical
+                                                   && Browse.alphabetRevision >= 0 ? Browse.labelAt(listRow.index)
+                                                                                     + "…" : "…"
+                            opacity: listRow.loaded ? 1 : 0.4
                             font.pixelSize: Metrics.bodySizePx + Metrics.scaled(2)
                             font.weight: listRow.GridView.isCurrentItem ? Font.DemiBold : Font.Medium
                             color: listRow.GridView.isCurrentItem ? Theme.textPrimary : Theme.textSecondary
@@ -1540,13 +1668,15 @@ FocusScope {
                         color: "transparent"
                         radius: Math.max(0, Theme.radiusMedium - Theme.focusBorderWidth)
                         border.width: Theme.focusBorderWidth
-                        border.color: root.navigationFocusVisible && ((Metrics.keyboardFocusActive && grid.activeFocus)
-                                                                      || (root.listMode && Metrics.coarsePointer
-                                                                          && root.touchPreviewItemId.length > 0
-                                                                          && root.touchPreviewItemId === String(
-                                                                              root.paneItem ? root.paneItem.movieId :
-                                                                                              ""))) ? Theme.accent :
-                                                                                                      "transparent"
+                        border.color: root.navigationFocusVisible && ((Metrics.keyboardFocusActive && grid.activeFocus
+                                                                       && !root.barActive) || (root.listMode
+                                                                                               && Metrics.coarsePointer
+                                                                                               && root.touchPreviewItemId.length
+                                                                                               > 0 && root.touchPreviewItemId
+                                                                                               === String(root.paneItem
+                                                                                                          ? root.paneItem.movieId :
+                                                                                                            ""))) ? Theme.accent :
+                                                                                                                    "transparent"
                     }
                 }
 
@@ -1571,21 +1701,40 @@ FocusScope {
         anchors.top: parent.top
         anchors.rightMargin: Metrics.pageMarginPx
         anchors.topMargin: root.contentTopMargin + 54
-        width: typeAheadText.implicitWidth + 30
+        width: typeAheadRow.implicitWidth + 30
         height: 40
         radius: height / 2
         visible: root.typeAheadBuffer.length > 0
         color: Theme.floatingPanel
         border.width: 1
-        border.color: Theme.accent
+        border.color: root.typeAheadMissed ? Theme.border : Theme.accent
         z: 30
 
-        AppText {
-            id: typeAheadText
+        Row {
+            id: typeAheadRow
             anchors.centerIn: parent
-            text: root.typeAheadBuffer
-            font.pixelSize: Metrics.bodySizePx
-            font.weight: Font.DemiBold
+            spacing: Metrics.scaled(10)
+
+            AppText {
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.typeAheadBuffer
+                font.pixelSize: Metrics.bodySizePx
+                font.weight: Font.DemiBold
+            }
+            // Finding a title in rows not loaded yet takes a fetch or two.
+            BusySpinner {
+                anchors.verticalCenter: parent.verticalCenter
+                width: Metrics.scaled(18)
+                height: width
+                running: Boolean(Browse.seeking)
+                visible: running
+            }
+            SecondaryText {
+                anchors.verticalCenter: parent.verticalCenter
+                visible: root.typeAheadMissed
+                text: Platform.isTV ? "OK to search" : "Enter to search"
+                font.pixelSize: Metrics.metaSizePx
+            }
         }
     }
 
@@ -1593,7 +1742,10 @@ FocusScope {
         id: typeAheadReset
         interval: 1250
         repeat: false
-        onTriggered: root.typeAheadBuffer = ""
+        onTriggered: {
+            root.typeAheadBuffer = ""
+            root.typeAheadMissed = false
+        }
     }
 
     // Kodi-style single-line media info for the focused item.
@@ -1633,7 +1785,7 @@ FocusScope {
         checkedFor: function (entry) {
             return entry && String(entry.libraryId) === String(Browse.libraryId || "")
         }
-        onCurrentIndexChanged: root.libraryIndex = currentIndex
+        onMoved: index => root.libraryIndex = index
         onDismissed: root.closeMenus()
         onAccepted: entry => root.activateLibraryIndex(entry.index)
     }
@@ -1656,7 +1808,7 @@ FocusScope {
                                                                                 entry && entry.value
                                                                                 === root.currentSortBy()
         }
-        onCurrentIndexChanged: root.sortIndex = currentIndex
+        onMoved: index => root.sortIndex = index
         onDismissed: root.closeMenus()
         onAccepted: entry => root.activateSortEntry(entry)
     }
@@ -1678,12 +1830,9 @@ FocusScope {
         selectionStyle: "check"
         resetVisible: true
         resetEnabled: root.activeFilterCount > 0
-        onCurrentIndexChanged: root.filterIndex = currentIndex
+        onMoved: index => root.filterIndex = index
         onDismissed: root.closeMenus()
         onAccepted: entry => root.activateFilterEntry(entry)
-        onReset: {
-            root.savedIndex = 0
-            Browse.clearFilters()
-        }
+        onReset: root.clearFilters()
     }
 }

@@ -66,6 +66,9 @@ namespace {
         = { { "auto", "Automatic" }, { "ask", "Ask first" }, { "manual", "Only when I check" } };
     constexpr SettingChoice kArtworkFormatChoices[]
         = { { "auto", "Automatic" }, { "webp", "WebP (smaller downloads)" }, { "jpeg", "JPEG (faster to decode)" } };
+    constexpr SettingChoice kArtworkDownloadChoices[] = { { "auto", "Automatic" }, { "2", "2 at a time" },
+        { "4", "4 at a time" }, { "6", "6 at a time" }, { "8", "8 at a time" }, { "12", "12 at a time" },
+        { "16", "16 at a time" }, { "24", "24 at a time" }, { "32", "32 at a time" } };
     constexpr SettingChoice kTechnicalMetadataChoices[]
         = { { "Always", "Always" }, { "On details only", "Details page only" }, { "Hidden", "Never" } };
     // "%1" is replaced with the user's preferred-language name when shown.
@@ -320,6 +323,11 @@ const QVector<SettingSpec>& settingSpecs()
                 "JPEG needs a higher number than WebP to look the same", "82", 40, 100, 1, "",
                 SettingTarget::ArtworkJpegQuality)
                 .advanced(),
+            selectSpec("artwork/downloads", "Appearance", "Artwork downloads",
+                "Automatic measures the server and opens more downloads at once while that keeps posters "
+                "arriving faster",
+                "auto", kArtworkDownloadChoices, SettingTarget::ArtworkDownloads)
+                .advanced(),
             toggleSpec("remote/acceptCommands", "Remote Control", "Allow remote control", "", true,
                 SettingTarget::RemoteControlTargetEnabled),
             selectSpec("audio/language", "Playback", "Preferred audio language", "", "", nullptr, 0,
@@ -568,13 +576,17 @@ const QVector<SettingSpec>& settingSpecs()
                 .advanced(),
 
             pageSpec("action/accounts", "Accounts", "Accounts", "", SettingType::Action),
-            pageSpec("action/providers", "Accounts", "Providers", "", SettingType::Action),
-            selectSpec("providers/updates", "Accounts", "Provider updates", "", "ask", kProviderUpdateChoices,
-                SettingTarget::External),
+            pageSpec("action/providers", "Accounts", "Add an account", "", SettingType::Action),
+            // Providers keep themselves current; asking first is for people
+            // who want to know.
+            selectSpec("providers/updates", "Accounts", "Provider updates", "", "auto", kProviderUpdateChoices,
+                SettingTarget::External)
+                .advanced(),
             pageSpec("action/manageCertificates", "Accounts", "Remembered certificates", "", SettingType::Action),
-            selectSpec("home/providerId", "Accounts", "Home provider",
-                "All providers, or one installed provider, on Home only", "", nullptr, 0, SettingTarget::External,
-                SettingNormalizer::String),
+            // Comma-separated provider ids turned off for Home. The settings
+            // page opens the Home provider picker rather than editing text.
+            SettingSpec { "home/hiddenProviderIds", "Accounts", "Providers on Home", "", SettingType::Action, "",
+                SettingTarget::External, SettingNormalizer::String },
 
             pageSpec("action/exportDiagnostics", "Diagnostics", "Export diagnostics", "", SettingType::Action),
             pageSpec("action/clearLogs", "Diagnostics", "Clear logs", "", SettingType::Action),
@@ -620,23 +632,24 @@ const QVector<SettingSpec>& settingSpecs()
             QStringLiteral("subtitles/bitmapShadowSpreadOpacityPercent"),
             QStringLiteral("subtitles/bitmapShadowDither") };
         const QStringList device { QStringLiteral("artwork/format"), QStringLiteral("artwork/webpQuality"),
-            QStringLiteral("playback/maxStreamingHeight"), QStringLiteral("playback/manualStreamingBitrate"),
-            QStringLiteral("playback/maxStreamingBitrateMbps"), QStringLiteral("playback/unlimitedLocalBitrate"),
-            QStringLiteral("artwork/jpegQuality"), QStringLiteral("settings/audioDelayMs"),
-            QStringLiteral("playback/showVolumeSlider"), QStringLiteral("playback/controlFadeDelaySeconds"),
-            QStringLiteral("playback/seekPreviews"), QStringLiteral("playback/accurateTrickplay"),
-            QStringLiteral("playback/trickplayPreviewScalePercent"), QStringLiteral("playback/videoOutput"),
-            QStringLiteral("playback/softwareRenderer"), QStringLiteral("playback/hardwareDecoding"),
-            QStringLiteral("playback/renderQuality"), QStringLiteral("playback/autoAdjustQuality"),
-            QStringLiteral("playback/graphicsApi"), QStringLiteral("playback/hdrOutput"),
-            QStringLiteral("playback/hdrPeakNits"), QStringLiteral("settings/audioOutputMode"),
-            QStringLiteral("playback/forwardCacheSizeMiB"), QStringLiteral("subtitles/hdrBrightnessPercent"),
-            QStringLiteral("input/redButton"), QStringLiteral("input/greenButton"),
-            QStringLiteral("input/yellowButton"), QStringLiteral("input/blueButton"),
-            QStringLiteral("updates/automatic"), QStringLiteral("providers/updates"),
-            QStringLiteral("shell/diagnostics"), QStringLiteral("settings/toneMappingVisualization"),
-            QStringLiteral("shell/latencyGuard"), QStringLiteral("shell/latencyOverlay"),
-            QStringLiteral("theme/antialiasedText"), QStringLiteral("theme/renderMode") };
+            QStringLiteral("artwork/downloads"), QStringLiteral("playback/maxStreamingHeight"),
+            QStringLiteral("playback/manualStreamingBitrate"), QStringLiteral("playback/maxStreamingBitrateMbps"),
+            QStringLiteral("playback/unlimitedLocalBitrate"), QStringLiteral("artwork/jpegQuality"),
+            QStringLiteral("settings/audioDelayMs"), QStringLiteral("playback/showVolumeSlider"),
+            QStringLiteral("playback/controlFadeDelaySeconds"), QStringLiteral("playback/seekPreviews"),
+            QStringLiteral("playback/accurateTrickplay"), QStringLiteral("playback/trickplayPreviewScalePercent"),
+            QStringLiteral("playback/videoOutput"), QStringLiteral("playback/softwareRenderer"),
+            QStringLiteral("playback/hardwareDecoding"), QStringLiteral("playback/renderQuality"),
+            QStringLiteral("playback/autoAdjustQuality"), QStringLiteral("playback/graphicsApi"),
+            QStringLiteral("playback/hdrOutput"), QStringLiteral("playback/hdrPeakNits"),
+            QStringLiteral("settings/audioOutputMode"), QStringLiteral("playback/forwardCacheSizeMiB"),
+            QStringLiteral("subtitles/hdrBrightnessPercent"), QStringLiteral("input/redButton"),
+            QStringLiteral("input/greenButton"), QStringLiteral("input/yellowButton"),
+            QStringLiteral("input/blueButton"), QStringLiteral("updates/automatic"),
+            QStringLiteral("providers/updates"), QStringLiteral("shell/diagnostics"),
+            QStringLiteral("settings/toneMappingVisualization"), QStringLiteral("shell/latencyGuard"),
+            QStringLiteral("shell/latencyOverlay"), QStringLiteral("theme/antialiasedText"),
+            QStringLiteral("theme/renderMode") };
         for (SettingSpec& spec : rows) {
             const QString key = QString::fromLatin1(spec.key);
             const QLatin1String group(spec.group);

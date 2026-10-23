@@ -9,6 +9,7 @@
 #include "provider/SourceHub.h"
 
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -23,6 +24,7 @@
 #include <QMouseEvent>
 #include <QNetworkProxy>
 #include <QPointer>
+#include <QQuickItem>
 #include <QSaveFile>
 #include <QTcpSocket>
 #include <QTimer>
@@ -39,6 +41,17 @@ namespace {
     const QStringList SettingKeys { QStringLiteral("playback/seekPreviews"),
         QStringLiteral("playback/accurateTrickplay"), QStringLiteral("playback/trickplayPreviewScalePercent"),
         QStringLiteral("appearance/uiScalePercent"), QStringLiteral("playback/renderQuality") };
+    QCoro::Task<MovieItem> itemStateTask(SourceHub *sources, QString itemId, QString field, QJsonValue value)
+    {
+        if (field == QStringLiteral("played"))
+            co_await sources->setItemPlayed(itemId, value.toBool());
+        else if (field == QStringLiteral("favorite"))
+            co_await sources->setItemFavorite(itemId, value.toBool());
+        else if (field == QStringLiteral("position"))
+            co_await sources->setItemPlaybackPosition(itemId, qint64(value.toDouble() * 10'000'000.0));
+        co_return co_await sources->fetchItemDetails(itemId);
+    }
+
     QJsonObject itemJson(const MovieItem& item, int index)
     {
         return { { QStringLiteral("index"), index }, { QStringLiteral("id"), item.id },
@@ -73,6 +86,10 @@ LocalCommandServer::LocalCommandServer(AppController *app, RouterController *rou
     m_server.setSocketOptions(QLocalServer::UserAccessOption);
     m_server.setMaxPendingConnections(8);
     connect(&m_server, &QLocalServer::newConnection, this, &LocalCommandServer::acceptConnections);
+    m_capture.settle.setSingleShot(true);
+    m_capture.deadline.setSingleShot(true);
+    connect(&m_capture.settle, &QTimer::timeout, this, [this] { stopCapture(QStringLiteral("settled")); });
+    connect(&m_capture.deadline, &QTimer::timeout, this, [this] { stopCapture(QStringLiteral("deadline")); });
     m_tcpServer.setProxy(QNetworkProxy::NoProxy);
     m_tcpServer.setMaxPendingConnections(8);
     connect(&m_tcpServer, &QTcpServer::newConnection, this, &LocalCommandServer::acceptConnections);
@@ -293,6 +310,24 @@ void LocalCommandServer::reject(QIODevice *socket, const QString& id, const QStr
     finish(socket, id, LocalControl::failure(id, code, message));
 }
 
+// Where keyboard input lands: the focused item's QML type, the nearest
+// ancestor with an objectName, and whether it can be seen. Types and object
+// names only, never text or bound values.
+QJsonObject LocalCommandServer::focusState() const
+{
+    QQuickItem *item = m_window->activeFocusItem();
+    if (!item)
+        return { { QStringLiteral("item"), QJsonValue::Null } };
+    QString named;
+    for (QQuickItem *ancestor = item; ancestor && named.isEmpty(); ancestor = ancestor->parentItem())
+        named = ancestor->objectName();
+    QString type = QString::fromLatin1(item->metaObject()->className());
+    type = type.section(QStringLiteral("_QML"), 0, 0);
+    return { { QStringLiteral("item"), type }, { QStringLiteral("named"), named },
+        { QStringLiteral("visible"), item->isVisible() },
+        { QStringLiteral("contentItem"), item == m_window->contentItem() } };
+}
+
 QJsonObject LocalCommandServer::state() const
 {
     const auto player = m_app->player();
@@ -304,7 +339,9 @@ QJsonObject LocalCommandServer::state() const
         { QStringLiteral("browseLoading"), m_app->browse()->loadingMore() },
         { QStringLiteral("homeLoading"), m_app->home()->loading() },
         { QStringLiteral("visual"), QJsonObject::fromVariantMap(m_window->automationVisualState()) },
+        { QStringLiteral("focus"), focusState() },
         { QStringLiteral("source"), QJsonObject::fromVariantMap(m_app->streamingQualitySource()) },
+        { QStringLiteral("network"), QJsonObject::fromVariantMap(player->networkMetrics()) },
         { QStringLiteral("playback"),
             QJsonObject { { QStringLiteral("active"), player->sessionActive() },
                 { QStringLiteral("loaded"), player->fileLoaded() }, { QStringLiteral("paused"), player->paused() },
@@ -394,6 +431,99 @@ void LocalCommandServer::screenshot(QIODevice *socket, const QString& id, const 
     // Request a scene-graph repaint, not just a platform-window update event.
     // QQuickWindow::update() schedules a frame even when the scene is unchanged.
     m_window->update();
+}
+
+QString LocalCommandServer::startCapture(const QJsonObject& args)
+{
+    const QString directory = args.value(QStringLiteral("dir")).toString();
+    const int settleMs = args.value(QStringLiteral("settleMs")).toInt(1500);
+    const int maxMs = args.value(QStringLiteral("maxMs")).toInt(10000);
+    if (directory.isEmpty() || !QDir::isAbsolutePath(directory) || !QFileInfo(directory).isDir())
+        return QStringLiteral("Capture needs an existing absolute directory");
+    if (!QDir(directory).entryList({ QStringLiteral("frame-*.png") }, QDir::Files).isEmpty())
+        return QStringLiteral("Capture directory already holds frames; use an empty one");
+    if (settleMs < 100 || settleMs > 30000 || maxMs < 500 || maxMs > 120000)
+        return QStringLiteral("settleMs must be 100..30000 and maxMs 500..120000");
+    if (!m_window->isExposed())
+        return QStringLiteral("Window must be exposed to capture rendered frames");
+    if (m_capture.running)
+        stopCapture(QStringLiteral("restarted"));
+    m_capture.running = true;
+    m_capture.directory = directory;
+    m_capture.stopReason.clear();
+    m_capture.rendered = 0;
+    m_capture.saved = 0;
+    m_capture.lastDigest.clear();
+    m_capture.index = {};
+    m_capture.clock.start();
+    m_capture.settle.setInterval(settleMs);
+    m_capture.deadline.setInterval(maxMs);
+    // Queued: frameSwapped is emitted on the render thread, and the readback
+    // must run on the GUI thread after that frame. The grab renders the same
+    // scene again without swapping, so it cannot feed back into this signal.
+    m_capture.frames
+        = connect(m_window, &QQuickWindow::frameSwapped, this, [this] { captureFrame(); }, Qt::QueuedConnection);
+    m_capture.settle.start();
+    m_capture.deadline.start();
+    // Record the state the change starts from.
+    m_window->update();
+    return {};
+}
+
+void LocalCommandServer::captureFrame()
+{
+    if (!m_capture.running)
+        return;
+    ++m_capture.rendered;
+    const QImage image = m_window->grabWindow();
+    if (image.isNull())
+        return;
+    const QByteArray digest = QCryptographicHash::hash(
+        QByteArrayView(reinterpret_cast<const char *>(image.constBits()), image.sizeInBytes()),
+        QCryptographicHash::Sha1);
+    // Qt also swaps for changes too small to see, and the grab can repeat a
+    // frame; only a visible change counts as activity.
+    if (digest == m_capture.lastDigest)
+        return;
+    m_capture.lastDigest = digest;
+    const QString name = QStringLiteral("frame-%1.png").arg(m_capture.saved, 4, 10, QLatin1Char('0'));
+    if (!image.save(QDir(m_capture.directory).filePath(name), "PNG")) {
+        stopCapture(QStringLiteral("save_failed"));
+        return;
+    }
+    m_capture.index.append(QJsonObject { { QStringLiteral("frame"), m_capture.saved }, { QStringLiteral("file"), name },
+        { QStringLiteral("ms"), double(m_capture.clock.nsecsElapsed()) / 1e6 },
+        { QStringLiteral("route"), m_router->route() } });
+    ++m_capture.saved;
+    m_capture.settle.start();
+}
+
+void LocalCommandServer::stopCapture(const QString& reason)
+{
+    if (!m_capture.running)
+        return;
+    disconnect(m_capture.frames);
+    m_capture.settle.stop();
+    m_capture.deadline.stop();
+    m_capture.running = false;
+    m_capture.stopReason = reason;
+    QSaveFile file(QDir(m_capture.directory).filePath(QStringLiteral("index.json")));
+    if (file.open(QIODevice::WriteOnly)) {
+        const QJsonObject index { { QStringLiteral("frames"), m_capture.index },
+            { QStringLiteral("rendered"), m_capture.rendered }, { QStringLiteral("stopReason"), reason },
+            { QStringLiteral("width"), m_window->width() }, { QStringLiteral("height"), m_window->height() } };
+        file.write(QJsonDocument(index).toJson(QJsonDocument::Indented));
+        file.commit();
+    }
+}
+
+QJsonObject LocalCommandServer::captureStatus() const
+{
+    return { { QStringLiteral("running"), m_capture.running }, { QStringLiteral("dir"), m_capture.directory },
+        { QStringLiteral("rendered"), m_capture.rendered }, { QStringLiteral("saved"), m_capture.saved },
+        { QStringLiteral("stopReason"), m_capture.stopReason },
+        { QStringLiteral("elapsedMs"), m_capture.clock.isValid() ? double(m_capture.clock.elapsed()) : 0.0 },
+        { QStringLiteral("route"), m_router->route() } };
 }
 
 void LocalCommandServer::dispatch(QIODevice *socket, const QJsonObject& request)
@@ -660,6 +790,65 @@ void LocalCommandServer::dispatch(QIODevice *socket, const QJsonObject& request)
                 operation->deleteLater();
             },
             "local control setting");
+    } else if (command == QStringLiteral("capture-start")) {
+        const QString error = startCapture(args);
+        if (!error.isEmpty()) {
+            invalid(error);
+            return;
+        }
+        done(captureStatus());
+    } else if (command == QStringLiteral("capture-status")) {
+        done(captureStatus());
+    } else if (command == QStringLiteral("capture-stop")) {
+        stopCapture(QStringLiteral("stopped"));
+        done(captureStatus());
+    } else if (command == QStringLiteral("open")) {
+        // Opens an item through the shell, with the same route, model and
+        // snapshot a person's selection would use.
+        const QString source = args.value(QStringLiteral("source")).toString();
+        const int index = args.value(QStringLiteral("index")).toInt(-1);
+        QObject *shell = m_window->rootObject()
+            ? m_window->rootObject()->findChild<QObject *>(QStringLiteral("appShell"))
+            : nullptr;
+        QVariant opened;
+        if (!shell
+            || !QMetaObject::invokeMethod(shell, "automationOpen", Q_RETURN_ARG(QVariant, opened),
+                Q_ARG(QVariant, source), Q_ARG(QVariant, index))
+            || !opened.toBool()) {
+            invalid(QStringLiteral("Source must be browse, resume, next-up, context or similar, with an index "
+                                   "present in that row"));
+            return;
+        }
+        done(state());
+    } else if (command == QStringLiteral("item-state")) {
+        const QString itemId = args.value(QStringLiteral("id")).toString();
+        const QString field = args.value(QStringLiteral("field")).toString();
+        if (m_sources->accountOf(itemId).isEmpty() || SourceHub::rawId(itemId).isEmpty()) {
+            invalid(QStringLiteral("item-state requires an account-qualified item ID"));
+            return;
+        }
+        if (!field.isEmpty()
+            && !QStringList { QStringLiteral("played"), QStringLiteral("favorite"), QStringLiteral("position") }
+                .contains(field)) {
+            invalid(QStringLiteral("Field must be played, favorite or position"));
+            return;
+        }
+        QObject *operation = new QObject(socket);
+        Async::runScoped(
+            operation, itemStateTask(m_sources, itemId, field, args.value(QStringLiteral("value"))),
+            [done, operation, itemId](const MovieItem& item) {
+                done({ { QStringLiteral("id"), itemId }, { QStringLiteral("title"), item.title },
+                    { QStringLiteral("type"), item.itemType }, { QStringLiteral("played"), item.played },
+                    { QStringLiteral("favorite"), item.favorite },
+                    { QStringLiteral("positionSeconds"), double(item.resumeTicks) / 1e7 } });
+                operation->deleteLater();
+            },
+            [this, socket, id, operation](const std::exception_ptr&) {
+                reject(socket, id, QStringLiteral("provider_failed"),
+                    QStringLiteral("The provider rejected the item state request"));
+                operation->deleteLater();
+            },
+            "local control item state");
     } else if (command == QStringLiteral("library")) {
         if (!m_app->openLibraryById(args.value(QStringLiteral("id")).toString())) {
             invalid(QStringLiteral("Library ID is not in the current qualified library inventory"));
@@ -738,7 +927,9 @@ void LocalCommandServer::dispatch(QIODevice *socket, const QJsonObject& request)
             { QStringLiteral("completion"), QStringLiteral("Playback starts asynchronously; poll status") } });
     } else if (command == QStringLiteral("pause") || command == QStringLiteral("resume")
         || command == QStringLiteral("stop") || command == QStringLiteral("seek")) {
-        if (!m_app->player()->sessionActive()) {
+        // Stop also retires asynchronous item lookup/negotiation. Requiring an
+        // adopted player here could let a timed-out control request start later.
+        if (command != QStringLiteral("stop") && !m_app->player()->sessionActive()) {
             reject(socket, id, QStringLiteral("no_playback"), QStringLiteral("No active local playback session"));
             return;
         }

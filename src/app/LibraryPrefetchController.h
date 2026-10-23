@@ -26,13 +26,16 @@ public:
     LibraryPrefetchController(Catalog *catalog, ArtworkPrefetcher *artwork = nullptr, QObject *parent = nullptr);
 
     void stop();
+    void reset();
     void schedule(const std::vector<LibraryItem>& libraries, const QStringList& recentLibraryIds);
     std::optional<PagedMovieItems> cachedPage(const QString& cacheKey) const;
     void storePage(const QString& cacheKey, const PagedMovieItems& page);
     // Milliseconds since the cached page was stored, or -1 when absent.
     qint64 pageAgeMs(const QString& cacheKey) const;
+    // `retarget`: these are around where the view now is, in place of any
+    // still waiting for where it was.
     void prefetchPosters(const std::vector<MovieItem>& items, int firstIndex = 0, int visibleCount = 12,
-        ImageKind imageKind = ImageKind::Poster);
+        ImageKind imageKind = ImageKind::Poster, bool retarget = false);
 
 private:
     struct PrefetchRequest {

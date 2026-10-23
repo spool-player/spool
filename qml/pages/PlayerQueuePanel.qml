@@ -206,6 +206,8 @@ FocusScope {
     }
 
     function routeKey(key, phase, repeat) {
+        if (InputKeys.isBack(key))
+            return phase === "press" && (repeat || back())
         if (phase === "release")
             return true
 

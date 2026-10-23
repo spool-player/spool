@@ -17,12 +17,16 @@ import "../primitives/ModelAccess.js" as ModelAccess
 //
 // Sections are plain descriptors, so a caller can build them from anything:
 //   { key, title, model, kind, useSeriesPoster, preferEpisodeTitle,
-//     contextSource, moveItem, contextMenu, headerAction, headerActionText }
+//     contextSource, moveItem, contextMenu, headerAction, headerActionText,
+//     reserveWhenEmpty, reserveWhileLoading }
 FocusScope {
     id: root
 
     property var shell
     property var sections: []
+    // Loading changes row reservation without replacing the section model,
+    // which would discard every row's delegates and horizontal position.
+    property bool loading: false
     property string contextReturnRoute: ""
     property bool navigationFocusVisible: true
     // Set on the first row so the shell can time the first frame it draws.
@@ -40,6 +44,12 @@ FocusScope {
 
     property bool pointerNavigationPending: false
     property var pendingScrollController: null
+    readonly property bool directionRelease: true
+    property var recoveryGesture: ({
+                                       "key": 0
+                                   })
+    onVisibleChanged: if (!visible)
+                          recoveryGesture.key = 0
 
     signal activated(var section, int index, var item)
     signal contextRequested(var section, int index, var item, var anchor)
@@ -51,6 +61,49 @@ FocusScope {
     readonly property alias contentY: sectionList.contentY
 
     readonly property int sectionCount: sections ? sections.length : 0
+    property var sectionObjects: []
+    property bool sectionObjectsReady: false
+    onSectionsChanged: if (sectionObjectsReady)
+                           updateSectionObjects()
+    Component.onCompleted: {
+        sectionObjectsReady = true
+        updateSectionObjects()
+    }
+
+    Component {
+        id: sectionObjectComponent
+        QtObject {
+            property var descriptor
+        }
+    }
+
+    // Re-publishing a card model is not replacing its section. Keep descriptor
+    // objects (and therefore row delegates) when the section topology is stable.
+    function updateSectionObjects() {
+        // sectionsChanged precedes reevaluation of dependent bindings in some
+        // QML delivery orders. Reconcile the published payload, not sectionCount.
+        const nextCount = sections ? sections.length : 0
+        let sameSections = sectionObjects.length === nextCount
+        for (let index = 0; sameSections && index < nextCount; ++index) {
+            const previous = sectionObjects[index].descriptor
+            const next = sections[index]
+            sameSections = previous.key === next.key && previous.contextSource === next.contextSource
+        }
+        if (sameSections) {
+            for (let index = 0; index < nextCount; ++index)
+                sectionObjects[index].descriptor = sections[index]
+            return
+        }
+        const previousObjects = sectionObjects
+        const nextObjects = []
+        for (let index = 0; index < nextCount; ++index)
+            nextObjects.push(sectionObjectComponent.createObject(root, {
+                                                                     "descriptor": sections[index]
+                                                                 }))
+        sectionObjects = nextObjects
+        for (let index = 0; index < previousObjects.length; ++index)
+            previousObjects[index].destroy()
+    }
 
     function sectionAt(index) {
         return index >= 0 && index < sectionCount ? sections[index] : null
@@ -214,13 +267,25 @@ FocusScope {
     }
 
     function routeKey(key, phase, repeat) {
-        if (phase !== "release" && InputKeys.isDirection(key) && pointerNavigationPending)
-            return recoverPointerNavigation()
         const row = currentRow()
+        if (phase === "release" && InputKeys.isDirection(key)) {
+            InputKeys.consumeRecoveryGesture(recoveryGesture, key, phase, repeat, false)
+            if (row)
+                row.routeKey(key, phase, repeat)
+            return true
+        }
         if (!row)
             return false
         if (row.moveMode)
             return row.routeKey(key, phase, repeat)
+        if (InputKeys.isDirection(key)) {
+            if (InputKeys.consumeRecoveryGesture(recoveryGesture, key, phase, repeat, false))
+                return true
+            if (pointerNavigationPending || !row.selectionVisiblyUsable(sectionList)) {
+                InputKeys.consumeRecoveryGesture(recoveryGesture, key, phase, repeat, true)
+                return recoverPointerNavigation()
+            }
+        }
         if (key === Qt.Key_Up || key === Qt.Key_Down)
             return moveSection(key === Qt.Key_Down ? 1 : -1)
         return row.routeKey(key, phase, repeat)
@@ -239,6 +304,8 @@ FocusScope {
 
     onActiveFocusChanged: {
         clearPendingPointerNavigation()
+        if (!activeFocus)
+            recoveryGesture.key = 0
         if (activeFocus && Metrics.keyboardFocusActive) {
             navigationFocusVisible = true
             Qt.callLater(focusCurrentSection)
@@ -249,7 +316,7 @@ FocusScope {
         id: sectionList
 
         anchors.fill: parent
-        model: root.sections
+        model: root.sectionObjects
         header: root.header
         footer: root.footer
         spacing: root.rowSpacing
@@ -277,25 +344,27 @@ FocusScope {
 
             required property int index
             required property var modelData
+            readonly property var sectionDescriptor: modelData.descriptor
 
             width: sectionList.width
-            title: String(modelData.title || "")
-            model: modelData.model
+            title: String(sectionDescriptor.title || "")
+            model: sectionDescriptor.model
             shell: root.shell
-            cardKind: String(modelData.kind || "poster")
-            useSeriesPoster: Boolean(modelData.useSeriesPoster)
-            preferEpisodeTitle: Boolean(modelData.preferEpisodeTitle)
-            enabledRow: modelData.enabled === undefined ? true : Boolean(modelData.enabled)
-            reserveWhenEmpty: Boolean(modelData.reserveWhenEmpty)
-            loading: Boolean(modelData.loading)
-            emptyText: String(modelData.emptyText || "")
-            headerBadge: modelData.headerBadge || null
-            cardBadge: modelData.cardBadge || null
+            cardKind: String(sectionDescriptor.kind || "poster")
+            useSeriesPoster: Boolean(sectionDescriptor.useSeriesPoster)
+            preferEpisodeTitle: Boolean(sectionDescriptor.preferEpisodeTitle)
+            enabledRow: sectionDescriptor.enabled === undefined ? true : Boolean(sectionDescriptor.enabled)
+            reserveWhenEmpty: Boolean(sectionDescriptor.reserveWhenEmpty) || (root.loading && Boolean(
+                                                                                  sectionDescriptor.reserveWhileLoading))
+            loading: Boolean(sectionDescriptor.loading)
+            emptyText: String(sectionDescriptor.emptyText || "")
+            headerBadge: sectionDescriptor.headerBadge || null
+            cardBadge: sectionDescriptor.cardBadge || null
             focusVisible: root.navigationFocusVisible
-            moveItem: modelData.moveItem || null
-            contextMenu: modelData.contextMenu || null
-            headerAction: modelData.headerAction || null
-            headerActionText: String(modelData.headerActionText || "")
+            moveItem: sectionDescriptor.moveItem || null
+            contextMenu: sectionDescriptor.contextMenu || null
+            headerAction: sectionDescriptor.headerAction || null
+            headerActionText: String(sectionDescriptor.headerActionText || "")
             onCountChanged: Qt.callLater(root.repair)
             onHasHeaderActionChanged: Qt.callLater(root.repair)
             // This view is already inset by its host; use its usable width.
@@ -305,7 +374,7 @@ FocusScope {
             cardGap: Metrics.gapPx
             wheelFlickable: sectionList
             atomicPopulate: root.measureFirstRow && index === 0
-            itemContextSource: String(modelData.contextSource || modelData.key || "")
+            itemContextSource: String(sectionDescriptor.contextSource || sectionDescriptor.key || "")
             itemContextReturnRoute: root.contextReturnRoute
 
             onVerticalWheelScrolled: controller => root.beginPointerNavigation(controller)
@@ -317,7 +386,7 @@ FocusScope {
                                              root.firstRowReady = true
             onActivated: (itemIndex, item) => {
                 root.currentSection = index
-                root.activated(modelData, itemIndex, item)
+                root.activated(sectionDescriptor, itemIndex, item)
             }
         }
     }

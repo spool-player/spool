@@ -3,14 +3,17 @@
 #include "platform/PlatformPerformanceSampler.h"
 
 #include <QObject>
+#include <QSet>
 #include <QTimer>
 
 #include <functional>
+#include <memory>
 
 namespace Spool {
 
 class SystemPerformanceMonitor final : public QObject {
     Q_OBJECT
+    Q_PROPERTY(bool active READ active NOTIFY activeChanged)
     Q_PROPERTY(bool available READ available NOTIFY metricsChanged)
     Q_PROPERTY(bool systemStatsAvailable READ systemStatsAvailable NOTIFY metricsChanged)
     Q_PROPERTY(bool threadBreakdownAvailable READ threadBreakdownAvailable NOTIFY metricsChanged)
@@ -33,6 +36,12 @@ class SystemPerformanceMonitor final : public QObject {
 public:
     explicit SystemPerformanceMonitor(QObject *parent = nullptr);
     void setAudioDecodeCpuTimeProvider(std::function<qint64()> provider);
+    Q_INVOKABLE void observe(QObject *observer);
+
+    bool active() const
+    {
+        return !m_observers.isEmpty();
+    }
 
     bool available() const
     {
@@ -108,12 +117,14 @@ public:
     }
 
 signals:
+    void activeChanged();
     void metricsChanged();
 
 private:
     void sample();
 
-    PlatformPerformanceSampler m_sampler;
+    std::unique_ptr<PlatformPerformanceSampler> m_sampler;
+    QSet<QObject *> m_observers;
     QTimer m_timer;
     std::function<qint64()> m_audioDecodeCpuTimeProvider;
     bool m_available = false;

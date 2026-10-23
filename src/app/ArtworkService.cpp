@@ -1,6 +1,7 @@
 #include "ArtworkService.h"
 #include "../common/TlsTrust.h"
 #include "../platform/PlatformSettingsPolicy.h"
+#include "ArtworkConcurrency.h"
 #include "ArtworkImageProvider.h"
 #include "LocalThumbnail.h"
 
@@ -9,6 +10,7 @@
 #include <QCryptographicHash>
 #include <QDebug>
 #include <QDir>
+#include <QHttp1Configuration>
 #include <QImageReader>
 #include <QJSValue>
 #include <QMutexLocker>
@@ -33,7 +35,6 @@ namespace Spool {
 
 namespace {
 
-    constexpr int kRenderConcurrency = 6;
     // Each completed response becomes a texture upload in the next sync pass;
     // batches of 50+ posters land together, so cap completions per 16 ms tick
     // to keep individual frames short while a batch trickles in.
@@ -106,6 +107,21 @@ namespace {
         return url.toString(QUrl::FullyEncoded);
     }
 
+    QString originOf(const QUrl& url)
+    {
+        return url.toString(QUrl::RemovePath | QUrl::RemoveQuery | QUrl::RemoveFragment | QUrl::RemoveUserInfo);
+    }
+
+    // Qt opens at most six HTTP/1.1 connections to a host unless told
+    // otherwise, which would quietly cap the adaptive limit. Connections are
+    // opened only as requests need them, so a high ceiling costs nothing.
+    void allowConnections(QNetworkRequest& request)
+    {
+        QHttp1Configuration http1;
+        http1.setNumberOfConnectionsPerHost(ArtworkConcurrency::kMaximum);
+        request.setHttp1Configuration(http1);
+    }
+
 } // namespace
 
 class ArtworkFetchWorker final : public QObject {
@@ -145,9 +161,16 @@ public:
         drainPrefetch();
     }
 
-    void prefetch(QStringList urls)
+    void prefetch(QStringList urls, bool retarget)
     {
         ensureNetwork();
+        if (retarget) {
+            // Fetches already under way finish; only the waiting ones go.
+            m_prefetchQueue.clear();
+            m_prefetchSeen.clear();
+            for (const QNetworkReply *reply : std::as_const(m_prefetchReplies))
+                m_prefetchSeen.insert(cacheKeyForUrl(reply->request().url()));
+        }
         for (const QString& urlString : urls) {
             const QUrl url(urlString);
             const QString key = cacheKeyForUrl(url);
@@ -170,6 +193,32 @@ public:
         }
     }
 
+    // Zero adapts to each server; anything else is the user's fixed number.
+    void setDownloadLimit(int fixed)
+    {
+        m_fixedLimit = fixed;
+        for (Origin& origin : m_origins)
+            origin.control.setFixed(fixed);
+        publishStatus();
+        drainRender();
+    }
+
+    QString downloadStatus() const
+    {
+        QStringList parts;
+        for (auto it = m_origins.cbegin(); it != m_origins.cend(); ++it) {
+            const ArtworkConcurrency& control = it->control;
+            parts.push_back(QStringLiteral("%1 at once%2%3")
+                    .arg(control.limit())
+                    .arg(control.roundTripMs() >= 0
+                            ? QStringLiteral(", about %1 ms away").arg(qRound(control.roundTripMs()))
+                            : QString())
+                    .arg(control.recentMs() >= 0 ? QStringLiteral(", %1 ms per image").arg(qRound(control.recentMs()))
+                                                 : QString()));
+        }
+        return parts.join(QStringLiteral("; "));
+    }
+
     void cancelAll()
     {
         m_renderQueue.clear();
@@ -190,6 +239,72 @@ private:
         QByteArray headers;
     };
 
+    struct Origin {
+        ArtworkConcurrency control;
+        int inFlight = 0;
+        // Per open fetch, the most fetches open to this server at once
+        // while it ran: what it shared the server with.
+        QHash<int, int> peakOpen;
+        // Early round trips: time to first byte of the first fetches.
+        int seedSamples = 0;
+        double fastestFirstByteMs = -1;
+        int lastLoggedLimit = 0;
+    };
+
+    Origin& originFor(const QUrl& url)
+    {
+        const QString key = originOf(url);
+        auto found = m_origins.find(key);
+        if (found == m_origins.end()) {
+            found = m_origins.insert(key, Origin {});
+            found->control.setFixed(m_fixedLimit);
+        }
+        return *found;
+    }
+
+    // The ping comes from the first real fetches rather than a request of
+    // its own, so the server sees nothing it was not asked for. Those first
+    // fetches each open a connection, so their first byte arrives after the
+    // TCP and TLS handshakes too -- two to three round trips in all.
+    void noteFirstByte(Origin& origin, double firstByteMs)
+    {
+        if (origin.seedSamples >= 3 || firstByteMs < 0)
+            return;
+        ++origin.seedSamples;
+        origin.fastestFirstByteMs
+            = origin.fastestFirstByteMs < 0 ? firstByteMs : std::min(origin.fastestFirstByteMs, firstByteMs);
+        const double roundTripMs = origin.fastestFirstByteMs / 2.5;
+        origin.control.seed(roundTripMs);
+        if (origin.seedSamples == 1)
+            qInfo() << "artwork: server round trip about" << qRound(roundTripMs) << "ms, starting at"
+                    << origin.control.limit() << "downloads at once";
+        publishStatus();
+    }
+
+    void noteLimit(Origin& origin)
+    {
+        const int limit = origin.control.limit();
+        if (std::abs(limit - origin.lastLoggedLimit) < 3)
+            return;
+        origin.lastLoggedLimit = limit;
+        qInfo() << "artwork: downloads at once" << limit << "fastest" << qRound(origin.control.fastestMs())
+                << "ms recent" << qRound(origin.control.recentMs()) << "ms server parallelism"
+                << QString::number(origin.control.serverParallelism(), 'f', 1);
+        publishStatus();
+    }
+
+    void publishStatus()
+    {
+        QPointer<ArtworkService> service = m_service;
+        QMetaObject::invokeMethod(
+            m_service,
+            [service, status = downloadStatus()]() mutable {
+                if (service)
+                    service->setDownloadStatus(std::move(status));
+            },
+            Qt::QueuedConnection);
+    }
+
     void ensureNetwork()
     {
         if (m_network)
@@ -209,6 +324,7 @@ private:
     QNetworkRequest cachedRequest(const QUrl& url, const QByteArray& headers = {}) const
     {
         QNetworkRequest request(url);
+        allowConnections(request);
         if (headers.isEmpty()) {
             request.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::PreferCache);
             return request;
@@ -232,17 +348,48 @@ private:
     void drainRender()
     {
         ensureNetwork();
-        while (m_network && m_renderReplies.size() < kRenderConcurrency && !m_renderQueue.isEmpty()) {
-            const RenderRequest request = m_renderQueue.dequeue();
+        if (!m_network)
+            return;
+        // Oldest first, skipping requests whose server is at its limit so a
+        // slow server never holds up another one's posters.
+        for (qsizetype index = 0; index < m_renderQueue.size();) {
+            Origin& origin = originFor(m_renderQueue.at(index).url);
+            if (origin.inFlight >= origin.control.limit()) {
+                ++index;
+                continue;
+            }
+            const RenderRequest request = m_renderQueue.takeAt(index);
+            const QString originKey = originOf(request.url);
+            ++origin.inFlight;
+            origin.peakOpen.insert(request.requestId, 0);
+            for (int& peak : origin.peakOpen)
+                peak = std::max(peak, origin.inFlight);
             const qint64 fetchStartedNs = monotonicNs();
             QNetworkReply *reply = m_network->get(cachedRequest(request.url, request.headers));
             m_renderReplies.insert(request.requestId, reply);
             const QString key = request.key;
+            auto firstByteNs = std::make_shared<qint64>(-1);
+            connect(reply, &QNetworkReply::metaDataChanged, this, [firstByteNs, fetchStartedNs] {
+                if (*firstByteNs < 0)
+                    *firstByteNs = monotonicNs() - fetchStartedNs;
+            });
             connect(reply, &QNetworkReply::finished, this,
-                [this, reply, requestId = request.requestId, key, queuedNs = request.queuedNs, fetchStartedNs]() {
+                [this, reply, requestId = request.requestId, key, queuedNs = request.queuedNs, fetchStartedNs,
+                    originKey, firstByteNs]() {
                     m_renderReplies.remove(requestId);
                     const bool diskCache = reply->attribute(QNetworkRequest::SourceIsFromCacheAttribute).toBool();
                     const qint64 finishedNs = monotonicNs();
+                    if (const auto origin = m_origins.find(originKey); origin != m_origins.end()) {
+                        const int sharedWith = origin->peakOpen.take(requestId);
+                        origin->inFlight = std::max(0, origin->inFlight - 1);
+                        // Cache hits and failures say nothing about the network.
+                        if (!diskCache && reply->error() == QNetworkReply::NoError) {
+                            if (origin->control.automatic())
+                                noteFirstByte(*origin, static_cast<double>(*firstByteNs) / 1e6);
+                            origin->control.record(static_cast<double>(finishedNs - fetchStartedNs) / 1e6, sharedWith);
+                            noteLimit(*origin);
+                        }
+                    }
                     finishReply(reply,
                         [this, requestId, key, diskCache, queuedNs, fetchStartedNs, finishedNs](
                             QByteArray bytes, QString error) {
@@ -261,7 +408,12 @@ private:
         ensureNetwork();
         if (!m_network || !m_renderQueue.isEmpty() || !m_renderReplies.isEmpty())
             return;
-        while (m_prefetchReplies.size() < m_prefetchMaxConcurrent && !m_prefetchQueue.isEmpty()) {
+        // Speculative fetches get half of what the screen would, and only
+        // while it is not waiting on anything.
+        const int prefetchLimit = m_prefetchQueue.isEmpty()
+            ? 0
+            : std::max(2, m_origins.value(originOf(m_prefetchQueue.head())).control.limit() / 2);
+        while (m_prefetchReplies.size() < prefetchLimit && !m_prefetchQueue.isEmpty()) {
             const QUrl url = m_prefetchQueue.dequeue();
             const QString key = cacheKeyForUrl(url);
             QNetworkReply *reply = m_network->get(cachedRequest(url));
@@ -332,7 +484,8 @@ private:
     QQueue<QUrl> m_prefetchQueue;
     QSet<QString> m_prefetchSeen;
     QSet<QNetworkReply *> m_prefetchReplies;
-    int m_prefetchMaxConcurrent = 3;
+    QHash<QString, Origin> m_origins;
+    int m_fixedLimit = 0;
 };
 
 class ArtworkImageResponse final : public QQuickImageResponse {
@@ -678,7 +831,7 @@ QQuickImageResponse *ArtworkService::requestImageResponse(const QString& id, con
     return new ArtworkImageResponse(this, QUrl(urlString), requestedSize);
 }
 
-void ArtworkService::prefetch(const QStringList& urls)
+void ArtworkService::prefetch(const QStringList& urls, bool retarget)
 {
     QStringList uncached;
     uncached.reserve(urls.size());
@@ -693,10 +846,10 @@ void ArtworkService::prefetch(const QStringList& urls)
             continue;
         uncached.push_back(url);
     }
-    if (uncached.isEmpty())
+    if (uncached.isEmpty() && !retarget)
         return;
-    invokeWorker(
-        [urls = std::move(uncached)](ArtworkFetchWorker *worker) mutable { worker->prefetch(std::move(urls)); });
+    invokeWorker([urls = std::move(uncached), retarget](
+                     ArtworkFetchWorker *worker) mutable { worker->prefetch(std::move(urls), retarget); });
 }
 
 ArtworkService::DecodeTotals ArtworkService::decodeTotals() const
@@ -708,6 +861,19 @@ ArtworkService::DecodeTotals ArtworkService::decodeTotals() const
 int ArtworkService::outstandingRequests() const
 {
     return static_cast<int>(m_responses.size()) + static_cast<int>(m_pendingDeliveries.size());
+}
+
+void ArtworkService::setDownloadLimit(int fixed)
+{
+    invokeWorker([fixed](ArtworkFetchWorker *worker) { worker->setDownloadLimit(fixed); });
+}
+
+void ArtworkService::setDownloadStatus(QString status)
+{
+    if (status == m_downloadStatus)
+        return;
+    m_downloadStatus = std::move(status);
+    emit downloadStatusChanged();
 }
 
 void ArtworkService::cancelPrefetches()

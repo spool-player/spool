@@ -325,6 +325,14 @@ empty or repeated nonterminal cursors fail with `invalid_pagination`.
 Collectors stop after 256 pages; collect-all also has a 10,000-row bound.
 Exceeding either bound without completion reports `response_limit`.
 
+A `browse` listing that can start at any row says so with `seekable: true` on
+its pages and an exact `total`. Spool then fetches only the rows on screen,
+asking with `offset` (a row number) in place of `cursor`, so a library of tens
+of thousands of titles never has to be walked from the top. Optional
+`browseIndex` answers how a `SortName` listing divides by first character; with
+it the letter rail is exact, without it Spool estimates and corrects itself as
+rows arrive.
+
 `Item.entryId` identifies an occurrence within its container. It is not a media
 ID and is never account-prefixed. Duplicate media IDs retain separate entry IDs
 and queue occurrences. ID lookups fetch at most 50 unique IDs per request and

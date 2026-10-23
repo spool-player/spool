@@ -175,5 +175,7 @@ function(spool_import_static_webos_plugins native_target)
             Qt6::QSQLiteDriverPlugin
             Qt6::QJpegPlugin
             Qt6::QWebpPlugin
+            # Provider marks, such as Jellyfin's, are SVG.
+            Qt6::QSvgPlugin
     )
 endfunction()

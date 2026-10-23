@@ -77,9 +77,12 @@ public:
     QCoro::Task<std::vector<MovieItem>> fetchNextUpEpisodes(int limit = 24) override;
     QCoro::Task<std::vector<MovieItem>> fetchLatestItems(QString parentId = {}, int limit = 24) override;
     QCoro::Task<std::vector<MovieItem>> fetchSimilarItems(QString itemId, int limit = 24) override;
+    QCoro::Task<std::vector<MovieItem>> fetchRelatedMedia(QString itemId, QString kind) override;
     QCoro::Task<PersonCredits> fetchItemsByPerson(QString personId, int maximumItems = 4000) override;
     QCoro::Task<std::vector<LibraryItem>> fetchLibraries() override;
     QCoro::Task<QVariantMap> fetchLibraryFilterOptions(QString libraryId, QString collectionType = {}) override;
+    QCoro::Task<std::vector<BrowseIndexEntry>> fetchBrowseIndex(
+        BrowseDescriptor descriptor, QVariantMap queryOptions) override;
     QCoro::Task<std::vector<MovieItem>> fetchItemsByIds(QStringList itemIds) override;
     QCoro::Task<std::vector<MovieItem>> searchItems(QString searchTerm, int limit = 80) override;
     QCoro::Task<std::vector<MovieItem>> fetchSearchSuggestions(int limit = 20) override;

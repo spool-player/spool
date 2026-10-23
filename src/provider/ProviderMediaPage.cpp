@@ -300,6 +300,8 @@ ProviderMediaPage readProviderMediaPage(const QJSValue& value, int maximumItems)
     const QJSValue total = value.property(QStringLiteral("total"));
     if (!absent(total))
         result.total = integer(total);
+    const QJSValue seekable = value.property(QStringLiteral("seekable"));
+    result.seekable = boolean(seekable) && result.total.has_value();
     result.items.reserve(length);
     for (quint32 i = 0; i < length; ++i)
         result.items.push_back(reader.item(rows.property(i)));

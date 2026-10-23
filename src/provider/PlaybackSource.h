@@ -8,6 +8,7 @@
 #include <QObject>
 #include <QString>
 #include <QUrl>
+#include <QVariantMap>
 
 #include <vector>
 
@@ -29,10 +30,29 @@ public:
     virtual QByteArray mediaRequestHeaders() const = 0;
     // The origin whose remembered TLS trust decision covers media URLs.
     virtual QUrl mediaOrigin() const = 0;
-    // How many parallel range requests the network profile allows per stream.
+    // Hard range-request cap; the learned initial count lives in the profile.
     virtual int playbackParallelRequests() const = 0;
+    // Native-only transport learning. Rates are bytes/s; media bitrate is bits/s.
+    // {initial-requests:1..4, latency-ms, capacity-bytes-per-second,
+    //  measured-bitrate:bits/s, concurrency-samples:[{requests, capacity-bytes-per-second,
+    //  latency-ms, updated-at-ms}]} contains only fresh observations.
+    // Feedback is curl-transport-metrics plus observed-at-ms (UTC epoch ms)
+    // and media-bitrate (bits/s). Only non-cache-blocked concurrency samples
+    // with increasing stream-id/capacity-samples are learned.
+    virtual QVariantMap playbackNetworkProfile() const
+    {
+        return {};
+    }
+    // origin is captured with the load, never inferred from a later account.
+    virtual void updatePlaybackNetworkProfile(const QUrl&, const QVariantMap&) { }
     // Whether reports and follow-up lookups can be made right now.
     virtual bool signedIn() const = 0;
+    // Reporting retries must retain the source instance that accepted playback,
+    // rather than route an old session through a replacement account runtime.
+    virtual PlaybackSource *reportingContext(const QString&)
+    {
+        return this;
+    }
 
     // Turns an item into something mpv can open: the URL, its streams, and
     // where to start. `forceTranscode` asks a source that can re-encode to

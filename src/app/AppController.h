@@ -10,14 +10,17 @@
 #include "BrowseSessionController.h"
 #include "ContentModelController.h"
 #include "HomeModelController.h"
+#include "PlaybackStopPolicy.h"
 #include "RemoteTargetsController.h"
 #include "SearchController.h"
 #include "SettingsController.h"
 
 #include <QCoroTask>
+#include <QElapsedTimer>
 #include <QJsonObject>
 #include <QLockFile>
 #include <QObject>
+#include <QTimer>
 #include <QVariantList>
 #include <QVariantMap>
 
@@ -53,6 +56,10 @@ class AppController final : public QObject {
     Q_PROPERTY(QString errorText MEMBER m_errorText NOTIFY errorTextChanged)
     Q_PROPERTY(bool initialized READ initialized NOTIFY initializedChanged)
     Q_PROPERTY(QString connectionSpeedDescription READ connectionSpeedDescription NOTIFY streamingQualityChanged)
+
+    Q_PROPERTY(QString sleepTimerMode READ sleepTimerMode NOTIFY sleepTimerChanged)
+    Q_PROPERTY(int sleepTimerMinutes READ sleepTimerMinutes NOTIFY sleepTimerChanged)
+    Q_PROPERTY(int sleepTimerRemainingSeconds READ sleepTimerRemainingSeconds NOTIFY sleepTimerChanged)
 
 public:
     AppController(DatabaseManager *database, SourceHub *provider, ArtworkService *artwork, PlayerController *player,
@@ -133,6 +140,15 @@ public:
     Q_INVOKABLE void playQueueNext();
     Q_INVOKABLE void playQueuePrevious();
     Q_INVOKABLE void playQueueItem(int index);
+    Q_INVOKABLE void setRepeatMode(const QString& mode);
+    QString sleepTimerMode() const;
+    int sleepTimerMinutes() const
+    {
+        return m_playbackStopPolicy.durationMinutes();
+    }
+    int sleepTimerRemainingSeconds() const;
+    Q_INVOKABLE void setSleepTimerMinutes(int minutes);
+    Q_INVOKABLE void stopAfterCurrentItem();
     // The queue panel edits through these rather than reaching for the
     // PlayQueue singleton, so a SyncPlay group cannot be desynchronised by a
     // drag that never passed a guard. A reorder gesture previews locally on
@@ -169,6 +185,7 @@ public:
 signals:
     void busyChanged();
     void playbackTransitionChanged();
+    void sleepTimerChanged();
     void streamingQualityChanged();
     void errorTextChanged();
     void initializedChanged();
@@ -192,6 +209,8 @@ private:
     void resetVisibleModels();
     void loadLibraries();
     void loadMoreCurrentItems();
+    void loadBrowseBlock(int start);
+    void loadBrowseIndex();
     void refreshHomeRows()
     {
         m_home->refresh(m_libraries.libraries());
@@ -210,6 +229,12 @@ private:
         bool fromStart, const QString& mode = QStringLiteral("now"),
         std::optional<qint64> positionTicks = std::nullopt);
     void fetchPlayItem(const QString& itemId, bool fromStart, PlayDestination destination);
+    // One play request spans item details, album/episode expansion and
+    // negotiation. A newer request or an explicit Stop retires every earlier
+    // stage and its callbacks.
+    RequestGeneration::Token cancelPendingPlaybackRequests(bool cancelGroup = false);
+    void cancelSleepTimer();
+    bool stopIfSleepTimerExpired();
     void playQueuedItems(
         const std::vector<MovieItem>& items, int startIndex, bool fromStart, PlayDestination destination);
     bool modelIsOrderedList(MovieGridModel *model) const;
@@ -277,10 +302,15 @@ private:
     bool m_busy = false;
     bool m_playbackTransition = false;
     quint64 m_playbackTransitionGeneration = 0;
+    // A lookup accepted on the user's behalf is still the current intent;
+    // completion notifications must not treat its target as stale.
+    bool m_playbackLookupPending = false;
+    PlaybackStopPolicy m_playbackStopPolicy;
+    QElapsedTimer m_sleepTimerClock;
+    QTimer m_sleepTimer;
     bool m_initialized = false;
     QString m_busyText;
     QString m_errorText;
-    QString m_repeatMode = QStringLiteral("RepeatNone");
     RequestGeneration m_libraryLoadGeneration;
     RequestGeneration m_libraryListGeneration;
     RequestGeneration m_playbackLoadGeneration;

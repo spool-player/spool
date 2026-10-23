@@ -27,13 +27,17 @@ double PlaybackPositionTracker::position() const
     return m_positionSeconds;
 }
 
+bool PlaybackPositionTracker::canEstimatePosition() const
+{
+    return m_positionClock.isValid() && !seekInFlight();
+}
+
 double PlaybackPositionTracker::estimatedPosition(double playbackSpeed, bool advancing) const
 {
     // A seek in flight is holding the position at its target; running the
     // clock forward from there would drift the seek bar away from the place
     // the next gesture is going to be measured from.
-    if (!advancing || seekInFlight() || !m_hasMpvPosition || !m_positionClock.isValid()
-        || !std::isfinite(playbackSpeed)) {
+    if (!advancing || !canEstimatePosition() || !std::isfinite(playbackSpeed)) {
         return m_positionSeconds;
     }
     return clamp(m_positionSeconds + static_cast<double>(m_positionClock.elapsed()) * playbackSpeed / 1'000.0);

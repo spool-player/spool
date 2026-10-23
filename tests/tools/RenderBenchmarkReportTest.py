@@ -26,7 +26,8 @@ def report(walls: dict[str, list[float]], *, cpu: float = 2.0, gap: float = 0.0,
 
 
 def run(script: Path, current: dict, *, baseline: dict | None = None,
-        warn_only: bool = False, expected: int = 0) -> str:
+        warn_only: bool = False, expected: int = 0, require_comparable: bool = False,
+        baseline_missing: bool = False) -> str:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         current_path = root / "current.json"
@@ -36,6 +37,10 @@ def run(script: Path, current: dict, *, baseline: dict | None = None,
             baseline_path = root / "baseline.json"
             baseline_path.write_text(json.dumps(baseline), encoding="utf-8")
             args += ["--baseline", str(baseline_path)]
+        elif baseline_missing:
+            args += ["--baseline", str(root / "missing.json")]
+        if require_comparable:
+            args.append("--require-comparable")
         if warn_only:
             args.append("--warn-only")
         result = subprocess.run(args, text=True, capture_output=True, check=False)
@@ -96,6 +101,35 @@ def main() -> int:
 
     # Warning-only must not hide a broken measurement with no samples.
     run(script, report({}), warn_only=True, expected=1)
+
+    # Present-but-unmeasured values must not silently become zero, NaN must
+    # not disable regression comparisons, and a zero swap count is no frame.
+    for key in ("wallMs", "guiCpuMs", "instanceMs", "maxGapMs", "actualSwaps", "frameBudgetMs"):
+        for value in (None, -1, float("nan"), float("inf"), True, "1"):
+            invalid = report({"home": [20.0] * 4})
+            invalid["samples"][0][key] = value
+            run(script, invalid, warn_only=True, expected=1)
+        missing = report({"home": [20.0] * 4})
+        del missing["samples"][0][key]
+        run(script, baseline, baseline=missing, warn_only=True, expected=1)
+    for key in ("wallMs", "actualSwaps", "frameBudgetMs"):
+        unmeasured = report({"home": [20.0] * 4})
+        unmeasured["samples"][0][key] = 0
+        run(script, unmeasured, expected=1)
+    run(script, baseline, baseline=report({}), warn_only=True, expected=1)
+
+    # Local A/B runs can demand proof of comparable work; warning-only must
+    # not turn absent/incompatible baselines into a successful strict run.
+    run(script, baseline, baseline=baseline, require_comparable=True)
+    run(script, baseline, baseline_missing=True)
+    run(script, baseline, baseline_missing=True, require_comparable=True, warn_only=True, expected=1)
+    run(script, baseline, require_comparable=True, expected=1)
+    for key, value in (("qtVersion", "different"), ("providerRuntime", "different"),
+                       ("settleMs", 500), ("iterations", 1), ("warmupPasses", 2)):
+        incompatible = report({"home": [20.0] * 4, "search": [20.0] * 4})
+        incompatible[key] = value
+        run(script, incompatible, baseline=baseline, require_comparable=True,
+            warn_only=True, expected=1)
     return 0
 
 

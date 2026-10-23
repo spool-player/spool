@@ -8,8 +8,21 @@ function itemTypeFor(item) {
     return item ? String(item.itemType || item.type || "") : ""
 }
 
+function personContext(args) {
+    const routeArgs = args || ({})
+    return {
+        id: String(routeArgs.personId || ""),
+        name: String(routeArgs.personName || "Person"),
+        role: String(routeArgs.personRole || ""),
+        type: String(routeArgs.personType || "Person"),
+        imageTag: String(routeArgs.personImageTag || "")
+    }
+}
+
 function modelCount(model) {
-    return model && model.rowCount ? model.rowCount() : 0
+    if (!model)
+        return 0
+    return model.count !== undefined ? Number(model.count) : model.rowCount ? model.rowCount() : 0
 }
 
 function modelItem(model, index) {
@@ -24,6 +37,9 @@ function modelIndexForItemId(model, itemId, fallbackIndex) {
             if (itemIdFor(model.get(i)) === id)
                 return i
         }
+        // A route's identity survives its source model being refreshed or
+        // reused by another page. Never turn it into a different item.
+        return -1
     }
     return count > 0 ? Math.max(0, Math.min(Number(fallbackIndex || 0), count - 1)) : -1
 }
@@ -32,22 +48,30 @@ function detailsContext(args, fallbackModel) {
     const routeArgs = args || ({})
     const model = routeArgs.model || fallbackModel
     const index = modelIndexForItemId(model, routeArgs.itemId, routeArgs.focusIndex)
+    const id = String(routeArgs.itemId || "")
     let item = modelItem(model, index)
-    let effectiveIndex = index
-    if (itemIdFor(item).length <= 0 && String(routeArgs.itemId || "").length > 0) {
-        item = {
-            movieId: String(routeArgs.itemId),
-            itemType: String(routeArgs.itemType || "Video"),
-            title: String(routeArgs.title || "Selected item"),
-            seriesId: String(routeArgs.seriesId || ""),
-            seasonId: String(routeArgs.seasonId || ""),
-            playable: true
-        }
-        effectiveIndex = 0
+    if (itemIdFor(item).length <= 0 && id.length > 0) {
+        // The row this was opened from can be refilled by the page itself --
+        // a series' seasons become the season's episodes. Fall back to the
+        // copy taken at navigation, not a bare title, so nothing on the page
+        // disappears while the full details load.
+        const snapshot = routeArgs.snapshot
+        item = snapshot && itemIdFor(snapshot) === id ? snapshot : {
+                                                            movieId: id,
+                                                            itemType: String(routeArgs.itemType || "Video"),
+                                                            title: String(routeArgs.title || "Selected item"),
+                                                            seriesId: String(routeArgs.seriesId || ""),
+                                                            seasonId: String(routeArgs.seasonId || ""),
+                                                            playable: true
+                                                        }
     }
+    if (!item.seriesName && String(routeArgs.seriesName || "").length > 0)
+        item = Object.assign({}, item, {
+                                 seriesName: String(routeArgs.seriesName)
+                             })
     return {
         model: model,
-        index: effectiveIndex,
+        index: index,
         item: item,
         source: String(routeArgs.source || "movies"),
         returnRoute: String(routeArgs.returnRoute || "libraryGrid")
@@ -73,7 +97,9 @@ function normalizeDetailsRoute(request, fallbackModel, currentRoute) {
         title: request && request.title ? String(request.title) : String(fallbackItem.title || fallbackItem.seriesName
                                                                          || ""),
         seriesId: request && request.seriesId ? String(request.seriesId) : String(fallbackItem.seriesId || ""),
-        seasonId: request && request.seasonId ? String(request.seasonId) : String(fallbackItem.seasonId || "")
+        seriesName: request && request.seriesName ? String(request.seriesName) : String(fallbackItem.seriesName || ""),
+        seasonId: request && request.seasonId ? String(request.seasonId) : String(fallbackItem.seasonId || ""),
+        snapshot: itemIdFor(fallbackItem) === itemId ? fallbackItem : null
     }
 }
 
@@ -96,7 +122,9 @@ function detailsNavigationMode(currentRoute, currentArgs, nextArgs, source) {
     return currentId.length > 0 && currentId === nextId ? "replace" : "push"
 }
 
-function detailsRouteAt(model, index, source, returnRoute, currentRoute) {
+// `parent` names what the item belongs to when its own row may not say, as a
+// series page does for its seasons.
+function detailsRouteAt(model, index, source, returnRoute, currentRoute, parent) {
     const focusIndex = Math.max(0, Number(index || 0))
     const item = modelItem(model, focusIndex)
     return normalizeDetailsRoute({
@@ -104,7 +132,8 @@ function detailsRouteAt(model, index, source, returnRoute, currentRoute) {
                                      itemId: itemIdFor(item),
                                      itemType: itemTypeFor(item),
                                      title: String(item.title || item.seriesName || ""),
-                                     seriesId: String(item.seriesId || ""),
+                                     seriesId: String(item.seriesId || (parent && parent.seriesId) || ""),
+                                     seriesName: String(item.seriesName || (parent && parent.seriesName) || ""),
                                      seasonId: String(item.seasonId || ""),
                                      source: source || "movies",
                                      returnRoute: returnRoute || currentRoute || "libraryGrid",

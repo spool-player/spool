@@ -37,6 +37,16 @@ void LibraryPrefetchController::stop()
     m_active = false;
 }
 
+// A scope change (account or library availability) drops the stored pages;
+// merely navigating away only stops the queue via stop().
+void LibraryPrefetchController::reset()
+{
+    stop();
+    m_pages.clear();
+    m_pageStoredAtMs.clear();
+    m_cachedKeys.clear();
+}
+
 void LibraryPrefetchController::schedule(const std::vector<LibraryItem>& libraries, const QStringList& recentLibraryIds)
 {
     stop();
@@ -125,9 +135,9 @@ qint64 LibraryPrefetchController::pageAgeMs(const QString& cacheKey) const
 }
 
 void LibraryPrefetchController::prefetchPosters(
-    const std::vector<MovieItem>& items, int firstIndex, int visibleCount, ImageKind imageKind)
+    const std::vector<MovieItem>& items, int firstIndex, int visibleCount, ImageKind imageKind, bool retarget)
 {
-    if (items.empty() || !m_artwork)
+    if (!m_artwork || (items.empty() && !retarget))
         return;
 
     const int begin = std::clamp(firstIndex, 0, static_cast<int>(items.size()));
@@ -143,8 +153,8 @@ void LibraryPrefetchController::prefetchPosters(
             urls.push_back(url);
     }
 
-    if (!urls.isEmpty())
-        m_artwork->prefetch(urls);
+    if (!urls.isEmpty() || retarget)
+        m_artwork->prefetch(urls, retarget);
 }
 
 void LibraryPrefetchController::startNext()

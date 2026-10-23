@@ -14,6 +14,7 @@ FocusScope {
 
     function routeKey(key, phase, repeat) {
         if (root.inputKeys.isBack(key, false, false)) {
+            // Back claims both phases; only the release dismisses.
             if (phase === "release")
                 dismissed()
             return true
@@ -105,7 +106,7 @@ FocusScope {
                     width: ListView.view.width
                     height: details.implicitHeight + Metrics.scaled(24)
                     elevated: ListView.isCurrentItem
-                    baseColor: ListView.isCurrentItem ? Theme.focusFill : Theme.bgElevated
+                    baseColor: ListView.isCurrentItem ? Theme.focusedFill : Theme.bgRaised
 
                     TapHandler {
                         onTapped: {

@@ -289,7 +289,7 @@ FocusScope {
         pressActivated = false
         if (target.longPress) {
             longPressTimer.restart()
-        } else {
+        } else if (!(Window.activeFocusItem && Window.activeFocusItem.activatesOnRelease === true)) {
             // Nothing to disambiguate without a long-press gesture: fire on
             // press so activation doesn't wait out the physical key release.
             pressActivated = true

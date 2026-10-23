@@ -21,15 +21,16 @@ extern "C" {
 
 #include <QByteArray>
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDebug>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QMetaObject>
-#include <QPointer>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
+#include <QThread>
 #include <QUrl>
 #include <QtGlobal>
 
@@ -38,6 +39,7 @@ extern "C" {
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <thread>
 #include <utility>
 
 #ifdef Q_OS_ANDROID
@@ -60,6 +62,7 @@ namespace {
     }
 
     constexpr uint64_t kTimePosRefreshReply = 0x6a666e7074730001ULL;
+    constexpr uint64_t kNetworkMetricsReply = 0x6375726c73746174ULL;
     constexpr uint64_t kFullscreenSetReply = 0x6673000000000000ULL;
     constexpr uint64_t kFullscreenObservation = 0x666f000000000000ULL;
     constexpr uint64_t kFullscreenReplyMask = 0xffff000000000000ULL;
@@ -121,6 +124,11 @@ namespace {
             ok &= setOption(handle, option.name.constData(), option.value.constData());
         return ok;
     }
+    void destroyMpvOffThread(mpv_handle *handle)
+    {
+        if (handle)
+            std::thread([handle] { mpv_terminate_destroy(handle); }).detach();
+    }
     bool setMpvProperty(mpv_handle *handle, const char *name, const char *value)
     {
         const int error = mpv_set_property_string(handle, name, value);
@@ -159,6 +167,44 @@ namespace {
         return static_cast<qint64>(seconds * 10000000.0);
     }
 
+    // Curl's public snapshot contains numeric counters and nested numeric sample
+    // maps. Never propagate string values into support/CLI diagnostics.
+    QVariant networkMetricValue(const mpv_node& node, int depth = 0)
+    {
+        if (depth > 4)
+            return {};
+        switch (node.format) {
+        case MPV_FORMAT_INT64:
+            return QVariant::fromValue<qint64>(node.u.int64);
+        case MPV_FORMAT_DOUBLE:
+            return std::isfinite(node.u.double_) ? QVariant(node.u.double_) : QVariant();
+        case MPV_FORMAT_FLAG:
+            return bool(node.u.flag);
+        case MPV_FORMAT_NODE_MAP: {
+            QVariantMap result;
+            if (node.u.list) {
+                for (int i = 0; i < node.u.list->num; ++i) {
+                    const QVariant value = networkMetricValue(node.u.list->values[i], depth + 1);
+                    if (value.isValid() && node.u.list->keys[i])
+                        result.insert(QString::fromUtf8(node.u.list->keys[i]), value);
+                }
+            }
+            return result;
+        }
+        case MPV_FORMAT_NODE_ARRAY: {
+            QVariantList result;
+            if (node.u.list) {
+                result.reserve(node.u.list->num);
+                for (int i = 0; i < node.u.list->num; ++i)
+                    result.append(networkMetricValue(node.u.list->values[i], depth + 1));
+            }
+            return result;
+        }
+        default:
+            return {};
+        }
+    }
+
     void logMemoryStats()
     {
         const QString diagnostics = platformProcessMemoryDiagnostics();
@@ -167,6 +213,24 @@ namespace {
     }
 
 } // namespace
+// This is a value snapshot, not a worker-side view of the controller. The
+// worker and its queued completion own it until initialization finishes.
+struct PlayerController::MpvPreparation {
+    std::vector<MpvOption> options;
+    std::vector<MpvOption> runtimeOptions;
+    MpvOptionProfile::Platform platform;
+    bool needsVideoSurface = true;
+    bool embeddedVideo = false;
+    bool hardwareDecoding = true;
+    bool userConfig = false;
+    mpv_handle *handle = nullptr;
+    qint64 elapsedMs = 0;
+
+    ~MpvPreparation()
+    {
+        destroyMpvOffThread(handle);
+    }
+};
 
 PlayerController::PlayerController(NativeAppWindow *window, PlaybackSource *api, TlsTrustController *tlsTrust,
     const QString& subtitleFontsPath, QObject *parent)
@@ -179,6 +243,15 @@ PlayerController::PlayerController(NativeAppWindow *window, PlaybackSource *api,
 {
     if (m_window) {
         connect(m_window, &NativeAppWindow::hdrOutputChanged, this, &PlayerController::updateRenderTarget);
+        connect(
+            m_window, &QQuickWindow::frameSwapped, this,
+            [this] {
+                if (!m_firstFramePresented) {
+                    m_firstFramePresented = true;
+                    scheduleIdleMpvPreparation();
+                }
+            },
+            Qt::QueuedConnection);
         connect(m_window, &QWindow::activeChanged, this, [this]() {
             if (!m_window->isActive())
                 releaseMpvKeys();
@@ -190,6 +263,7 @@ PlayerController::PlayerController(NativeAppWindow *window, PlaybackSource *api,
     }
     if (m_api) {
         connect(m_api, &PlaybackSource::credentialsChanged, this, [this]() {
+            m_sessionRequestHeaders.clear();
             if (m_trickplay)
                 m_trickplay->clear();
             if (auto *handle = m_mpvLifecycle.handle())
@@ -205,6 +279,16 @@ PlayerController::PlayerController(NativeAppWindow *window, PlaybackSource *api,
     m_seekWatchdogTimer.setInterval(2500);
     m_backgroundTeardownTimer.setSingleShot(true);
     m_backgroundTeardownTimer.setInterval(750);
+    m_networkTimer.setInterval(1000);
+    connect(&m_networkTimer, &QTimer::timeout, this, &PlayerController::updateNetworkTransport);
+    connect(&m_backgroundTeardownTimer, &QTimer::timeout, this, [this]() {
+        if (!m_sessionActive)
+            return;
+        const quint64 generation = m_mpvEventGeneration;
+        stopWithReason(QStringLiteral("background"));
+        if (generation == m_mpvEventGeneration)
+            teardownMpv(true);
+    });
     // Five seconds of real playback is enough to tell a device that cannot
     // keep up from one that merely stuttered while the cache filled, and it
     // is short enough that the viewer is still watching the opening titles
@@ -252,7 +336,7 @@ PlayerController::PlayerController(NativeAppWindow *window, PlaybackSource *api,
         emit playbackStateChanged();
     });
     connect(&m_uiPositionTimer, &QTimer::timeout, this, [this]() {
-        if (m_sessionActive)
+        if (positionAdvancing())
             emit positionChanged();
     });
     connect(&m_seekWatchdogTimer, &QTimer::timeout, this, [this]() {
@@ -298,8 +382,11 @@ PlayerController::~PlayerController()
 
 void PlayerController::prepareForShutdown()
 {
+    ++m_playGeneration;
     m_idleMpvPreparationEnabled = false;
     m_idleMpvPreparationScheduled = false;
+    m_mpvPreparationContinuation = {};
+    destroyIdleMpv("shutdown");
     if (!m_mpvLifecycle.handle())
         return;
 
@@ -316,14 +403,18 @@ void PlayerController::prepareForShutdown()
 void PlayerController::teardownMpv(bool async)
 {
     releaseMpvKeys();
-    ++m_mpvTeardownGeneration;
+    const quint64 generation = ++m_mpvTeardownGeneration;
     Diagnostics::Phase phase(QStringLiteral("shutdown"), QStringLiteral("player_teardown_mpv"));
     ++m_mpvEventGeneration;
     m_idleMpvPreparationEnabled = false;
     m_idleMpvPreparationScheduled = false;
+    m_mpvPreparationContinuation = {};
     destroyIdleMpv("teardown");
     // Platform render resources must detach before the mpv core is destroyed.
-    if (!releasePlatformMpvSurface(m_embeddedVideoOutput)) {
+    const bool released = releasePlatformMpvSurface(m_embeddedVideoOutput);
+    if (generation != m_mpvTeardownGeneration)
+        return;
+    if (!released) {
         qCritical() << "player: timed out releasing the mpv render context; preserving the mpv core";
         return;
     }
@@ -349,56 +440,120 @@ void PlayerController::teardownMpv(bool async)
 
 void PlayerController::scheduleIdleMpvPreparation()
 {
-    if (!m_idleMpvPreparationEnabled || m_idleMpvPreparationScheduled || m_idleMpvHandle || m_mpvLifecycle.handle())
+    if (!m_firstFramePresented || !m_idleMpvPreparationEnabled || m_idleMpvPreparationScheduled || m_idleMpvHandle
+        || m_mpvPreparation || m_mpvLifecycle.handle())
         return;
 
     m_idleMpvPreparationScheduled = true;
-    QPointer<PlayerController> controller(this);
-    runAfterPlatformMpvLoaded([controller]() {
-        if (auto *app = QCoreApplication::instance()) {
-            // Delay past the launch window: idle preparation saves little at
-            // play-start and must not compete with first-page construction.
-            QTimer::singleShot(3000, app, [controller]() {
-                if (controller)
-                    controller->prepareIdleMpv();
-            });
-        }
+    // frameSwapped has already crossed the first-frame boundary. Starting the
+    // delay here (rather than after dlopen) also keeps library loading cold.
+    QTimer::singleShot(3000, this, [this] {
+        if (m_idleMpvPreparationScheduled)
+            prepareIdleMpv();
     });
 }
 
 void PlayerController::prepareIdleMpv()
 {
     m_idleMpvPreparationScheduled = false;
-    if (!m_idleMpvPreparationEnabled || m_idleMpvHandle || m_mpvLifecycle.handle() || m_sessionActive)
+    if (!m_idleMpvPreparationEnabled || m_idleMpvHandle || m_mpvPreparation || m_mpvLifecycle.handle()
+        || m_sessionActive)
         return;
-
-    QElapsedTimer startupTimer;
-    startupTimer.start();
-    mpv_handle *handle = mpv_create();
-    if (!handle) {
-        qWarning() << "player: idle mpv_create failed";
+    if (usesUserMpvConfig()) {
+        // User scripts may load media or open audio during initialize. They
+        // belong to an explicit play, never a speculative background core.
         return;
     }
+    PlaybackSession video;
+    prepareMpvAsync(true, platformUsesEmbeddedVideo(video, m_directVideoOutput));
+}
 
-    if (!configureAndInitializeMpv(handle, true, false)) {
-        mpv_terminate_destroy(handle);
-        qWarning() << "player: idle mpv initialization failed";
+void PlayerController::prepareMpvAsync(bool needsVideoSurface, bool embeddedVideo)
+{
+    if (m_mpvPreparation && m_mpvPreparation->needsVideoSurface == needsVideoSurface
+        && m_mpvPreparation->embeddedVideo == embeddedVideo)
         return;
-    }
-
-    m_idleMpvHandle = handle;
-    qInfo() << "player: idle-prepared mpv initialized in" << startupTimer.elapsed() << "ms";
+    destroyIdleMpv("output profile change");
+    auto preparation = std::make_shared<MpvPreparation>();
+    preparation->platform = platformMpvOptionProfile();
+    preparation->needsVideoSurface = needsVideoSurface;
+    preparation->embeddedVideo = embeddedVideo;
+    preparation->hardwareDecoding = m_hardwareDecoding;
+    preparation->userConfig = usesUserMpvConfig();
+    const int parallelRequests = m_api ? m_api->playbackParallelRequests() : 1;
+    const auto network = MpvOptionProfile::networkProfile(preparation->platform, parallelRequests);
+    qInfo().nospace() << "player: curl profile source=MpvOptionProfile platform="
+                      << platformPlaybackBackendName(embeddedVideo) << " requestsPerStream=" << network.parallelRequests
+                      << " rangeBytes=" << network.rangeBytes << " ringBytes=" << network.ringBytes;
+    QByteArray certificateBundle = QFile::encodeName(writeTrustBundle());
+    if (certificateBundle.isEmpty())
+        certificateBundle = MpvOptionProfile::systemCertificateBundle();
+    preparation->options = MpvOptionProfile::preInitializeOptions(m_mpvConfigPolicy);
+    auto applicationOptions = MpvOptionProfile::applicationOptions(preparation->platform, needsVideoSurface,
+        m_audioOutputMode, {}, m_demuxerMaxBytes, m_demuxerMaxBackBytes, parallelRequests, embeddedVideo,
+        mpvShaderCachePath(), certificateBundle, m_renderQuality);
+    applicationOptions.push_back({ "sub-fonts-dir", m_subtitleFontsPath });
+    applicationOptions.push_back({ "osd-fonts-dir", m_subtitleFontsPath });
+    applicationOptions.push_back({ "osd-font", QByteArrayLiteral("IBM Plex Sans Var") });
+    for (auto& option : applicationOptions)
+        preparation->options.push_back(std::move(option));
+    preparation->runtimeOptions = {
+        { "af", m_nightModeEnabled.load() ? QByteArray(kNightModeFilter) : QByteArray() },
+        { "tone-mapping-visualize", mpvBool(m_toneMappingVisualizationEnabled.load()) },
+        { "audio-delay", QByteArray::number(static_cast<double>(effectiveAudioDelayMs()) / 1000.0, 'f', 3) },
+        { "sub-delay", QByteArray::number(static_cast<double>(m_subtitleDelayMs.load()) / 1000.0, 'f', 3) },
+        { "speed", QByteArray::number(effectivePlaybackSpeed(), 'f', 3) },
+    };
+    for (auto& option :
+        MpvOptionProfile::subtitleOptions(m_subtitlePreferences, m_tracks.subtitlesEnabled(), m_hdrPlayback))
+        preparation->runtimeOptions.push_back(std::move(option));
+    m_mpvPreparation = preparation;
+    auto *worker = QThread::create([preparation] {
+        QElapsedTimer timer;
+        timer.start();
+        preparation->handle = mpv_create();
+        if (preparation->handle && !configureAndInitializeMpv(preparation->handle, *preparation)) {
+            mpv_terminate_destroy(std::exchange(preparation->handle, nullptr));
+        }
+        preparation->elapsedMs = timer.elapsed();
+    });
+    connect(worker, &QThread::finished, worker, &QObject::deleteLater);
+    connect(
+        worker, &QThread::finished, this,
+        [this, preparation] {
+            if (m_mpvPreparation != preparation)
+                return; // The snapshot owns and disposes of stale cores off-thread.
+            m_mpvPreparation.reset();
+            if (!preparation->handle) {
+                qWarning() << "player: background mpv initialization failed";
+                if (m_mpvPreparationContinuation) {
+                    m_mpvPreparationContinuation = {};
+                    m_errorText = QStringLiteral("Failed to initialize libmpv.");
+                    m_statusText = QStringLiteral("Playback unavailable");
+                    stopProgressReporting(true);
+                }
+                return;
+            }
+            m_idleMpvHandle = std::exchange(preparation->handle, nullptr);
+            m_idleMpvNeedsVideoSurface = preparation->needsVideoSurface;
+            m_idleMpvEmbeddedVideo = preparation->embeddedVideo;
+            qInfo() << "player: idle-prepared mpv initialized in" << preparation->elapsedMs << "ms";
+            auto continuation = std::move(m_mpvPreparationContinuation);
+            m_mpvPreparationContinuation = {};
+            if (continuation)
+                continuation();
+        },
+        Qt::QueuedConnection);
+    worker->start(QThread::LowPriority);
 }
 
 void PlayerController::destroyIdleMpv(const char *reason)
 {
-    if (!m_idleMpvHandle)
-        return;
-
-    mpv_handle *handle = m_idleMpvHandle;
-    m_idleMpvHandle = nullptr;
-    qInfo() << "player: destroying idle-prepared mpv" << (reason ? reason : "unspecified");
-    mpv_terminate_destroy(handle);
+    m_mpvPreparation.reset();
+    if (auto *handle = std::exchange(m_idleMpvHandle, nullptr)) {
+        qInfo() << "player: destroying idle-prepared mpv" << (reason ? reason : "unspecified");
+        destroyMpvOffThread(handle);
+    }
 }
 
 mpv_handle *PlayerController::takeIdleMpvHandle()
@@ -410,45 +565,13 @@ mpv_handle *PlayerController::takeIdleMpvHandle()
     return handle;
 }
 
-bool PlayerController::configureAndInitializeMpv(mpv_handle *handle, bool needsVideoSurface, bool embeddedVideo)
+bool PlayerController::configureAndInitializeMpv(mpv_handle *handle, const MpvPreparation& preparation)
 {
     if (!handle)
         return false;
-
-    const auto platform = platformMpvOptionProfile();
-    const int parallelRequests = m_api ? m_api->playbackParallelRequests() : 1;
-    const MpvOptionProfile::NetworkProfile network = MpvOptionProfile::networkProfile(platform, parallelRequests);
-    qInfo().nospace() << "player: curl profile source=MpvOptionProfile platform="
-                      << platformPlaybackBackendName(embeddedVideo) << " requestsPerStream=" << network.parallelRequests
-                      << " rangeBytes=" << network.rangeBytes << " ringBytes=" << network.ringBytes;
-    // Qt's trust first: it resolves the platform store through the OS rather
-    // than a path chosen when libcurl was compiled, and it is the only place a
-    // certificate the viewer remembered can reach playback. The path probe
-    // stays behind it for the case where the bundle cannot be written.
-    QByteArray certificateBundle = QFile::encodeName(writeTrustBundle());
-    if (certificateBundle.isEmpty())
-        certificateBundle = MpvOptionProfile::systemCertificateBundle();
-    if (certificateBundle.isEmpty())
-        qWarning() << "player: no certificate bundle; playback TLS will use libcurl's built-in trust";
-    // mpv's own file sink bypasses Qt redaction. Route its events through the
-    // application log instead, including opt-in full-URL diagnostics.
-    auto applicationOptions = MpvOptionProfile::applicationOptions(platform, needsVideoSurface, m_audioOutputMode, {},
-        m_demuxerMaxBytes, m_demuxerMaxBackBytes, parallelRequests, embeddedVideo, mpvShaderCachePath(),
-        certificateBundle, m_renderQuality);
-    applicationOptions.push_back({ "sub-fonts-dir", m_subtitleFontsPath });
-    // mpv's OSD — the performance stats overlay among it — is drawn by libass
-    // too, and it looks for fonts under its own options rather than the
-    // subtitle ones. Builds without a system font provider found nothing at
-    // all and drew an empty overlay, so name the bundled family the app
-    // already ships for subtitles.
-    applicationOptions.push_back({ "osd-fonts-dir", m_subtitleFontsPath });
-    applicationOptions.push_back({ "osd-font", QByteArrayLiteral("IBM Plex Sans Var") });
-
     mpv_request_log_messages(handle, mpvLogLevel());
-    if (!applyOptions(handle, MpvOptionProfile::preInitializeOptions(m_mpvConfigPolicy))
-        || !applyOptions(handle, applicationOptions))
-        return false;
-    if (usesUserMpvConfig() && !applyMpvRuntimeOptions(MpvOptionApplyMode::Initial, handle))
+    if (!applyOptions(handle, preparation.options)
+        || (preparation.userConfig && !applyOptions(handle, preparation.runtimeOptions)))
         return false;
     int initializeResult;
 #if !defined(SPOOL_WEBOS) && !defined(Q_OS_ANDROID)
@@ -485,19 +608,19 @@ bool PlayerController::configureAndInitializeMpv(mpv_handle *handle, bool needsV
     // initialise, losing the pre-warm silently for want of an option that had
     // nothing to constrain. The option stays at auto for both.
     QByteArray softwareDecodeOption = QByteArrayLiteral("--hwdec=no");
-    if (!m_hardwareDecoding)
+    if (!preparation.hardwareDecoding)
         embeddingArguments[std::size(embeddingOptions)] = softwareDecodeOption.data();
     char audioVideoOutputOption[] = "--vo=null";
     char audioVideoTrackOption[] = "--vid=no";
     char audioDisplayOption[] = "--audio-display=no";
-    if (!needsVideoSurface) {
+    if (!preparation.needsVideoSurface) {
         embeddingArguments[0] = audioVideoOutputOption;
         // Keep the argument list contiguous when hardware decoding is enabled.
-        size_t index = std::size(embeddingOptions) + (m_hardwareDecoding ? 0 : 1);
+        size_t index = std::size(embeddingOptions) + (preparation.hardwareDecoding ? 0 : 1);
         embeddingArguments[index++] = audioVideoTrackOption;
         embeddingArguments[index] = audioDisplayOption;
     }
-    if (usesUserMpvConfig())
+    if (preparation.userConfig)
         qInfo() << "player: user mpv config enabled; embedding overrides vo, gpu-api, gpu-context,"
                    " wid, force-window, idle, keep-open, input-vo-keyboard, input-cursor, terminal and osc";
     initializeResult = mpv_initialize_opts(handle, embeddingArguments);
@@ -516,14 +639,20 @@ bool PlayerController::configureAndInitializeMpv(mpv_handle *handle, bool needsV
     // problems are diagnosable wherever the app runs.
     mpv_request_log_messages(handle, mpvLogLevel());
 
-    if (platform == MpvOptionProfile::Platform::Desktop) {
+    if (preparation.platform == MpvOptionProfile::Platform::Desktop) {
         for (const char *name : { "mpv-version", "ffmpeg-version", "hwdec", "gpu-api", "gpu-context" }) {
             char *value = mpv_get_property_string(handle, name);
             qInfo() << "player: initialized mpv" << name << (value ? value : "unavailable");
             mpv_free(value);
         }
     }
-    return usesUserMpvConfig() || applyMpvRuntimeOptions(MpvOptionApplyMode::Runtime, handle);
+    if (!preparation.userConfig) {
+        for (const MpvOption& option : preparation.runtimeOptions) {
+            if (!setMpvProperty(handle, option.name.constData(), option.value.constData()))
+                return false;
+        }
+    }
+    return true;
 }
 
 bool PlayerController::usesUserMpvConfig() const
@@ -645,6 +774,9 @@ void PlayerController::observeMpvProperties(mpv_handle *handle)
     mpv_observe_property(handle, 0, "video-params/transfer", MPV_FORMAT_STRING);
     mpv_observe_property(handle, 0, "video-target-params/transfer", MPV_FORMAT_STRING);
     mpv_observe_property(handle, 0, "hwdec-current", MPV_FORMAT_STRING);
+    mpv_observe_property(handle, 0, "demuxer-cache-duration", MPV_FORMAT_DOUBLE);
+    mpv_observe_property(handle, 0, "video-bitrate", MPV_FORMAT_DOUBLE);
+    mpv_observe_property(handle, 0, "audio-bitrate", MPV_FORMAT_DOUBLE);
     if (platformMpvOptionProfile() == MpvOptionProfile::Platform::Desktop) {
         for (const char *name : { "current-vo", "current-gpu-context", "video-codec", "video-dec-params/pixelformat" })
             mpv_observe_property(handle, 0, name, MPV_FORMAT_STRING);
@@ -863,8 +995,7 @@ double PlayerController::positionSeconds() const
 
 double PlayerController::estimatedPositionSeconds() const
 {
-    const bool advancing = m_sessionActive && !m_paused && !m_buffering && !m_seeking;
-    return m_positionTracker.estimatedPosition(effectivePlaybackSpeed(), advancing);
+    return m_positionTracker.estimatedPosition(effectivePlaybackSpeed(), positionAdvancing());
 }
 
 double PlayerController::durationSeconds() const
@@ -1007,8 +1138,15 @@ void PlayerController::discardPreparedMpvForOptionChange(const char *reason)
     if (m_mpvLifecycle.handle())
         return;
 
+    const bool pendingPlay = static_cast<bool>(m_mpvPreparationContinuation);
     destroyIdleMpv(reason);
-    scheduleIdleMpvPreparation();
+    if (pendingPlay) {
+        auto continuation = std::move(m_mpvPreparationContinuation);
+        m_mpvPreparationContinuation = {};
+        continuation();
+    } else {
+        scheduleIdleMpvPreparation();
+    }
 }
 
 bool PlayerController::applyMpvSubtitleOptions(MpvOptionApplyMode mode, mpv_handle *handle, bool preserveTrackSelection,
@@ -1071,31 +1209,24 @@ bool PlayerController::ensureMpv(bool needsVideoSurface, bool embeddedVideo)
     QElapsedTimer startupTimer;
     startupTimer.start();
 
-    // The prewarmed core carries a video output profile. Audio must be
-    // initialized without one, just as embedded video needs its own profile.
-    if (embeddedVideo || !needsVideoSurface)
-        destroyIdleMpv(embeddedVideo ? "embedded software video output" : "audio-only output");
     mpv_handle *handle = takeIdleMpvHandle();
-    const bool idlePrepared = handle != nullptr;
-    if (!handle) {
-        handle = mpv_create();
-        if (!handle) {
-            m_errorText = QStringLiteral("mpv_create failed.");
-            emit playbackStateChanged();
-            return false;
-        }
+    if (!handle)
+        return false;
+    const bool idlePrepared = true;
 
-        if (!configureAndInitializeMpv(handle, needsVideoSurface, embeddedVideo)) {
-            mpv_terminate_destroy(handle);
-            m_errorText = QStringLiteral("Failed to initialize libmpv.");
-            emit playbackStateChanged();
-            return false;
-        }
+    if (((m_volumeKnown || !usesUserMpvConfig())
+            && !setRequiredMpvProperty(handle, "volume", QByteArray::number(m_volume.load()).constData()))
+        || ((m_muteKnown || !usesUserMpvConfig())
+            && !setRequiredMpvProperty(handle, "mute", m_muted.load() ? "yes" : "no"))) {
+        destroyMpvOffThread(handle);
+        m_errorText = QStringLiteral("Failed to restore the playback volume.");
+        emit playbackStateChanged();
+        return false;
     }
 
     QString surfaceError;
     if (!configurePlatformMpvSurface(handle, *m_window, needsVideoSurface, embeddedVideo, surfaceError)) {
-        mpv_terminate_destroy(handle);
+        destroyMpvOffThread(handle);
         m_errorText = surfaceError;
         emit playbackStateChanged();
         return false;
@@ -1115,7 +1246,7 @@ bool PlayerController::ensureMpv(bool needsVideoSurface, bool embeddedVideo)
     if (!attachPlatformMpvSurface(
             handle, needsVideoSurface, embeddedVideo, *this,
             [this](const QString& message) { handleVideoRenderError(message); }, attachmentError)) {
-        mpv_terminate_destroy(handle);
+        destroyMpvOffThread(handle);
         m_errorText = attachmentError;
         m_statusText = QStringLiteral("Playback unavailable");
         emit playbackStateChanged();
@@ -1130,7 +1261,7 @@ bool PlayerController::ensureMpv(bool needsVideoSurface, bool embeddedVideo)
         if (needsVideoSurface)
             releasePlatformMpvSurface(m_embeddedVideoOutput);
         m_embeddedVideoOutput = false;
-        mpv_terminate_destroy(handle);
+        destroyMpvOffThread(handle);
         m_errorText = QStringLiteral("Failed to start the libmpv event loop.");
         emit playbackStateChanged();
         return false;
@@ -1163,6 +1294,8 @@ void PlayerController::playLocalFiles(const QList<QUrl>& urls)
 
 void PlayerController::playSession(const PlaybackSession& session, bool startPaused, const QList<QUrl>& localFiles)
 {
+    const quint64 generation = ++m_playGeneration;
+    m_mpvPreparationContinuation = {};
     const bool needsVideoSurface = MpvOptionProfile::needsVideoSurface(session);
     const QString nextMediaKind = needsVideoSurface ? QStringLiteral("video") : QStringLiteral("audio");
     const bool embeddedVideo = needsVideoSurface && platformUsesEmbeddedVideo(session, m_directVideoOutput);
@@ -1173,9 +1306,27 @@ void PlayerController::playSession(const PlaybackSession& session, bool startPau
             << "mediaKind=" << nextMediaKind << "startTimeTicks=" << session.startTimeTicks
             << "startPaused=" << startPaused;
 
+    sampleSettledPlaybackPosition();
+    m_progressTimer.stop();
+    m_uiPositionTimer.stop();
+    m_seekWatchdogTimer.stop();
+    m_backgroundTeardownTimer.stop();
+    if (m_sessionActive && !m_localPlaylist) {
+        const auto previous = m_session;
+        const qint64 position = secondsToTicks(m_positionTracker.position());
+        const quint64 reportId = m_reporter.stop(position, false, effectivePlaybackSpeed());
+        emit playbackStopped(previous.itemId, position, false, false, reportId);
+    } else if (m_localPlaylist && m_localEntryId >= 0) {
+        emit localEntryEnded(QString::number(m_localEntryId), secondsToTicks(m_positionTracker.position()), false);
+    }
+    if (generation != m_playGeneration)
+        return;
+
     if (m_mpvLifecycle.handle()) {
         qInfo() << "player: tearing down stale mpv before play";
         teardownMpv();
+        if (generation != m_playGeneration)
+            return;
         if (m_mpvLifecycle.handle()) {
             // A timed-out render-context release preserves the old core.
             // Never load a different media kind into its output profile.
@@ -1195,6 +1346,8 @@ void PlayerController::playSession(const PlaybackSession& session, bool startPau
     }
     if (hadSubtitleDelay)
         emit subtitleDelayMsChanged();
+    if (generation != m_playGeneration)
+        return;
 
     m_hdrInput = MpvOptionProfile::isHdrPlayback(session.mediaStreams);
     m_starfishVideoOutput
@@ -1207,7 +1360,10 @@ void PlayerController::playSession(const PlaybackSession& session, bool startPau
     if (needsVideoSurface && !embeddedVideo) {
         QElapsedTimer playbackSurfaceTimer;
         playbackSurfaceTimer.start();
-        if (!m_window->prepareForPlaybackSurface()) {
+        const bool prepared = m_window->prepareForPlaybackSurface();
+        if (generation != m_playGeneration)
+            return;
+        if (!prepared) {
             m_errorText = QStringLiteral("Failed to prepare the native playback surface.");
             qWarning() << "player: prepareForPlaybackSurface failed after" << playbackSurfaceTimer.elapsed() << "ms";
             emit playbackStateChanged();
@@ -1224,10 +1380,16 @@ void PlayerController::playSession(const PlaybackSession& session, bool startPau
         qInfo() << "player: audio-only playback does not request a video surface";
     }
 
-    if (!ensureMpv(needsVideoSurface, embeddedVideo))
-        return;
-
     m_session = session;
+    m_networkMetrics.clear();
+    m_networkQueryPending = false;
+    m_networkBufferSeconds = 0;
+    m_networkVideoBitrate = 0;
+    m_networkAudioBitrate = 0;
+    m_networkOrigin = localFiles.isEmpty() && m_api ? m_api->mediaOrigin() : QUrl();
+    m_sessionRequestHeaders = localFiles.isEmpty() && m_api ? m_api->mediaRequestHeaders() : QByteArray();
+    m_sessionNetworkProfile = localFiles.isEmpty() && m_api ? m_api->playbackNetworkProfile() : QVariantMap();
+    m_sessionTrustCertificate = m_tlsTrust ? m_tlsTrust->trustedCertificate(m_networkOrigin) : QSslCertificate();
     m_localPlaylist = !localFiles.isEmpty();
     m_localEntryStarted = false;
     m_localEntryId = -1;
@@ -1261,13 +1423,13 @@ void PlayerController::playSession(const PlaybackSession& session, bool startPau
     m_restoreStreamSelection = session.restoreStreamSelection;
     m_backAllowed = false;
     m_backGuardTimer.start();
-    m_uiPositionTimer.start();
     const bool wasVisible = m_visible;
     const bool wasSessionActive = m_sessionActive;
     // Audio has no video surface but still owns the screen: it gets the same
     // transport chrome over a now playing stage instead of playing unseen.
     m_visible = true;
     m_sessionActive = true;
+    updateUiPositionTimer();
     if (wasVisible != m_visible)
         emit visibleChanged();
     if (wasSessionActive != m_sessionActive)
@@ -1277,9 +1439,34 @@ void PlayerController::playSession(const PlaybackSession& session, bool startPau
     emit tracksChanged();
     emit segmentsChanged();
     emit trickplayChanged();
+    if (generation != m_playGeneration)
+        return;
+    finishPlaySession(session, startPaused, localFiles, generation);
+}
+
+void PlayerController::finishPlaySession(
+    const PlaybackSession& session, bool startPaused, const QList<QUrl>& localFiles, quint64 generation)
+{
+    if (generation != m_playGeneration)
+        return;
+    const bool needsVideoSurface = MpvOptionProfile::needsVideoSurface(session);
+    const bool embeddedVideo = needsVideoSurface && platformUsesEmbeddedVideo(session, m_directVideoOutput);
+    if (!m_idleMpvHandle || m_idleMpvNeedsVideoSurface != needsVideoSurface
+        || m_idleMpvEmbeddedVideo != embeddedVideo) {
+        m_mpvPreparationContinuation = [this, session, startPaused, localFiles, generation] {
+            finishPlaySession(session, startPaused, localFiles, generation);
+        };
+        prepareMpvAsync(needsVideoSurface, embeddedVideo);
+        return;
+    }
+    if (!ensureMpv(needsVideoSurface, embeddedVideo) || generation != m_playGeneration)
+        return;
 
     QString surfaceReadyError;
-    if (!waitForPlatformMpvSurfaceReady(needsVideoSurface, embeddedVideo, surfaceReadyError)) {
+    const bool surfaceReady = waitForPlatformMpvSurfaceReady(needsVideoSurface, embeddedVideo, surfaceReadyError);
+    if (generation != m_playGeneration)
+        return;
+    if (!surfaceReady) {
         m_errorText = surfaceReadyError;
         m_statusText = QStringLiteral("Playback unavailable");
         teardownMpv();
@@ -1292,12 +1479,11 @@ void PlayerController::playSession(const PlaybackSession& session, bool startPau
     // about at all.
     updateRenderTarget();
 
-    // An idle-prepared mpv was configured before this session's HDR policy
-    // was known. Reapply subtitle options now so HDR paperwhite is correct
-    // from the first rendered subtitle, not only after a settings change.
-    if (!usesUserMpvConfig() && !applyMpvSubtitleOptions(MpvOptionApplyMode::Runtime, handle)) {
+    // Session-specific HDR and per-file delays may have changed since an idle
+    // core's snapshot. Restore current runtime settings before loading media.
+    if (!usesUserMpvConfig() && !applyMpvRuntimeOptions(MpvOptionApplyMode::Runtime, handle)) {
         m_mpvLifecycle.cancelFileLoad();
-        m_errorText = QStringLiteral("libmpv rejected the subtitle appearance.");
+        m_errorText = QStringLiteral("libmpv rejected the playback settings.");
         stopProgressReporting(true);
         return;
     }
@@ -1308,7 +1494,7 @@ void PlayerController::playSession(const PlaybackSession& session, bool startPau
     // timeline before the server's scheduled Unpause command. Set pause on
     // the idle mpv core before loadfile so even the first decoded frame is
     // held. Ordinary playback explicitly clears any inherited pause state.
-    if (!setRequiredMpvProperty(handle, "pause", startPaused ? "yes" : "no")) {
+    if (!setRequiredMpvProperty(handle, "pause", m_paused ? "yes" : "no")) {
         m_mpvLifecycle.cancelFileLoad();
         m_errorText = QStringLiteral("libmpv rejected the initial playback state.");
         stopProgressReporting(true);
@@ -1324,8 +1510,7 @@ void PlayerController::playSession(const PlaybackSession& session, bool startPau
     }
 
     QByteArray urlBytes = session.url.toUtf8();
-    if (!MpvOptionProfile::applyRequestHeaders(
-            handle, !m_localPlaylist && m_api ? m_api->mediaRequestHeaders() : QByteArray {})) {
+    if (!MpvOptionProfile::applyRequestHeaders(handle, m_sessionRequestHeaders)) {
         m_mpvLifecycle.cancelFileLoad();
         m_errorText = QStringLiteral("libmpv rejected the authenticated media request.");
         stopProgressReporting(true);
@@ -1338,7 +1523,7 @@ void PlayerController::playSession(const PlaybackSession& session, bool startPau
         return;
     }
     if (!m_localPlaylist && m_api && m_tlsTrust) {
-        const QSslCertificate certificate = m_tlsTrust->trustedCertificate(m_api->mediaOrigin());
+        const QSslCertificate& certificate = m_sessionTrustCertificate;
         if (!certificate.isNull()) {
             const QString trustDirectory = QDir(startupCacheRoot({})).filePath(QStringLiteral("tls"));
             const QString trustPath = trustDirectory + QLatin1Char('/')
@@ -1364,6 +1549,8 @@ void PlayerController::playSession(const PlaybackSession& session, bool startPau
             }
         }
     }
+    const double startSeconds
+        = session.startTimeTicks > 0 ? static_cast<double>(session.startTimeTicks) / 10000000.0 : 0.0;
     const double streamStartSeconds = m_timeline.streamSeconds(startSeconds);
     if (streamStartSeconds >= 0.001) {
         const QByteArray startValue = QByteArray::number(streamStartSeconds, 'f', 3);
@@ -1413,7 +1600,29 @@ void PlayerController::playSession(const PlaybackSession& session, bool startPau
         }
         return;
     }
-    const QByteArray loadFileOptions = MpvOptionProfile::loadFileOptions(session);
+    QByteArray loadFileOptions = MpvOptionProfile::loadFileOptions(session);
+    if (m_api && !m_networkOrigin.isEmpty()) {
+        // Resolve seeds per file, not from whichever account was active when
+        // the speculative core was initialized.
+        const QVariantMap& profile = m_sessionNetworkProfile;
+        const auto addOption = [&loadFileOptions](const char *name, const QByteArray& value) {
+            if (!loadFileOptions.isEmpty())
+                loadFileOptions += ',';
+            loadFileOptions += name;
+            loadFileOptions += '=';
+            loadFileOptions += value;
+        };
+        addOption("curl-adaptive", "yes");
+        addOption("curl-parallel-requests", "4");
+        addOption("curl-initial-requests",
+            QByteArray::number(std::clamp(profile.value(QStringLiteral("initial-requests"), 1).toInt(), 1, 4)));
+        addOption(
+            "curl-latency-ms", QByteArray::number(profile.value(QStringLiteral("latency-ms")).toDouble(), 'f', 3));
+        addOption("curl-observed-bps",
+            QByteArray::number(profile.value(QStringLiteral("capacity-bytes-per-second")).toDouble(), 'f', 0));
+        addOption("curl-media-bitrate", QByteArray::number(networkMediaBitrate(), 'f', 0));
+    }
+    m_networkTimer.start();
     const char *loadCommand[] = { "loadfile", urlBytes.constData(), "replace", "-1",
         loadFileOptions.isEmpty() ? nullptr : loadFileOptions.constData(), nullptr };
     if (mpv_command(handle, loadCommand) < 0) {
@@ -1598,12 +1807,23 @@ void PlayerController::setMediaSegments(const QString& itemId, const std::vector
 void PlayerController::togglePause()
 {
     qInfo() << "player: toggle pause requested";
+    if (!m_mpvLifecycle.handle() && m_sessionActive) {
+        setPaused(!m_paused);
+        return;
+    }
     mpvCommand({ QByteArrayLiteral("no-osd"), QByteArrayLiteral("cycle"), QByteArrayLiteral("pause") });
 }
 
 void PlayerController::setPaused(bool paused)
 {
     qInfo() << "player: pause requested" << paused;
+    if (!m_mpvLifecycle.handle() && m_sessionActive) {
+        if (m_paused != paused) {
+            m_paused = paused;
+            notifyPlaybackStateChanged();
+        }
+        return;
+    }
     mpvCommand({ QByteArrayLiteral("no-osd"), QByteArrayLiteral("set"), QByteArrayLiteral("pause"),
         paused ? QByteArrayLiteral("yes") : QByteArrayLiteral("no") });
 }
@@ -1640,6 +1860,8 @@ void PlayerController::resyncForForeground()
 {
     if (!platformUsesBackgroundPlaybackPolicy())
         return;
+    m_idleMpvPreparationEnabled = platformIdleMpvPreparationEnabled();
+    scheduleIdleMpvPreparation();
     if (m_backgroundTeardownTimer.isActive()) {
         m_backgroundTeardownTimer.stop();
         qInfo() << "player: cancelled transient background teardown";
@@ -1790,7 +2012,8 @@ void PlayerController::selectSubtitle(int index)
     if (!command)
         return;
 
-    mpvCommand(*command);
+    if (!mpvCommand(*command))
+        return;
     m_tracks.applySubtitleSelection(index);
     if (!m_tracks.subtitlesEnabled()) {
         m_window->clearOverlay();
@@ -1879,6 +2102,12 @@ void PlayerController::updateReportedStreamSelection(bool sendProgress)
             m_volume.load(), m_muted.load());
 }
 
+void PlayerController::setQueueState(
+    const std::vector<PlaybackQueueItem>& queue, const QString& repeatMode, bool shuffled)
+{
+    m_reporter.setQueue(queue, repeatMode, shuffled);
+}
+
 void PlayerController::stepChapter(int delta)
 {
     if (!m_tracks.hasChapters())
@@ -1887,6 +2116,7 @@ void PlayerController::stepChapter(int delta)
     // it says so -- but it is still a seek, and the samples on the way to it
     // belong to where playback was, not to where it is going.
     m_positionTracker.beginBlindSeek();
+    updateUiPositionTimer();
     m_seekWatchdogTimer.start();
     if (mpvCommand({ QByteArrayLiteral("add"), QByteArrayLiteral("chapter"), QByteArray::number(delta) }))
         return;
@@ -1909,38 +2139,49 @@ void PlayerController::stop()
     stopWithReason(QStringLiteral("explicit-stop"), true);
 }
 
+bool PlayerController::sampleSettledPlaybackPosition()
+{
+    if (!m_fileLoaded || m_pendingSeek || m_seeking || m_positionTracker.seekInFlight())
+        return false;
+    auto *handle = m_mpvLifecycle.handle();
+    double position = 0.0;
+    double duration = 0.0;
+    const bool sampledPosition
+        = handle && mpv_get_property(handle, "time-pos", MPV_FORMAT_DOUBLE, &position) >= 0 && std::isfinite(position);
+    const bool sampledDuration
+        = handle && mpv_get_property(handle, "duration", MPV_FORMAT_DOUBLE, &duration) >= 0 && std::isfinite(duration);
+    if (sampledDuration)
+        m_positionTracker.setDuration(m_timeline.sourceDuration(duration));
+    if (sampledPosition)
+        m_positionTracker.update(m_timeline.sourceSeconds(position));
+    return sampledPosition && sampledDuration;
+}
+
 void PlayerController::stopWithReason(const QString& reason, bool explicitStop)
 {
+    const quint64 stopGeneration = ++m_playGeneration;
     Diagnostics::Task task(QStringLiteral("player_stop"),
         { { QStringLiteral("reason"), reason }, { QStringLiteral("sessionActive"), m_sessionActive } });
     qInfo() << "player: stop requested" << reason << "sessionActive" << m_sessionActive;
-    emit stopRequested();
+    emit stopRequested(reason);
+    if (stopGeneration != m_playGeneration)
+        return;
+    m_mpvPreparationContinuation = {};
+    destroyIdleMpv("stop");
     if (!m_sessionActive)
         return;
 
     // A paused resume may still show its seed, and a playing clock can be a
     // little ahead of the last observation. Completion uses one native stop
     // snapshot, never a requested seek or an estimated UI position.
-    if (explicitStop && m_fileLoaded && !m_pendingSeek && !m_seeking && !m_positionTracker.seekInFlight()) {
-        auto *handle = m_mpvLifecycle.handle();
-        double nativePosition = 0.0;
-        double nativeDuration = 0.0;
-        const bool sampledPosition = handle
-            && mpv_get_property(handle, "time-pos", MPV_FORMAT_DOUBLE, &nativePosition) >= 0
-            && std::isfinite(nativePosition);
-        const bool sampledDuration = handle
-            && mpv_get_property(handle, "duration", MPV_FORMAT_DOUBLE, &nativeDuration) >= 0
-            && std::isfinite(nativeDuration);
-        if (sampledDuration)
-            m_positionTracker.setDuration(m_timeline.sourceDuration(nativeDuration));
-        if (sampledPosition)
-            m_positionTracker.update(m_timeline.sourceSeconds(nativePosition));
-        if (!sampledPosition || !sampledDuration)
-            explicitStop = false;
-    }
+    if (explicitStop)
+        explicitStop = sampleSettledPlaybackPosition();
 
     // Drop the UI synchronously so navigation never waits for backend unload.
+    const quint64 generation = m_mpvEventGeneration;
     stopProgressReporting(false, false, explicitStop);
+    if (generation != m_mpvEventGeneration)
+        return;
 
     if (auto *handle = m_mpvLifecycle.handle())
         setMpvProperty(handle, "http-header-fields", "");
@@ -2012,6 +2253,8 @@ void PlayerController::setFileAudioDelayMs(int delayMs)
         return;
     if (auto *handle = m_mpvLifecycle.handle())
         applyMpvRuntimeOption(MpvRuntimeOption::AudioDelay, MpvOptionApplyMode::Runtime, handle);
+    else
+        discardPreparedMpvForOptionChange("file audio delay change");
     emit fileAudioDelayMsChanged();
     emit effectiveAudioDelayMsChanged();
 }
@@ -2023,6 +2266,8 @@ void PlayerController::setSubtitleDelayMs(int delayMs)
         return;
     if (auto *handle = m_mpvLifecycle.handle())
         applyMpvRuntimeOption(MpvRuntimeOption::SubtitleDelay, MpvOptionApplyMode::Runtime, handle);
+    else
+        discardPreparedMpvForOptionChange("subtitle delay change");
     emit subtitleDelayMsChanged();
 }
 
@@ -2040,6 +2285,7 @@ void PlayerController::setAudioOutputMode(const QString& mode)
 
 void PlayerController::setVolume(int volume)
 {
+    m_volumeKnown = true;
     const int clampedVolume = qBound(0, volume, 100);
     if (m_volume.load() == clampedVolume)
         return;
@@ -2061,6 +2307,7 @@ void PlayerController::adjustVolume(int delta)
 }
 void PlayerController::setMuted(bool muted)
 {
+    m_muteKnown = true;
     if (m_muted.load() == muted)
         return;
     m_muted = muted;
@@ -2228,6 +2475,43 @@ void PlayerController::setMpvConfigPolicy(const MpvConfigPolicy& policy)
     discardPreparedMpvForOptionChange("mpv config policy change");
 }
 
+double PlayerController::networkMediaBitrate() const
+{
+    const double bitrate = m_session.playMethod != QLatin1String("Transcode") && m_session.sourceBitrate > 0
+        ? static_cast<double>(m_session.sourceBitrate)
+        : m_networkVideoBitrate + m_networkAudioBitrate;
+    return std::clamp(bitrate * effectivePlaybackSpeed(), 0.0, 1.0e12);
+}
+
+void PlayerController::updateNetworkTransport()
+{
+    auto *handle = m_mpvLifecycle.handle();
+    if (!handle || !m_sessionActive)
+        return;
+    char bitrateKey[] = "media-bitrate";
+    char bufferKey[] = "buffer-seconds";
+    char pausedKey[] = "paused";
+    char *keys[] = { bitrateKey, bufferKey, pausedKey };
+    mpv_node values[3] {};
+    values[0].format = MPV_FORMAT_DOUBLE;
+    values[0].u.double_ = networkMediaBitrate();
+    values[1].format = MPV_FORMAT_DOUBLE;
+    values[1].u.double_ = m_networkBufferSeconds;
+    values[2].format = MPV_FORMAT_FLAG;
+    values[2].u.flag = m_paused || m_seeking;
+    mpv_node_list list { 3, values, keys };
+    mpv_node control {};
+    control.format = MPV_FORMAT_NODE_MAP;
+    control.u.list = &list;
+    // Async APIs copy their arguments. Neither operation waits for curl/the core
+    // while Qt needs the GUI thread for rendering.
+    mpv_set_property_async(handle, 0, "curl-transport-control", MPV_FORMAT_NODE, &control);
+    if (!m_networkQueryPending) {
+        m_networkQueryPending
+            = mpv_get_property_async(handle, kNetworkMetricsReply, "curl-transport-metrics", MPV_FORMAT_NODE) >= 0;
+    }
+}
+
 void PlayerController::startProgressReporting()
 {
     Diagnostics::logEvent(QStringLiteral("player"), QStringLiteral("progress_reporting_start"),
@@ -2258,6 +2542,7 @@ void PlayerController::stopProgressReporting(bool failed, bool reachedEnd, bool 
     m_progressTimer.stop();
     m_uiPositionTimer.stop();
     m_seekWatchdogTimer.stop();
+    m_networkTimer.stop();
 
     const auto session = m_session;
     reachedEnd = reachedEnd && !failed && m_fileLoaded;
@@ -2299,6 +2584,7 @@ void PlayerController::setDirectVideoOutput(bool direct)
     if (m_directVideoOutput == direct)
         return;
     m_directVideoOutput = direct;
+    discardPreparedMpvForOptionChange("video output change");
     qInfo() << "player: video output" << (direct ? "direct" : "enhanced");
 }
 
@@ -2307,6 +2593,7 @@ void PlayerController::setRenderQuality(MpvOptionProfile::RenderQuality quality)
     if (m_renderQuality == quality)
         return;
     m_renderQuality = quality;
+    discardPreparedMpvForOptionChange("render quality change");
     qInfo() << "player: render quality" << MpvOptionProfile::renderQualityName(quality).constData();
 }
 
@@ -2473,7 +2760,7 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_
         // thread, whose captured handle lives until the event loop is joined,
         // so GUI synchronization remains available to the renderer.
         logColorDiagnostics(handle);
-        postMpvEvent(generation, [this]() {
+        postMpvEvent(generation, [this, generation]() {
             m_mpvLifecycle.completeFileLoad();
             qInfo() << "player: file loaded";
             m_fileLoaded = true;
@@ -2494,13 +2781,17 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_
                         stream.title.toUtf8(), stream.language.toUtf8() });
             }
             notifyPlaybackStateChanged();
-            startProgressReporting();
+            if (generation == m_mpvEventGeneration && m_sessionActive)
+                startProgressReporting();
         });
         break;
     case MPV_EVENT_PLAYBACK_RESTART:
-        logColorDiagnostics(handle);
         postMpvEvent(generation, [this]() {
             qInfo() << "player: playback restart";
+            // The first restart has the final output parameters. Ordinary
+            // seek completions do not need another synchronous property sweep.
+            if (!m_seekDispatchReady)
+                logColorDiagnostics(m_mpvLifecycle.handle());
             const bool hadPendingSeek = m_pendingSeek;
             m_seekDispatchReady = true;
             if (hadPendingSeek) {
@@ -2545,6 +2836,30 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_
         break;
     }
     case MPV_EVENT_GET_PROPERTY_REPLY: {
+        if (event->reply_userdata == kNetworkMetricsReply) {
+            const auto *property = static_cast<mpv_event_property *>(event->data);
+            const QVariantMap metrics
+                = event->error >= 0 && property && property->data && property->format == MPV_FORMAT_NODE
+                ? networkMetricValue(*static_cast<const mpv_node *>(property->data)).toMap()
+                : QVariantMap();
+            postMpvEvent(generation, [this, metrics] {
+                m_networkQueryPending = false;
+                if (metrics.isEmpty())
+                    return;
+                m_networkMetrics = metrics;
+                if (m_api && !m_networkOrigin.isEmpty() && !m_seeking && !m_paused
+                    && m_session.playMethod != QLatin1String("Transcode")) {
+                    QVariantMap sample = metrics;
+                    const quint64 streamId = metrics.value(QStringLiteral("stream-id")).toULongLong();
+                    sample.insert(QStringLiteral("stream-id"),
+                        QVariant::fromValue<quint64>((m_mpvEventGeneration << 32) | (streamId & 0xffffffffULL)));
+                    sample.insert(QStringLiteral("observed-at-ms"), QDateTime::currentMSecsSinceEpoch());
+                    sample.insert(QStringLiteral("media-bitrate"), networkMediaBitrate());
+                    m_api->updatePlaybackNetworkProfile(m_networkOrigin, sample);
+                }
+            });
+            break;
+        }
         if (event->reply_userdata != kTimePosRefreshReply)
             break;
 
@@ -2553,13 +2868,30 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_
             break;
 
         const double seconds = *static_cast<double *>(property->data);
-        postMpvEvent(generation, [this, seconds]() { setPositionSeconds(seconds); });
+        postMpvEvent(generation, [this, seconds]() { setPositionSeconds(seconds, true); });
         break;
     }
     case MPV_EVENT_PROPERTY_CHANGE: {
         auto *property = static_cast<mpv_event_property *>(event->data);
         if (!property || !property->data)
             break;
+        if ((strcmp(property->name, "demuxer-cache-duration") == 0 || strcmp(property->name, "video-bitrate") == 0
+                || strcmp(property->name, "audio-bitrate") == 0)
+            && property->format == MPV_FORMAT_DOUBLE) {
+            const double value = *static_cast<double *>(property->data);
+            const QByteArray name(property->name);
+            postMpvEvent(generation, [this, name, value] {
+                if (!std::isfinite(value) || value < 0)
+                    return;
+                if (name == "demuxer-cache-duration")
+                    m_networkBufferSeconds = value;
+                else if (name == "video-bitrate")
+                    m_networkVideoBitrate = value;
+                else
+                    m_networkAudioBitrate = value;
+            });
+            break;
+        }
 
         if (strcmp(property->name, "playlist") == 0) {
             postMpvEvent(generation, [this] { refreshLocalPlaylist(); });
@@ -2578,6 +2910,13 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_
         if (strcmp(property->name, "pause") == 0 && property->format == MPV_FORMAT_FLAG) {
             const bool paused = *static_cast<int *>(property->data);
             postMpvEvent(generation, [this, paused]() {
+                // Until a file has loaded, mpv's pause is only ever what was
+                // set or is about to be: an adopted idle core reports its own
+                // initial state as it is observed, and that report lands
+                // while setup waits for the surface. Taking it would overwrite
+                // the requested start (or a pause pressed during setup).
+                if (!m_fileLoaded)
+                    return;
                 if (m_paused != paused)
                     qInfo() << "player: pause state changed" << paused;
                 m_paused = paused;
@@ -2656,6 +2995,7 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_
         } else if (strcmp(property->name, "volume") == 0 && property->format == MPV_FORMAT_DOUBLE) {
             const auto volume = static_cast<int>(std::round(*static_cast<double *>(property->data)));
             postMpvEvent(generation, [this, volume]() {
+                m_volumeKnown = true;
                 const int clampedVolume = qBound(0, volume, 100);
                 if (m_volume.load() == clampedVolume)
                     return;
@@ -2681,6 +3021,7 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_
         } else if (strcmp(property->name, "mute") == 0 && property->format == MPV_FORMAT_FLAG) {
             const bool muted = *static_cast<int *>(property->data);
             postMpvEvent(generation, [this, muted]() {
+                m_muteKnown = true;
                 if (m_muted.exchange(muted) != muted)
                     emit volumeChanged();
             });
@@ -2789,7 +3130,7 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_
         // while loading belongs to this request. Clear the pending marker on
         // both success and failure; otherwise a failed manifest stays stuck in
         // the preparing state forever.
-        postMpvEvent(generation, [this, failed, endFileReason, endFileError]() {
+        postMpvEvent(generation, [this, generation, failed, endFileReason, endFileError]() {
             if (m_localPlaylist) {
                 if (endFileReason != MPV_END_FILE_REASON_REDIRECT) {
                     const bool completed = PlaybackFailurePolicy::classifyFileEnd(failed, endFileReason,
@@ -2801,6 +3142,8 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_
                     emit localEntryEnded(
                         QString::number(m_localEntryId), secondsToTicks(m_positionTracker.position()), completed);
                 }
+                if (generation != m_mpvEventGeneration)
+                    return;
                 m_localEntryId = -1;
                 m_fileLoaded = false;
                 m_seekDispatchReady = false;
@@ -2844,6 +3187,8 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_
             // against the ending core before emitting it, never its replacement.
             scheduleMpvTeardown();
             stopProgressReporting(failed, completed);
+            if (generation != m_mpvEventGeneration)
+                return;
             if (interrupted) {
                 emit playbackInterrupted(failedItemId, failedPositionTicks,
                     PlaybackFailurePolicy::shouldResumeInterrupted(startSeconds, positionSeconds));
@@ -2857,7 +3202,6 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_
     }
     case MPV_EVENT_SHUTDOWN:
         postMpvEvent(generation, [this]() {
-            m_mpvLifecycle.requestEventLoopStop();
             qInfo() << "player: mpv shutdown";
             scheduleMpvTeardown();
             if (m_sessionActive)
@@ -2899,8 +3243,29 @@ void PlayerController::updatePlaybackStatusText()
 
 void PlayerController::notifyPlaybackStateChanged()
 {
+    const bool wasAdvancing = m_uiPositionTimer.isActive();
+    updateUiPositionTimer();
+    // A pause or buffering transition freezes the clock at the latest mpv
+    // sample. Seek gestures already publish their optimistic target directly.
+    if (wasAdvancing && !m_uiPositionTimer.isActive() && !m_positionTracker.seekInFlight())
+        emit positionChanged();
     updatePlaybackStatusText();
     emit playbackStateChanged();
+}
+
+bool PlayerController::positionAdvancing() const
+{
+    return m_sessionActive && m_fileLoaded && !m_paused && !m_buffering && !m_seeking
+        && m_positionTracker.canEstimatePosition();
+}
+
+void PlayerController::updateUiPositionTimer()
+{
+    if (!positionAdvancing()) {
+        m_uiPositionTimer.stop();
+    } else if (!m_uiPositionTimer.isActive()) {
+        m_uiPositionTimer.start();
+    }
 }
 
 double PlayerController::clampedPosition(double seconds) const
@@ -2928,23 +3293,27 @@ void PlayerController::requestMpvPositionRefresh(const char *reason)
                    << mpv_error_string(error);
 }
 
-void PlayerController::setPositionSeconds(double seconds, bool notifySegments)
+void PlayerController::setPositionSeconds(double seconds, bool publishImmediately)
 {
     // Tearing down mpv leaves its last position events queued for the main
     // thread, so they land after play() has reset the tracker for the new item
     // -- and they are about the item that just ended. Until the new file is
     // loaded the tracker already holds the requested start position, and
     // nothing mpv says about the old one is worth hearing.
-    if (!m_fileLoaded)
+    if (!m_fileLoaded || !std::isfinite(seconds) || m_positionTracker.seekInFlight())
         return;
 
-    if (!m_positionTracker.update(m_timeline.sourceSeconds(seconds)))
-        return;
+    const bool firstSample = !m_positionTracker.canEstimatePosition();
+    const bool changed = m_positionTracker.update(m_timeline.sourceSeconds(seconds));
+    updateUiPositionTimer();
 
-    const bool segmentChanged = m_timeline.updatePosition(m_positionTracker.position());
-
-    emit positionChanged();
-    if (notifySegments && segmentChanged)
+    // Every observation still reaches the tracker and segment boundaries.
+    // Normal playback publishes its extrapolated UI clock at 250 ms instead
+    // of also invalidating every QML/JNI consumer for each mpv sample. A first
+    // sample, explicit refresh, or changed frozen position remains immediate.
+    if (publishImmediately || firstSample || (changed && !m_uiPositionTimer.isActive()))
+        emit positionChanged();
+    if (m_timeline.updatePosition(m_positionTracker.position()))
         emit segmentsChanged();
 }
 

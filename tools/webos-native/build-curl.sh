@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+PHASE="${1:-all}"
+if (( $# > 1 )); then echo "usage: $0 [fetch|build|all]" >&2; exit 2; fi
+case "$PHASE" in
+  -h|--help) echo "usage: $0 [fetch|build|all]"; exit 0 ;;
+  fetch|build|all) ;;
+  *) echo "usage: $0 [fetch|build|all]" >&2; exit 2 ;;
+esac
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=tools/lib/build-common.sh
 source "$ROOT/tools/lib/build-common.sh"
@@ -10,7 +18,6 @@ source "$ROOT/tools/lib/manifest-sources.sh"
 source "$ROOT/tools/webos-native/nixos-sdk-compat.sh"
 
 MANIFEST="${WEBOS_THIRD_PARTY_MANIFEST:-$ROOT/tools/manifests/webos-third-party.json}"
-PHASE="${1:-all}"
 SDK_ROOT="${WEBOS_SDK_ROOT:-$ROOT/build/webos-sdk/arm-webos-linux-gnueabi_sdk-buildroot}"
 SYSROOT="$SDK_ROOT/arm-webos-linux-gnueabi/sysroot"
 TARGET_PREFIX="${WEBOS_TARGET_PREFIX:-/usr/local/webos-native}"
@@ -24,10 +31,6 @@ prepare_manifest_source "$ROOT" "$MANIFEST" curl "$SRC_DIR"
 if [[ "$PHASE" == "fetch" ]]; then
   echo "Fetched verified curl source into $SRC_DIR"
   exit 0
-fi
-if [[ "$PHASE" != "all" && "$PHASE" != "build" ]]; then
-  echo "usage: $0 [fetch|build|all]" >&2
-  exit 2
 fi
 
 ensure_webos_sdk_host_tools "$SDK_ROOT"

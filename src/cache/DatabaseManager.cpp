@@ -601,9 +601,12 @@ bool DatabaseManager::initialize(const QString& databasePath)
 
 QCoro::Task<bool> DatabaseManager::awaitInitialization()
 {
-    if (!m_initializationFuture.isValid())
+    const QFuture<bool> initialization = m_initializationFuture;
+    if (!initialization.isValid())
         co_return false;
-    co_return co_await m_initializationFuture;
+    const QPointer<DatabaseManager> manager(this);
+    const bool initialized = co_await initialization;
+    co_return initialized&& manager;
 }
 
 void DatabaseManager::shutdown()
@@ -641,7 +644,7 @@ void DatabaseManager::saveDeviceId(const QString& deviceId)
     invokeOnWorkerAsync([this, deviceId]() { m_worker->setValue(QStringLiteral("client/deviceId"), deviceId); });
 }
 
-QCoro::Task<QJsonObject> DatabaseManager::loadHomePayloadAsync(const QString& key, int schemaVersion)
+QCoro::Task<QJsonObject> DatabaseManager::loadHomePayloadAsync(QString key, int schemaVersion)
 {
     if (!co_await awaitInitialization())
         co_return QJsonObject();
@@ -660,7 +663,7 @@ void DatabaseManager::saveHomePayload(const QString& key, int schemaVersion, con
         [this, key, schemaVersion, payload]() { m_worker->setHomePayload(key, schemaVersion, payload); });
 }
 
-QCoro::Task<QString> DatabaseManager::loadSettingAsync(const QString& key, const QString& defaultValue)
+QCoro::Task<QString> DatabaseManager::loadSettingAsync(QString key, QString defaultValue)
 {
     if (!co_await awaitInitialization())
         co_return defaultValue;
@@ -669,14 +672,14 @@ QCoro::Task<QString> DatabaseManager::loadSettingAsync(const QString& key, const
         [worker, key, defaultValue]() { return worker ? settingFromWorker(worker, key, defaultValue) : defaultValue; });
 }
 
-QCoro::Task<QVariantMap> DatabaseManager::loadValuesAsync(const QStringList& keys)
+QCoro::Task<QVariantMap> DatabaseManager::loadValuesAsync(QStringList keys)
 {
     if (!co_await awaitInitialization())
         co_return QVariantMap();
     DatabaseWorker *worker = m_worker;
     co_return co_await workerTask(worker, [worker, keys]() { return worker ? worker->values(keys) : QVariantMap(); });
 }
-QCoro::Task<StartupState> DatabaseManager::loadStartupStateAsync(const QStringList& keys)
+QCoro::Task<StartupState> DatabaseManager::loadStartupStateAsync(QStringList keys)
 {
     if (!m_initializationFuture.isValid())
         co_return StartupState {};
@@ -719,8 +722,7 @@ QCoro::Task<int> DatabaseManager::schemaVersionAsync()
     co_return co_await workerTask(worker, [worker]() { return worker ? worker->schemaVersion() : 0; });
 }
 
-QCoro::Task<QByteArray> DatabaseManager::loadCacheEntryAsync(
-    const QString& nameSpace, const QString& key, qint64 maxAgeMs)
+QCoro::Task<QByteArray> DatabaseManager::loadCacheEntryAsync(QString nameSpace, QString key, qint64 maxAgeMs)
 {
     if (!co_await awaitInitialization())
         co_return QByteArray();

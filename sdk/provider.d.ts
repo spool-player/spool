@@ -81,11 +81,11 @@ export type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error';
 export type LogFields = Readonly<Record<string, null | boolean | number | string>>;
 
 /**
- * Given to createSource and lives as long as the account: use it for
- * connections that outlast an operation. Everything stops when the account
- * is removed, disabled or the provider is updated.
+ * The host surface shared by sources and operations, under different scopes:
+ * source services outlive any one operation; operation requests are cancelled
+ * with their call.
  */
-export interface SourceHost {
+export interface ProviderHost {
     device: Device;
     /** Frozen manifest declarations mapped to true; not account authorization. */
     readonly capabilities: Capabilities;
@@ -95,16 +95,27 @@ export interface SourceHost {
     log(level: LogLevel, message: string | (() => string), fields?: LogFields): void;
     /** Only origins the account was set up with (or manifest `origins`). */
     http(url: string, options?: HttpOptions): Promise<HttpResponse>;
-    /** 0–60000 ms. */
-    delay(milliseconds: number): Promise<void>;
-    /** ws:// or wss:// on an allowed origin; at most four open. */
-    socket(url: string, options?: { headers?: Record<string, string> }): Socket;
     /** Push to Spool: see Events. */
     emit<K extends keyof Events>(type: K, payload: Events[K]): void;
 }
 
-/** Given to each operation; its requests are cancelled with it. */
-export interface OperationHost extends SourceHost {
+/**
+ * Given to createSource and lives as long as the account: use it for
+ * connections that outlast an operation. Everything stops when the account
+ * is removed, disabled or the provider is updated.
+ */
+export interface SourceHost extends ProviderHost {
+    /** 0–60000 ms. */
+    delay(milliseconds: number): Promise<void>;
+    /** ws:// or wss:// on an allowed origin; at most four open. */
+    socket(url: string, options?: { headers?: Record<string, string> }): Socket;
+}
+
+/**
+ * Given to each operation; its requests are cancelled with it. Sockets are
+ * source-level services only: operations cannot open them.
+ */
+export interface OperationHost extends ProviderHost {
     /** 0–10000 ms. */
     delay(milliseconds: number): Promise<void>;
     /** Requires discovery declaration. UDP broadcast; replies within `timeout` ms (100–5000). */
@@ -140,8 +151,12 @@ export type CreateSource = (configuration: Record<string, Value>, host: SourceHo
 /** Throw `new Error('code')` with a short snake_case code; Spool shows no provider text. `http_401` marks the account as needing sign-in. */
 export type Operation<A, R> = (args: A, host: OperationHost) => R | Promise<R>;
 
-export interface Page { items: Item[]; cursor: string | null; total?: number | null; exhausted: boolean }
-export interface PageArgs { cursor?: string; limit: number }
+export interface Page { items: Item[]; cursor: string | null; total?: number | null; exhausted: boolean;
+    /** `browse` only: this listing is positional. Spool may then ask for any row with `offset`, and `total` is exact. */
+    seekable?: boolean }
+export interface PageArgs { cursor?: string; limit: number;
+    /** Row to start at, sent instead of `cursor` only to a listing whose first page said `seekable: true`. */
+    offset?: number }
 
 export type SortBy = 'SortName' | 'Random' | 'CommunityRating' | 'CriticRating' | 'DateCreated' | 'DateLastContentAdded'
     | 'OfficialRating' | 'PremiereDate' | 'PlayCount' | 'Runtime' | 'DatePlayed' | string;
@@ -382,6 +397,11 @@ export interface Source extends CatalogueOperations, PreferenceOperations, Appli
     latest?: Operation<PageArgs & { parentId?: string }, Page>;
     similar?: Operation<PageArgs & { itemId: string }, Page>;
     personItems?: Operation<PageArgs & { personId: string }, Page>;
+    /** How a `SortName` listing divides by leading character, so a long library can show and jump to letters
+     *  before those rows are loaded. Takes the same arguments as `browse` without paging; `entries` run in
+     *  ascending order with '#' first for anything before A. Optional: Spool estimates without it. */
+    browseIndex?: Operation<{ parentId?: string; collectionType?: string; genre?: string; studio?: string;
+        filters?: BrowseFilters }, { entries: { label: string; count: number }[] }>;
     /** `supported` names the BrowseFilters this library honours, as a key or `key:value`
      *  (`filters:IsPlayed`). When present Spool offers only those; when absent it offers
      *  every filter except `isHdr`, which is offered only where declared. */
@@ -406,7 +426,14 @@ export interface Source extends CatalogueOperations, PreferenceOperations, Appli
         queue?: PlaybackQueueSnapshot; queueIndex?: number }, {}>;
 
     favorite?: Operation<{ itemId: string; value: boolean }, {}>;
+    /** Marking unplayed also clears the resume position on the server. */
     played?: Operation<{ itemId: string; value: boolean }, {}>;
+    /**
+     * Saves the resume position. `"0"` clears it on the server, taking the item out of the server's
+     * continue-watching list, and must leave its played state unchanged. Spool's Clear progress and
+     * Continue Watching's Mark unwatched send exactly this; a server that ignores a zero position
+     * needs another way to reset it.
+     */
     progress?: Operation<{ itemId: string; positionTicks: string }, {}>;
 
     /** Manifest `actions` are run here; `pick` shows the picker, then runs again with its result merged in. */

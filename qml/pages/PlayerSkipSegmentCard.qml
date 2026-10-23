@@ -8,6 +8,7 @@ Rectangle {
 
     required property var overlay
     readonly property string segmentType: overlay.hasPlayer ? overlay.player.activeSegmentType : ""
+    readonly property bool focused: overlay.isControlsActive() && overlay.focusZone === "skip"
     readonly property string label: {
         if (segmentType === "Intro")
             return "Skip intro"
@@ -27,10 +28,10 @@ Rectangle {
     width: overlay.dp(220)
     height: overlay.dp(60)
     radius: Theme.radiusPanel
-    color: skipHover.hovered ? Qt.lighter(Theme.accentDim, 1.2) : Theme.accentDim
-    border.width: 1
+    color: focused || skipHover.hovered ? Qt.lighter(Theme.accentDim, 1.2) : Theme.accentDim
+    border.width: focused ? Theme.focusBorderWidth : 1
     border.color: Theme.accent
-    visible: segmentType.length > 0 && overlay.controlsVisible
+    visible: overlay.hasActiveSegment && overlay.controlsVisible
     z: 30
 
     RowLayout {
@@ -52,7 +53,9 @@ Rectangle {
             font.weight: Font.DemiBold
         }
         AppText {
-            text: "T"
+            text: root.overlay.smartTvPlatform ? (root.focused ? "OK" : "") : root.overlay.touchscreenControls ? "" :
+                                                                                                                 "T"
+            visible: text.length > 0
             color: Theme.textSecondary
             font.pixelSize: root.overlay.dp(13)
         }
@@ -63,7 +66,6 @@ Rectangle {
     }
 
     TapHandler {
-        onTapped: if (root.overlay.hasPlayer)
-                      root.overlay.player.skipActiveSegment()
+        onTapped: root.overlay.skipActiveSegment()
     }
 }

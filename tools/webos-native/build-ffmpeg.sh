@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ $# == 1 && ( "$1" == -h || "$1" == --help ) ]]; then
+  echo "Usage: $0"
+  echo 'Fetches pinned FFmpeg and makes a fresh webOS dependency build.'
+  exit 0
+fi
+(( $# == 0 )) || { echo "Usage: $0" >&2; exit 2; }
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=tools/lib/build-common.sh
 source "$ROOT/tools/lib/build-common.sh"

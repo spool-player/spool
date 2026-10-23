@@ -242,6 +242,13 @@ public:
         co_return std::vector<MovieItem> {};
     }
 
+    QCoro::Task<std::vector<MovieItem>> fetchRelatedMedia(QString itemId, QString kind) override
+    {
+        Q_UNUSED(itemId);
+        Q_UNUSED(kind);
+        co_return std::vector<MovieItem> {};
+    }
+
     QCoro::Task<PersonCredits> fetchItemsByPerson(QString personId, int maximumItems = 4000) override
     {
         Q_UNUSED(personId);
@@ -330,6 +337,11 @@ public:
         Q_UNUSED(libraryId);
         Q_UNUSED(collectionType);
         co_return QVariantMap {};
+    }
+
+    QCoro::Task<std::vector<Spool::BrowseIndexEntry>> fetchBrowseIndex(Spool::BrowseDescriptor, QVariantMap) override
+    {
+        co_return std::vector<Spool::BrowseIndexEntry> {};
     }
 
     QCoro::Task<std::vector<MovieItem>> fetchItemsByIds(QStringList itemIds) override

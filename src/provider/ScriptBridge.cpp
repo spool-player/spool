@@ -156,6 +156,28 @@ namespace {
     }
 #endif
 
+    // Qt hands a QVariantList to script as a sequence wrapper, not an Array,
+    // and a provider that passes it back unchanged returns an object keyed
+    // "0", "1"... Results promised as arrays are built as plain values.
+    QJSValue plainScriptValue(QJSEngine *engine, const QVariant& value)
+    {
+        if (value.metaType().id() == QMetaType::QVariantList) {
+            const QVariantList list = value.toList();
+            QJSValue array = engine->newArray(static_cast<uint>(list.size()));
+            for (qsizetype index = 0; index < list.size(); ++index)
+                array.setProperty(static_cast<quint32>(index), plainScriptValue(engine, list.at(index)));
+            return array;
+        }
+        if (value.metaType().id() == QMetaType::QVariantMap) {
+            const QVariantMap map = value.toMap();
+            QJSValue object = engine->newObject();
+            for (auto it = map.cbegin(); it != map.cend(); ++it)
+                object.setProperty(it.key(), plainScriptValue(engine, it.value()));
+            return object;
+        }
+        return engine->toScriptValue(value);
+    }
+
     void rejectWith(QJSEngine *engine, QJSValue& reject, const char *code)
     {
         reject.call({ engine->toScriptValue(QString::fromLatin1(code)) });
@@ -450,7 +472,7 @@ void ScriptRequests::speedTest(const QVariantMap& options, QJSValue resolve, QJS
         return rejectWith(m_access->engine, reject, "request_denied");
     auto *test = new SpeedTest(
         m_access,
-        [this, resolve, reject](QString error, qint64 bitrate, int parallelRequests) mutable {
+        [this, resolve, reject](QString error, QVariantMap result) mutable {
             SpeedTest *test = std::exchange(m_speedTest, nullptr);
             m_pending.remove(test);
             test->deleteLater();
@@ -459,10 +481,7 @@ void ScriptRequests::speedTest(const QVariantMap& options, QJSValue resolve, QJS
                 reject.call({ engine->toScriptValue(error) });
                 return;
             }
-            QJSValue result = engine->newObject();
-            result.setProperty(QStringLiteral("bitrate"), static_cast<double>(bitrate));
-            result.setProperty(QStringLiteral("parallelRequests"), parallelRequests);
-            resolve.call({ result });
+            resolve.call({ plainScriptValue(engine, result) });
         },
         this);
     m_speedTest = test;

@@ -31,6 +31,19 @@ T.Control {
     height: width
     focusPolicy: Metrics.keyboardFocusActive && root.focusOnClick ? Qt.StrongFocus : Qt.NoFocus
 
+    Accessible.role: Accessible.Button
+    Accessible.name: root.accessibleName || root.iconText
+    Accessible.focusable: root.enabled
+    Accessible.focused: root.activeFocus
+    Accessible.pressed: tap.pressed
+    Accessible.onPressAction: {
+        if (root.enabled) {
+            if (root.focusOnClick)
+                InputKeys.focus(root)
+            root.clicked()
+        }
+    }
+
     background: Rectangle {
         radius: Theme.radiusSmall
         color: root.chromeless ? (tap.pressed ? Theme.bgHover : "transparent") : tap.pressed ? Theme.bgHover : root.railStyle
@@ -68,6 +81,7 @@ T.Control {
             iconSize: Math.round(Math.min(root.width, root.height, Metrics.scaled(44)) * root.iconRatio)
             iconColor: Metrics.keyboardFocusActive && root.activeFocus || root.selected ? Theme.accent :
                                                                                           Theme.textSecondary
+            Accessible.ignored: true
         }
 
         AppText {
@@ -80,6 +94,7 @@ T.Control {
                                                                                                          Theme.textSecondary
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
+            Accessible.ignored: true
         }
     }
 

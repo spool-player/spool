@@ -15,7 +15,6 @@ class NativeAppWindow;
 struct PlaybackSession;
 
 bool platformIdleMpvPreparationEnabled();
-void runAfterPlatformMpvLoaded(std::function<void()> callback);
 MpvOptionProfile::Platform platformMpvOptionProfile();
 // Whether video goes through the Qt scene graph. `directRequested` carries
 // the viewer's choice for platforms that offer one; the rest ignore it,

@@ -64,6 +64,10 @@ public:
         return m_target;
     }
     QVariantMap state() const;
+    // The running clock for media-session consumers: the last accepted
+    // position advanced by elapsed time while the target plays. Zero is a
+    // real position, not a frozen clock.
+    qint64 predictedPositionTicks() const;
     QString positionTicks() const
     {
         return m_position;
@@ -203,6 +207,7 @@ private:
     QVariantMap m_optimistic;
     qint64 m_optimisticUntil = 0;
     qint64 m_optimisticAt = 0;
+    qint64 m_positionAt = 0;
     std::optional<quint64> m_ackSequence;
     QTimer m_pollTimer;
     QTimer m_listTimer;

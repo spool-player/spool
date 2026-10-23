@@ -33,6 +33,11 @@ on:
         required: true
         default: false
         type: boolean
+      build_ios:
+        description: "Build unsigned iOS device IPA and smoke the simulator app"
+        required: true
+        default: true
+        type: boolean
       build_tvos:
         description: "Build unsigned Apple TV device IPA and simulator app"
         required: true
@@ -361,6 +366,29 @@ jobs:
         run: |
           nix develop .#native -c python tools/run-tests.py \
             --build-dir build/linux-release/app --workers "$(nproc)"
+
+      # The GUI phase measures real cold/prepared controller setup on every
+      # run. Keep its history longer than the large transient test artifacts.
+      - name: Report player setup latency
+        if: ${{ always() }}
+        run: |
+          mkdir -p dist/player-setup-benchmark
+          if [[ -f build/linux-release/app/player-setup-benchmark.json ]]; then
+            cp build/linux-release/app/player-setup-benchmark.json dist/player-setup-benchmark/timings.json
+          fi
+          status=0
+          python3 tools/report-player-setup.py dist/player-setup-benchmark/timings.json \
+            --markdown dist/player-setup-benchmark/summary.md || status=$?
+          cat dist/player-setup-benchmark/summary.md >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+      - name: Retain player setup history
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: internal-player-setup-benchmark
+          path: dist/player-setup-benchmark
+          retention-days: 90
 
       - name: Retain internal native phase results after failures
         if: always()
@@ -756,6 +784,14 @@ jobs:
             build/macos/app
             ~/Library/Caches/ccache
           key: ${{ steps.macos-build-cache.outputs.cache-primary-key }}
+
+  ios:
+    name: iOS
+    needs: [lint, toolchain]
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_ios }}
+    uses: ./.github/workflows/ios-review.yml
+    with:
+      release: ${{ inputs.release || false }}
 
   tvos:
     name: tvOS (${{ matrix.sdk }} arm64)

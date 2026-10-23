@@ -1,7 +1,6 @@
 #include "platform/PlatformPlaybackSurface.h"
 
 #include "platform/NativeAppWindow.h"
-#include "platform/webos/WebOSMpvRuntime.h"
 #include "player/MpvVideoItem.h"
 
 #include <QDebug>
@@ -29,11 +28,6 @@ bool platformIdleMpvPreparationEnabled()
     const bool enabled = qEnvironmentVariable("SPOOL_DISABLE_IDLE_MPV") != QLatin1String("1");
     qInfo() << "player: idle mpv preparation" << (enabled ? "enabled" : "disabled");
     return enabled;
-}
-
-void runAfterPlatformMpvLoaded(std::function<void()> callback)
-{
-    WebOSMpvRuntime::runAfterLoaded(std::move(callback));
 }
 
 MpvOptionProfile::Platform platformMpvOptionProfile()

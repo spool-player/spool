@@ -5,6 +5,7 @@
 
 #include <QHash>
 #include <QObject>
+#include <QPointer>
 #include <QTimer>
 #include <QtTypes>
 
@@ -21,6 +22,9 @@ public:
     void start(const PlaybackSession& session, double playbackRate, int volume, bool muted);
     bool setStreamIndexes(int audioStreamIndex, int subtitleStreamIndex);
     void reportProgress(qint64 positionTicks, bool paused, double playbackRate, int volume, bool muted);
+    // Queue, repeat and shuffle stay truthful across progress reports; group
+    // playback reports an empty repeat mode.
+    bool setQueue(const std::vector<PlaybackQueueItem>& queue, const QString& repeatMode, bool shuffled);
     quint64 stop(qint64 positionTicks, bool failed, double playbackRate = 1.0, bool watched = false);
 
 signals:
@@ -33,6 +37,7 @@ signals:
 private:
     struct Report {
         PlaybackSession session;
+        QPointer<PlaybackSource> context;
         quint64 id = 0;
         qint64 stopPositionTicks = 0;
         double stopPlaybackRate = 1.0;
@@ -54,8 +59,9 @@ private:
     void sendStopIfReady(const ReportPtr& report);
     void sendStop(const ReportPtr& report, int attempt);
     void finishStop(const ReportPtr& report);
+    bool contextCurrent(const ReportPtr& report) const;
 
-    PlaybackSource *m_api = nullptr;
+    QPointer<PlaybackSource> m_api;
     ReportPtr m_report;
     quint64 m_nextReportId = 0;
     // Only outstanding stop operations, not item/progress state. Same-item

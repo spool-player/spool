@@ -621,7 +621,7 @@ SPOOL_TEST_MAIN("source-hub")
                 .toMap();
         };
         const QVariantMap beforeFeeds = excludedFeeds();
-        const SourceHub::HomeQuery selected { QStringLiteral("fixture.test") };
+        const SourceHub::HomeQuery selected { QStringList { QStringLiteral("fixture.other") } };
         for (const auto& items : { QCoro::waitFor(homeHub.fetchHomeResumeItems(selected, 1)),
                  QCoro::waitFor(homeHub.fetchHomeNextUpEpisodes(selected, 1)) }) {
             require(items.size() == 1 && homeHub.accountOf(items.front().id) != otherAccount,
@@ -630,7 +630,10 @@ SPOOL_TEST_MAIN("source-hub")
         require(excludedFeeds() == beforeFeeds && homeHub.sources().size() == 3
                 && homeHub.libraryScopeKey() == globalScope && homeRegistry.sourceRunning(otherAccount),
             "Home scope does not request excluded feeds or change global browsing/account state");
-        home.selectProvider(QStringLiteral("fixture.test"));
+        require(home.setProviderShown(QStringLiteral("fixture.other"), false), "turning off one of two providers");
+        require(!home.setProviderShown(QStringLiteral("fixture.test"), false)
+                && home.hiddenProviderIds() == QStringList { QStringLiteral("fixture.other") },
+            "the last provider that can fill Home cannot be turned off");
         home.refresh(QCoro::waitFor(homeHub.fetchLibraries()));
         waitUntil([&] { return !home.loading(); }, "multi-account homepage loads");
         require(home.latestLibraryRows().size() == 2, "homepage initially includes both accounts' latest rows");
@@ -679,7 +682,8 @@ SPOOL_TEST_MAIN("source-hub")
         homeRegistry.setAccountEnabled(retainedAccount, false);
         waitUntil([&] { return !home.loading() && hasAccount(home.resumeItems(), otherAccount); },
             "withdrawing the selected provider falls back to authorized All-provider feeds");
-        require(home.providerId().isEmpty() && home.preferredProviderId() == QStringLiteral("fixture.test")
+        require(!home.providerFilterActive()
+                && home.hiddenProviderIds() == QStringList { QStringLiteral("fixture.other") }
                 && !home.providerScopeMessage().isEmpty() && !hasAccount(home.resumeItems(), retainedAccount)
                 && home.latestLibraryRows().size() == 1,
             "fallback explains the unavailable selection and never restores withdrawn account content");

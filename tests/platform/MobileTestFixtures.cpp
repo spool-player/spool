@@ -37,7 +37,6 @@ bool prepareMobileFixtures()
             return false;
         }
     }
-    qputenv("QML_DISABLE_DISK_CACHE", "1");
     extractedRoot = directory.path();
     return true;
 }

@@ -43,11 +43,29 @@ void SpeedTest::finish(QString error, qint64 bitrate, int lanes)
     m_done = true;
     abort();
     auto completion = std::move(m_completion);
-    completion(std::move(error), bitrate, lanes);
+    QVariantMap result;
+    if (error.isEmpty()) {
+        QVariantList samples;
+        for (int i = 0; i < 3; ++i)
+            samples.append(QVariantMap { { QStringLiteral("requests"), 1 << i },
+                { QStringLiteral("capacity-bytes-per-second"), m_rates[i] / 8 },
+                { QStringLiteral("latency-ms"), m_latencies[i] }, { QStringLiteral("elapsed-seconds"), m_durations[i] },
+                { QStringLiteral("received-bytes"), 4 * 1024 * 1024 } });
+        QUrl endpoint;
+        endpoint.setScheme(m_request.url().scheme());
+        endpoint.setHost(m_request.url().host());
+        endpoint.setPort(m_request.url().port());
+        result = { { QStringLiteral("bitrate"), bitrate }, { QStringLiteral("parallelRequests"), lanes },
+            { QStringLiteral("concurrency-samples"), samples }, { QStringLiteral("origin"), endpoint.toString() } };
+    }
+    completion(std::move(error), std::move(result));
 }
 
 void SpeedTest::start(const QVariantMap& options)
 {
+    const double target = options.value(QStringLiteral("mediaBitrate")).toDouble();
+    if (std::isfinite(target) && target > 0 && target <= 800.0e9)
+        m_targetBitrate = target;
     const QVariant address = options.value(QStringLiteral("url"));
     if (address.metaType().id() != QMetaType::QString)
         return finish(QStringLiteral("request_denied"));
@@ -191,8 +209,8 @@ bool SpeedTest::drain(int index)
         const qint64 bytes = lane.reply->read(m_buffer.data(), m_buffer.size());
         if (bytes <= 0)
             break;
-        if (m_round == -1 && m_firstByteMs < 0)
-            m_firstByteMs = m_elapsed.elapsed();
+        if (lane.firstByteNs < 0)
+            lane.firstByteNs = m_elapsed.nsecsElapsed();
         lane.received += bytes;
         if (lane.received > m_expected) {
             finish(QStringLiteral("response_limit"));
@@ -221,22 +239,30 @@ void SpeedTest::finished(int index)
     if (m_round >= 0) {
         const qint64 nanoseconds = std::max<qint64>(1, m_elapsed.nsecsElapsed());
         m_rates[m_round] = static_cast<double>(m_expected * m_count) * 8.0e9 / nanoseconds;
+        m_durations[m_round] = nanoseconds / 1.0e9;
+        double latency = 0;
+        for (int i = 0; i < m_count; ++i)
+            latency += std::max<qint64>(0, m_lanes[i].firstByteNs) / 1.0e6;
+        m_latencies[m_round] = latency / m_count;
     }
     if (++m_round == 0)
         return round(1, 4 * 1024 * 1024);
     if (m_round == 1)
         return round(2, 4 * 1024 * 1024);
-    // Use warmup time-to-first-byte in place of a provider-specific RTT request.
-    // Otherwise retain the old >=20 ms or >=10% dual-lane gain criterion.
-    if (m_round == 2 && (m_firstByteMs >= 20 || m_rates[1] >= m_rates[0] * 1.10))
+    // Always measure every operating point. The controller needs the complete
+    // curve to identify negative scaling, not just the winner of a race.
+    if (m_round == 2)
         return round(4, 4 * 1024 * 1024);
-    const double best = *std::max_element(m_rates.cbegin(), m_rates.cend());
     int selected = 0;
-    while (selected < 2 && m_rates[selected] < best * 0.85)
-        ++selected;
-    // The ceiling belongs to the selected lane count, not the faster count
-    // that was deliberately rejected as an insignificant improvement.
-    const qint64 bitrate = std::llround(std::clamp(m_rates[selected] * 0.75, 1.0e6, 1.0e9));
+    if (m_targetBitrate > 0) {
+        while (selected < 2 && m_rates[selected] < m_targetBitrate * 1.75)
+            ++selected;
+        if (m_rates[selected] < m_targetBitrate * 1.75)
+            selected = 0;
+    }
+    // Without playback demand, one lane is the neutral startup choice; the
+    // full measured curve is preserved for the adaptive controller.
+    const qint64 bitrate = std::llround(*std::max_element(m_rates.cbegin(), m_rates.cend()) * 0.75);
     finish({}, bitrate, 1 << selected);
 }
 

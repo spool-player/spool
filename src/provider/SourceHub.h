@@ -109,10 +109,10 @@ public:
     // Home has its own query scope; it never changes enabled accounts or
     // the sources used by browsing, search, playback and remote control.
     struct HomeQuery {
-        QString moduleId; // Empty means every currently authorized browsing source.
+        QStringList hiddenModuleIds; // Empty means every currently authorized browsing source.
     };
     QVariantList homeProviderChoices() const;
-    QVariantMap homeProviderStatus(const QString& preferredModuleId) const;
+    QVariantMap homeProviderStatus(const QStringList& hiddenModuleIds) const;
     bool containsHomeItem(const HomeQuery& query, const QString& scopedId) const;
     QString homeScopeKey(const HomeQuery& query) const;
     QCoro::Task<std::vector<MovieItem>> fetchHomeResumeItems(HomeQuery query, int limit = 24);
@@ -156,6 +156,7 @@ public:
     QString libraryScopeKey() const override;
     QCoro::Task<PagedMovieItems> fetchBrowsePage(BrowseDescriptor descriptor, int startIndex, int limit,
         QVariantMap queryOptions, std::optional<QString> cursor) override;
+    void cancelBrowseJump(const BrowseDescriptor& descriptor, int startIndex) override;
     QCoro::Task<MovieItem> fetchItemDetails(QString itemId) override;
     QCoro::Task<std::vector<MovieItem>> fetchSeasons(QString seriesId) override;
     QCoro::Task<std::vector<MovieItem>> fetchEpisodes(QString seriesId, QString seasonId = {}) override;
@@ -163,9 +164,12 @@ public:
     QCoro::Task<std::vector<MovieItem>> fetchNextUpEpisodes(int limit = 24) override;
     QCoro::Task<std::vector<MovieItem>> fetchLatestItems(QString parentId = {}, int limit = 24) override;
     QCoro::Task<std::vector<MovieItem>> fetchSimilarItems(QString itemId, int limit = 24) override;
+    QCoro::Task<std::vector<MovieItem>> fetchRelatedMedia(QString itemId, QString kind) override;
     QCoro::Task<PersonCredits> fetchItemsByPerson(QString personId, int maximumItems = 4000) override;
     QCoro::Task<std::vector<LibraryItem>> fetchLibraries() override;
     QCoro::Task<QVariantMap> fetchLibraryFilterOptions(QString libraryId, QString collectionType = {}) override;
+    QCoro::Task<std::vector<BrowseIndexEntry>> fetchBrowseIndex(
+        BrowseDescriptor descriptor, QVariantMap queryOptions) override;
     QCoro::Task<std::vector<MovieItem>> fetchItemsByIds(QStringList itemIds) override;
 
     // SearchSource: the selected viewer on every independent server, ranked
@@ -224,7 +228,7 @@ private:
         enum class SpeedState { Pending, Running, Complete, Failed };
         SpeedState speedState = SpeedState::Pending;
         qint64 measuredBitrate = 0;
-        int parallelRequests = 2;
+        int parallelRequests = 1;
         struct RemotePreview {
             QString urlTemplate;
             QByteArray headers;

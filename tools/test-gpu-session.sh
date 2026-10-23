@@ -2,6 +2,9 @@
 # Run GUI consumers on a private display, never the developer's desktop.
 set -euo pipefail
 [[ $# -gt 0 ]] || { echo 'usage: test-gpu-session.sh <command> [args...]' >&2; exit 2; }
+# Already inside a private session (run-tests.py wraps the whole e2e phase and
+# CTest wraps the e2e entry too): one session is enough.
+[[ "${SPOOL_PRIVATE_TEST_SESSION:-}" == 1 ]] && exec "$@"
 : "${SPOOL_TEST_DRI_DIR:?run through nix develop .#native}"
 : "${SPOOL_TEST_VULKAN_ICD:?run through nix develop .#native}"
 : "${SPOOL_TEST_DRIVER_LIB_DIR:?run through nix develop .#native}"
@@ -30,7 +33,7 @@ trap 'exit 143' TERM
 mkdir -p "$work/runtime"
 chmod 700 "$work/runtime"
 export XDG_RUNTIME_DIR="$work/runtime"
-export SPOOL_E2E_ISOLATED_DISPLAY=1
+export SPOOL_E2E_ISOLATED_DISPLAY=1 SPOOL_PRIVATE_TEST_SESSION=1
 unset DISPLAY WAYLAND_DISPLAY DBUS_SESSION_BUS_ADDRESS QT_QUICK_BACKEND
 unset VK_ICD_FILENAMES VK_ADD_DRIVER_FILES MESA_GL_VERSION_OVERRIDE MESA_GLSL_VERSION_OVERRIDE
 export LIBGL_DRIVERS_PATH="$SPOOL_TEST_DRI_DIR"

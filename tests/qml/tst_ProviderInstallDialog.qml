@@ -19,11 +19,25 @@ TestCase {
         const dialog = createTemporaryObject(dialogComponent, testCase)
         verify(dialog)
         verify(!dialog.visible)
+        // A store install or a background update shows on its own tile, if
+        // anywhere; it never takes over the screen.
         dialog.transfers = [
                     {
                         id: "spool.emby",
                         name: "Emby",
                         state: "downloading",
+                        received: 0,
+                        total: -1
+                    }
+                ]
+        verify(!dialog.visible)
+        // An install the viewer started from a file waits on this dialog.
+        dialog.transfers = [
+                    {
+                        id: "spool.emby",
+                        name: "Emby",
+                        state: "downloading",
+                        operationToken: "file-1",
                         received: 0,
                         total: -1
                     }
@@ -37,6 +51,7 @@ TestCase {
                         id: "spool.emby",
                         name: "Emby",
                         state: "downloading",
+                        operationToken: "file-1",
                         received: 512,
                         total: 1024
                     }
@@ -47,6 +62,7 @@ TestCase {
                         id: "spool.emby",
                         name: "Emby",
                         state: "installing",
+                        operationToken: "file-1",
                         received: 1024,
                         total: 1024
                     }

@@ -16,6 +16,10 @@ FocusScope {
     property bool pinRequired: false
     property string pinLabel: "PIN"
     property alias pinText: pin.text
+    // Offered beside the PIN when non-empty, such as skipping it at startup.
+    property string rememberLabel: ""
+    property string rememberDescription: ""
+    property bool remember: false
     property var choices: []
     property bool retryVisible: true
     property string backText: "Back"
@@ -44,6 +48,9 @@ FocusScope {
     }
     function submitPin() {
         const value = pin.text
+        // An empty answer is a stray Enter, never a PIN.
+        if (!value)
+            return
         pin.text = ""
         pinSubmitted(value)
     }
@@ -116,10 +123,12 @@ FocusScope {
                 width: ListView.view.width
                 title: modelData.title || modelData.name || ""
                 serverAddress: modelData.address || ""
+                iconName: modelData.icon || "dns"
+                badge: modelData.badge || ""
+                opacity: modelData.badge ? 0.75 : 1
                 providerName: root.installedModule ? root.installedModule.name : ""
                 providerId: root.provider ? root.provider.moduleId : ""
                 providerIcon: root.installedModule ? root.installedModule.iconUrl : ""
-                providerVersion: root.installedModule ? root.installedModule.version : ""
                 enabled: !root.busy
                 onAccepted: {
                     choicesList.currentIndex = index
@@ -140,6 +149,14 @@ FocusScope {
             echoMode: TextInput.Password
             inputMethodHints: Qt.ImhDigitsOnly | Qt.ImhNoPredictiveText
             onAccepted: root.submitPin()
+        }
+        ToggleRow {
+            Layout.fillWidth: true
+            visible: root.pinRequired && !!root.rememberLabel
+            title: root.rememberLabel
+            description: root.rememberDescription
+            checked: root.remember
+            onToggled: checked => root.remember = checked
         }
         ActionButton {
             Layout.fillWidth: true

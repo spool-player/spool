@@ -134,6 +134,7 @@ prime_linuxdeploy_qt_plugins() {
   for plugins_dir in "${plugin_roots[@]}"; do
     for plugin_dir in \
       platforminputcontexts \
+      platformthemes \
       tls \
       wayland-decoration-client \
       wayland-graphics-integration-client \

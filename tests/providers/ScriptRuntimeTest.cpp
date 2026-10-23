@@ -11,6 +11,7 @@
 #include <QUrlQuery>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
@@ -331,11 +332,21 @@ SPOOL_TEST_MAIN("script-runtime")
     const auto measurement = QCoro::waitFor(runtime->call("a", "speedTest"));
     speedResponsiveness.stop();
     waitForSpeedAbort();
-    require(
-        measurement.value("bitrate").toLongLong() >= 1000000 && measurement.value("bitrate").toLongLong() <= 1000000000,
-        "successful benchmark returns a bounded usable streaming bitrate");
-    const int lanes = measurement.value("parallelRequests").toInt();
-    require(lanes == 1 || lanes == 2 || lanes == 4, "benchmark selects a supported lane count");
+    require(measurement.value("bitrate").toLongLong() > 0, "successful benchmark returns a usable streaming ceiling");
+    require(measurement.value("parallelRequests").toInt() == 1,
+        "without playback demand a benchmark does not blindly select maximum throughput");
+    const QVariantList curve = measurement.value("concurrency-samples").toList();
+    require(curve.size() == 3, "native result preserves every concurrency operating point");
+    for (int index = 0; index < 3; ++index) {
+        const auto sample = curve[index].toMap();
+        const double seconds = sample.value("elapsed-seconds").toDouble();
+        const double rate = sample.value("capacity-bytes-per-second").toDouble();
+        const double latencyMs = sample.value("latency-ms").toDouble();
+        require(sample.value("requests").toInt() == (1 << index)
+                && sample.value("received-bytes").toLongLong() == 4194304 && seconds > 0 && latencyMs >= 35
+                && latencyMs <= seconds * 1000 && std::abs(rate * seconds - 4194304.0) < 1,
+            "per-concurrency raw capacity divides actual payload by full measured wall time including TTFB");
+    }
     require(speedSizes == QList<int> { 524288, 4194304, 2097152, 2097152, 1048576, 1048576, 1048576, 1048576 },
         "warmup and completed 1/2/4 lane rounds use the intended byte budgets");
     require(speedMaximum == 4 && speedGuiTurns >= 5, "lane requests overlap without blocking GUI events");

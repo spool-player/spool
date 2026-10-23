@@ -32,6 +32,10 @@ FocusScope {
     // A rail cell is never narrower than the button inside it, so hit areas
     // tile with nothing dead between them on any pointer.
     readonly property int railCellWidth: Math.max(Metrics.scaled(50), Metrics.touchTargetPx)
+    // A cell held empty at the trailing end for a control the shell places
+    // itself (Open files), so it keeps the rail's spacing and background.
+    property int trailingCells: 0
+    readonly property real trailingCellCenterX: width - Metrics.scaled(14) - trailingCells * railCellWidth / 2
 
     // Index space: the rail's buttons, then the group button when shown.
     function lastIndex() {
@@ -276,6 +280,9 @@ FocusScope {
                 iconName: "groups"
                 accessibleName: "Watch together"
                 railStyle: true
+                // The glyph's figures sit inside a wide, short box, so at the
+                // rail's ratio it read smaller than its neighbours.
+                iconRatio: 0.62
                 selected: root.groupMenuOpen
                 onClicked: root.groupMenuOpen ? root.closeGroupMenu(false) : root.openGroupMenu()
 
@@ -293,6 +300,12 @@ FocusScope {
                     border.color: Theme.bgRaised
                 }
             }
+        }
+
+        Item {
+            visible: root.trailingCells > 0
+            Layout.preferredWidth: root.trailingCells * root.railCellWidth
+            Layout.fillHeight: true
         }
     }
 

@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+PHASE="${1:-all}"
+if (( $# > 1 )); then echo "usage: $0 [fetch|build|all]" >&2; exit 2; fi
+case "$PHASE" in
+  -h|--help) echo "usage: $0 [fetch|build|all]"; exit 0 ;;
+  fetch|build|all) ;;
+  *) echo "usage: $0 [fetch|build|all]" >&2; exit 2 ;;
+esac
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=tools/lib/build-common.sh
 source "$ROOT/tools/lib/build-common.sh"
@@ -9,7 +17,6 @@ source "$ROOT/tools/lib/manifest-sources.sh"
 # shellcheck source=tools/webos-native/nixos-sdk-compat.sh
 source "$ROOT/tools/webos-native/nixos-sdk-compat.sh"
 MANIFEST="${WEBOS_THIRD_PARTY_MANIFEST:-$ROOT/tools/manifests/webos-third-party.json}"
-PHASE="${1:-all}"
 SDK_ROOT="${WEBOS_SDK_ROOT:-$ROOT/build/webos-sdk/arm-webos-linux-gnueabi_sdk-buildroot}"
 SDK_BIN="$SDK_ROOT/bin"
 SYSROOT="$SDK_ROOT/arm-webos-linux-gnueabi/sysroot"
@@ -49,10 +56,6 @@ if [[ "$PHASE" == "fetch" ]]; then
   exit 0
 fi
 
-if [[ "$PHASE" != "all" && "$PHASE" != "build" ]]; then
-  echo "usage: $0 [fetch|build|all]" >&2
-  exit 2
-fi
 
 describe_parallel_jobs "$WEBOS_BUILD_JOBS" "webOS third-party" "$WEBOS_BUILD_MEMORY_PER_JOB_MIB" "$WEBOS_BUILD_MEMORY_RESERVE_MIB"
 
