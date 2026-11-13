@@ -14,7 +14,7 @@ SCRIPT = ROOT / 'tools/find-streaming-candidates.py'
 NOISE = 'provider boom https://cdn.invalid/stream.mpd?token=SECRET-TOKEN credential=abc123'
 
 FAKE_SPOOLET = r'''#!/usr/bin/env python3
-import json, os, sys
+import json, os, sys, time
 
 argv = sys.argv[1:]
 if len(argv) != 6 or argv[0] != '--instance' or argv[2] != 'catalog':
@@ -25,7 +25,13 @@ if limit <= 0:
 with open(os.environ['SPOOL_FAKE_LOG'], 'a') as log:
     log.write('{} {}\n'.format(library, offset))
 entry = json.loads(open(os.environ['SPOOL_FAKE_CATALOG']).read())['libraries'][library]
-failure = entry.get('fail')
+failure = entry.get('fail') if entry.get('failOffset', offset) == offset else None
+if entry.get('delay'):
+    with open(os.environ['SPOOL_FAKE_LOG'] + '.events', 'a') as log:
+        log.write(json.dumps([time.monotonic(), 1]) + '\n')
+    time.sleep(entry['delay'])
+    with open(os.environ['SPOOL_FAKE_LOG'] + '.events', 'a') as log:
+        log.write(json.dumps([time.monotonic(), -1]) + '\n')
 if failure == 'exit':
     sys.stderr.write(entry['noise'])
     sys.exit(3)
@@ -90,8 +96,8 @@ class StreamingCandidatesTest(unittest.TestCase):
                 for i in range(350)]
         config = {'libraries': {'movies': library(350, True, {
             str(offset): {'items': rows[offset:offset + 100], 'exhausted': offset + 100 >= 350}
-            for offset in range(0, 350, 100)})}}
-        result = self.run_tool(config, ['--instance', 'acct-1', '--library', 'movies', '--top', '3'])
+            for offset in range(0, 350, 100)}, delay=.1)}}
+        result = self.run_tool(config, ['--instance', 'acct-1', '--library', 'movies', '--top', '3', '--workers', '2'])
         report = self.report(result)
         self.assertEqual([r['id'] for r in report['candidates']], ['349', '348', '347'])
         self.assertEqual(report['libraries'][0], {'library': 'movies', 'scanned': 350,
@@ -99,6 +105,12 @@ class StreamingCandidatesTest(unittest.TestCase):
         calls = self.log.read_text().splitlines()
         self.assertEqual(set(calls), {'movies 0', 'movies 100', 'movies 200', 'movies 300'})
         self.assertEqual(len(calls), 4)
+        active = peak = 0
+        for _, change in sorted(json.loads(line) for line in Path(str(self.log) + '.events').read_text().splitlines()):
+            active += change
+            peak = max(peak, active)
+        self.assertLessEqual(peak, 2, 'catalog scan exceeded its concurrent provider operation limit')
+        self.assertEqual(active, 0)
         self.assertNotIn(NOISE, result.stdout + result.stderr)
         self.assertEqual(set(report['candidates'][0]),
                          {'id', 'title', 'library', 'bitrate', 'sizeBytes', 'width', 'height'})
@@ -143,6 +155,17 @@ class StreamingCandidatesTest(unittest.TestCase):
             ['--instance', 'acct', '--library', 'movies']))
         self.assertFalse(report['libraries'][0]['complete'])
         self.assertEqual(len(report['candidates']), 1)
+
+    def test_later_failure_is_not_hidden_by_an_earlier_terminal_reply(self):
+        rows = [item(str(i), [source(i + 1)]) for i in range(200)]
+        data = library(300, True, {
+            '0': {'items': rows[:100], 'exhausted': False},
+            '100': {'items': rows[100:], 'exhausted': True}}, fail='exit', failOffset=200)
+        result = self.run_tool({'libraries': {'movies': data}},
+            ['--instance', 'acct', '--library', 'movies', '--workers', '2'])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, '')
+        self.assertEqual(result.stderr.strip(), 'provider read failed')
 
     def test_read_failure_exits_nonzero_without_provider_detail(self):
         for failure in ('exit', 'json', 'ok'):
