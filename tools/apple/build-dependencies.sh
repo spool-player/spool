@@ -96,6 +96,13 @@ cmake_cross=(-DCMAKE_SYSTEM_NAME="$APPLE_SYSTEM" -DCMAKE_OSX_SYSROOT="$APPLE_SDK
 # Isolated build directories retain toolchain flags; source pins are verified
 # above. Reconfigure every dependency rather than trusting stale install stamps.
 openssl_build="$BUILD_ROOT/openssl"
+streaming_stamp="$PREFIX/.spool-streaming-configuration"
+streaming_pin="$(python3 "$ROOT/tools/streaming-fingerprint.py" --root "$ROOT" \
+  --target "$TRIPLE:$SDKROOT:$($CC --version):static" --wrapper "${BASH_SOURCE[0]}" \
+  --wrapper "$ROOT/tools/lib/streaming-build.sh")"
+if [[ ! -f "$streaming_stamp" || "$(<"$streaming_stamp")" != "$streaming_pin" ]]; then
+  rm -rf "$openssl_build" "$BUILD_ROOT/streaming"
+fi
 mkdir -p "$openssl_build"
 export CROSS_TOP="$(dirname "$SDKROOT")"
 export CROSS_SDK="$(basename "$SDKROOT")"
@@ -114,6 +121,7 @@ build_streaming_http "$SOURCE_ROOT" "$BUILD_ROOT/streaming" "$PREFIX" OFF "${cma
   -DOPENSSL_INCLUDE_DIR="$PREFIX/include" -DOPENSSL_CRYPTO_LIBRARY="$PREFIX/lib/libcrypto.a" \
   -DOPENSSL_SSL_LIBRARY="$PREFIX/lib/libssl.a" -DCURL_ZLIB=OFF
 python3 "$ROOT/tools/check-streaming-dependencies.py" --prefix "$PREFIX" --manifest "$ROOT/tools/manifests/streaming-third-party.json"
+printf '%s\n' "$streaming_pin" >"$streaming_stamp"
 cmake -S "$SOURCE_ROOT/freetype" -B "$BUILD_ROOT/freetype" -GNinja "${cmake_cross[@]}" \
   -DBUILD_SHARED_LIBS=OFF -DFT_DISABLE_ZLIB=ON -DFT_DISABLE_BZIP2=ON -DFT_DISABLE_PNG=ON -DFT_DISABLE_HARFBUZZ=ON -DFT_DISABLE_BROTLI=ON
 cmake --build "$BUILD_ROOT/freetype" --parallel "$JOBS"
