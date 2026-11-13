@@ -6,16 +6,6 @@
       "url": "https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz",
       "sha256": "eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3"
     },
-    "openssl": {
-      "version": "3.5.4",
-      "url": "https://github.com/openssl/openssl/releases/download/openssl-3.5.4/openssl-3.5.4.tar.gz",
-      "sha256": "967311f84955316969bdb1d8d4b983718ef42338639c621ec4c34fddef355e99"
-    },
-    "curl": {
-      "version": "8.21.0",
-      "url": "https://curl.se/download/curl-8.21.0.tar.xz",
-      "sha256": "aa1b66a70eace83dc624508745646c08ae561de512ab403adffb93ac87fc72e6"
-    },
     "freetype": {
       "version": "2.14.3",
       "url": "https://downloads.sourceforge.net/project/freetype/freetype2/2.14.3/freetype-2.14.3.tar.xz",

@@ -1,0 +1,16 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -815,6 +815,8 @@
+-  find_library(CORESERVICES_FRAMEWORK NAMES "CoreServices")
+-  mark_as_advanced(CORESERVICES_FRAMEWORK)
+-  if(NOT CORESERVICES_FRAMEWORK)
+-    message(FATAL_ERROR "CoreServices framework not found")
++  if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
++    find_library(CORESERVICES_FRAMEWORK NAMES "CoreServices")
++    mark_as_advanced(CORESERVICES_FRAMEWORK)
++    if(NOT CORESERVICES_FRAMEWORK)
++      message(FATAL_ERROR "CoreServices framework not found")
++    endif()
++    list(APPEND CURL_LIBS "-framework CoreServices")
+   endif()
+-  list(APPEND CURL_LIBS "-framework CoreServices")
