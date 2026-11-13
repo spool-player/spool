@@ -70,6 +70,7 @@ http {{
   ssl_protocols TLSv1.2 TLSv1.3;
   ssl_session_cache shared:SSL:1m;
   sendfile on;
+  limit_rate 4m;
   server {{
     listen 127.0.0.1:{tls} ssl;
     listen 127.0.0.1:{tls} quic reuseport;
