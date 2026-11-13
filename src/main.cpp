@@ -926,7 +926,7 @@ int main(int argc, char **argv)
                                      : qint64(0) },
             { QStringLiteral("unlimitedLocalNetwork"), get("playback/unlimitedLocalBitrate") },
             { QStringLiteral("preferRemux"), get("playback/preferRemux") },
-            { QStringLiteral("preferredMaxHeight"), get("playback/maxStreamingHeight") } };
+            { QStringLiteral("preferredMaxHeight"), get("playback/maxStreamingHeight").toInt() } };
     });
     QObject::connect(controller->settings(), &Spool::SettingsController::serverOverridesChanged, &hub,
         &Spool::SourceHub::refreshPlaybackPreferences);
