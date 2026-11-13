@@ -3,8 +3,10 @@
 import argparse
 import hashlib
 import json
+import sys
 from pathlib import Path
 
+sys.stdout.reconfigure(newline="\n")
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--root', type=Path, required=True)
 parser.add_argument('--manifest', type=Path)

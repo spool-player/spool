@@ -3,6 +3,7 @@
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -42,10 +43,10 @@ class StreamingDependenciesTest(unittest.TestCase):
     def write_manifest(self):
         self.manifest.write_text(json.dumps(self.data))
 
-    def prepare(self, *extra):
+    def prepare(self, *extra, env=None):
         return subprocess.run(['bash', str(self.root / 'tools/prepare-streaming-sources.sh'),
                                '--root', str(self.root), '--output', str(self.output), *extra],
-                              capture_output=True, text=True)
+                              capture_output=True, text=True, env=env)
 
     def test_digest_rejection_precedes_source_use(self):
         self.data['sources']['openssl']['sha256'] = '0' * 64
@@ -69,6 +70,27 @@ class StreamingDependenciesTest(unittest.TestCase):
         archive.unlink()
         result = self.prepare()
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_preparation_survives_native_windows_python_text_streams(self):
+        # Native Windows Python starts stdout with CRLF translation. Reproduce
+        # that real TextIO boundary on this host; the preparer still downloads,
+        # verifies, extracts and patches actual local archives.
+        interpreter = self.root / 'native-python'
+        interpreter.write_text('#!' + sys.executable + '\n'
+            'import sys, runpy\n'
+            'sys.stdout.reconfigure(newline="\\r\\n")\n'
+            'if sys.argv[1] == "-c":\n'
+            ' code = sys.argv[2]; sys.argv = ["-c"] + sys.argv[3:]; exec(code)\n'
+            'else:\n'
+            ' script = sys.argv[1]; sys.argv = sys.argv[1:]; runpy.run_path(script, run_name="__main__")\n')
+        interpreter.chmod(0o755)
+        patch = self.root / 'change.patch'
+        patch.write_text('--- a/content.txt\n+++ b/content.txt\n@@ -1 +1 @@\n-original\n+windows-safe\n')
+        self.data['sources']['curl']['patches'] = ['change.patch']
+        self.write_manifest()
+        result = self.prepare(env=dict(os.environ, MANIFEST_PYTHON=str(interpreter)))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.output / 'curl/content.txt').read_text(), 'windows-safe\n')
 
     def test_help_and_invalid_arguments_have_no_side_effects(self):
         for arguments, code in [(['--help'], 0), (['--root', 'relative', '--output', str(self.output)], 2),
