@@ -677,6 +677,9 @@ jobs:
         run: nix develop .#native --no-write-lock-file -c bash tools/build-macos.sh
 
 
+      - name: Run macOS traditional and real GUI e2e tests
+        run: nix develop .#native --no-write-lock-file -c python tools/run-tests.py --build-dir build/macos/app --workers 4
+
       - name: Lint compiled QML
         run: nix develop .#native --no-write-lock-file -c cmake --build build/macos/app --target spool_qmllint_strict
 
@@ -847,7 +850,7 @@ jobs:
             build/apple/qt-${{ matrix.sdk }}-arm64
             build/apple/${{ matrix.sdk }}-arm64
             build/downloads
-          key: tvos-source1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.sdk }}-16.0-${{ steps.apple-toolchain.outputs.key }}-${{ hashFiles('tools/manifests/toolchain.json', 'tools/manifests/android-third-party.json', 'tools/manifests/ffmpeg-capabilities.json', 'tools/apple/**', 'tools/build-tvos.sh', 'tools/ffmpeg-capabilities.py', 'tools/lib/manifest-sources.sh', 'tools/webos-native/patches/qtdeclarative-*-qmlimportscanner-exclude-subtrees.patch', 'third_party/**', 'mpv/meson.build', 'mpv/meson.options') }}
+          key: tvos-source1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.sdk }}-16.0-${{ steps.apple-toolchain.outputs.key }}-${{ hashFiles('tools/manifests/streaming-third-party.json', 'tools/prepare-streaming-sources.sh', 'tools/streaming-fingerprint.py', 'tools/check-streaming-dependencies.py', 'tools/cmake/StreamingDependencies.cmake', 'tools/lib/streaming-build.sh', 'tools/patches/curl-*.patch', 'tools/windows/build-streaming-dependencies.ps1', 'tools/manifests/toolchain.json', 'tools/manifests/android-third-party.json', 'tools/manifests/ffmpeg-capabilities.json', 'tools/apple/**', 'tools/build-tvos.sh', 'tools/ffmpeg-capabilities.py', 'tools/lib/manifest-sources.sh', 'tools/webos-native/patches/qtdeclarative-*-qmlimportscanner-exclude-subtrees.patch', 'third_party/**', 'mpv/meson.build', 'mpv/meson.options') }}
       - name: Install matching macOS Qt host tools
         if: ${{ steps.tvos-source-cache.outputs.cache-hit != 'true' }}
         env:
@@ -860,6 +863,14 @@ jobs:
             -m qtshadertools qttasktree qtwebsockets qtimageformats
       - name: Build actual source Qt, media closure, and tvOS app
         run: bash tools/build-tvos.sh
+      - name: Build native host controller for tvOS application journeys
+        if: matrix.sdk == 'appletvsimulator'
+        run: nix develop .#native -c env DEPLOY_APP=0 bash tools/build-macos.sh
+
+      - name: Run tvOS traditional and real GPU GUI e2e tests
+        if: matrix.sdk == 'appletvsimulator'
+        run: bash tools/apple/smoke-tvos.sh build/tvos/appletvsimulator-arm64/install/Spool.app
+
       - name: Package artifact-audited unsigned device IPA (no device runtime claim)
         if: ${{ matrix.sdk == 'appletvos' }}
         run: bash tools/package-tvos.sh build/tvos/appletvos-arm64/install/Spool.app dist/tvos
@@ -938,7 +949,7 @@ jobs:
             build/third_party
             .ccache
             mpv/build/webos-libmpv
-          key: webos3-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock', 'mpv/meson.build', 'build-ipk.sh', 'tools/package-audit.py', 'tools/lib/*.sh', 'tools/manifests/ffmpeg-capabilities.json', 'tools/manifests/toolchain.json', 'tools/manifests/mpv-native.json', 'tools/manifests/qt-webos-6.11.json', 'tools/manifests/webos-third-party.json', 'tools/webos-native/**') }}
+          key: webos3-${{ runner.os }}-${{ hashFiles('tools/manifests/streaming-third-party.json', 'tools/prepare-streaming-sources.sh', 'tools/streaming-fingerprint.py', 'tools/check-streaming-dependencies.py', 'tools/cmake/StreamingDependencies.cmake', 'tools/lib/streaming-build.sh', 'tools/patches/curl-*.patch', 'tools/windows/build-streaming-dependencies.ps1', 'flake.nix', 'flake.lock', 'mpv/meson.build', 'build-ipk.sh', 'tools/package-audit.py', 'tools/lib/*.sh', 'tools/manifests/ffmpeg-capabilities.json', 'tools/manifests/toolchain.json', 'tools/manifests/mpv-native.json', 'tools/manifests/qt-webos-6.11.json', 'tools/manifests/webos-third-party.json', 'tools/webos-native/**') }}
           restore-keys: |
             webos3-${{ runner.os }}-
             webos2-${{ runner.os }}-
@@ -1151,7 +1162,7 @@ jobs:
             build/android/qt
             build/android/deps
             build/android/qcoro
-          key: android6-${{ matrix.abi }}-${{ runner.os }}-${{ steps.cache-inputs.outputs.mpv }}-${{ steps.cache-inputs.outputs.toolchain }}-${{ hashFiles('tools/android/build-dependencies.sh', 'tools/android/build-qt6.sh', 'tools/android/patches/*.patch', 'tools/ffmpeg-capabilities.py', 'tools/lib/build-common.sh', 'tools/lib/manifest-sources.sh', 'tools/manifests/android-third-party.json', 'tools/manifests/ffmpeg-capabilities.json', 'tools/manifests/toolchain.json', 'tools/manifests/qt-android-6.11.json') }}
+          key: android6-${{ matrix.abi }}-${{ runner.os }}-${{ steps.cache-inputs.outputs.mpv }}-${{ steps.cache-inputs.outputs.toolchain }}-${{ hashFiles('tools/manifests/streaming-third-party.json', 'tools/prepare-streaming-sources.sh', 'tools/streaming-fingerprint.py', 'tools/check-streaming-dependencies.py', 'tools/cmake/StreamingDependencies.cmake', 'tools/lib/streaming-build.sh', 'tools/patches/curl-*.patch', 'tools/windows/build-streaming-dependencies.ps1', 'tools/android/build-dependencies.sh', 'tools/android/build-qt6.sh', 'tools/android/patches/*.patch', 'tools/ffmpeg-capabilities.py', 'tools/lib/build-common.sh', 'tools/lib/manifest-sources.sh', 'tools/manifests/android-third-party.json', 'tools/manifests/ffmpeg-capabilities.json', 'tools/manifests/toolchain.json', 'tools/manifests/qt-android-6.11.json') }}
 
       - name: Build cached Android toolchains
         if: ${{ steps.android-cache.outputs.cache-hit != 'true' }}
@@ -1231,8 +1242,21 @@ jobs:
           key: ${{ steps.android-cache.outputs.cache-primary-key }}
 
 
-      # Hosted emulator runtime checks remain available through
-      # tools/android/emulator-launch-test.sh, but do not gate release artifacts.
+      - name: Build native host controller for Android application journeys
+        if: matrix.abi == 'x86_64'
+        run: nix develop .#native -c bash tools/build-linux-release.sh
+
+      - name: Run Android phone traditional and real GPU GUI e2e tests
+        if: matrix.abi == 'x86_64'
+        env:
+          SPOOL_ANDROID_FORM_FACTOR: phone
+        run: nix develop .#android -c bash tools/android/emulator-launch-test.sh
+
+      - name: Run Android TV traditional and real GPU GUI e2e tests
+        if: matrix.abi == 'x86_64'
+        env:
+          SPOOL_ANDROID_FORM_FACTOR: tv
+        run: nix develop .#android -c bash tools/android/emulator-launch-test.sh
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
         with:
@@ -1381,7 +1405,7 @@ jobs:
         with:
           msystem: MSYS
           path-type: inherit
-          install: make diffutils pkgconf
+          install: make diffutils pkgconf patch tar curl
 
       - name: Install build and packaging tools
         shell: pwsh
@@ -1428,7 +1452,7 @@ jobs:
         uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
         with:
           path: build/windows-deps/mpv
-          key: windows-mpv-${{ runner.os }}-${{ steps.mpv-revision.outputs.revision }}-${{ hashFiles('tools/windows/build-mpv.ps1', 'tools/windows/build-ffmpeg.ps1', 'tools/windows/build-ffmpeg.sh', 'tools/windows/check-ffmpeg.py', 'tools/windows/build-shader-tools.ps1', 'tools/windows/common.ps1', 'tools/manifests/mpv-native.json', 'tools/manifests/ffmpeg-capabilities.json', 'tools/manifests/toolchain.json', 'tools/ffmpeg-capabilities.py') }}
+          key: windows-mpv-${{ runner.os }}-${{ steps.mpv-revision.outputs.revision }}-${{ hashFiles('tools/manifests/streaming-third-party.json', 'tools/prepare-streaming-sources.sh', 'tools/streaming-fingerprint.py', 'tools/check-streaming-dependencies.py', 'tools/cmake/StreamingDependencies.cmake', 'tools/lib/streaming-build.sh', 'tools/patches/curl-*.patch', 'tools/windows/build-streaming-dependencies.ps1', 'tools/windows/build-mpv.ps1', 'tools/windows/build-ffmpeg.ps1', 'tools/windows/build-ffmpeg.sh', 'tools/windows/check-ffmpeg.py', 'tools/windows/build-shader-tools.ps1', 'tools/windows/common.ps1', 'tools/manifests/mpv-native.json', 'tools/manifests/ffmpeg-capabilities.json', 'tools/manifests/toolchain.json', 'tools/ffmpeg-capabilities.py') }}
 
       - name: Build libmpv from the fork
         if: steps.mpv-cache.outputs.cache-hit != 'true'
@@ -1443,7 +1467,7 @@ jobs:
         uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
         with:
           path: build/windows-deps/mpv
-          key: windows-mpv-${{ runner.os }}-${{ steps.mpv-revision.outputs.revision }}-${{ hashFiles('tools/windows/build-mpv.ps1', 'tools/windows/build-ffmpeg.ps1', 'tools/windows/build-ffmpeg.sh', 'tools/windows/check-ffmpeg.py', 'tools/windows/build-shader-tools.ps1', 'tools/windows/common.ps1', 'tools/manifests/mpv-native.json', 'tools/manifests/ffmpeg-capabilities.json', 'tools/manifests/toolchain.json', 'tools/ffmpeg-capabilities.py') }}
+          key: windows-mpv-${{ runner.os }}-${{ steps.mpv-revision.outputs.revision }}-${{ hashFiles('tools/manifests/streaming-third-party.json', 'tools/prepare-streaming-sources.sh', 'tools/streaming-fingerprint.py', 'tools/check-streaming-dependencies.py', 'tools/cmake/StreamingDependencies.cmake', 'tools/lib/streaming-build.sh', 'tools/patches/curl-*.patch', 'tools/windows/build-streaming-dependencies.ps1', 'tools/windows/build-mpv.ps1', 'tools/windows/build-ffmpeg.ps1', 'tools/windows/build-ffmpeg.sh', 'tools/windows/check-ffmpeg.py', 'tools/windows/build-shader-tools.ps1', 'tools/windows/common.ps1', 'tools/manifests/mpv-native.json', 'tools/manifests/ffmpeg-capabilities.json', 'tools/manifests/toolchain.json', 'tools/ffmpeg-capabilities.py') }}
 
       - name: Build application
         shell: pwsh
@@ -1451,8 +1475,13 @@ jobs:
 
 
 
-      # The strict Windows native suite remains available through
-      # tools/windows/test.ps1. Hosted OCR/runtime checks do not gate packaging.
+      - name: Install pinned Windows GPU and OCR test runtime
+        shell: pwsh
+        run: tools\windows\install-test-runtime.ps1
+
+      - name: Run Windows traditional and real OpenGL GUI e2e tests
+        shell: pwsh
+        run: tools\windows\test.ps1
 
       - name: Stage and launch-test release payload
         shell: pwsh
