@@ -18,7 +18,7 @@ MANIFEST="${MANIFEST:-$ROOT/tools/manifests/streaming-third-party.json}"
 source "$ROOT/tools/lib/manifest-sources.sh"
 # A changed patch must re-extract pristine source; reverse-applying an older
 # patch cannot establish that the new patch's preimage still exists.
-fingerprint="$(python3 "$ROOT/tools/streaming-fingerprint.py" --root "$ROOT" --manifest "$MANIFEST" --target sources)"
+fingerprint="$("$MANIFEST_PYTHON" "$ROOT/tools/streaming-fingerprint.py" --root "$ROOT" --manifest "$MANIFEST" --target sources)"
 for name in openssl nghttp2 nghttp3 ngtcp2 curl; do
   marker="$OUTPUT/$name/.spool-preparation-fingerprint"
   if [[ -f "$OUTPUT/$name/.jellyfin-source-sha256" && ( ! -f "$marker" || "$(<"$marker")" != "$fingerprint" ) ]]; then
