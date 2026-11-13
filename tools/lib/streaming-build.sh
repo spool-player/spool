@@ -12,4 +12,7 @@ build_streaming_http() {
     cmake --build "$builds/$dependency" --parallel "${JOBS:-4}"
     cmake --install "$builds/$dependency"
   done
+  cmake -S "$ROOT/tools/cmake/QuicBatchingProbe" -B "$builds/quic-batching-probe" -GNinja \
+    "$@" -DSTREAMING_CURL_SOURCE="$sources/curl" -DSTREAMING_CURL_BUILD="$builds/curl" \
+    -DSTREAMING_INSTALLED_PC="${DESTDIR:-}$prefix/lib/pkgconfig/libcurl.pc"
 }

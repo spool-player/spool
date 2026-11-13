@@ -59,6 +59,11 @@ foreach ($name in @('nghttp2', 'nghttp3', 'ngtcp2', 'curl')) {
     & cmake --install (Join-Path $builds $name)
     if ($LASTEXITCODE -ne 0) { throw "Installing $name failed." }
 }
+& cmake -S (Join-Path $root 'tools\cmake\QuicBatchingProbe') -B (Join-Path $builds 'quic-batching-probe') -GNinja `
+    -DCMAKE_C_COMPILER=clang-cl -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL `
+    "-DSTREAMING_CURL_SOURCE=$(Join-Path $sources 'curl')" "-DSTREAMING_CURL_BUILD=$(Join-Path $builds 'curl')" `
+    "-DSTREAMING_INSTALLED_PC=$(Join-Path $prefix 'lib\pkgconfig\libcurl.pc')"
+if ($LASTEXITCODE -ne 0) { throw 'Auditing compiled QUIC batching capabilities failed.' }
 # Audit metadata using native Python and the explicit MSYS shell; no target
 # binary or implicit system package can satisfy a wrong-version closure.
 & python (Join-Path $root 'tools\check-streaming-dependencies.py') --prefix $prefix `
