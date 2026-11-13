@@ -13,38 +13,6 @@
 
 namespace Spool {
 
-NetworkLaneSelection selectNetworkLanes(const QVariantList& samples, double mediaBitrate, int maxRequests)
-{
-    double best = 0;
-    maxRequests = std::clamp(maxRequests, 1, 16);
-    for (const QVariant& value : samples) {
-        const auto sample = value.toMap();
-        const int requests = sample.value(QStringLiteral("requests")).toInt();
-        const double capacity = sample.value(QStringLiteral("capacity-bytes-per-second")).toDouble();
-        if (requests >= 1 && requests <= maxRequests && std::isfinite(capacity))
-            best = std::max(best, capacity);
-    }
-    if (!(best > 0))
-        return {};
-    // Sub-15% gains are not evidence that another socket is useful, especially
-    // on fast links where scheduling and connection warmup dominate tiny tests.
-    double threshold = best * 0.85;
-    int reason = 1;
-    if (std::isfinite(mediaBitrate) && mediaBitrate > 0 && mediaBitrate * 1.75 / 8 <= threshold) {
-        threshold = mediaBitrate * 1.75 / 8;
-        reason = 2;
-    }
-    int selected = 17;
-    for (const QVariant& value : samples) {
-        const auto sample = value.toMap();
-        const int requests = sample.value(QStringLiteral("requests")).toInt();
-        if (requests >= 1 && requests <= maxRequests
-            && sample.value(QStringLiteral("capacity-bytes-per-second")).toDouble() >= threshold)
-            selected = std::min(selected, requests);
-    }
-    return { selected <= 16 ? selected : 1, reason };
-}
-
 SpeedTest::SpeedTest(ScriptAccess *access, Completion completion, QObject *parent)
     : QObject(parent)
     , m_access(access)
@@ -101,10 +69,17 @@ void SpeedTest::finish(QString error, qint64 bitrate)
                   "elapsed_seconds=%.3f received_bytes=%lld",
                 1 << i, m_rates[i] / 8, m_latencies[i], m_durations[i], static_cast<long long>(m_received[i]));
         }
-        const auto selection = selectNetworkLanes(samples, m_targetBitrate);
-        const int lanes = selection.requests;
-        qInfo("streaming probe selection requests=%d reason=%d media_bitrate=%.0f", lanes, selection.reason,
-            m_targetBitrate);
+        // This count describes the offline probe only; native playback chooses
+        // its own profile from the complete measured curve.
+        const double threshold = *std::max_element(m_rates.cbegin(), m_rates.cend()) * 0.85;
+        int lanes = 1;
+        for (int i = 0; i < 3; ++i) {
+            if (m_rates[i] >= threshold) {
+                lanes = 1 << i;
+                break;
+            }
+        }
+        qInfo("streaming probe selection requests=%d", lanes);
         QUrl endpoint;
         endpoint.setScheme(m_request.url().scheme());
         endpoint.setHost(m_request.url().host());
@@ -117,9 +92,6 @@ void SpeedTest::finish(QString error, qint64 bitrate)
 
 void SpeedTest::start(const QVariantMap& options)
 {
-    const double target = options.value(QStringLiteral("mediaBitrate")).toDouble();
-    if (std::isfinite(target) && target > 0 && target <= 800.0e9)
-        m_targetBitrate = target;
     const QVariant address = options.value(QStringLiteral("url"));
     if (address.metaType().id() != QMetaType::QString)
         return finish(QStringLiteral("request_denied"));

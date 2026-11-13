@@ -1346,6 +1346,11 @@ QVariantMap SourceHub::speedTestStatus() const
         for (const QVariant& value : profile.value(QStringLiteral("transport-samples")).toList()) {
             const QVariantMap sample = value.toMap();
             curve.append(QVariantMap { { QStringLiteral("requests"), sample.value(QStringLiteral("requests")).toInt() },
+                { QStringLiteral("httpVersion"), sample.value(QStringLiteral("http-version")).toInt() },
+                { QStringLiteral("receiveProfile"), sample.value(QStringLiteral("receive-profile")).toInt() },
+                { QStringLiteral("receiveBytes"), sample.value(QStringLiteral("receive-bytes")).toLongLong() },
+                { QStringLiteral("rangeBytes"), sample.value(QStringLiteral("range-bytes")).toLongLong() },
+                { QStringLiteral("source"), sample.value(QStringLiteral("source")).toInt() },
                 { QStringLiteral("mbps"),
                     sample.value(QStringLiteral("ordered-bytes-per-second")).toDouble() * 8.0 / 1'000'000.0 } });
         }
@@ -1353,6 +1358,7 @@ QVariantMap SourceHub::speedTestStatus() const
             { QStringLiteral("measuredMbps"),
                 profile.value(QStringLiteral("measured-bitrate")).toDouble() / 1'000'000.0 },
             { QStringLiteral("accountId"), provider->id() }, { QStringLiteral("moduleId"), moduleId },
+            { QStringLiteral("selectedRequests"), profile.value(QStringLiteral("last-selected-requests"), 1).toInt() },
             { QStringLiteral("laneMbps"), curve },
             { QStringLiteral("running"), entry->speedState == Entry::SpeedState::Running },
             { QStringLiteral("pending"), entry->speedState == Entry::SpeedState::Pending },

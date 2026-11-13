@@ -320,13 +320,13 @@ namespace {
             QStringLiteral("receive-profile"), QStringLiteral("receive-bytes"), QStringLiteral("range-bytes"),
             QStringLiteral("ordered-bytes-per-second"), QStringLiteral("updated-at-ms"), QStringLiteral("source"),
             QStringLiteral("effective-http-version"), QStringLiteral("http-fallbacks"), QStringLiteral("origins"),
-            QStringLiteral("origin-id"), QStringLiteral("h2-state"), QStringLiteral("h3-state"),
-            QStringLiteral("cooldown-remaining-ms"), QStringLiteral("receive-requested-bytes"),
-            QStringLiteral("receive-effective-bytes"), QStringLiteral("receive-status"),
-            QStringLiteral("udp-rcvbuf-requested"), QStringLiteral("udp-rcvbuf-effective"), QStringLiteral("udp-drops"),
-            QStringLiteral("urgency"), QStringLiteral("state"), QStringLiteral("last-reason"),
-            QStringLiteral("joint-extra-grant-bytes"), QStringLiteral("allocated-extra-bytes"),
-            QStringLiteral("reserved-socket-bytes") };
+            QStringLiteral("primary-origin-match"), QStringLiteral("origin-id"), QStringLiteral("h2-state"),
+            QStringLiteral("h3-state"), QStringLiteral("cooldown-remaining-ms"),
+            QStringLiteral("receive-requested-bytes"), QStringLiteral("receive-effective-bytes"),
+            QStringLiteral("receive-status"), QStringLiteral("udp-rcvbuf-requested"),
+            QStringLiteral("udp-rcvbuf-effective"), QStringLiteral("udp-drops"), QStringLiteral("urgency"),
+            QStringLiteral("state"), QStringLiteral("last-reason"), QStringLiteral("joint-extra-grant-bytes"),
+            QStringLiteral("allocated-extra-bytes"), QStringLiteral("reserved-socket-bytes") };
         if (keys.contains(key))
             return true;
         constexpr QLatin1String available("-available");
