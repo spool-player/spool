@@ -193,8 +193,18 @@ http {{
                                           for row in sample.get('streams', [])), default=0)
                     if fallback_count < 1:
                         raise AssertionError('HTTP2 reset downgrade was not reported')
+                    h2_connections = reset.protocols.count('h2')
+                    second = transport.Player(args.libmpv, **{'tls-ca-file': root / 'cert.pem',
+                        'curl-http-mode': 'tcp', 'curl-fixed-requests': '1'})
+                    try:
+                        second.play(f'https://127.0.0.1:{reset.port}/fixture.wav', timeout=30)
+                    finally:
+                        second.close()
+                    if reset.protocols.count('h2') != h2_connections:
+                        raise AssertionError('new playback core retried cooled-down failed HTTP2 origin')
                     print(json.dumps({'scenario': 'h2-reset-with-zero-retry-budget',
-                                      'http-fallbacks': fallback_count, 'pcm-bytes': len(expected)}), flush=True)
+                                      'http-fallbacks': fallback_count, 'cooldown-reused': True,
+                                      'pcm-bytes': len(expected)}), flush=True)
                 from quic_origin import QuicFailureOrigin
                 # Both protocol paths identify the same representation. Obtain the
                 # fixture's real validator before serving it over a second stack.
