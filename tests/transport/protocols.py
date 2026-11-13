@@ -7,6 +7,8 @@ The separate packet harness may skip when user network namespaces are disabled.
 import argparse
 import array
 import importlib.util
+import http.client
+import ssl
 import json
 from pathlib import Path
 import shutil
@@ -56,8 +58,11 @@ def main():
                         '-days', '1', '-subj', '/CN=127.0.0.1', '-addext',
                         'subjectAltName=IP:127.0.0.1'], check=True, capture_output=True)
         tls, tcp = free_port('127.0.0.1'), free_port('127.0.0.1')
+        broken_quic = free_port('127.0.0.1')
         while tls == tcp:
             tcp = free_port('127.0.0.1')
+        while broken_quic in (tls, tcp):
+            broken_quic = free_port('127.0.0.1')
         (root / 'nginx.conf').write_text(f'''worker_processes 1;
 pid {root}/nginx.pid;
 error_log {root}/error.log info;
@@ -76,6 +81,12 @@ http {{
     listen 127.0.0.1:{tls} quic reuseport;
     http2 on;
     add_header Alt-Svc 'h3=":{tls}"';
+    root {root};
+  }}
+  server {{
+    listen 127.0.0.1:{broken_quic} ssl;
+    http2 on;
+    add_header Alt-Svc 'h3=":{broken_quic}"';
     root {root};
   }}
   server {{
@@ -175,6 +186,55 @@ http {{
                         raise AssertionError('HTTP2 reset downgrade was not reported')
                     print(json.dumps({'scenario': 'h2-reset-with-zero-retry-budget',
                                       'http-fallbacks': fallback_count, 'pcm-bytes': len(expected)}), flush=True)
+                from quic_origin import QuicFailureOrigin
+                # Both protocol paths identify the same representation. Obtain the
+                # fixture's real validator before serving it over a second stack.
+                metadata = http.client.HTTPSConnection('127.0.0.1', broken_quic,
+                    context=ssl.create_default_context(cafile=root / 'cert.pem'))
+                try:
+                    metadata.request('HEAD', '/fixture.wav')
+                    response = metadata.getresponse()
+                    etag = response.getheader('ETag')
+                    if response.status != 200 or not etag:
+                        raise AssertionError('TCP fixture did not supply a strong representation validator')
+                    response.read()
+                finally:
+                    metadata.close()
+                with QuicFailureOrigin(root, broken_quic, header + expected, etag) as broken:
+                    output = root / 'quic-reset.pcm'
+                    player = transport.Player(args.libmpv, **{
+                        'tls-ca-file': root / 'cert.pem', 'ao': 'pcm', 'ao-pcm-file': output,
+                        'ao-pcm-waveheader': 'no', 'audio-format': 's16',
+                        'curl-http-mode': 'prefer-h3', 'curl-fixed-requests': '1', 'curl-max-retries': '0'})
+                    try:
+                        player.configure(1, max_requests=4, fixed_requests=1, http_mode=3)
+                        player.check(player.transport_control({'format': 2, 'op': 1, 'playback-epoch': 1,
+                            'joint-extra-grant-bytes': 64 << 20, 'background-network': False}), 'grant')
+                        result = player.play(f'https://127.0.0.1:{broken_quic}/fixture.wav', timeout=30)
+                        # Reuse the process-wide origin cooldown in a new core.
+                        # This first core must finish before creating its successor.
+                    finally:
+                        player.close()
+                    if output.read_bytes() != expected or not broken.requests:
+                        raise AssertionError('HTTP3 connection failure did not preserve exact PCM')
+                    fallback_count = max((row.get('http-fallbacks', 0) for _, sample in result['samples']
+                                          for row in sample.get('streams', [])), default=0)
+                    if fallback_count < 1:
+                        raise AssertionError('HTTP3 connection failure was not reported as a downgrade')
+                    if f'{broken_quic} HTTP/2.0 206 bytes=' not in (root / 'access.log').read_text():
+                        raise AssertionError('HTTP3 connection failure did not retry over HTTP2')
+                    before = len(broken.requests)
+                    second = transport.Player(args.libmpv, **{'tls-ca-file': root / 'cert.pem',
+                        'curl-http-mode': 'prefer-h3', 'curl-fixed-requests': '1'})
+                    try:
+                        second.play(f'https://127.0.0.1:{broken_quic}/fixture.wav', timeout=30)
+                    finally:
+                        second.close()
+                    if len(broken.requests) != before:
+                        raise AssertionError('new playback core retried cooled-down failed HTTP3 origin')
+                    print(json.dumps({'scenario': 'h3-connection-failure-with-zero-retry-budget',
+                                      'http-fallbacks': fallback_count, 'cooldown-reused': True,
+                                      'pcm-bytes': len(expected)}), flush=True)
         finally:
             nginx.terminate()
             try:
