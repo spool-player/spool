@@ -239,7 +239,7 @@ export function createSource(configuration) {
                     == 26'000'000
                 && sampleFor(learnedMelbourne, 2, 0, 0, 0) == probePrior,
             "protocol, receive mode/size, range size, request count and probe evidence never contaminate each other");
-        for (int invalid = 0; invalid < 11; ++invalid) {
+        for (int invalid = 0; invalid < 12; ++invalid) {
             auto rejected = feedback(2, 90'000'000, 4);
             if (invalid == 0)
                 rejected["observed-at-ms"] = QDateTime::currentMSecsSinceEpoch() - 600'000;
@@ -270,6 +270,8 @@ export function createSource(configuration) {
                 rejected["transport-samples"] = QVariantList { transportSample(90'000'000, 4), malformed };
             }
             rejected["average-bytes-per-second"] = 100.0;
+            if (invalid == 11)
+                rejected["transport-samples"] = QVariantList { transportSample(90'000'000, 4, 0, 0, 0) };
             hub.playback()->updatePlaybackNetworkProfile(melbourneOrigin, rejected);
             require(hub.playback()->playbackNetworkProfile() == learnedMelbourne,
                 "stale, replayed, nonprimary and malformed observations cannot partially mutate learning");
@@ -292,13 +294,13 @@ export function createSource(configuration) {
         require(hub.playback()->playbackNetworkProfile().value("last-selected-requests").toInt() == 4,
             "profile reports the actual count even when a probe demonstrated a faster count");
         auto actualSingle = feedback(4, 6'000'000);
-        actualSingle["transport-samples"] = QVariantList { transportSample(6'000'000, 1, 0, 0, 0) };
+        actualSingle["transport-samples"] = QVariantList { transportSample(6'000'000, 1) };
         hub.playback()->updatePlaybackNetworkProfile(njOrigin, actualSingle);
-        const auto actual = sampleFor(hub.playback()->playbackNetworkProfile(), 1, 0, 0, 0);
+        const auto actual = sampleFor(hub.playback()->playbackNetworkProfile(), 1, 11, 0, 512 * 1024);
         require(actual.value("source").toInt() == 2 && actual.value("ordered-bytes-per-second").toDouble() == 6'000'000,
-            "actual playback supersedes a probe only for its matching effective profile");
+            "actual playback retains its known effective profile separately from probe priors");
         require(probe(90'000'000), "later probe refresh records");
-        require(sampleFor(hub.playback()->playbackNetworkProfile(), 1, 0, 0, 0) == actual
+        require(sampleFor(hub.playback()->playbackNetworkProfile(), 1, 11, 0, 512 * 1024) == actual
                 && sampleFor(hub.playback()->playbackNetworkProfile(), 4, 11, 0, 512 * 1024)
                         .value("ordered-bytes-per-second")
                         .toDouble()
