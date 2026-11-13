@@ -2,6 +2,10 @@ param([switch] $Clean)
 . (Join-Path $PSScriptRoot 'common.ps1')
 Initialize-WindowsMpvBuildEnvironment
 $root = Get-RepositoryRoot
+$nativePerl = Get-NativeWindowsPerl
+if (-not $nativePerl) {
+    throw 'OpenSSL VC-WIN64A requires native Windows Perl. Run tools\windows\install-build-tools.ps1 to install Strawberry Perl.'
+}
 $msys = Get-Msys2Root
 $bash = Join-Path $msys 'usr\bin\bash.exe'
 $cygpath = Join-Path $msys 'usr\bin\cygpath.exe'
@@ -34,16 +38,21 @@ if (Test-Path $builds) { Remove-Item $builds -Recurse -Force }
 if (Test-Path $prefix) { Remove-Item $prefix -Recurse -Force }
 $opensslBuild = Join-Path $builds 'openssl'
 New-Item -ItemType Directory -Force $opensslBuild | Out-Null
+$originalStreamingPath = $env:PATH
+$env:PATH = "$(Split-Path $nativePerl -Parent);$env:PATH"
 Push-Location $opensslBuild
 try {
-    & perl (Join-Path $sources 'openssl\Configure') VC-WIN64A no-shared no-apps no-docs no-tests `
+    & $nativePerl (Join-Path $sources 'openssl\Configure') VC-WIN64A no-shared no-apps no-docs no-tests `
         no-comp no-dtls no-srp no-ssl3 no-weak-ssl-ciphers -MD "--prefix=$prefix" --libdir=lib
     if ($LASTEXITCODE -ne 0) { throw 'Configuring OpenSSL failed.' }
     & nmake build_libs
     if ($LASTEXITCODE -ne 0) { throw 'Building OpenSSL failed.' }
     & nmake install_dev
     if ($LASTEXITCODE -ne 0) { throw 'Installing OpenSSL failed.' }
-} finally { Pop-Location }
+} finally {
+    Pop-Location
+    $env:PATH = $originalStreamingPath
+}
 $env:PKG_CONFIG_PATH = Convert-StreamingPath "$prefix/lib/pkgconfig"
 foreach ($name in @('nghttp2', 'nghttp3', 'ngtcp2', 'curl')) {
     & cmake -S (Join-Path $sources $name) -B (Join-Path $builds $name) -GNinja `

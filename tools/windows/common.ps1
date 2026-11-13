@@ -60,6 +60,23 @@ function Get-Msys2Root {
     return $root
 }
 
+# OpenSSL's VC targets require a native Windows Perl. MSYS Perl can see a
+# Windows Configure path yet resolve FindBin against the build directory.
+function Get-NativeWindowsPerl {
+    $candidates = @()
+    if ($env:SPOOL_WINDOWS_PERL) { $candidates += $env:SPOOL_WINDOWS_PERL }
+    $candidates += Join-Path $env:SystemDrive 'Strawberry\perl\bin\perl.exe'
+    $candidates += @(Get-Command perl.exe -All -ErrorAction SilentlyContinue | ForEach-Object { $_.Source })
+    foreach ($candidate in ($candidates | Select-Object -Unique)) {
+        if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }
+        $flavor = & $candidate -e 'print $^O' 2>$null
+        if ($LASTEXITCODE -eq 0 -and (($flavor -join '').Trim() -eq 'MSWin32')) {
+            return [IO.Path]::GetFullPath($candidate)
+        }
+    }
+    return $null
+}
+
 function Expand-WindowsSourceArchive {
     param(
         [Parameter(Mandatory)] [string] $Archive,
