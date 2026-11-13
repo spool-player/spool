@@ -590,7 +590,7 @@ void LocalCommandServer::dispatch(QIODevice *socket, const QJsonObject& request)
             return;
         }
         auto *operation = new QObject(socket);
-        Async::run(
+        Async::runScoped(
             operation,
             m_sources->fetchBrowsePage(BrowseDescriptor::library(library.id, library.collectionType, library.name),
                 int(offset), int(limit),
