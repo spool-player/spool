@@ -1344,6 +1344,19 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
                     --libmpv "${SPOOL_CURL_TEST_MPV}" -v)
             # The real-HTTP suite runs about 330 s of playback serially.
             set_tests_properties(curl-transport PROPERTIES LABELS traditional TIMEOUT 600)
+            add_test(NAME streaming-dependencies COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/StreamingDependenciesTest.py")
+            set_tests_properties(streaming-dependencies PROPERTIES LABELS traditional TIMEOUT 120)
+            add_test(NAME transport-protocols COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/transport/protocols.py"
+                --transport-helper "${MPV_ACTIVE_SOURCE_DIR}/test/curl_transport.py"
+                --libmpv "${SPOOL_CURL_TEST_MPV}")
+            set_tests_properties(transport-protocols PROPERTIES LABELS traditional TIMEOUT 300)
+            add_test(NAME transport-packet-performance COMMAND bash
+                "${CMAKE_CURRENT_SOURCE_DIR}/tools/test-transport-netns.sh"
+                --libmpv "${SPOOL_CURL_TEST_MPV}")
+            set_tests_properties(transport-packet-performance PROPERTIES LABELS performance
+                RUN_SERIAL TRUE RESOURCE_LOCK transport-network TIMEOUT 1200 SKIP_RETURN_CODE 77)
         endif()
     endif()
     if(SPOOL_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
