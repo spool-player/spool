@@ -333,6 +333,8 @@ FocusScope {
         for (let index = 0; index < allSettingsRows.length; ++index) {
             const entry = allSettingsRows[index]
             const row = rowsByKey[entry.rowKey]
+            if (row.resetKey && !rowAvailable(row))
+                continue
             if (pageMode === "search") {
                 if (SettingsNavigation.matchesSearch(row, searchQuery, rowOptions(row)))
                     visibleRows.push(descriptor(row.key, entry.sourceIndex, false, false))
@@ -565,8 +567,10 @@ FocusScope {
         }
         if (serverSettings && row.perServer) {
             const overrides = Settings.serverOverrides
+            const reason = availabilityReason(row)
             return (Settings.hasServerOverride(row.key, sourceId) ? "Custom" : "Default · Follows your settings") + (
-                        row.description ? " · " + row.description : "") + capability
+                        row.description ? " · " + row.description : "") + (reason.length ? " · " + reason : "")
+                    + capability
         }
         if (pageMode === "search")
             return SettingsNavigation.categoryTitle(row.categoryId) + " · " + row.group + (availabilityReason(
