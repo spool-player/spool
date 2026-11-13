@@ -4,7 +4,7 @@ set -euo pipefail
 # routes, qdiscs, sysctls or socket ceilings and never invokes sudo.
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 usage() { echo "Usage: $0 --libmpv ABS [--output ABS] [--rtt-ms N] [--loss-percent N]"; }
-LIBRARY= OUTPUT= RTT=150 LOSS=0.1
+LIBRARY= OUTPUT= RTT=150 LOSS=0
 while (( $# )); do
   case "$1" in
     --help|-h) usage; exit 0 ;;
@@ -30,7 +30,7 @@ ip link set lo up mtu 1500
 # A loopback packet traverses this qdisc once in each direction, so half the
 # desired round-trip delay applies to each packet; ping records the real RTT.
 delay="$(python3 -c 'import sys; print(float(sys.argv[1])/2)' "$rtt")"
-if ! tc qdisc add dev lo root netem delay "${delay}ms" loss "${loss}%" rate 150mbit limit 10000; then
+if ! tc qdisc add dev lo root netem delay "${delay}ms" loss "${loss}%" rate 200mbit limit 10000; then
   echo 'SKIP: netem qdisc unavailable in isolated namespace' >&2
   exit 77
 fi

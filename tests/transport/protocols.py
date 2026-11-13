@@ -110,12 +110,12 @@ http {{
                                   '-g', 'daemon off;'], stdout=subprocess.DEVNULL,
                                  stderr=subprocess.PIPE)
         try:
-            deadline = time.monotonic() + 5
+            deadline = time.monotonic() + (20 if args.performance else 5)
             while True:
                 if nginx.poll() is not None:
                     raise AssertionError('nginx fixture failed: ' + nginx.stderr.read().decode())
                 try:
-                    with socket.create_connection(('127.0.0.1', tls), timeout=.1):
+                    with socket.create_connection(('127.0.0.1', tls), timeout=1 if args.performance else .1):
                         break
                 except OSError:
                     if time.monotonic() > deadline:
