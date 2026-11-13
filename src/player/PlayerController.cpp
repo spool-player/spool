@@ -326,7 +326,10 @@ namespace {
             QStringLiteral("receive-status"), QStringLiteral("udp-rcvbuf-requested"),
             QStringLiteral("udp-rcvbuf-effective"), QStringLiteral("udp-drops"), QStringLiteral("urgency"),
             QStringLiteral("state"), QStringLiteral("last-reason"), QStringLiteral("joint-extra-grant-bytes"),
-            QStringLiteral("allocated-extra-bytes"), QStringLiteral("reserved-socket-bytes") };
+            QStringLiteral("allocated-extra-bytes"), QStringLiteral("reserved-socket-bytes"),
+            QStringLiteral("baseline-raw-bytes"), QStringLiteral("allocated-raw-bytes"),
+            QStringLiteral("reserved-manual-socket-bytes"), QStringLiteral("desired-joint-extra-grant-bytes"),
+            QStringLiteral("committed-joint-extra-grant-bytes") };
         if (keys.contains(key))
             return true;
         constexpr QLatin1String available("-available");
