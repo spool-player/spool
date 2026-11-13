@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -117,7 +118,7 @@ add_library(sample sample.c)
                         '-C', str(ROOT / 'tools/cmake/StreamingDependencies.cmake')], capture_output=True, text=True)
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     subprocess.run(['cmake', '--build', str(build)], check=True, capture_output=True)
-                    extension = '.so' if shared == 'ON' else '.a'
+                    extension = ('.dylib' if sys.platform == 'darwin' else '.so') if shared == 'ON' else '.a'
                     self.assertTrue((build / ('libsample' + extension)).is_file())
         result = subprocess.run(['cmake', '-DSTREAMING_DEPENDENCY=bad', '-DSTREAMING_SHARED=ON',
             '-P', str(ROOT / 'tools/cmake/StreamingDependencies.cmake')], capture_output=True)
