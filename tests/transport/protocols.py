@@ -131,6 +131,10 @@ http {{
                                'audio-format': 's16', 'curl-http-mode': mode,
                                'curl-fixed-requests': str(count),
                                'curl-receive-mode': 'fixed', 'curl-receive-bytes': str(4 << 20)}
+                    if args.performance:
+                        # Correctness uses short ranges to exercise many joins.
+                        # Performance must permit BDP-sized adaptive ranges.
+                        options['curl-max-request-size'] = str(16 << 20)
                     player = transport.Player(args.libmpv, **options)
                     try:
                         capabilities = player.get('curl-transport-capabilities')
