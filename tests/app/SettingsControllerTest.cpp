@@ -89,6 +89,48 @@ SPOOL_TEST_MAIN("settings-controller")
             && settings.value(QStringLiteral("playback/maxStreamingThreads")).toInt() == 4
             && !settings.value(QStringLiteral("playback/forceStreamingThreads")).toBool(),
         "fresh profile did not preserve adaptive streaming with a four-request maximum");
+    // Per-account overrides cross the real persistence boundary, remain local,
+    // and keep the bitrate toggle/value together when reverting to defaults.
+    {
+        const QString first = QStringLiteral("12345678-aaaa-bbbb-cccc-dddddddddddd");
+        const QString second = QStringLiteral("87654321-aaaa-bbbb-cccc-dddddddddddd");
+        const QString http = QStringLiteral("playback/streamingHttpVersion");
+        settings.setServerValue(http, QStringLiteral("http1"), first);
+        require(settings.effectiveValue(http, first).toString() == QLatin1String("http1")
+                && settings.effectiveValue(http, second).toString() == QLatin1String("auto")
+                && settings.value(http).toString() == QLatin1String("auto"),
+            "a server HTTP restriction must not affect global defaults or another server");
+        require(settings.effectiveValue(http, QStringLiteral("12345678:item")).toString() == QLatin1String("http1"),
+            "scoped item IDs must resolve the same account override");
+        settings.setServerValue(http, QStringLiteral("invalid"), first);
+        settings.setServerValue(QStringLiteral("appearance/uiScalePercent"), 180, first);
+        require(settings.effectiveValue(http, first).toString() == QLatin1String("http1")
+                && !settings.hasServerOverride(QStringLiteral("appearance/uiScalePercent"), first),
+            "invalid or non-playback server edits must be rejected atomically");
+        settings.setServerValue(QStringLiteral("playback/manualStreamingBitrate"), true, first);
+        require(settings.hasServerOverride(QStringLiteral("playback/maxStreamingBitrateMbps"), first),
+            "manual bitrate and its value must become one server override");
+        settings.setServerValue(QStringLiteral("playback/maxStreamingBitrateMbps"), 200, first);
+        SettingsController restored(&database, nullptr, &artwork);
+        QCoro::waitFor(restored.loadLocalAsync());
+        require(restored.effectiveValue(http, first).toString() == QLatin1String("http1")
+                && restored.effectiveValue(QStringLiteral("playback/maxStreamingBitrateMbps"), first).toInt() == 200,
+            "server playback overrides must survive a settings-controller reload");
+        require(!restored.values().contains(QStringLiteral("playback/serverOverrides-v1")),
+            "device account overrides must never enter the global syncable value map");
+        settings.resetServerValue(QStringLiteral("playback/maxStreamingBitrateMbps"), first);
+        require(!settings.hasServerOverride(QStringLiteral("playback/manualStreamingBitrate"), first)
+                && !settings.hasServerOverride(QStringLiteral("playback/maxStreamingBitrateMbps"), first),
+            "Use default must reset the entire manual bitrate override");
+        settings.setServerValue(http, QStringLiteral("tcp"), second);
+        settings.retainServerOverrides({ second });
+        require(!settings.hasServerOverride(http, first) && settings.hasServerOverride(http, second),
+            "removing an account must delete only that account's playback overrides");
+        settings.removeServerOverrides(second);
+        require(settings.serverOverrides().isEmpty()
+                && settings.serverPlaybackSummary(first) == QLatin1String("Using your defaults"),
+            "an account without overrides must return to following defaults");
+    }
     require(settings.value(QStringLiteral("playback/rememberSeriesAudioTrack")).toBool(),
         "fresh profile did not remember per-series audio tracks by default");
     require(settings.playerControlTooltipsEnabled(), "fresh profile unexpectedly hid player control tooltips");

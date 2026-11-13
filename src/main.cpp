@@ -918,6 +918,25 @@ int main(int argc, char **argv)
         [&settingsSync](Qt::ApplicationState state) { settingsSync.setForeground(state == Qt::ApplicationActive); });
     QObject::connect(controller->settings(), &Spool::SettingsController::playbackPreferencesChanged, &hub,
         &Spool::SourceHub::setPlaybackPreferences);
+    hub.setPlaybackPreferenceResolver([settings = controller->settings()](const QString& account) {
+        const auto get = [&](const char *key) { return settings->effectiveValue(QString::fromLatin1(key), account); };
+        return QVariantMap { { QStringLiteral("preferredMaxBitrate"),
+                                 get("playback/manualStreamingBitrate").toBool()
+                                     ? get("playback/maxStreamingBitrateMbps").toLongLong() * 1000000
+                                     : qint64(0) },
+            { QStringLiteral("unlimitedLocalNetwork"), get("playback/unlimitedLocalBitrate") },
+            { QStringLiteral("preferRemux"), get("playback/preferRemux") },
+            { QStringLiteral("preferredMaxHeight"), get("playback/maxStreamingHeight") } };
+    });
+    QObject::connect(controller->settings(), &Spool::SettingsController::serverOverridesChanged, &hub,
+        &Spool::SourceHub::refreshPlaybackPreferences);
+    QObject::connect(&providers, &Spool::ProviderRegistry::accountsChanged, controller->settings(),
+        [&providers, settings = controller->settings()] {
+            QStringList ids;
+            for (const auto& account : providers.accountList())
+                ids.append(account.id);
+            settings->retainServerOverrides(ids);
+        });
     QObject::connect(
         &providers, &Spool::ProviderRegistry::problem, controller.get(), &Spool::AppController::toastMessage);
     QObject::connect(&store, &Spool::ProviderStore::problem, controller.get(), &Spool::AppController::toastMessage);

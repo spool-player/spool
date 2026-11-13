@@ -44,6 +44,7 @@ class SettingsController final : public QObject {
     Q_PROPERTY(QStringList systemSubtitleFonts READ systemSubtitleFonts CONSTANT)
     Q_PROPERTY(QVariantList settingsSchema READ settingsSchema CONSTANT)
     Q_PROPERTY(QVariantMap values READ values NOTIFY settingsValuesChanged)
+    Q_PROPERTY(QVariantMap serverOverrides READ serverOverrides NOTIFY serverOverridesChanged)
     Q_PROPERTY(
         bool playerControlTooltipsEnabled READ playerControlTooltipsEnabled NOTIFY playerControlTooltipsEnabledChanged)
     Q_PROPERTY(bool remoteControlTargetEnabled READ remoteControlTargetEnabled NOTIFY remoteControlSettingsChanged)
@@ -88,6 +89,19 @@ public:
     // schema is built once, on that first read.
     QVariantMap values() const;
     Q_INVOKABLE QVariant value(const QString& key) const;
+    QVariantMap serverOverrides() const
+    {
+        return m_serverOverrides;
+    }
+    Q_INVOKABLE QVariant effectiveValue(const QString& key, const QString& sourceId = {}) const;
+    Q_INVOKABLE bool hasServerOverride(const QString& key, const QString& sourceId) const;
+    Q_INVOKABLE void setServerValue(const QString& key, const QVariant& value, const QString& sourceId);
+    Q_INVOKABLE void resetServerValue(const QString& key, const QString& sourceId);
+    Q_INVOKABLE void removeServerOverrides(const QString& sourceId);
+    Q_INVOKABLE QString serverPlaybackSummary(const QString& sourceId) const;
+    QVariantMap playbackSnapshot(const QString& sourceId) const;
+    void retainServerOverrides(const QStringList& accountIds);
+    void preparePlayback(const QString& sourceId);
     bool playerControlTooltipsEnabled() const
     {
         return m_playerControlTooltipSessions < 3;
@@ -145,6 +159,7 @@ signals:
     void appearanceChanged();
     void settingChanged(const QString& key);
     void settingsValuesChanged();
+    void serverOverridesChanged();
     void userValuesCommitted(QVariantMap values);
     void userValuesCommitFailed();
     void settingsPersistenceFailed(QString message);
@@ -153,6 +168,7 @@ signals:
     void errorOccurred(const QString& message);
 
 private:
+    void persistServerOverrides();
     void submitValues(QVariantMap values, ChangeOrigin origin);
     void mirrorExternalValue(const QString& key, const QVariant& value);
     void applyExternalValue(const SettingSpec& spec, const QVariant& value);
@@ -185,6 +201,7 @@ private:
     int m_artworkWebpQuality = 75;
     int m_artworkJpegQuality = 82;
     QVariantMap m_values;
+    QVariantMap m_serverOverrides;
     bool m_nightModeEnabled = false;
     bool m_remoteControlTargetEnabled = true;
     bool m_toneMappingVisualizationEnabled = false;

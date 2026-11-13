@@ -1114,6 +1114,18 @@ void SourceHub::setPlaybackPreferences(
     emit streamingQualityChanged();
 }
 
+void SourceHub::setPlaybackPreferenceResolver(std::function<QVariantMap(const QString&)> resolver)
+{
+    m_playbackPreferenceResolver = std::move(resolver);
+    pushPlaybackContext();
+}
+
+void SourceHub::refreshPlaybackPreferences()
+{
+    pushPlaybackContext();
+    emit streamingQualityChanged();
+}
+
 void SourceHub::setOverride(qint64 bitrate, int height)
 {
     m_bitrate = bitrate;
@@ -1196,6 +1208,10 @@ void SourceHub::pushPlaybackContext()
     context.insert(QStringLiteral("videoPreviews"), m_videoPreviewsEnabled);
     for (const Entry& entry : std::as_const(m_entries)) {
         if (auto *portable = qobject_cast<PortableProvider *>(entry.provider.data())) {
+            const auto preferences
+                = m_playbackPreferenceResolver ? m_playbackPreferenceResolver(entry.accountId) : m_preferences;
+            for (auto it = preferences.cbegin(); it != preferences.cend(); ++it)
+                context.insert(it.key(), it.value());
             const auto learned = m_registry->playbackNetworkProfile(entry.accountId);
             context.insert(QStringLiteral("measuredBitrate"), learned.value(QStringLiteral("measured-bitrate")));
             context.insert(QStringLiteral("parallelRequests"), learned.value(QStringLiteral("initial-requests"), 1));

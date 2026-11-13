@@ -26,6 +26,11 @@ struct PlatformMemoryPolicy {
     qint64 lowMemoryBytes = 1536LL * 1024LL * 1024LL;
 };
 
+struct PlatformStreamingMemoryState {
+    qint64 availableBytes = 0;
+    bool available = false;
+};
+PlatformStreamingMemoryState platformStreamingMemoryState();
 PlatformCpuProbe platformCpuProbe(int logicalCpus);
 PlatformMemoryPolicy platformMemoryPolicy();
 qint64 effectiveLinuxMemoryBytes(

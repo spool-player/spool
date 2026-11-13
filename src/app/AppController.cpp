@@ -825,6 +825,7 @@ void AppController::playLocalFiles(const QList<QUrl>& urls, bool append)
     m_activePlaybackItem = {};
     m_playingAccountId.clear();
     m_playQueue->clear();
+    m_settings->preparePlayback({});
     m_player->playLocalFiles(urls);
     if (!m_player->sessionActive() && !m_player->errorText().isEmpty())
         showToast(m_player->errorText());
@@ -1528,6 +1529,7 @@ QCoro::Task<void> AppController::startPlayback(MovieItem playItem, bool startPau
     setBusy(false);
     if (!guard || !m_playbackLoadGeneration.isCurrent(generation))
         co_return;
+    m_settings->preparePlayback(m_provider->accountOf(session.itemId));
     m_player->play(session, startPaused);
     m_playingAccountId = m_provider->accountOf(session.itemId);
     if (!guard || !m_playbackLoadGeneration.isCurrent(generation))

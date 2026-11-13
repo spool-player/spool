@@ -43,7 +43,10 @@ namespace {
         QStringLiteral("playback/accurateTrickplay"), QStringLiteral("playback/trickplayPreviewScalePercent"),
         QStringLiteral("appearance/uiScalePercent"), QStringLiteral("playback/renderQuality"),
         QStringLiteral("playback/threadedStreaming"), QStringLiteral("playback/maxStreamingThreads"),
-        QStringLiteral("playback/forceStreamingThreads"), QStringLiteral("playback/logStreamingPerformance") };
+        QStringLiteral("playback/forceStreamingThreads"), QStringLiteral("playback/logStreamingPerformance"),
+        QStringLiteral("playback/streamingExplore"), QStringLiteral("playback/streamingMemoryLoan"),
+        QStringLiteral("playback/maxExtraStreamingMemoryMiB"), QStringLiteral("playback/streamingReceiveWindowMode"),
+        QStringLiteral("playback/streamingHttpVersion") };
     QCoro::Task<MovieItem> itemStateTask(SourceHub *sources, QString itemId, QString field, QJsonValue value)
     {
         if (field == QStringLiteral("played"))

@@ -43,8 +43,10 @@ std::vector<MpvOption> profileOptions(const MpvConfigPolicy& policy, MpvOptionPr
     bool embeddedVideo = false, const QByteArray& shaderCachePath = QByteArrayLiteral("/tmp/mpv-shaders"))
 {
     std::vector<MpvOption> options = MpvOptionProfile::preInitializeOptions(policy);
+    MpvOptionProfile::StreamingOptions streaming;
+    streaming.maxRequests = parallelRequests;
     std::vector<MpvOption> applicationOptions = MpvOptionProfile::applicationOptions(platform, true, audioOutputMode,
-        logPath, demuxerMaxBytes, demuxerMaxBackBytes, parallelRequests, embeddedVideo, shaderCachePath);
+        logPath, streaming, demuxerMaxBytes, demuxerMaxBackBytes, embeddedVideo, shaderCachePath);
     options.insert(options.end(), applicationOptions.cbegin(), applicationOptions.cend());
     return options;
 }
@@ -133,8 +135,8 @@ SPOOL_TEST_MAIN("mpv-option-profile")
             "no candidate leaves the bundle unset rather than pointing at nothing");
 
         const std::vector<MpvOption> options = MpvOptionProfile::applicationOptions(MpvOptionProfile::Platform::Desktop,
-            true, QStringLiteral("auto"), QByteArrayLiteral("/tmp/mpv.log"), QByteArrayLiteral("64M"),
-            QByteArrayLiteral("32M"), 1, false, QByteArrayLiteral("/tmp/shaders"), QFile::encodeName(bundle));
+            true, QStringLiteral("auto"), QByteArrayLiteral("/tmp/mpv.log"), {}, QByteArrayLiteral("64M"),
+            QByteArrayLiteral("32M"), false, QByteArrayLiteral("/tmp/shaders"), QFile::encodeName(bundle));
         require(valueFor(options, "tls-ca-file") == QFile::encodeName(bundle),
             "a resolved certificate bundle must reach mpv as tls-ca-file");
         require(valueFor(profileOptions(MpvConfigPolicy {}, MpvOptionProfile::Platform::Desktop, QStringLiteral("auto"),
@@ -147,7 +149,6 @@ SPOOL_TEST_MAIN("mpv-option-profile")
     const auto desktopNetwork = MpvOptionProfile::networkProfile(MpvOptionProfile::Platform::Desktop);
     require(desktopNetwork.ringBytes == 4 * 1024 * 1024, "desktop curl ring profile changed");
     require(desktopNetwork.rangeBytes == 1024 * 1024, "desktop curl range profile changed");
-    require(desktopNetwork.parallelRequests == 1, "desktop curl should default to one request");
 
     const auto desktop = profileOptions(MpvConfigPolicy {}, MpvOptionProfile::Platform::Desktop, QStringLiteral("alsa"),
         QByteArrayLiteral("/tmp/mpv.log"));
@@ -212,7 +213,7 @@ SPOOL_TEST_MAIN("mpv-option-profile")
         require(!MpvOptionProfile::needsVideoSurface(music),
             "an audio item's attached picture must not request a video surface");
         const auto musicOptions = MpvOptionProfile::applicationOptions(MpvOptionProfile::Platform::Android,
-            MpvOptionProfile::needsVideoSurface(music), QStringLiteral("auto"), QByteArrayLiteral("/tmp/mpv.log"));
+            MpvOptionProfile::needsVideoSurface(music), QStringLiteral("auto"), QByteArrayLiteral("/tmp/mpv.log"), {});
         require(valueFor(musicOptions, "vo") == "null" && valueFor(musicOptions, "vid") == "no"
                 && valueFor(musicOptions, "audio-display") == "no",
             "audio playback must neither select cover art nor create a surface-dependent video output");
@@ -225,7 +226,7 @@ SPOOL_TEST_MAIN("mpv-option-profile")
         music.mediaStreams = { picture, audio };
         require(MpvOptionProfile::needsVideoSurface(music), "music videos must retain their video output");
         const auto videoOptions = MpvOptionProfile::applicationOptions(MpvOptionProfile::Platform::Android,
-            MpvOptionProfile::needsVideoSurface(music), QStringLiteral("auto"), QByteArrayLiteral("/tmp/mpv.log"));
+            MpvOptionProfile::needsVideoSurface(music), QStringLiteral("auto"), QByteArrayLiteral("/tmp/mpv.log"), {});
         require(valueFor(videoOptions, "vo") == "mediacodec_embed" && valueFor(videoOptions, "vid") != "no",
             "a video session after audio must restore direct output and video track selection");
     }
@@ -353,7 +354,6 @@ SPOOL_TEST_MAIN("mpv-option-profile")
     const auto webOSNetwork = MpvOptionProfile::networkProfile(MpvOptionProfile::Platform::WebOS);
     require(webOSNetwork.ringBytes == 2 * 1024 * 1024, "webOS curl ring profile changed");
     require(webOSNetwork.rangeBytes == 512 * 1024, "webOS curl range profile changed");
-    require(webOSNetwork.parallelRequests == 1, "webOS curl should default to one request");
 
     const auto webOSPcm = profileOptions(MpvConfigPolicy {}, MpvOptionProfile::Platform::WebOS,
         QStringLiteral("starfish-pcm"), QByteArrayLiteral("/tmp/mpv.log"));

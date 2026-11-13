@@ -171,6 +171,8 @@ FocusScope {
                 previous.visible = false
         }
         InputKeys.focus(item)
+        if (route === "settings" && root.shell)
+            item.configureServer(String((root.shell.routeArgs || {}).sourceId || ""))
         if (route === "subtitleSettings" && root.shell) {
             const args = root.shell.routeArgs || ({})
             if (args.advanced && !item.advancedExpanded) {

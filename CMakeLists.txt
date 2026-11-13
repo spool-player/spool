@@ -185,6 +185,7 @@ set(SPOOL_PLATFORM_SOURCES
     src/platform/PlatformSettingsPolicy.h
     src/platform/PlatformStartup.h
     src/platform/PlatformSystemProbes.h
+    src/platform/PlatformStreamingMemory.cpp
     src/platform/ScreenSaverInhibitor.h
     src/platform/common/NativeAppWindowCommon.cpp
     src/platform/common/PlatformDisplayOutput.cpp
