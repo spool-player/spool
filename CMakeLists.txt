@@ -1337,6 +1337,11 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
         endforeach()
         set_tests_properties(provider-sdk-tool local-provider-overrides ffmpeg-capability-generator module-seam
             network-shaper render-benchmark-report altstore-source player-setup-report test-driver-ordering PROPERTIES LABELS traditional)
+        if(UNIX)
+            add_test(NAME streaming-dependencies COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/StreamingDependenciesTest.py")
+            set_tests_properties(streaming-dependencies PROPERTIES LABELS traditional TIMEOUT 120)
+        endif()
         if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
             set_tests_properties(package-audit webos-tooling PROPERTIES LABELS traditional)
             # Exercise the actual curl scheduler/counters, not just its exposed
@@ -1347,9 +1352,6 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
                     --libmpv "${SPOOL_CURL_TEST_MPV}" -v)
             # The real-HTTP suite runs about 330 s of playback serially.
             set_tests_properties(curl-transport PROPERTIES LABELS traditional TIMEOUT 600)
-            add_test(NAME streaming-dependencies COMMAND "${Python3_EXECUTABLE}"
-                "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/StreamingDependenciesTest.py")
-            set_tests_properties(streaming-dependencies PROPERTIES LABELS traditional TIMEOUT 120)
             add_test(NAME transport-protocols COMMAND "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/tests/transport/protocols.py"
                 --transport-helper "${MPV_ACTIVE_SOURCE_DIR}/test/curl_transport.py"
