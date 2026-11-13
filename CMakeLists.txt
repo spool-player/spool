@@ -1145,6 +1145,9 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
         COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-module-seam.sh"
     )
 
+    add_test(NAME streaming-candidates
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/StreamingCandidatesTest.py")
+
     add_test(NAME network-shaper
         COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/NetworkShaperTest.py"
@@ -1338,7 +1341,7 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
                 INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL OFF)
         endforeach()
         set_tests_properties(provider-sdk-tool local-provider-overrides ffmpeg-capability-generator module-seam
-            network-shaper render-benchmark-report altstore-source player-setup-report test-driver-ordering PROPERTIES LABELS traditional)
+            network-shaper streaming-candidates render-benchmark-report altstore-source player-setup-report test-driver-ordering PROPERTIES LABELS traditional)
         if(UNIX)
             add_test(NAME streaming-dependencies COMMAND "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/StreamingDependenciesTest.py")
