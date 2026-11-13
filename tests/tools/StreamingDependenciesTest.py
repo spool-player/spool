@@ -91,6 +91,29 @@ class StreamingDependenciesTest(unittest.TestCase):
         wrapper.write_text('changed')
         self.assertNotEqual(initial, identity('arm:28:static'))
 
+    @unittest.skipUnless(shutil.which('ninja'), 'Ninja is required by the production dependency builder')
+    def test_dependency_builder_stops_on_first_configure_failure_even_inside_conditional(self):
+        sources = self.root / 'sources'
+        for name in NAMES[1:]:
+            source = sources / name
+            source.mkdir(parents=True)
+            source.joinpath('CMakeLists.txt').write_text('cmake_minimum_required(VERSION 3.20)\n'
+                'project(FailureFixture NONE)\n'
+                + ('message(FATAL_ERROR "fixture configuration rejected")\n' if name == 'nghttp2'
+                   else 'file(WRITE "${CMAKE_BINARY_DIR}/entered" "configured")\n'))
+        builds = self.root / 'builds'
+        # Conditional callers suppress bash errexit inside functions. The owner
+        # must propagate the failing configure command itself, before siblings.
+        result = subprocess.run(['bash', '-c',
+            'set -e; ROOT="$1"; source "$ROOT/tools/lib/streaming-build.sh"; '
+            'if build_streaming_http "$2" "$3" "$4" OFF; then exit 99; else exit "$?"; fi',
+            'bash', str(ROOT), str(sources), str(builds), str(self.root / 'prefix')],
+            capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotEqual(result.returncode, 99)
+        self.assertIn('fixture configuration rejected', result.stdout + result.stderr)
+        self.assertFalse((builds / 'nghttp3').exists())
+
     def test_batching_metadata_tracks_actual_target_compile_capability(self):
         source = self.root / 'curl'
         (source / 'lib').mkdir(parents=True)
