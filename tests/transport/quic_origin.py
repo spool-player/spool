@@ -63,7 +63,7 @@ class QuicFailureOrigin:
                         (b'etag', origin.etag.encode()), (b'accept-ranges', b'bytes'),
                         (b'content-length', str(end - start).encode()),
                         (b'content-range', f'bytes {start}-{end - 1}/{len(origin.payload)}'.encode())])
-                    self.http.send_data(request.stream_id, origin.payload[start:min(start + 16384, end)])
+                    self.http.send_data(request.stream_id, origin.payload[start:min(start + 16384, end)], end_stream=False)
                     self.transmit()
                     self.failed = True
                     # A real HTTP3 connection error, not an HTTP error status.
