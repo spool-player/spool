@@ -109,4 +109,6 @@ class ResetOrigin:
             start, end, headers = self.headers(values)
             connection.sendall(('HTTP/1.1 206 Partial Content\r\n' +
                                 ''.join(f'{k}: {v}\r\n' for k, v in headers) + '\r\n').encode())
-            connection.sendall(self.payload[start:end])
+            for offset in range(start, end, 65536):
+                connection.sendall(self.payload[offset:min(offset + 65536, end)])
+                time.sleep(.002)

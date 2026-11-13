@@ -125,7 +125,8 @@ http {{
                     if result['metrics']:
                         snapshots.append(result['metrics'])
                     protocols = {row['http-version'] for sample in snapshots for row in sample.get('connections', [])}
-                    protocols.update(sample.get('effective-http-version', 0) for sample in snapshots)
+                    protocols.update(row.get('effective-http-version', 0) for sample in snapshots
+                                     for row in sample.get('streams', []))
                     if version not in protocols:
                         raise AssertionError(f'{mode}: expected negotiated {version}, observed {sorted(protocols)}')
                     # The independent server log confirms ALPN/QUIC rather than
@@ -160,7 +161,8 @@ http {{
                         raise AssertionError('HTTP2 reset did not cause a fresh HTTP1 connection')
                     if not any(start > 0 for start, _ in reset.ranges):
                         raise AssertionError('HTTP2 reset did not retry an unfinished suffix')
-                    fallback_count = max(sample.get('http-fallbacks', 0) for _, sample in result['samples'])
+                    fallback_count = max((row.get('http-fallbacks', 0) for _, sample in result['samples']
+                                          for row in sample.get('streams', [])), default=0)
                     if fallback_count < 1:
                         raise AssertionError('HTTP2 reset downgrade was not reported')
                     print(json.dumps({'scenario': 'h2-reset-with-zero-retry-budget',
