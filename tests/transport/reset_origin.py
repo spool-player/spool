@@ -7,6 +7,7 @@ import re
 import socket
 import ssl
 import threading
+import time
 
 
 class ResetOrigin:
@@ -85,6 +86,10 @@ class ResetOrigin:
                     # Real partial delivery, then a protocol-level reset. This
                     # cannot be mistaken for an HTTP status or empty body.
                     h2conn.send_data(event.stream_id, self.payload[start:min(start + 16384, end)])
+                    connection.sendall(h2conn.data_to_send())
+                    # Give curl a read turn with body bytes before the reset;
+                    # otherwise one read can see only an already-reset stream.
+                    time.sleep(.05)
                     h2conn.reset_stream(event.stream_id, error_code=2)
             connection.sendall(h2conn.data_to_send())
 
