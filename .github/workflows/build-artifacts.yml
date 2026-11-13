@@ -788,6 +788,20 @@ jobs:
             ~/Library/Caches/ccache
           key: ${{ steps.macos-build-cache.outputs.cache-primary-key }}
 
+      - name: Retain native macOS test journals and selector logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: internal-macos-${{ matrix.arch }}-unified-tests
+          # Only CI fixture supervisor outputs; never an application data directory.
+          path: |
+            build/macos/app/*-results.json
+            build/macos/app/*-results.json.*.log
+            build/macos/app/test-phases.json
+            build/macos/app/Testing/Temporary/LastTest.log
+          if-no-files-found: warn
+          retention-days: 7
+
   ios:
     name: iOS
     needs: [lint, toolchain]
@@ -1509,3 +1523,17 @@ jobs:
             dist/*-Setup.exe
           if-no-files-found: error
           retention-days: ${{ inputs.release && 1 || 7 }}
+
+      - name: Retain native Windows test journals and selector logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: internal-windows-x64-unified-tests
+          # Only CI fixture supervisor outputs; never an application data directory.
+          path: |
+            build/windows-release/app/*-results.json
+            build/windows-release/app/*-results.json.*.log
+            build/windows-release/app/test-phases.json
+            build/windows-release/app/Testing/Temporary/LastTest.log
+          if-no-files-found: warn
+          retention-days: 7
