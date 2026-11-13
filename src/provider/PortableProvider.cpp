@@ -318,10 +318,7 @@ private:
 
 void PortableProvider::setPlaybackContext(QVariantMap context)
 {
-    const int previous = m_playbackContext.value(QStringLiteral("parallelRequests"), 1).toInt();
     m_playbackContext = std::move(context);
-    if (previous != m_playbackContext.value(QStringLiteral("parallelRequests"), 1).toInt())
-        emit m_playback->playbackNetworkProfileChanged();
 }
 
 void PortableProvider::setPlaybackQueueContext(QVariantMap snapshot, int index)

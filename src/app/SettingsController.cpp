@@ -321,10 +321,16 @@ QString SettingsController::serverPlaybackSummary(const QString& sourceId) const
     QStringList labels;
     for (const auto& spec : settingSpecs()) {
         const QString key = keyString(spec);
-        if (!rows.contains(key) || key == QLatin1String("playback/manualStreamingBitrate"))
+        if (!rows.contains(key))
+            continue;
+        const bool manual = effectiveValue(QStringLiteral("playback/manualStreamingBitrate"), sourceId).toBool();
+        if ((key == QLatin1String("playback/maxStreamingBitrateMbps") && !manual)
+            || (key == QLatin1String("playback/manualStreamingBitrate") && manual))
             continue;
         const QVariant current = rows.value(key);
         QString label;
+        if (key == QLatin1String("playback/manualStreamingBitrate"))
+            label = QStringLiteral("Automatic bitrate limit");
         for (qsizetype i = 0; i < spec.choiceCount; ++i)
             if (current.toString() == QLatin1String(spec.choices[i].value))
                 label = QString::fromUtf8(spec.choices[i].label);

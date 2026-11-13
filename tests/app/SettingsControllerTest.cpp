@@ -102,6 +102,11 @@ SPOOL_TEST_MAIN("settings-controller")
             "a server HTTP restriction must not affect global defaults or another server");
         require(settings.effectiveValue(http, QStringLiteral("12345678:item")).toString() == QLatin1String("http1"),
             "scoped item IDs must resolve the same account override");
+        QCoro::waitFor(settings.applyValues({ { http, QStringLiteral("tcp") } }, Spool::ChangeOrigin::User));
+        require(settings.effectiveValue(http, first).toString() == QLatin1String("http1")
+                && settings.effectiveValue(http, second).toString() == QLatin1String("tcp"),
+            "following defaults must update live while a custom server remains unchanged");
+        QCoro::waitFor(settings.applyValues({ { http, QStringLiteral("auto") } }, Spool::ChangeOrigin::User));
         settings.setServerValue(http, QStringLiteral("invalid"), first);
         settings.setServerValue(QStringLiteral("appearance/uiScalePercent"), 180, first);
         require(settings.effectiveValue(http, first).toString() == QLatin1String("http1")
