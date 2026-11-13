@@ -44,6 +44,7 @@ run_phase() {
       ;;
     qt-target)
       WEBOS_SDK_ROOT="$SDK_ROOT" "$TOOLS_ROOT/restore-toolchain.sh"
+      "$TOOLS_ROOT/build-curl.sh" build
       QT_STATIC="${QT_STATIC:-1}" "$TOOLS_ROOT/build-qt6-611.sh" target
       ;;
     dependencies)

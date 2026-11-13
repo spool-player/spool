@@ -324,11 +324,15 @@ FFMPEG_STAGED_LIBRARY="$(stage_elf_shared_library \
 AVFORMAT_STAGED_LIBRARY="$(stage_elf_shared_library \
   "$PREFIX/lib/libavformat.so.*" "$STAGE_LIB" "$READELF_BIN")"
 OPENSSL_STAGED_LIBRARY="$(stage_elf_shared_library \
-  "$SYSROOT/usr/lib/libssl.so.*" "$STAGE_LIB" "$READELF_BIN")"
+  "$PREFIX/lib/libssl.so.*" "$STAGE_LIB" "$READELF_BIN")"
 OPENSSL_CRYPTO_STAGED_LIBRARY="$(stage_elf_shared_library \
-  "$SYSROOT/usr/lib/libcrypto.so.*" "$STAGE_LIB" "$READELF_BIN")"
+  "$PREFIX/lib/libcrypto.so.*" "$STAGE_LIB" "$READELF_BIN")"
 
 for pattern in \
+  "$PREFIX/lib/libnghttp2.so.*" \
+  "$PREFIX/lib/libnghttp3.so.*" \
+  "$PREFIX/lib/libngtcp2.so.*" \
+  "$PREFIX/lib/libngtcp2_crypto_ossl.so.*" \
   "$PREFIX/lib/libavfilter.so.*" \
   "$PREFIX/lib/libavutil.so.*" \
   "$PREFIX/lib/libswresample.so.*" \

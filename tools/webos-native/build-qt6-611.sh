@@ -530,8 +530,8 @@ configure_target_qtbase() {
   sdk_glesv2_lib="$(sdk_sysroot_library GLESv2)"
   sdk_egl_lib="$(sdk_sysroot_library EGL)"
   sdk_xkb_lib="$(sdk_sysroot_library xkbcommon)"
-  sdk_ssl_lib="$(sdk_sysroot_library ssl)"
-  sdk_crypto_lib="$(sdk_sysroot_library crypto)"
+  sdk_ssl_lib="$SYSROOT/usr/local/webos-native/lib/libssl.so"
+  sdk_crypto_lib="$SYSROOT/usr/local/webos-native/lib/libcrypto.so"
   sdk_wayland_client_lib="$(sdk_sysroot_library wayland-client)"
   sdk_wayland_server_lib="$(sdk_sysroot_library wayland-server)"
   sdk_wayland_cursor_lib="$(sdk_sysroot_library wayland-cursor)"
@@ -618,8 +618,8 @@ configure_target_qtbase() {
     -DINPUT_openssl=linked \
     -DFEATURE_ssl=ON \
     -DOPENSSL_USE_STATIC_LIBS=OFF \
-    -DOPENSSL_ROOT_DIR="$SYSROOT/usr" \
-    -DOPENSSL_INCLUDE_DIR="$SYSROOT/usr/include" \
+    -DOPENSSL_ROOT_DIR="$SYSROOT/usr/local/webos-native" \
+    -DOPENSSL_INCLUDE_DIR="$SYSROOT/usr/local/webos-native/include" \
     -DOPENSSL_SSL_LIBRARY="$sdk_ssl_lib" \
     -DOPENSSL_CRYPTO_LIBRARY="$sdk_crypto_lib" \
     -DWaylandScanner_EXECUTABLE="$target_wayland_scanner"
@@ -628,6 +628,7 @@ configure_target_qtbase() {
 target_qtbase_up_to_date() {
   [[ "${QT_BUILD_FORCE:-0}" != "1" ]] || return 1
   qt_prefix_matches_version "$TARGET_STAGING" || return 1
+  [[ -f "$TARGET_STAGING/.spool-private-tls-v1" ]] || return 1
   [[ -f "$TARGET_STAGING/.jellyfin-openssl-shared" ]] || return 1
   [[ -f "$TARGET_STAGING/.spool-no-testlib-v1" ]] || return 1
   if [[ "$QT_STATIC" == "1" ]]; then
@@ -662,6 +663,7 @@ build_target_qtbase() {
   cmake_build "$TARGET_BUILD_ROOT/qtbase" --parallel "$JOBS"
   cmake_install "$TARGET_BUILD_ROOT/qtbase"
   printf 'shared\n' >"$TARGET_STAGING/.jellyfin-openssl-shared"
+  printf '1\n' >"$TARGET_STAGING/.spool-private-tls-v1"
   prune_completed_build_dir "$TARGET_BUILD_ROOT/qtbase"
   printf '1\n' >"$TARGET_STAGING/.spool-no-testlib-v1"
 }

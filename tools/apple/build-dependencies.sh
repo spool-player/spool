@@ -40,9 +40,10 @@ export CFLAGS="-target $TRIPLE -isysroot $SDKROOT -fPIC"
 export CXXFLAGS="$CFLAGS"
 export LDFLAGS="-target $TRIPLE -isysroot $SDKROOT -L$PREFIX/lib"
 export CC CXX AR RANLIB SDKROOT
-for name in openssl curl freetype qcoro fribidi harfbuzz libass libplacebo; do
+for name in freetype qcoro fribidi harfbuzz libass libplacebo; do
   prepare_manifest_source "$ROOT" "$MANIFEST" "$name" "$SOURCE_ROOT/$name"
 done
+bash "$ROOT/tools/prepare-streaming-sources.sh" --root "$ROOT" --output "$SOURCE_ROOT"
 prepare_toolchain_ffmpeg "$ROOT" "$SOURCE_ROOT/ffmpeg"
 while IFS=$'\t' read -r path url sha; do
   archive="$ROOT/build/downloads/apple-libplacebo-${path//\//-}-$sha.archive"
@@ -106,15 +107,13 @@ case "$APPLE_SDK:$APPLE_ARCH" in
 esac
 # Only the TLS libraries belong in the application closure. OpenSSL's command
 # line HTTP server uses fork(), which tvOS explicitly prohibits.
-(cd "$openssl_build"; "$SOURCE_ROOT/openssl/Configure" "$openssl_target" no-apps no-shared no-tests no-asm --prefix="$PREFIX"; make -j"$JOBS" build_libs; make install_dev)
-cmake -S "$SOURCE_ROOT/curl" -B "$BUILD_ROOT/curl" -GNinja "${cmake_cross[@]}" \
-  -DBUILD_SHARED_LIBS=OFF -DBUILD_STATIC_LIBS=ON -DBUILD_CURL_EXE=OFF -DBUILD_TESTING=OFF \
-  -DCURL_USE_OPENSSL=ON -DCURL_USE_SECTRUST=ON -DOPENSSL_ROOT_DIR="$PREFIX" -DOPENSSL_USE_STATIC_LIBS=ON \
+(cd "$openssl_build"; "$SOURCE_ROOT/openssl/Configure" "$openssl_target" no-apps no-docs no-shared no-tests no-comp no-dtls no-srp no-ssl3 no-weak-ssl-ciphers no-asm --prefix="$PREFIX"; make -j"$JOBS" build_libs; make install_dev)
+source "$ROOT/tools/lib/streaming-build.sh"
+build_streaming_http "$SOURCE_ROOT" "$BUILD_ROOT/streaming" "$PREFIX" OFF "${cmake_cross[@]}" \
+  -DUSE_APPLE_SECTRUST=ON -DOPENSSL_ROOT_DIR="$PREFIX" -DOPENSSL_USE_STATIC_LIBS=ON \
   -DOPENSSL_INCLUDE_DIR="$PREFIX/include" -DOPENSSL_CRYPTO_LIBRARY="$PREFIX/lib/libcrypto.a" \
-  -DOPENSSL_SSL_LIBRARY="$PREFIX/lib/libssl.a" \
-  -DCURL_USE_LIBPSL=OFF -DCURL_USE_LIBSSH2=OFF -DUSE_NGHTTP2=OFF -DCURL_ZLIB=OFF
-cmake --build "$BUILD_ROOT/curl" --parallel "$JOBS"
-cmake --install "$BUILD_ROOT/curl"
+  -DOPENSSL_SSL_LIBRARY="$PREFIX/lib/libssl.a" -DCURL_ZLIB=OFF
+python3 "$ROOT/tools/check-streaming-dependencies.py" --prefix "$PREFIX" --manifest "$ROOT/tools/manifests/streaming-third-party.json"
 cmake -S "$SOURCE_ROOT/freetype" -B "$BUILD_ROOT/freetype" -GNinja "${cmake_cross[@]}" \
   -DBUILD_SHARED_LIBS=OFF -DFT_DISABLE_ZLIB=ON -DFT_DISABLE_BZIP2=ON -DFT_DISABLE_PNG=ON -DFT_DISABLE_HARFBUZZ=ON -DFT_DISABLE_BROTLI=ON
 cmake --build "$BUILD_ROOT/freetype" --parallel "$JOBS"

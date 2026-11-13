@@ -1,0 +1,31 @@
+#!/usr/bin/env python3
+"""Audit installed cross-built transport metadata; does not execute target code."""
+import argparse
+import json
+import re
+import subprocess
+from pathlib import Path
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--prefix', type=Path, required=True)
+parser.add_argument('--manifest', type=Path, required=True)
+args = parser.parse_args()
+manifest = json.loads(args.manifest.read_text())['sources']
+config = args.prefix / 'bin/curl-config'
+features = set(subprocess.check_output(['bash', str(config), '--features'], text=True).split())
+missing = {'HTTP2', 'HTTP3', 'alt-svc'} - features
+if missing:
+    parser.error('curl is missing required features: ' + ', '.join(sorted(missing)))
+version = subprocess.check_output(['bash', str(config), '--version'], text=True).strip().split()[-1]
+if version != manifest['curl']['version']:
+    parser.error(f'curl version {version} differs from pin')
+for package, library in [('openssl', 'openssl'), ('nghttp2', 'libnghttp2'),
+                         ('nghttp3', 'libnghttp3'), ('ngtcp2', 'libngtcp2')]:
+    pc = args.prefix / 'lib/pkgconfig' / (library + '.pc')
+    match = re.search(r'^Version:\s*(\S+)', pc.read_text(), re.M)
+    if not match or match[1] != manifest[package]['version']:
+        parser.error(f'{package} version does not match pin')
+for name in ['ssl', 'crypto']:
+    files = [p for p in (args.prefix / 'lib').glob(f'lib{name}.*') if p.is_file() and not p.is_symlink()]
+    print(f'{name}: ' + ', '.join(f'{p.name}={p.stat().st_size}' for p in files))
+print('Transport metadata: HTTP2 HTTP3 alt-svc; pinned versions verified')
