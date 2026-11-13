@@ -451,6 +451,18 @@ PlayerController::PlayerController(NativeAppWindow *window, PlaybackSource *api,
     m_backgroundTeardownTimer.setInterval(750);
     m_networkTimer.setInterval(1000);
     connect(&m_networkTimer, &QTimer::timeout, this, &PlayerController::updateNetworkTransport);
+    // Measure spare headroom before playback as well: the startup sample can
+    // confirm an idle observation before any fixed socket profile connects.
+    m_idleStreamingMemoryTimer.setInterval(5000);
+    connect(&m_idleStreamingMemoryTimer, &QTimer::timeout, this, [this] {
+        if (!m_sessionActive)
+            updateStreamingMemoryGrant();
+    });
+    m_idleStreamingMemoryTimer.start();
+    QTimer::singleShot(0, this, [this] {
+        if (!m_sessionActive)
+            updateStreamingMemoryGrant();
+    });
     connect(&m_backgroundTeardownTimer, &QTimer::timeout, this, [this]() {
         if (!m_sessionActive)
             return;
@@ -1593,7 +1605,6 @@ void PlayerController::playSession(const PlaybackSession& session, bool startPau
     m_sessionThreadedStreaming = m_threadedStreaming;
     m_sessionStreamingOptions = m_streamingOptions;
     m_jointExtraGrantBytes = 0;
-    m_previousMemoryCandidate = 0;
     m_streamingMemoryTimer.invalidate();
     updateStreamingMemoryGrant();
     m_streamingMemoryTimer.start();
@@ -3759,14 +3770,14 @@ void PlayerController::updateStreamingMemoryGrant()
     const bool constrained = platformMpvOptionProfile() == MpvOptionProfile::Platform::WebOS
         || (policy.totalBytes > 0 && policy.totalBytes < policy.lowMemoryBytes);
     const qint64 reserve = (constrained ? 64 : 128) * mib;
-    const auto& options = m_sessionStreamingOptions;
+    const auto& options = m_sessionActive ? m_sessionStreamingOptions : m_streamingOptions;
     const qint64 cap = options.maxExtraBytes > 0 ? options.maxExtraBytes : (constrained ? 32 : 64) * mib;
-    const qint64 desired = options.allowExtraMemory && memory.available
-        ? std::min(cap, std::max(qint64(0), memory.availableBytes - reserve) / 4)
-        : 0;
+    const qint64 candidate
+        = memory.available ? std::min(cap, std::max(qint64(0), memory.availableBytes - reserve) / 4) : 0;
+    const qint64 desired = options.allowExtraMemory ? candidate : 0;
     // Pressure shrinks admission immediately; growth needs two independent samples.
     const qint64 grant = desired <= m_jointExtraGrantBytes ? desired : std::min(desired, m_previousMemoryCandidate);
-    m_previousMemoryCandidate = desired;
+    m_previousMemoryCandidate = candidate;
     if (grant != m_jointExtraGrantBytes) {
         m_jointExtraGrantBytes = grant;
         updateBackgroundNetwork();
