@@ -116,6 +116,11 @@ http {{
                         capabilities = player.get('curl-transport-capabilities')
                         if not capabilities or not capabilities.get('http2') or not capabilities.get('http3'):
                             raise AssertionError('production libmpv must advertise HTTP2 and HTTP3')
+                        player.configure(1, max_requests=4, fixed_requests=count,
+                                         http_mode={'http1': 2, 'tcp': 1, 'prefer-h3': 3}[mode],
+                                         receive_mode=2, receive_bytes=4 << 20)
+                        player.check(player.transport_control({'format': 2, 'op': 1, 'playback-epoch': 1,
+                            'joint-extra-grant-bytes': 64 << 20, 'background-network': False}), 'grant')
                         result = player.play(f'https://127.0.0.1:{port}/fixture.wav', timeout=180)
                     finally:
                         player.close()
@@ -152,6 +157,9 @@ http {{
                         'ao-pcm-waveheader': 'no', 'audio-format': 's16',
                         'curl-http-mode': 'tcp', 'curl-fixed-requests': '1', 'curl-max-retries': '0'})
                     try:
+                        player.configure(1, max_requests=4, fixed_requests=1, http_mode=1)
+                        player.check(player.transport_control({'format': 2, 'op': 1, 'playback-epoch': 1,
+                            'joint-extra-grant-bytes': 64 << 20, 'background-network': False}), 'grant')
                         result = player.play(f'https://127.0.0.1:{reset.port}/fixture.wav', timeout=30)
                     finally:
                         player.close()
