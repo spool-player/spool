@@ -61,7 +61,9 @@ FocusScope {
     readonly property alias contentY: sectionList.contentY
 
     readonly property int sectionCount: sections ? sections.length : 0
-    property var sectionObjects: []
+    ListModel {
+        id: sectionModel
+    }
     property bool sectionObjectsReady: false
     onSectionsChanged: if (sectionObjectsReady)
                            updateSectionObjects()
@@ -77,32 +79,75 @@ FocusScope {
         }
     }
 
-    // Re-publishing a card model is not replacing its section. Keep descriptor
-    // objects (and therefore row delegates) when the section topology is stable.
+    // Mutate the view's model in place: assigning a replacement JS array resets
+    // every row, even when its descriptor object was reused.
     function updateSectionObjects() {
-        // sectionsChanged precedes reevaluation of dependent bindings in some
-        // QML delivery orders. Reconcile the published payload, not sectionCount.
         const nextCount = sections ? sections.length : 0
-        let sameSections = sectionObjects.length === nextCount
-        for (let index = 0; sameSections && index < nextCount; ++index) {
-            const previous = sectionObjects[index].descriptor
-            const next = sections[index]
-            sameSections = previous.key === next.key && previous.contextSource === next.contextSource
+        const selectedKey = currentSection >= 0 && currentSection < sectionModel.count ? String(sectionModel.get(
+                                                                                                    currentSection).sectionObject.descriptor.key) :
+                                                                                         null
+        const selectedRow = currentRow()
+        const restoreFocus = selectedRow && activeFocus && Metrics.keyboardFocusActive && !pointerNavigationPending
+        const selectedIndex = selectedRow ? selectedRow.currentIndex : -1
+        const screenY = restoreFocus ? selectedRow.mapToItem(sectionList, 0, 0).y : 0
+        let structureChanged = false
+        let anchor = -1
+        for (let index = 0; index < nextCount; ++index) {
+            const key = String(sections[index].key)
+            let existing = index
+            while (existing < sectionModel.count && String(sectionModel.get(existing).sectionObject.descriptor.key)
+                   !== key)
+                ++existing
+            if (existing < sectionModel.count) {
+                if (existing !== index) {
+                    sectionModel.move(existing, index, 1)
+                    structureChanged = true
+                }
+                sectionModel.get(index).sectionObject.descriptor = sections[index]
+            } else {
+                const sectionObject = sectionObjectComponent.createObject(root, {
+                                                                              "descriptor": sections[index]
+                                                                          })
+                sectionModel.insert(index, {
+                                        "sectionObject": sectionObject
+                                    })
+                structureChanged = true
+            }
+            if (key === selectedKey)
+                anchor = index
         }
-        if (sameSections) {
-            for (let index = 0; index < nextCount; ++index)
-                sectionObjects[index].descriptor = sections[index]
+        while (sectionModel.count > nextCount) {
+            const removed = sectionModel.get(nextCount).sectionObject
+            sectionModel.remove(nextCount)
+            structureChanged = true
+            removed.destroy()
+        }
+        if (anchor >= 0) {
+            currentSection = anchor
+            // An insertion can push the focused row out of the zero-buffer view.
+            // Restore its card and screen position before the next frame.
+            if (restoreFocus && structureChanged) {
+                sectionList.positionViewAtIndex(anchor, ListView.Contain)
+                sectionList.forceLayout()
+                const row = currentRow()
+                if (row) {
+                    row.currentIndex = selectedIndex
+                    const desiredY = sectionList.contentY + row.mapToItem(sectionList, 0, 0).y - screenY
+                    const lastY = Math.max(sectionList.originY, sectionList.originY + sectionList.contentHeight
+                                           - sectionList.height)
+                    sectionList.contentY = Math.max(sectionList.originY, Math.min(lastY, desiredY))
+                    row.focusList()
+                }
+            }
             return
         }
-        const previousObjects = sectionObjects
-        const nextObjects = []
-        for (let index = 0; index < nextCount; ++index)
-            nextObjects.push(sectionObjectComponent.createObject(root, {
-                                                                     "descriptor": sections[index]
-                                                                 }))
-        sectionObjects = nextObjects
-        for (let index = 0; index < previousObjects.length; ++index)
-            previousObjects[index].destroy()
+        const previousIndex = Math.min(currentSection, nextCount - 1)
+        let fallback = nextPopulated(previousIndex, 1)
+        if (fallback < 0)
+            fallback = nextPopulated(previousIndex, -1)
+        if (fallback < 0)
+            fallback = nextPopulated(0, 1)
+        currentSection = fallback
     }
 
     function sectionAt(index) {
@@ -316,7 +361,7 @@ FocusScope {
         id: sectionList
 
         anchors.fill: parent
-        model: root.sectionObjects
+        model: sectionModel
         header: root.header
         footer: root.footer
         spacing: root.rowSpacing
@@ -343,8 +388,8 @@ FocusScope {
             id: mediaRow
 
             required property int index
-            required property var modelData
-            readonly property var sectionDescriptor: modelData.descriptor
+            required property var sectionObject
+            readonly property var sectionDescriptor: sectionObject.descriptor
 
             width: sectionList.width
             title: String(sectionDescriptor.title || "")

@@ -13,9 +13,34 @@ FocusScope {
     property var shell
     property var uiTransitionToken: 0
     readonly property bool directionRelease: rows.directionRelease
+    readonly property bool pendingContent: !Providers.restored || Home.loading || Providers.accounts.some(account
+                                                                                                          => account.enabled
+                                                                                                             && !account.removing
+                                                                                                             && !account.needsSignIn
+                                                                                                             && account.connectionState
+                                                                                                             === "starting")
+    readonly property bool hasHomeContent: homeLibraries.length > 0 || Home.resumeItems.count > 0
+                                           || Home.nextUpItems.count > 0 || Home.latestLibraryRows.some(row
+                                                                                                        => row.model
+                                                                                                           && row.model.count
+                                                                                                           > 0)
+    readonly property bool initialLoading: pendingContent && !hasHomeContent
+    readonly property string connectionWarning: Providers.accounts.filter(account => account.enabled && (
+                                                                                         account.needsSignIn
+                                                                                         || account.connectionState
+                                                                                         === "failed")).map(account
+                                                                                                            => String(
+                                                                                                                   account.detail
+                                                                                                                   || account.providerName)
+                                                                                                               + ": " + String(
+                                                                                                                   account.errorText
+                                                                                                                   || (account.needsSignIn
+                                                                                                                       ? "Sign in again to use this profile." :
+                                                                                                                         "Couldn't reach this server."))).join(
+                                                    "\n")
     // An all-hidden library row has management controls instead of cards.
-    readonly property bool contentReady: rows.firstRowReady || !Providers.hasAccounts || (homeLibraries.length === 0 &&
-                                                                                          !Home.loading)
+    readonly property bool contentReady: initialLoading || rows.firstRowReady || !Providers.hasAccounts || (
+                                             homeLibraries.length === 0 && !pendingContent)
     property int libraryRevision: 0
     readonly property var homeLibraries: {
         // Read the signals' properties so scoped identity/visibility changes
@@ -112,7 +137,7 @@ FocusScope {
             const row = latest[index]
             const rowIndex = Number(row && row.rowIndex !== undefined ? row.rowIndex : index)
             sections.push({
-                              "key": "latestLibrary",
+                              "key": "latestLibrary:" + String(row.libraryId),
                               "title": row && row.title ? row.title : "Recently Added",
                               "model": row && row.model ? row.model : null,
                               "kind": row && row.kind ? row.kind : "poster",
@@ -154,25 +179,35 @@ FocusScope {
                             }, App, shell, section ? section.model : null, index)
     }
 
-    // With nothing on Home, or when Home providers are filtered, the only
-    // control above the rows is "Show all".
+    // Controls above the rows remain reachable even while the first load is pending.
     function edgeUp() {
-        if (allProvidersButton.visible)
+        if (accountsButton.visible)
+            InputKeys.focus(accountsButton)
+        else if (allProvidersButton.visible)
             InputKeys.focus(allProvidersButton)
         else if (root.shell)
             root.shell.focusNavBar()
     }
 
     function routeKey(key, phase, repeat) {
-        if (allProvidersButton.activeFocus) {
+        if (allProvidersButton.activeFocus || accountsButton.activeFocus) {
             if (phase === "press" && key === Qt.Key_Down)
-                return rows.focusPreferred("libraries")
+                return initialLoading || rows.focusPreferred("libraries")
             if (phase === "press" && key === Qt.Key_Up) {
                 if (root.shell)
                     root.shell.focusNavBar()
                 return true
             }
             return InputKeys.isDirection(key) || InputKeys.isAccept(key)
+        }
+        if (initialLoading && InputKeys.isDirection(key)) {
+            if (phase === "press") {
+                if (key === Qt.Key_Up && root.shell)
+                    root.shell.focusNavBar()
+                else if (key === Qt.Key_Down)
+                    edgeUp()
+            }
+            return true
         }
         if (phase === "press" && InputKeys.isDirection(key) && (!rows.activeFocus || (homeLibraries.length === 0
                                                                                       && Home.resumeItems.count === 0
@@ -186,10 +221,17 @@ FocusScope {
     }
 
     function activate() {
+        if (accountsButton.activeFocus) {
+            if (shell)
+                shell.pushRoute("accounts")
+            return
+        }
         if (allProvidersButton.activeFocus) {
             Home.showAllProviders()
             return
         }
+        if (initialLoading)
+            return
         if (!rows.activeFocus) {
             edgeUp()
             return
@@ -241,6 +283,21 @@ FocusScope {
                 font.pixelSize: Metrics.titleSizePx
                 Layout.fillWidth: true
             }
+            RowLayout {
+                visible: root.pendingContent && root.hasHomeContent
+                spacing: Metrics.scaled(8)
+                BusySpinner {
+                    Layout.preferredWidth: Metrics.scaled(18)
+                    Layout.preferredHeight: width
+                    running: parent.visible
+                    color: Theme.textMuted
+                }
+                SecondaryText {
+                    text: "Loading more…"
+                    color: Theme.textMuted
+                    font.pixelSize: Metrics.metaSizePx
+                }
+            }
             ActionButton {
                 id: allProvidersButton
                 visible: Home.providerScopeMessage.length > 0
@@ -257,11 +314,47 @@ FocusScope {
             Accessible.role: Accessible.StaticText
             Accessible.name: text
         }
+        RowLayout {
+            Layout.fillWidth: true
+            visible: root.connectionWarning.length > 0
+            spacing: Metrics.gapPx
+            SecondaryText {
+                Layout.fillWidth: true
+                text: root.connectionWarning
+                color: Theme.errorText
+                wrapMode: Text.WordWrap
+            }
+            ActionButton {
+                id: accountsButton
+                text: "Profiles & servers"
+                onClicked: if (root.shell)
+                               root.shell.pushRoute("accounts")
+            }
+        }
+    }
+
+    Column {
+        anchors.centerIn: parent
+        visible: root.initialLoading
+        spacing: Metrics.scaled(16)
+        BusySpinner {
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: Metrics.scaled(40)
+            height: width
+            running: root.initialLoading
+            color: Theme.textMuted
+        }
+        SecondaryText {
+            text: "Loading your libraries…"
+            color: Theme.textMuted
+            font.pixelSize: Metrics.bodySizePx
+        }
     }
 
     RowStackView {
         id: rows
 
+        visible: !root.initialLoading
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: homeHeader.bottom

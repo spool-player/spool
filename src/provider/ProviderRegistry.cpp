@@ -64,6 +64,13 @@ namespace {
         return code == "http_401" || code == "invalid_config" || code == "auth_required" || code == "invalid_token";
     }
 
+    bool connectionFailure(const std::exception& error)
+    {
+        const std::string_view code(error.what());
+        return code == "network_error" || code == "operation_timeout" || code == "server_unreachable"
+            || code.starts_with("http_5");
+    }
+
     // One sentence for the profile that failed to open; provider codes are
     // grouped by what the viewer can do about them, never shown verbatim.
     QString activationError(const std::exception& error)
@@ -75,7 +82,7 @@ namespace {
             return QStringLiteral("That PIN wasn't accepted. Try again.");
         if (code == "permission_denied")
             return QStringLiteral("This profile doesn't have access to this server.");
-        if (code == "network_error" || code == "operation_timeout" || code == "server_unreachable")
+        if (connectionFailure(error))
             return QStringLiteral("Couldn't reach the server. Check the connection and try again.");
         return QStringLiteral("Couldn't open this profile. Try again.");
     }
@@ -1271,14 +1278,24 @@ QCoro::Task<T> ProviderRegistry::guarded(QString sourceId, Call call, QString ca
     try {
         result = co_await call(runtime, runtimeId);
     } catch (const std::exception& error) {
-        // The server no longer accepts this account's credentials: say so
-        // once, and let the accounts page offer to sign in again.
-        if (guard && m_running.value(sourceId).generation == generation && requiresSignIn(error)
-            && !m_expired.contains(sourceId)) {
-            m_expired.insert(sourceId);
-            if (const ProviderAccount *entry = account(sourceId))
-                emit problem(QStringLiteral("Sign in to %1 again").arg(entry->label));
-            emit accountsChanged();
+        // A live runtime is not proof that its server is reachable or still
+        // accepts these credentials. Surface each failure until recovery.
+        if (guard && m_running.value(sourceId).generation == generation) {
+            if (requiresSignIn(error) && !m_expired.contains(sourceId)) {
+                m_expired.insert(sourceId);
+                m_accountErrors.insert(sourceId, activationError(error));
+                if (const ProviderAccount *entry = account(sourceId))
+                    emit problem(QStringLiteral("Sign in to %1 again").arg(entry->label));
+                emit accountsChanged();
+            } else if (connectionFailure(error) && !m_failedAccounts.contains(sourceId)) {
+                m_failedAccounts.insert(sourceId);
+                const QString message = activationError(error);
+                m_accountErrors.insert(sourceId, message);
+                if (const ProviderAccount *entry = account(sourceId))
+                    emit problem(
+                        QStringLiteral("%1: %2").arg(entry->detail.isEmpty() ? entry->label : entry->detail, message));
+                emit accountsChanged();
+            }
         }
         throw;
     }
@@ -1345,6 +1362,11 @@ QCoro::Task<QVariantMap> ProviderRegistry::callSource(
         },
         capability, scope);
     requireCurrent();
+    if (operation == QStringLiteral("libraries") && !m_expired.contains(sourceId)
+        && m_failedAccounts.remove(sourceId)) {
+        m_accountErrors.remove(sourceId);
+        emit accountsChanged();
+    }
     if (preferences)
         result = ProviderExtensionData::preferenceResult(operation, result);
     else if (storage) {
@@ -1660,13 +1682,15 @@ QVariantList ProviderRegistry::accounts() const
             { QStringLiteral("pendingEnabled"),
                 m_preparing.contains(account.id) && m_running.value(m_preparing.value(account.id)).enableOnCommit },
             { QStringLiteral("connectionState"),
-                m_running.value(account.id).provider                                    ? QStringLiteral("active")
-                    : m_preparing.contains(account.id)                                  ? QStringLiteral("starting")
-                    : m_lockedAccounts.contains(account.id)                             ? QStringLiteral("locked")
-                    : m_failedAccounts.contains(account.id) || (owner && owner->failed) ? QStringLiteral("failed")
-                    : awaiting                                                          ? QStringLiteral("choose")
-                    : account.enabled                                                   ? QStringLiteral("starting")
-                                                                                        : QStringLiteral("locked") },
+                m_preparing.contains(account.id) ? QStringLiteral("starting")
+                    : m_expired.contains(account.id) || m_unavailableConfigurations.contains(account.id)
+                        || m_failedAccounts.contains(account.id) || (owner && owner->failed)
+                    ? QStringLiteral("failed")
+                    : m_running.value(account.id).provider  ? QStringLiteral("active")
+                    : m_lockedAccounts.contains(account.id) ? QStringLiteral("locked")
+                    : awaiting                              ? QStringLiteral("choose")
+                    : account.enabled                       ? QStringLiteral("starting")
+                                                            : QStringLiteral("locked") },
             { QStringLiteral("capabilities"), capabilities(account.id) },
             { QStringLiteral("needsSignIn"),
                 m_expired.contains(account.id) || m_unavailableConfigurations.contains(account.id) },
@@ -2094,7 +2118,7 @@ void ProviderRegistry::useAccount(const QString& accountId)
         emit accountSelectionFinished(accountId, false);
         return;
     }
-    if (m_running.value(accountId).provider) {
+    if (m_running.value(accountId).provider && !m_failedAccounts.contains(accountId)) {
         ProviderAccount selected = *chosen;
         selected.enabled = true;
         selected.lastUsed = QDateTime::currentMSecsSinceEpoch();

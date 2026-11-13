@@ -217,7 +217,8 @@ private:
     }
     void showCurrentItemsPage(const PagedMovieItems& page, const QString& cacheKey, bool append);
     void loadLibraryFilterOptions(RequestGeneration::Token generation, const LibraryItem& library);
-    RequestGeneration::Token beginBrowse(bool useWarmCache = false);
+    enum class BrowseLoad { Reset, UseCache, Refresh };
+    RequestGeneration::Token beginBrowse(BrowseLoad mode = BrowseLoad::Reset);
     QCoro::Task<void> startPlayback(MovieItem playItem, bool startPaused = false, bool forceTranscode = false,
         int audioStreamIndex = -2, int subtitleStreamIndex = -2, bool restartActive = false);
     // nullopt is an explicitly local internal operation. A user operation captures

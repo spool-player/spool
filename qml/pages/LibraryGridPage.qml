@@ -824,10 +824,9 @@ FocusScope {
     // The preview controls stay resident. Only their bound item changes, so
     // title and synopsis update immediately while artwork decodes separately.
     readonly property var paneItem: {
-        const index = grid.currentIndex
-        if (!listMode || !Browse.items || index < 0 || index >= Browse.items.count)
+        if (!listMode || !grid.currentItem)
             return null
-        return Browse.items.get(index)
+        return grid.currentItem.item
     }
 
     onListModeChanged: {
@@ -842,7 +841,7 @@ FocusScope {
     // Kodi-style media info for the focused item, formatted natively in one
     // call so scrolling never iterates stream lists from JS.
     readonly property var mediaInfo: {
-        if (grid.currentIndex < 0 || grid.count <= 0)
+        if (grid.currentIndex < 0 || !grid.currentItem || !grid.currentItem.item || !grid.currentItem.item.movieId)
             return null
         const smart = String(Settings.values["audio/trackMode"] || "Default") === "Smart"
         const language = Settings.values["audio/language"] || Settings.values["subtitles/language"] || ""

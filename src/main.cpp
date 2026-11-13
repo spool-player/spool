@@ -70,6 +70,8 @@
 #if defined(SPOOL_WEBOS)
 #include "platform/webos/WebOSDeviceName.h"
 #endif
+#include <QDeadlineTimer>
+#include <QEventLoop>
 #include <QMessageLogContext>
 #include <QMetaObject>
 #include <QNetworkAccessManager>
@@ -1024,11 +1026,12 @@ int main(int argc, char **argv)
     auto localization = std::make_unique<Spool::LocalizationManager>();
     localization->attachToEngine(window.engine());
     controller->settings()->attachLocalization(localization.get());
-    // Providers start once the device identity they present is known: in
-    // parallel, off the GUI thread, after the first frame is on its way.
+    // Start provider restoration as soon as the device identity is known,
+    // without waiting for the full QML shell to finish loading.
     QObject::connect(controller.get(), &Spool::AppController::deviceIdentityReady, &providers,
         [&providers, &store, &capabilities, &tlsTrust, loc = localization.get(), settings = controller->settings()](
             const QString& deviceId) {
+            logLine("startup: restoring saved provider accounts");
             providers.setRuntimeEnvironment(
                 { { QStringLiteral("id"), deviceId }, { QStringLiteral("name"), capabilities.deviceName },
                     { QStringLiteral("app"), QStringLiteral("Spool") },
@@ -1051,6 +1054,7 @@ int main(int argc, char **argv)
                 });
             }
         });
+    controller->initialize();
     auto router = std::make_unique<Spool::RouterController>(QStringLiteral("home"));
     QTimer identityRouteReset;
     identityRouteReset.setSingleShot(true);
@@ -1165,9 +1169,9 @@ int main(int argc, char **argv)
     qmlRegisterSingletonInstance("Spool", 1, 0, "Platform", platformInfo);
     qmlRegisterType<Spool::MpvVideoItem>("Spool", 1, 0, "MpvVideoItem");
     qmlRegisterType<Spool::TrickplayPreviewItem>("Spool", 1, 0, "TrickplayPreviewItem");
-    // Start asynchronous device, settings, account, and discovery reads before
-    // QML construction. A sole saved account is resolved before routing begins.
-    controller->initialize();
+    // Give completed identity/credential reads a chance to start provider HTTP
+    // work before compiling the full shell. Never wait on network or user input.
+    QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents, QDeadlineTimer(5));
 
     QObject::connect(
         &app, &QCoreApplication::aboutToQuit, router.get(), [router = router.get()] { router->markCleanShutdown(); });

@@ -1252,6 +1252,7 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
             PREFIX "/qt/qml/Spool"
             FILES
                 tests/qml/tst_MediaRow.qml
+                tests/qml/tst_RowStackView.qml
                 tests/qml/tst_SubtitleSettingsPanel.qml
                 tests/qml/tst_RemoteControlPage.qml
                 tests/qml/tst_ProviderInstallDialog.qml
@@ -1273,7 +1274,7 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
             math(EXPR qml_source_index "${qml_index} + 1")
             list(GET SPOOL_QML_TESTS ${qml_index} qml_test_name)
             list(GET SPOOL_QML_TESTS ${qml_source_index} qml_test_source)
-            if(qml_test_name MATCHES "^(subtitle-settings-panel|remote-control-page|provider-install-dialog|provider-shell|player-seek-bar-hover|media-row|extension-integration|provider-forms|artwork-integration|library-scale-profile|option-picker-input)$")
+            if(qml_test_name MATCHES "^(subtitle-settings-panel|remote-control-page|provider-install-dialog|provider-shell|player-seek-bar-hover|media-row|row-stack-view|extension-integration|provider-forms|artwork-integration|library-scale-profile|option-picker-input)$")
                 set(qml_input ":/qt/qml/Spool/${qml_test_source}")
             else()
                 set(qml_input "${CMAKE_CURRENT_SOURCE_DIR}/${qml_test_source}")

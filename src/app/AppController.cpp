@@ -289,6 +289,7 @@ AppController::AppController(
     connect(m_provider, &Provider::errorOccurred, this, &AppController::setErrorText);
     connect(m_provider, &SourceHub::browseSourcesChanged, this, [this] {
         m_libraryListGeneration.invalidate();
+        m_home->setLibrariesLoading(true);
         QSet<QString> accounts;
         for (Provider *source : m_provider->sources())
             accounts.insert(source->id());
@@ -312,7 +313,9 @@ AppController::AppController(
             m_home->invalidate();
             loadLibraries();
         }
-        beginBrowse();
+        const QString libraryId = m_browse->libraryId();
+        const bool availableLibrary = !libraryId.isEmpty() && !m_libraries.libraryById(libraryId).id.isEmpty();
+        beginBrowse(availableLibrary ? BrowseLoad::Refresh : BrowseLoad::Reset);
     });
     connect(m_provider, &Provider::sessionStarted, this, [this]() {
         m_home->loadCachedPayload();
@@ -604,7 +607,8 @@ bool AppController::openLibraryById(const QString& libraryId)
     const QVariantMap defaultQuery = defaultLibraryQuery(library);
     m_browse->enterLibrary(library, defaultQuery);
     m_home->recordLibraryUse(library);
-    loadLibraryFilterOptions(beginBrowse(m_browse->query() == defaultQuery), library);
+    loadLibraryFilterOptions(
+        beginBrowse(m_browse->query() == defaultQuery ? BrowseLoad::UseCache : BrowseLoad::Reset), library);
     return true;
 }
 
@@ -1646,6 +1650,7 @@ void AppController::showToast(const QString& message)
 void AppController::loadLibraries()
 {
     m_prefetch->stop();
+    m_home->setLibrariesLoading(true);
     const RequestGeneration::Token generation = m_libraryListGeneration.next();
     Async::runLatest(
         this, m_catalog->fetchLibraries(), m_libraryListGeneration, generation,
@@ -1653,9 +1658,11 @@ void AppController::loadLibraries()
             m_libraries.setLibraries(libraries);
             setBusy(false);
             refreshHomeRows();
+            m_home->setLibrariesLoading(false);
         },
         [this](const std::exception_ptr& error) {
             setBusy(false);
+            m_home->setLibrariesLoading(false);
             setErrorText(exceptionMessage(error));
         });
 }
@@ -1697,7 +1704,7 @@ void AppController::showCurrentItemsPage(const PagedMovieItems& page, const QStr
     setBusy(false);
 }
 
-RequestGeneration::Token AppController::beginBrowse(bool useWarmCache)
+RequestGeneration::Token AppController::beginBrowse(BrowseLoad mode)
 {
     const BrowseDescriptor descriptor = m_browse->descriptor();
     if (!descriptor.isValid() || !m_catalog->signedIn())
@@ -1713,11 +1720,14 @@ RequestGeneration::Token AppController::beginBrowse(bool useWarmCache)
         cacheKey = libraryCacheKey(library, query);
     }
 
-    m_browse->resetPaging(cacheKey);
+    if (mode == BrowseLoad::Refresh)
+        m_browse->beginRefresh();
+    else
+        m_browse->resetPaging(cacheKey);
     m_prefetch->stop();
     if (m_artwork)
         m_artwork->cancelPrefetches();
-    if (useWarmCache) {
+    if (mode == BrowseLoad::UseCache) {
         const int cachedCount = m_browse->applyCachedPage(cacheKey);
         m_browse->setLoadingMore(true);
         if (cachedCount > 0) {
@@ -1730,7 +1740,7 @@ RequestGeneration::Token AppController::beginBrowse(bool useWarmCache)
             }
             qInfo() << "library open: showing cached page while refreshing" << descriptor.name << cachedCount;
         }
-    } else {
+    } else if (mode == BrowseLoad::Reset) {
         m_browse->clear();
         m_browse->setLoadingMore(true);
     }

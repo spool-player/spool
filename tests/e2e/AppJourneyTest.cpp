@@ -1196,6 +1196,19 @@ SPOOL_TEST_MAIN("app-journey")
         require(itemId != "journey-movie" && (*episodeRow).toObject()["id"].toString() != "journey-episode",
             "provider items lost account scoping");
 
+        fixturePhase = QStringLiteral("library-background-refresh");
+        const int browseBeforeRefresh = fixture.authenticatedBrowse;
+        fixture.setLibraryBrowseHeld(true);
+        journey.await([&] { return fixture.sendLibraryChanged(); }, "library event socket did not connect");
+        journey.await([&] { return fixture.authenticatedBrowse > browseBeforeRefresh; },
+            "library change did not request a refreshed listing");
+        require(journey.command({ "items", "browse" })["count"].toInt(-1) == 2,
+            "background refresh cleared the visible catalogue while awaiting the server");
+        require(posterVisible(journey.capture()), "background refresh blanked the existing library posters");
+        fixture.setLibraryBrowseHeld(false);
+        journey.await(
+            [&] { return !journey.state()["browseLoading"].toBool(); }, "background library refresh did not finish");
+
         fixturePhase = QStringLiteral("filter-empty-recovery");
         const int filtersBefore = fixture.playedFilterRequests;
         journey.click("Filter");
@@ -1296,7 +1309,10 @@ SPOOL_TEST_MAIN("app-journey")
 
         journey.command({ "navigate", "settings" });
         journey.label("Appearance");
-        journey.click("Playback");
+        journey.click("Search settings", true);
+        journey.text("playback/seekPreviews");
+        journey.command({ "key", "ok" });
+        journey.click("Seek previews", true);
         const bool originalPreview = journey.command({ "settings", "get", "playback/seekPreviews" })["values"]
                                          .toObject()["playback/seekPreviews"]
                                          .toBool();
@@ -1309,6 +1325,7 @@ SPOOL_TEST_MAIN("app-journey")
                     != originalPreview;
             },
             "settings UI toggle did not commit its public value");
+        journey.command({ "key", "back" });
         journey.command({ "key", "back" });
         journey.label("Appearance");
         journey.click("Downloads");

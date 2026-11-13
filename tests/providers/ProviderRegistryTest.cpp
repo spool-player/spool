@@ -461,6 +461,21 @@ SPOOL_TEST_MAIN("provider-registry")
 
         require(failure(registry.callSource(carol, QStringLiteral("throws"))) == QStringLiteral("provider_error"),
             "provider error text never reaches the app");
+        const int warningsBeforeFailure = problems.size();
+        require(failure(registry.callSource(carol, QStringLiteral("unreachable"))) == QStringLiteral("network_error"),
+            "a running provider delivers a connection failure");
+        require(row(registry, carol).value(QStringLiteral("connectionState")) == QStringLiteral("failed")
+                && row(registry, carol).value(QStringLiteral("running")).toBool()
+                && !row(registry, carol).value(QStringLiteral("errorText")).toString().isEmpty()
+                && problems.size() == warningsBeforeFailure + 1,
+            "a live runtime is not reported as a healthy account after a failed connection");
+        QCoro::waitFor(registry.callSource(carol, QStringLiteral("configuration")));
+        require(row(registry, carol).value(QStringLiteral("connectionState")) == QStringLiteral("failed"),
+            "local provider work cannot erase a connection failure");
+        QCoro::waitFor(registry.callSource(carol, QStringLiteral("libraries")));
+        require(row(registry, carol).value(QStringLiteral("connectionState")) == QStringLiteral("active")
+                && row(registry, carol).value(QStringLiteral("errorText")).toString().isEmpty(),
+            "a successful library request clears the connection failure");
         require(failure(registry.callSource(carol, QStringLiteral("expired"))) == QStringLiteral("http_401"),
             "stable error codes pass through");
         bool needsSignIn = false;

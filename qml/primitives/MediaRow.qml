@@ -92,15 +92,24 @@ FocusScope {
         return Array.isArray(value) ? "list" : value.rowCount !== undefined ? "item" : "other"
     }
     function bindModel() {
+        const selected = ModelAccess.at(listView.model, currentIndex)
+        const selectedLibraryId = cardKind === "library" ? String(selected.libraryId || "") : ""
         const kind = modelKind(root.model)
         if (kind === boundModelKind) {
             listView.model = root.model
-            return
+        } else {
+            boundModelKind = kind
+            listView.reuseItems = false
+            listView.model = root.model
+            listView.reuseItems = true
         }
-        boundModelKind = kind
-        listView.reuseItems = false
-        listView.model = root.model
-        listView.reuseItems = true
+        if (!publishingMove && selectedLibraryId.length > 0) {
+            const selectedIndex = libraryIndex(selectedLibraryId)
+            if (selectedIndex >= 0)
+                currentIndex = selectedIndex
+        }
+        syncViewCurrentIndex()
+        Qt.callLater(syncViewCurrentIndex)
     }
 
     Component.onCompleted: {

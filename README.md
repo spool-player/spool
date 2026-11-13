@@ -63,6 +63,11 @@ Search uses all enabled, authorized watching profiles regardless of the Home
 provider filter, never the combined permissions of an adult and child profile
 saved on the same server.
 
+Home shows an initial loading state before its first content is available, then
+**Loading more…** while additional accounts or shelves are pending. A late server's
+libraries join the existing Home inventory. Connection failures remain visible
+with a **Profiles & servers** action; other successful sources stay usable.
+
 ### Settings and navigation
 
 Settings opens a category index with common controls and a direct **Zoom**
@@ -97,6 +102,16 @@ offscreen, the first direction selects the top-left usable visible card without
 scrolling back. That complete held gesture is consumed until physical release;
 the next press navigates normally. **Move** is explicit in the library menu:
 moving keeps the library selected and the viewport stable until **Done**.
+Library and Home shelf selections follow their identities through background
+inventory reordering. Late shelves retain the selected card and its screen
+position rather than resetting the existing rows. On webOS,
+directional holds require the remote's repeat events; a lost release cannot
+start synthetic scrolling.
+Changing the input target or losing focus retires the previous directional hold.
+
+Background library refreshes retain the current catalogue and posters while
+waiting for replacement rows. Explicit filter or library changes still replace
+the listing.
 
 Home's provider chooser switches between **All providers** and one provider
 without changing enabled accounts, watching profiles or global search. The

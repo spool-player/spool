@@ -112,6 +112,19 @@ SPOOL_TEST_MAIN("script-runtime")
         const QVariantMap picked
             = QCoro::waitFor(resolve({ { "pick", QVariantMap { { "quality", "4k" } } }, { "source", "not yet" } }));
         require(picked.contains("pick"), "a picker answer is admitted until its follow-up resolve");
+        // Providers build JS objects with undefined optional facts. Admit these
+        // as omissions without losing known facts or accepting explicit null.
+        const QVariantMap literal = QCoro::waitFor(runtime.call("media", "resolve", { { "literal", true } }));
+        const QVariantMap literalSource = literal.value("source").toMap();
+        require(literalSource.value("bitrate").typeId() == QMetaType::LongLong
+                && literalSource.value("bitrate").toLongLong() == 1500000
+                && literalSource.value("width").toInt() == 3840 && literalSource.value("height").toInt() == 2160,
+            "known media facts survive undefined siblings");
+        require(!literalSource.contains("sizeBytes") && !literalSource.contains("runtimeTicks"),
+            "explicit undefined media facts are admitted as omissions, not invalid_result");
+        require(!literal.contains("delivery"), "an undefined sibling is admitted as an omission");
+        rejects(runtime.call("media", "resolve", { { "nullish", true } }),
+            "null is not undefined: an explicit null size stays rejected");
     }
     QTcpServer server;
     require(server.listen(QHostAddress::LocalHost), "fixture server listens");
