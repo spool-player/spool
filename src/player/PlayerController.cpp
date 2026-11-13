@@ -94,7 +94,8 @@ namespace {
         integer("max-requests", options.maxRequests);
         integer("fixed-requests", options.fixedRequests);
         integer("receive-mode", options.receiveMode);
-        integer("receive-bytes", options.receiveBytes);
+        if (options.receiveMode == 2)
+            integer("receive-bytes", options.receiveBytes);
         integer("http-mode", options.httpMode);
         keys[count] = const_cast<char *>("explore");
         values[count].format = MPV_FORMAT_FLAG;
@@ -3755,10 +3756,11 @@ void PlayerController::updateStreamingMemoryGrant()
     constexpr qint64 mib = 1024LL * 1024;
     const auto memory = platformStreamingMemoryState();
     const auto policy = platformMemoryPolicy();
-    const bool constrained = policy.totalBytes > 0 && policy.totalBytes < policy.lowMemoryBytes;
+    const bool constrained = platformMpvOptionProfile() == MpvOptionProfile::Platform::WebOS
+        || (policy.totalBytes > 0 && policy.totalBytes < policy.lowMemoryBytes);
     const qint64 reserve = (constrained ? 64 : 128) * mib;
     const auto& options = m_sessionStreamingOptions;
-    const qint64 cap = options.maxExtraBytes > 0 ? options.maxExtraBytes : (constrained ? 32 : 128) * mib;
+    const qint64 cap = options.maxExtraBytes > 0 ? options.maxExtraBytes : (constrained ? 32 : 64) * mib;
     const qint64 desired = options.allowExtraMemory && memory.available
         ? std::min(cap, std::max(qint64(0), memory.availableBytes - reserve) / 4)
         : 0;
