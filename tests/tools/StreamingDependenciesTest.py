@@ -21,7 +21,8 @@ class StreamingDependenciesTest(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         for relative in ('tools/lib/manifest-sources.sh', 'tools/prepare-streaming-sources.sh',
-                         'tools/streaming-fingerprint.py', 'tools/cmake/StreamingDependencies.cmake'):
+                         'tools/streaming-fingerprint.py', 'tools/cmake/StreamingDependencies.cmake',
+                         'tools/cmake/QuicBatchingProbe/CMakeLists.txt'):
             target = self.root / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / relative, target)
@@ -89,6 +90,28 @@ class StreamingDependenciesTest(unittest.TestCase):
         self.assertNotEqual(initial, identity('arm:29:static'))
         wrapper.write_text('changed')
         self.assertNotEqual(initial, identity('arm:28:static'))
+
+    def test_batching_metadata_tracks_actual_target_compile_capability(self):
+        source = self.root / 'curl'
+        (source / 'lib').mkdir(parents=True)
+        (source / 'include').mkdir()
+        build = self.root / 'curl-build'
+        (build / 'lib').mkdir(parents=True)
+        metadata = self.root / 'libcurl.pc'
+        metadata.write_text('Name: test-curl\nVersion: 1\n')
+        setup = source / 'lib/curl_setup.h'
+        for available in (True, False):
+            setup.write_text('#include <sys/socket.h>\n#define HAVE_NETINET_UDP_H 1\n'
+                             '#define USE_NGTCP2 1\n#define USE_NGHTTP3 1\n#define HAVE_SENDMSG 1\n'
+                             + ('#define HAVE_SENDMMSG 1\n' if available else ''))
+            configured = subprocess.run(['cmake', '-S', str(ROOT / 'tools/cmake/QuicBatchingProbe'),
+                '-B', str(self.root / 'probe'), '-DSTREAMING_CURL_SOURCE=' + str(source),
+                '-DSTREAMING_CURL_BUILD=' + str(build), '-DSTREAMING_INSTALLED_PC=' + str(metadata)],
+                capture_output=True, text=True)
+            self.assertEqual(configured.returncode, 0, configured.stdout + configured.stderr)
+            expected = '1' if available and sys.platform.startswith('linux') else '0'
+            self.assertIn('spool_quic_batching=' + expected, metadata.read_text())
+            self.assertEqual(metadata.read_text().count('spool_quic_batching='), 1)
 
     def test_cmake_policy_builds_selected_library_and_requires_protocols(self):
         source = self.root / 'project'

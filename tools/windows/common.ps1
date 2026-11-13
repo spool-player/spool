@@ -121,6 +121,7 @@ function Get-MpvSourceRevision {
         'tools/windows/check-ffmpeg.py', 'tools/windows/build-shader-tools.ps1',
         'tools/windows/extract-archive.py', 'tools/windows/build-streaming-dependencies.ps1',
         'tools/manifests/streaming-third-party.json', 'tools/cmake/StreamingDependencies.cmake',
+        'tools/cmake/QuicBatchingProbe/CMakeLists.txt',
         'tools/prepare-streaming-sources.sh', 'tools/streaming-fingerprint.py',
         'tools/patches/curl-apple-mobile-sectrust.patch', 'tools/lib/manifest-sources.sh',
         'tools/manifests/mpv-native.json', 'tools/manifests/ffmpeg-capabilities.json',
