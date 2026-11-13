@@ -33,6 +33,8 @@ def main():
     parser.add_argument('--performance', action='store_true')
     parser.add_argument('--output', type=Path)
     args = parser.parse_args()
+    if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
     for tool in ['nginx', 'openssl']:
         if not shutil.which(tool):
             parser.error(f'{tool} required: run in nix develop .#native')
@@ -234,8 +236,9 @@ http {{
                             'expected-sha256': hashlib.sha256(expected).hexdigest(),
                             'quic-ranges': broken.requests,
                             'stream-samples': [{key: row.get(key) for key in metric_keys}
-                                for _, sample in result['samples'] for row in sample.get('streams', [])],
-                            'fixture-requests': (root / 'access.log').read_text().splitlines()}), flush=True)
+                                for _, sample in result['samples'] for row in sample.get('streams', [])][-64:],
+                            'fixture-requests': [line for line in (root / 'access.log').read_text().splitlines()
+                                                 if line.startswith(f'{broken_quic} ')][-64:]}), flush=True)
                         artifact = args.output.parent / 'quic-reset-failure.pcm' if args.output else None
                         if artifact:
                             artifact.write_bytes(actual)
