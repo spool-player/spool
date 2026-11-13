@@ -30,6 +30,7 @@
 #include <QTcpSocket>
 #include <QTimer>
 #include <QUuid>
+#include <climits>
 #include <cmath>
 #ifdef Q_OS_UNIX
 #include <cerrno>
@@ -577,6 +578,39 @@ void LocalCommandServer::dispatch(QIODevice *socket, const QJsonObject& request)
             return;
         }
         done(items(args));
+    } else if (command == QStringLiteral("catalog")) {
+        const auto library = m_app->libraries()->libraryById(args.value(QStringLiteral("libraryId")).toString());
+        const auto offsetValue = args.value(QStringLiteral("offset"));
+        const auto limitValue = args.value(QStringLiteral("limit"));
+        const double offset = offsetValue.isUndefined() ? 0 : offsetValue.toDouble(-1);
+        const double limit = limitValue.isUndefined() ? 100 : limitValue.toDouble(-1);
+        if (library.id.isEmpty() || offset < 0 || offset > INT_MAX || std::floor(offset) != offset || limit < 1
+            || limit > 100 || std::floor(limit) != limit) {
+            invalid(QStringLiteral("Use a current library ID, integer offset >= 0 and limit 1..100"));
+            return;
+        }
+        auto *operation = new QObject(socket);
+        Async::run(
+            operation,
+            m_sources->fetchBrowsePage(BrowseDescriptor::library(library.id, library.collectionType, library.name),
+                int(offset), int(limit),
+                { { QStringLiteral("sortBy"), QStringLiteral("SortName") },
+                    { QStringLiteral("sortOrder"), QStringLiteral("Ascending") } },
+                std::nullopt),
+            [done, operation, limit](const PagedMovieItems& page) {
+                QJsonArray rows;
+                for (size_t index = 0; index < page.items.size() && index < size_t(limit); ++index)
+                    rows.append(itemJson(page.items[index], page.startIndex + int(index)));
+                done({ { QStringLiteral("items"), rows }, { QStringLiteral("offset"), page.startIndex },
+                    { QStringLiteral("total"), page.totalRecordCount }, { QStringLiteral("exhausted"), page.exhausted },
+                    { QStringLiteral("seekable"), page.seekable } });
+                operation->deleteLater();
+            },
+            [this, socket, id, operation](const std::exception_ptr&) {
+                reject(socket, id, QStringLiteral("provider_failed"), QStringLiteral("Catalog page could not be read"));
+                operation->deleteLater();
+            },
+            "local control catalog");
     } else if (command == QStringLiteral("speed-test")) {
         if (args.contains(QStringLiteral("refresh")) && !args.value(QStringLiteral("refresh")).isBool()) {
             invalid(QStringLiteral("refresh must be a boolean"));

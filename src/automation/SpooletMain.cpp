@@ -38,6 +38,8 @@ QJsonObject help()
                         QStringLiteral("items [browse|libraries|resume|next-up] [OFFSET] [LIMIT] | library "
                                        "QUALIFIED_ID | load-more"),
                         QStringLiteral("browse sort SORT_KEY [Ascending|Descending] (server-side library ordering)"),
+                        QStringLiteral(
+                            "catalog LIBRARY_ID [OFFSET] [LIMIT] (bounded provider page; preserves the view)"),
                         QStringLiteral("play QUALIFIED_ID [--from-start] | pause | resume | stop | seek SECONDS"),
                         QStringLiteral("preview SECONDS (actual timeline hover; key up first if controls are hidden)"),
                         QStringLiteral("qualities | quality INDEX"), QStringLiteral("screenshot FILE.png"),
@@ -186,6 +188,17 @@ int main(int argc, char **argv)
             if (!valid || !std::isfinite(value) || value < 0)
                 return error(QStringLiteral("Pointer coordinates must be finite and nonnegative"));
             args.insert(index == 1 ? QStringLiteral("x") : QStringLiteral("y"), value);
+        }
+    } else if (command == QStringLiteral("catalog")) {
+        if (!count(1, 3))
+            return error(QStringLiteral("Usage: catalog LIBRARY_ID [OFFSET] [LIMIT]"));
+        args.insert(QStringLiteral("libraryId"), arguments.first());
+        for (int index = 1; index < arguments.size(); ++index) {
+            bool valid = false;
+            const int value = arguments.at(index).toInt(&valid);
+            if (!valid || value < (index == 2 ? 1 : 0) || (index == 2 && value > 100))
+                return error(QStringLiteral("Catalog offset must be nonnegative; limit must be 1..100"));
+            args.insert(index == 1 ? QStringLiteral("offset") : QStringLiteral("limit"), value);
         }
     } else if (command == QStringLiteral("browse")) {
         if (!count(2, 3) || arguments.first() != QStringLiteral("sort")

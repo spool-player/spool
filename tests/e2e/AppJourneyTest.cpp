@@ -1196,6 +1196,17 @@ SPOOL_TEST_MAIN("app-journey")
         require(itemId != "journey-movie" && (*episodeRow).toObject()["id"].toString() != "journey-episode",
             "provider items lost account scoping");
 
+        const auto libraryRows = journey.command({ "items", "libraries" })["items"].toArray();
+        const auto selectedLibrary = std::find_if(libraryRows.cbegin(), libraryRows.cend(),
+            [](const QJsonValue& row) { return row.toObject()["title"] == "Journey Library"; });
+        require(selectedLibrary != libraryRows.cend(), "selected library missing from the catalog inventory");
+        const auto catalogPage = journey.command({ "catalog", selectedLibrary->toObject()["id"].toString(), "0", "1" });
+        require(catalogPage["items"].toArray().size() == 1
+                && catalogPage["items"].toArray().first().toObject()["id"].toString() == itemId,
+            "direct catalog page did not preserve scoped provider identity or its row limit");
+        require(journey.command({ "items", "browse" })["count"].toInt(-1) == 2,
+            "catalog inspection changed the visible browse model");
+
         fixturePhase = QStringLiteral("library-background-refresh");
         const int browseBeforeRefresh = fixture.authenticatedBrowse;
         fixture.setLibraryBrowseHeld(true);
