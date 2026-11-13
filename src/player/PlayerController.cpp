@@ -129,7 +129,7 @@ namespace {
             for (int field = 0; field < 10; ++field) {
                 prior.keys[field] = const_cast<char *>(priorFields[field]);
                 const auto value = sample.value(QString::fromLatin1(priorFields[field]));
-                const bool real = field == 5 || field == 6;
+                const bool real = field == 6;
                 prior.values[field].format = real ? MPV_FORMAT_DOUBLE : MPV_FORMAT_INT64;
                 if (real)
                     prior.values[field].u.double_ = value.toDouble();
