@@ -350,6 +350,14 @@ else:
     const auto status = cli(target + QStringList { QStringLiteral("speed-test"), QStringLiteral("status") });
     require(status["ok"].toBool() && !status["result"].toObject()["args"].toObject()["refresh"].toBool(),
         "remote speed-test status does not restart measurement");
+    const auto sorted = cli(target + QStringList { "browse", "sort", "Bitrate", "Descending" });
+    require(sorted["ok"].toBool() && sorted["result"].toObject()["command"] == "browse-sort"
+            && sorted["result"].toObject()["args"].toObject()["sortBy"] == "Bitrate"
+            && sorted["result"].toObject()["args"].toObject()["sortOrder"] == "Descending",
+        "CLI forwards server-side sort and direction without loading library pages");
+    for (const QStringList& invalidSort : { QStringList { "browse", "sort", "Bitrate", "backwards" },
+             QStringList { "browse", "sort", "Bitrate&token=secret" }, QStringList { "browse", "sort" } })
+        require(!cli(target + invalidSort)["ok"].toBool(), "CLI rejects malformed server sort arguments");
     require(!cli({ "--host", "root@device.test", "--descriptor", "relative.json", "status" })["ok"].toBool(),
         "remote explicit descriptor must be an absolute remote path");
     require(!cli({ "--host", "root@device.test", "--instance", "remote-test", "--descriptor", "/private/test.json",

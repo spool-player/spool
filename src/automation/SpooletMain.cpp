@@ -8,6 +8,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRegularExpression>
 #include <QTextStream>
 #include <cmath>
 #include <cstdio>
@@ -36,6 +37,7 @@ QJsonObject help()
                         QStringLiteral("navigate providerDetails MODULE_ID | navigate subtitleSettings [SETTING_KEY]"),
                         QStringLiteral("items [browse|libraries|resume|next-up] [OFFSET] [LIMIT] | library "
                                        "QUALIFIED_ID | load-more"),
+                        QStringLiteral("browse sort SORT_KEY [Ascending|Descending] (server-side library ordering)"),
                         QStringLiteral("play QUALIFIED_ID [--from-start] | pause | resume | stop | seek SECONDS"),
                         QStringLiteral("preview SECONDS (actual timeline hover; key up first if controls are hidden)"),
                         QStringLiteral("qualities | quality INDEX"), QStringLiteral("screenshot FILE.png"),
@@ -185,6 +187,16 @@ int main(int argc, char **argv)
                 return error(QStringLiteral("Pointer coordinates must be finite and nonnegative"));
             args.insert(index == 1 ? QStringLiteral("x") : QStringLiteral("y"), value);
         }
+    } else if (command == QStringLiteral("browse")) {
+        if (!count(2, 3) || arguments.first() != QStringLiteral("sort")
+            || !QRegularExpression(QStringLiteral("^[A-Za-z][A-Za-z0-9]{0,63}$")).match(arguments.at(1)).hasMatch()
+            || (arguments.size() == 3 && arguments.last() != QStringLiteral("Ascending")
+                && arguments.last() != QStringLiteral("Descending")))
+            return error(QStringLiteral("Usage: browse sort SORT_KEY [Ascending|Descending]"));
+        command = QStringLiteral("browse-sort");
+        args.insert(QStringLiteral("sortBy"), arguments.at(1));
+        args.insert(
+            QStringLiteral("sortOrder"), arguments.size() == 3 ? arguments.last() : QStringLiteral("Ascending"));
     } else if (command == QStringLiteral("items")) {
         if (!count(0, 3))
             return error(QStringLiteral("Usage: items [KIND] [OFFSET] [LIMIT]"));

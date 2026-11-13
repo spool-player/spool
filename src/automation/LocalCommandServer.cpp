@@ -7,6 +7,7 @@
 #include "common/AsyncTask.h"
 #include "platform/NativeAppWindow.h"
 #include "provider/SourceHub.h"
+#include <QRegularExpression>
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -56,9 +57,21 @@ namespace {
 
     QJsonObject itemJson(const MovieItem& item, int index)
     {
+        QJsonArray sources;
+        for (const auto& source : item.mediaSources) {
+            int width = 0;
+            int height = 0;
+            for (const auto& stream : source.streams) {
+                width = qMax(width, stream.width);
+                height = qMax(height, stream.height);
+            }
+            sources.append(QJsonObject { { QStringLiteral("bitrate"), source.bitRate },
+                { QStringLiteral("sizeBytes"), double(source.size) }, { QStringLiteral("width"), width },
+                { QStringLiteral("height"), height } });
+        }
         return { { QStringLiteral("index"), index }, { QStringLiteral("id"), item.id },
             { QStringLiteral("title"), item.title }, { QStringLiteral("type"), item.itemType },
-            { QStringLiteral("playable"), item.isPlayable() } };
+            { QStringLiteral("playable"), item.isPlayable() }, { QStringLiteral("sources"), sources } };
     }
     void closeSocket(QIODevice *socket, bool abort)
     {
@@ -383,6 +396,8 @@ QJsonObject LocalCommandServer::items(const QJsonObject& args) const
     }
     return { { QStringLiteral("kind"), kind }, { QStringLiteral("offset"), offset }, { QStringLiteral("count"), count },
         { QStringLiteral("items"), rows },
+        { QStringLiteral("sortBy"), m_app->browse()->query().value(QStringLiteral("sortBy")).toString() },
+        { QStringLiteral("sortOrder"), m_app->browse()->query().value(QStringLiteral("sortOrder")).toString() },
         { QStringLiteral("hasMore"), kind == QStringLiteral("browse") && m_app->browse()->hasMore() } };
 }
 
@@ -865,6 +880,17 @@ void LocalCommandServer::dispatch(QIODevice *socket, const QJsonObject& request)
         }
         m_router->push(QStringLiteral("libraryGrid"),
             { { QStringLiteral("libraryId"), args.value(QStringLiteral("id")).toString() } });
+        done(state());
+    } else if (command == QStringLiteral("browse-sort")) {
+        const QString sortBy = args.value(QStringLiteral("sortBy")).toString();
+        const QString sortOrder = args.value(QStringLiteral("sortOrder")).toString();
+        if (m_app->browse()->libraryId().isEmpty()
+            || !QRegularExpression(QStringLiteral("^[A-Za-z][A-Za-z0-9]{0,63}$")).match(sortBy).hasMatch()
+            || (sortOrder != QStringLiteral("Ascending") && sortOrder != QStringLiteral("Descending"))) {
+            invalid(QStringLiteral("Open a library and supply a sort key with Ascending or Descending"));
+            return;
+        }
+        m_app->browse()->setSort(sortBy, sortOrder);
         done(state());
     } else if (command == QStringLiteral("load-more")) {
         m_app->browse()->prefetchNextPage();
