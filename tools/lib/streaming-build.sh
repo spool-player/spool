@@ -8,11 +8,11 @@ build_streaming_http() {
     cmake -S "$sources/$dependency" -B "$builds/$dependency" -GNinja \
       -DSTREAMING_DEPENDENCY="$dependency" -DSTREAMING_SHARED="$shared" \
       -C "$ROOT/tools/cmake/StreamingDependencies.cmake" \
-      -DCMAKE_BUILD_TYPE=MinSizeRel -DCMAKE_INSTALL_PREFIX="$prefix" "$@"
-    cmake --build "$builds/$dependency" --parallel "${JOBS:-4}"
-    cmake --install "$builds/$dependency"
+      -DCMAKE_BUILD_TYPE=MinSizeRel -DCMAKE_INSTALL_PREFIX="$prefix" "$@" || return
+    cmake --build "$builds/$dependency" --parallel "${JOBS:-4}" || return
+    cmake --install "$builds/$dependency" || return
   done
   cmake -S "$ROOT/tools/cmake/QuicBatchingProbe" -B "$builds/quic-batching-probe" -GNinja \
     "$@" -DSTREAMING_CURL_SOURCE="$sources/curl" -DSTREAMING_CURL_BUILD="$builds/curl" \
-    -DSTREAMING_INSTALLED_PC="${DESTDIR:-}$prefix/lib/pkgconfig/libcurl.pc"
+    -DSTREAMING_INSTALLED_PC="${DESTDIR:-}$prefix/lib/pkgconfig/libcurl.pc" || return
 }

@@ -20,6 +20,7 @@ manifest_source_field() {
   "$MANIFEST_PYTHON" -c '
 import json
 import sys
+sys.stdout.reconfigure(newline="\n")
 
 with open(sys.argv[1], encoding="utf-8") as handle:
     data = json.load(handle)
@@ -34,6 +35,7 @@ manifest_qt_field() {
   "$MANIFEST_PYTHON" -c '
 import json
 import sys
+sys.stdout.reconfigure(newline="\n")
 
 with open(sys.argv[1], encoding="utf-8") as handle:
     data = json.load(handle)
@@ -47,6 +49,7 @@ manifest_qt_module_sha256() {
   "$MANIFEST_PYTHON" -c '
 import json
 import sys
+sys.stdout.reconfigure(newline="\n")
 
 with open(sys.argv[1], encoding="utf-8") as handle:
     data = json.load(handle)
@@ -66,6 +69,7 @@ manifest_tool_field() {
   "$MANIFEST_PYTHON" -c '
 import json
 import sys
+sys.stdout.reconfigure(newline="\n")
 
 with open(sys.argv[1], encoding="utf-8") as handle:
     data = json.load(handle)
@@ -79,6 +83,7 @@ manifest_json_array() {
   "$MANIFEST_PYTHON" -c '
 import json
 import sys
+sys.stdout.reconfigure(newline="\n")
 
 with open(sys.argv[1], encoding="utf-8") as handle:
     data = json.load(handle)
@@ -93,6 +98,7 @@ manifest_source_patches() {
   "$MANIFEST_PYTHON" -c '
 import json
 import sys
+sys.stdout.reconfigure(newline="\n")
 
 with open(sys.argv[1], encoding="utf-8") as handle:
     data = json.load(handle)
@@ -107,6 +113,7 @@ manifest_vendored_sources() {
   "$MANIFEST_PYTHON" -c '
 import json
 import sys
+sys.stdout.reconfigure(newline="\n")
 
 with open(sys.argv[1], encoding="utf-8") as handle:
     data = json.load(handle)
@@ -193,6 +200,7 @@ toolchain_field() {
   "$MANIFEST_PYTHON" -c '
 import json
 import sys
+sys.stdout.reconfigure(newline="\n")
 
 with open(sys.argv[1] + "/tools/manifests/toolchain.json", encoding="utf-8") as handle:
     value = json.load(handle)
