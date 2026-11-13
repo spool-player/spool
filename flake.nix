@@ -790,7 +790,7 @@
 
         native = pkgs.mkShell {
           packages = nativePackages pkgs ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux
-            (with pkgs; [ nginxStable iproute2 util-linux ethtool iputils python3Packages.h2 ]);
+            (with pkgs; [ nginxStable iproute2 util-linux ethtool iputils python3Packages.h2 python3Packages.aioquic ]);
           shellHook = nativeShellHook pkgs;
         };
 
