@@ -9,14 +9,19 @@ from pathlib import Path
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--prefix', type=Path, required=True)
 parser.add_argument('--manifest', type=Path, required=True)
+parser.add_argument('--bash', default='bash', help='Host shell for generated curl-config')
+parser.add_argument('--require-native-ca', action='store_true')
 args = parser.parse_args()
 manifest = json.loads(args.manifest.read_text())['sources']
 config = args.prefix / 'bin/curl-config'
-features = set(subprocess.check_output(['bash', str(config), '--features'], text=True).split())
-missing = {'HTTP2', 'HTTP3', 'alt-svc'} - features
+features = set(subprocess.check_output([args.bash, str(config).replace('\\', '/'), '--features'], text=True).split())
+required = {'HTTP2', 'HTTP3', 'alt-svc'}
+if args.require_native_ca:
+    required.add('NativeCA')
+missing = required - features
 if missing:
     parser.error('curl is missing required features: ' + ', '.join(sorted(missing)))
-version = subprocess.check_output(['bash', str(config), '--version'], text=True).strip().split()[-1]
+version = subprocess.check_output([args.bash, str(config).replace('\\', '/'), '--version'], text=True).strip().split()[-1]
 if version != manifest['curl']['version']:
     parser.error(f'curl version {version} differs from pin')
 for package, library in [('openssl', 'openssl'), ('nghttp2', 'libnghttp2'),
