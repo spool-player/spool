@@ -2,7 +2,7 @@
 # supervisor launches a fresh instance of the same phase bundle per selector;
 # it never executes a desktop substitute or relies on an app launch exit code.
 function(spool_add_mobile_test_bundles)
-    if(NOT BUILD_TESTING OR NOT (ANDROID OR CMAKE_SYSTEM_NAME STREQUAL "tvOS"))
+    if(NOT BUILD_TESTING OR NOT (ANDROID OR SPOOL_APPLE_MOBILE))
         return()
     endif()
     if(ANDROID)
@@ -132,15 +132,23 @@ function(spool_add_mobile_test_bundles)
             else()
                 set(identifier "com.sachk.spool.e2e-tests")
             endif()
+            if(IOS)
+                set(test_plist "${CMAKE_CURRENT_SOURCE_DIR}/tests/platform/ios/Info.plist.in")
+                set(test_family "1,2")
+                target_compile_definitions(${target} PRIVATE TOUCHSCREEN)
+            else()
+                set(test_plist "${CMAKE_CURRENT_SOURCE_DIR}/tests/platform/tvos/Info.plist.in")
+                set(test_family "3")
+            endif()
             set_target_properties(${target} PROPERTIES
                 MACOSX_BUNDLE TRUE
-                MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/tests/platform/tvos/Info.plist.in"
+                MACOSX_BUNDLE_INFO_PLIST "${test_plist}"
                 MACOSX_BUNDLE_GUI_IDENTIFIER "${identifier}"
                 MACOSX_BUNDLE_BUNDLE_NAME "${target}"
                 MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
                 MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
-                XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "3")
-            spool_configure_tvos_simulator_entitlements(${target})
+                XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "${test_family}")
+            spool_configure_apple_simulator_entitlements(${target})
             install(TARGETS ${target} BUNDLE DESTINATION tests COMPONENT NativeTests)
         endif()
     endforeach()

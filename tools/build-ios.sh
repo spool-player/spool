@@ -29,6 +29,8 @@ if [[ "${APPLE_ARCHIVE:-0}" == 1 ]]; then
   : "${APPLE_DEVELOPMENT_TEAM:?Archiving requires a signing team}"
   : "${APPLE_EXPORT_OPTIONS:?Set APPLE_EXPORT_OPTIONS to your ExportOptions.plist}"
 fi
+build_testing=OFF
+if [[ "$APPLE_SDK" == iphonesimulator ]]; then build_testing=ON; fi
 xcrun --sdk "$APPLE_SDK" --show-sdk-path >/dev/null
 bash "$ROOT/tools/apple/build-ios-scanner.sh"
 BASE="$ROOT/build/apple/$APPLE_SDK-$APPLE_ARCH"
@@ -48,12 +50,15 @@ cmake -S "$ROOT" -B "$BASE/app" -GXcode \
   -DQCoro6_DIR="$APPLE_DEPS_PREFIX/lib/cmake/QCoro6" \
   -DCMAKE_OSX_SYSROOT="$APPLE_SDK" -DCMAKE_OSX_ARCHITECTURES="$APPLE_ARCH" \
   -DCMAKE_OSX_DEPLOYMENT_TARGET="$APPLE_DEPLOYMENT_TARGET" \
-  -DSPOOL_WEBOS=OFF -DSPOOL_APPLE_APP_STORE="${SPOOL_APPLE_APP_STORE:-ON}" -DBUILD_TESTING=OFF \
+  -DSPOOL_WEBOS=OFF -DSPOOL_APPLE_APP_STORE="${SPOOL_APPLE_APP_STORE:-ON}" -DBUILD_TESTING="$build_testing" \
   -DSPOOL_APPLE_QML_IMPORT_SCANNER="$ROOT/build/apple/qmlimportscanner/spool-qmlimportscanner" \
   -DSPOOL_IOS_ASSETS="$ASSETS" \
   -DCMAKE_XCODE_ATTRIBUTE_DEVELOPMENT_TEAM="${APPLE_DEVELOPMENT_TEAM:-}" \
   -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED="${APPLE_CODE_SIGNING_ALLOWED:-NO}"
-cmake --build "$BASE/app" --config Release --target spool --parallel "${BUILD_JOBS:-4}"
+cmake --build "$BASE/app" --config Release --parallel "${BUILD_JOBS:-4}"
+if [[ "$build_testing" == ON ]]; then
+  cmake --install "$BASE/app" --config Release --prefix "$BASE/install"
+fi
 if [[ "${APPLE_ARCHIVE:-0}" == 1 ]]; then
   : "${APPLE_DEVELOPMENT_TEAM:?Archiving requires a signing team}"
   : "${APPLE_EXPORT_OPTIONS:?Set APPLE_EXPORT_OPTIONS to your ExportOptions.plist}"
