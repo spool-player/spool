@@ -8,6 +8,7 @@ import argparse
 import array
 import importlib.util
 import http.client
+import hashlib
 import ssl
 import json
 from pathlib import Path
@@ -221,7 +222,25 @@ http {{
                         # This first core must finish before creating its successor.
                     finally:
                         player.close()
-                    if output.read_bytes() != expected or not broken.requests:
+                    actual = output.read_bytes()
+                    if actual != expected or not broken.requests:
+                        first_difference = next((index for index, (left, right) in enumerate(zip(actual, expected))
+                                                 if left != right), min(len(actual), len(expected)))
+                        metric_keys = ['effective-http-version', 'http-fallbacks', 'last-reason',
+                                       'state', 'retained-bytes', 'readable-bytes']
+                        print(json.dumps({'scenario': 'h3-failure-diagnostic', 'actual-bytes': len(actual),
+                            'expected-bytes': len(expected), 'first-difference': first_difference,
+                            'actual-sha256': hashlib.sha256(actual).hexdigest(),
+                            'expected-sha256': hashlib.sha256(expected).hexdigest(),
+                            'quic-ranges': broken.requests,
+                            'stream-samples': [{key: row.get(key) for key in metric_keys}
+                                for _, sample in result['samples'] for row in sample.get('streams', [])],
+                            'fixture-requests': (root / 'access.log').read_text().splitlines()}), flush=True)
+                        artifact = args.output.parent / 'quic-reset-failure.pcm' if args.output else None
+                        if artifact:
+                            artifact.write_bytes(actual)
+                        if not broken.requests:
+                            raise AssertionError('HTTP3 failure fixture was never requested over QUIC')
                         raise AssertionError('HTTP3 connection failure did not preserve exact PCM')
                     fallback_count = max((row.get('http-fallbacks', 0) for _, sample in result['samples']
                                           for row in sample.get('streams', [])), default=0)
