@@ -20,7 +20,7 @@ jobs:
   native:
     name: iOS (${{ matrix.sdk }} ${{ matrix.arch }})
     runs-on: macos-15-intel
-    timeout-minutes: 120
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:

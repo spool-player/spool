@@ -799,7 +799,7 @@ jobs:
   tvos:
     name: tvOS (${{ matrix.sdk }} arm64)
     runs-on: macos-15
-    timeout-minutes: 180
+    timeout-minutes: 240
     needs: [lint, toolchain]
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_tvos }}
     strategy:
@@ -1090,7 +1090,7 @@ jobs:
   android-apks:
     name: Android ${{ matrix.abi }} APK
     runs-on: ubuntu-24.04
-    timeout-minutes: 150
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
@@ -1384,7 +1384,7 @@ jobs:
   windows-x64:
     name: Windows x64 portable and installer
     runs-on: windows-2025
-    timeout-minutes: 75
+    timeout-minutes: 150
     needs: [toolchain, lint]
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_windows }}
     env:
@@ -1456,7 +1456,7 @@ jobs:
 
       - name: Build libmpv from the fork
         if: steps.mpv-cache.outputs.cache-hit != 'true'
-        timeout-minutes: 45
+        timeout-minutes: 90
         shell: pwsh
         env:
           MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
