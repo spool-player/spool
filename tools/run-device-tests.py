@@ -575,7 +575,7 @@ class JourneyOwner:
         self.regression = regression
         self.ready = threading.Event()
         self.bundle = (os.environ.get("SPOOL_E2E_TVOS_BUNDLE", "com.sachk.spool")
-                       if platform == "tvos" else "com.sachk.spool")
+                       if platform in ("tvos", "ios") else "com.sachk.spool")
         self.device = os.environ["ANDROID_SERIAL" if platform == "android" else "SPOOL_TVOS_DEVICE"]
         if platform == "android" and not self.device.startswith("emulator-"):
             raise RuntimeError("Android journey requires an isolated emulator serial")
@@ -587,7 +587,7 @@ class JourneyOwner:
         self.mappings = []
         self.app_path = None
         self.artifact_failure = False
-        if platform == "tvos":
+        if platform in ("tvos", "ios"):
             self.app_path = self.call("get_app_container", self.device, self.bundle, "app").stdout.strip()
             if not Path(self.app_path).is_dir():
                 raise RuntimeError("installed production simulator application is unavailable")
@@ -673,7 +673,7 @@ class JourneyOwner:
                     return
                 if self.platform == "android" and int(birth) < self.pending_launch["minimumBirth"]:
                     raise RuntimeError("refusing to own an Android process predating the launch")
-                if (self.platform == "tvos" and
+                if (self.platform in ("tvos", "ios") and
                         time.mktime(time.strptime(birth, "%a %b %d %H:%M:%S %Y")) <
                         self.pending_launch["started"] - 1):
                     raise RuntimeError("refusing to own a simulator process predating the launch")
@@ -1191,7 +1191,7 @@ def safe_result(value):
             result[key] = value[key]
     if isinstance(value.get("nonce"), str) and re.fullmatch("[a-f0-9]{32}", value["nonce"]):
         result["nonce"] = value["nonce"]
-    if value.get("platform") in ("android", "tvos"):
+    if value.get("platform") in ("android", "tvos", "ios"):
         result["platform"] = value["platform"]
     if isinstance(value.get("selector"), str) and re.fullmatch("[a-zA-Z0-9_-]+", value["selector"]):
         result["selector"] = value["selector"]
@@ -1282,7 +1282,7 @@ def write_journal(path, value):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--platform", choices=("android", "tvos"), required=True)
+    parser.add_argument("--platform", choices=("android", "tvos", "ios"), required=True)
     parser.add_argument("--phase", choices=("traditional", "e2e"), required=True)
     parser.add_argument("--artifact-dir", type=Path, required=True)
     parser.add_argument("--timeout", type=int, default=180)

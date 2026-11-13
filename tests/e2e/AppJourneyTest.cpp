@@ -110,14 +110,14 @@ public:
             ownership("prepare", { { "reversePort", reversePort } });
             remoteScreenshot = "/data/user/0/" + bundle + "/cache/journey-frame.png";
         } else {
-            require(this->kind == "tvos", "unknown mobile journey device");
+            require(this->kind == "tvos" || this->kind == "ios", "unknown mobile journey device");
             device = qEnvironmentVariable("SPOOL_TVOS_DEVICE");
-            require(!device.isEmpty(), "tvOS journey requires an explicit private simulator UUID");
+            require(!device.isEmpty(), "Apple journey requires an explicit private simulator UUID");
             tool = executable("SPOOL_E2E_XCRUN", QStandardPaths::findExecutable("xcrun"));
             bundle = qEnvironmentVariable("SPOOL_E2E_TVOS_BUNDLE", "com.sachk.spool");
             container = QString::fromUtf8(runTool({ "get_app_container", device, bundle, "data" })).trimmed();
             require(QDir::isAbsolutePath(container) && QDir(container).exists(),
-                "installed actual tvOS app data container is unavailable");
+                "installed actual Apple app data container is unavailable");
             remoteScreenshot = container + "/Library/Caches/journey-frame.png";
             ownership("prepare");
         }
@@ -1072,7 +1072,8 @@ SPOOL_TEST_MAIN("app-journey")
             if (arguments[index] == "--device") {
                 require(index + 1 < arguments.size(), "--device requires android or tvos");
                 deviceKind = arguments[++index];
-                require(deviceKind == "android" || deviceKind == "tvos", "--device requires android or tvos");
+                require(deviceKind == "android" || deviceKind == "tvos" || deviceKind == "ios",
+                    "--device requires android, tvos or ios");
             }
         }
         if (deviceKind.isEmpty()) {
