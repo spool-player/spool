@@ -1046,6 +1046,21 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
     else()
     find_package(Threads REQUIRED)
     find_package(Qt6 REQUIRED COMPONENTS QuickTest)
+    # Packaged libmpv disables Meson's test executables. Keep its standalone
+    # policy and accounting contracts in the native application's CI suite.
+    foreach(transport_module IN ITEMS budget controller policy)
+        set(transport_test "spool-curl-${transport_module}-tests")
+        add_executable(${transport_test}
+            "${MPV_ACTIVE_SOURCE_DIR}/stream/curl_${transport_module}.c"
+            "${MPV_ACTIVE_SOURCE_DIR}/test/curl_${transport_module}.c")
+        target_include_directories(${transport_test} PRIVATE "${MPV_ACTIVE_SOURCE_DIR}")
+        target_compile_features(${transport_test} PRIVATE c_std_11)
+        if(UNIX)
+            target_link_libraries(${transport_test} PRIVATE m)
+        endif()
+        add_test(NAME "curl-${transport_module}" COMMAND ${transport_test})
+        set_tests_properties("curl-${transport_module}" PROPERTIES LABELS traditional TIMEOUT 30)
+    endforeach()
     get_target_property(SPOOL_APP_SOURCES spool SOURCES)
     set(SPOOL_TEST_PLATFORM_SOURCES ${SPOOL_APP_SOURCES})
     list(FILTER SPOOL_TEST_PLATFORM_SOURCES INCLUDE REGEX "/[A-Za-z]+PlatformCapabilities\\.cpp$")
