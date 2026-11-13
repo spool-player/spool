@@ -63,11 +63,17 @@ def main():
             tcp = free_port('127.0.0.1')
         while broken_quic in (tls, tcp):
             broken_quic = free_port('127.0.0.1')
-        (root / 'nginx.conf').write_text(f'''worker_processes 1;
+        (root / 'nginx.conf').write_text(f'''user root root;
+worker_processes 1;
 pid {root}/nginx.pid;
 error_log {root}/error.log info;
 events {{ worker_connections 128; }}
 http {{
+  client_body_temp_path {root}/client_body;
+  proxy_temp_path {root}/proxy;
+  fastcgi_temp_path {root}/fastcgi;
+  uwsgi_temp_path {root}/uwsgi;
+  scgi_temp_path {root}/scgi;
   log_format protocols '$server_port $server_protocol $status $http_range';
   access_log {root}/access.log protocols;
   ssl_certificate {root}/cert.pem;
@@ -97,7 +103,7 @@ http {{
   }}
 }}
 ''')
-        nginx = subprocess.Popen(['nginx', '-p', str(root), '-c', str(root / 'nginx.conf'),
+        nginx = subprocess.Popen(['nginx', '-e', 'stderr', '-p', str(root), '-c', str(root / 'nginx.conf'),
                                   '-g', 'daemon off;'], stdout=subprocess.DEVNULL,
                                  stderr=subprocess.PIPE)
         try:
