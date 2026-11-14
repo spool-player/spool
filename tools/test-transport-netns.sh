@@ -35,11 +35,21 @@ if ! tc qdisc add dev lo root netem delay "${delay}ms" loss "${loss}%" rate 200m
   echo 'SKIP: netem qdisc unavailable in isolated namespace' >&2
   exit 77
 fi
-ping -n -c 3 -i .2 127.0.0.1
+ping_report="$(LC_ALL=C ping -n -c 3 -i .2 127.0.0.1)"
+printf '%s\n' "$ping_report"
+measured_rtt="$(python3 -c 'import math, sys
+lines = [line for line in sys.stdin.read().splitlines() if line.startswith("rtt ")]
+if not lines:
+    raise SystemExit("Could not measure private path RTT")
+value = float(lines[-1].split("=", 1)[1].strip().split("/")[1])
+if not math.isfinite(value) or value < 0:
+    raise SystemExit("Invalid private path RTT")
+print(value)' <<<"$ping_report")"
 # Each loss level has an independent report; zero loss is the capacity and
 # continuous-playback acceptance path. Run --loss-percent 0.1 / 1 separately
 # to retain packet-loss evidence without conflating it with baseline capacity.
 export SPOOL_TRANSPORT_NETNS=1 SPOOL_TRANSPORT_RTT_MS="$rtt" SPOOL_TRANSPORT_RATE_MBIT=200
+export SPOOL_TRANSPORT_MEASURED_RTT_MS="$measured_rtt"
 python3 "$root/tests/transport/high_bitrate.py" --libmpv "$library" \
   --transport-helper "$root/mpv/test/curl_transport.py" --output "$output" \
   --counts "$counts" --protocols "$protocols" --loss-percent "$loss"
