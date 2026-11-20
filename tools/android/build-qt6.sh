@@ -7,7 +7,7 @@ source "$ROOT/tools/lib/manifest-sources.sh"
 
 PHASE="${1:-all}"
 ABI="${ANDROID_ABI:-x86_64}"
-MANIFEST="${QT_ANDROID_MANIFEST:-$ROOT/tools/manifests/qt-android-6.11.json}"
+MANIFEST="${QT_ANDROID_MANIFEST:-$ROOT/tools/manifests/qt-android.json}"
 QT_VERSION="$(manifest_qt_field "$MANIFEST" qtVersion)"
 QT_BASE_URL="$(manifest_qt_field "$MANIFEST" baseUrl)"
 QT_HOST_PATH="${SPOOL_ANDROID_QT_HOST:-}"
@@ -73,7 +73,7 @@ require_environment() {
     exit 1
   }
   [[ -n "$QT_HOST_PATH" && -x "$QT_HOST_PATH/libexec/moc" ]] || {
-    echo "error: SPOOL_ANDROID_QT_HOST must name the Qt 6.11 host-tools prefix" >&2
+    echo "error: SPOOL_ANDROID_QT_HOST must name the host-tools prefix of the pinned Qt" >&2
     exit 1
   }
 }

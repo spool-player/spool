@@ -33,19 +33,19 @@ run_phase() {
   local phase="$1"
   case "$phase" in
     fetch)
-      "$TOOLS_ROOT/build-qt6-611.sh" fetch
+      "$TOOLS_ROOT/build-qt6.sh" fetch
       "$TOOLS_ROOT/build-third-party.sh" fetch
       "$TOOLS_ROOT/build-curl.sh" fetch
       "$TOOLS_ROOT/build-qcoro.sh" fetch
       fetch_toolchain_ffmpeg
       ;;
     qt-host)
-      "$TOOLS_ROOT/build-qt6-611.sh" host
+      "$TOOLS_ROOT/build-qt6.sh" host
       ;;
     qt-target)
       WEBOS_SDK_ROOT="$SDK_ROOT" "$TOOLS_ROOT/restore-toolchain.sh"
       "$TOOLS_ROOT/build-curl.sh" build
-      QT_STATIC="${QT_STATIC:-1}" "$TOOLS_ROOT/build-qt6-611.sh" target
+      QT_STATIC="${QT_STATIC:-1}" "$TOOLS_ROOT/build-qt6.sh" target
       ;;
     dependencies)
       WEBOS_SDK_ROOT="$SDK_ROOT" "$TOOLS_ROOT/restore-toolchain.sh"

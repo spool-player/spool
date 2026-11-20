@@ -65,7 +65,7 @@ MPV_SRC="${MPV_SRC:-$ROOT/mpv}"
 MPV_BUILD="${MPV_BUILD:-$MPV_SRC/build/webos-libmpv}"
 WEBOS_CROSS_FILE="${WEBOS_CROSS_FILE:-$ROOT/build/webos-thirdparty-build/webos.cross.ini}"
 FFMPEG_CAPABILITY_MANIFEST="${FFMPEG_CAPABILITY_MANIFEST:-$ROOT/tools/manifests/ffmpeg-capabilities.json}"
-QT_MANIFEST="${QT_MANIFEST:-$ROOT/tools/manifests/qt-webos-6.11.json}"
+QT_MANIFEST="${QT_MANIFEST:-$ROOT/tools/manifests/qt-webos.json}"
 QT_VERSION="$(manifest_qt_field "$QT_MANIFEST" qtVersion)"
 QT_BUILD_TAG="${QT_VERSION%.*}"
 QT_BUILD_TAG="${QT_BUILD_TAG//./}"
@@ -103,7 +103,7 @@ if (( DO_BUILD || DO_STAGE )); then
 
   if [[ ! -f "$QT6_PREFIX/lib/libQt6Core.a" ]]; then
     echo "error: static Qt6 install not found at $QT6_PREFIX" >&2
-    echo "       Run: QT_STATIC=1 bash $WEBOS_TOOLS_ROOT/build-qt6-611.sh target" >&2
+    echo "       Run: QT_STATIC=1 bash $WEBOS_TOOLS_ROOT/build-qt6.sh target" >&2
     exit 1
   fi
   echo "Using static Qt6 build at $QT6_PREFIX"
@@ -123,7 +123,7 @@ if (( DO_BUILD || DO_STAGE )); then
   if ! grep -Fqx '#define QT_FEATURE_ssl 1' "$QT_NETWORK_CONFIG" 2>/dev/null \
       || ! grep -Fqx '#define QT_FEATURE_openssl_linked 1' "$QT_CORE_CONFIG" 2>/dev/null; then
     echo "error: Qt at $QT6_PREFIX was built without linked TLS support." >&2
-    echo "       Rerun: QT_STATIC=1 bash $WEBOS_TOOLS_ROOT/build-qt6-611.sh target" >&2
+    echo "       Rerun: QT_STATIC=1 bash $WEBOS_TOOLS_ROOT/build-qt6.sh target" >&2
     exit 1
   fi
 

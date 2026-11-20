@@ -1,26 +1,26 @@
 diff --git a/src/plugins/platforms/cocoa/qcocoawindow.h b/src/plugins/platforms/cocoa/qcocoawindow.h
 --- a/src/plugins/platforms/cocoa/qcocoawindow.h
 +++ b/src/plugins/platforms/cocoa/qcocoawindow.h
-@@ -9,6 +9,7 @@
- #include <qpa/qplatformwindow_p.h>
+@@ -10,6 +10,7 @@
+ #include <QtGui/private/qwindow_p.h>
  #include <QRect>
  #include <QPointer>
 +#include <optional>
-
+ 
  #ifndef QT_NO_OPENGL
  #include "qcocoaglcontext.h"
-@@ -245,6 +246,7 @@
-     QCocoaNSWindow *m_nsWindow = nil;
-
+@@ -235,6 +236,7 @@
+     NSView *m_view = nil;
+ 
      Qt::WindowStates m_lastReportedWindowState = Qt::WindowNoState;
 +    std::optional<Qt::WindowStates> m_pendingFullScreenState;
-     Qt::WindowModality m_windowModality = Qt::NonModal;
-
+ 
      static QPointer<QCocoaWindow> s_windowUnderMouse;
+ 
 diff --git a/src/plugins/platforms/cocoa/qcocoawindow.mm b/src/plugins/platforms/cocoa/qcocoawindow.mm
 --- a/src/plugins/platforms/cocoa/qcocoawindow.mm
 +++ b/src/plugins/platforms/cocoa/qcocoawindow.mm
-@@ -784,6 +784,15 @@
+@@ -882,6 +882,15 @@
  */
  void QCocoaWindow::setWindowState(Qt::WindowStates state)
  {
@@ -36,9 +36,9 @@ diff --git a/src/plugins/platforms/cocoa/qcocoawindow.mm b/src/plugins/platforms
      if (window()->isVisible())
          applyWindowState(state); // Window state set for hidden windows take effect when show() is called
  }
-@@ -955,6 +964,15 @@
+@@ -1048,6 +1057,15 @@
      setWindowFlags(window()->flags());
-
+ 
      handleWindowStateChanged();
 +
 +    // A native titlebar entry has no pending Qt request. Do not undo it.
@@ -50,5 +50,5 @@ diff --git a/src/plugins/platforms/cocoa/qcocoawindow.mm b/src/plugins/platforms
 +        window()->setWindowStates(requestedState);
 +    }
  }
-
+ 
  void QCocoaWindow::windowWillExitFullScreen()

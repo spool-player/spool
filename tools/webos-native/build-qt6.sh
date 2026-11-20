@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build a private Qt 6.11 tree for native webOS development.
+# Build a private Qt tree for native webOS development.
 #
 # Design goals:
 #   - never accidentally link against nixpkgs' Qt while building Qt from source;
@@ -17,7 +17,7 @@ source "$ROOT/tools/lib/build-common.sh"
 source "$ROOT/tools/lib/manifest-sources.sh"
 # shellcheck source=tools/webos-native/nixos-sdk-compat.sh
 source "$ROOT/tools/webos-native/nixos-sdk-compat.sh"
-QT_MANIFEST="${QT_MANIFEST:-$ROOT/tools/manifests/qt-webos-6.11.json}"
+QT_MANIFEST="${QT_MANIFEST:-$ROOT/tools/manifests/qt-webos.json}"
 SDK_ROOT="${WEBOS_SDK_ROOT:-$ROOT/build/webos-sdk/arm-webos-linux-gnueabi_sdk-buildroot}"
 SYSROOT="$SDK_ROOT/arm-webos-linux-gnueabi/sysroot"
 QT_VERSION="${QT_VERSION:-$(manifest_qt_field "$QT_MANIFEST" qtVersion)}"
@@ -275,7 +275,7 @@ apply_local_patches() {
     "$PATCH_DIR/qtdeclarative-$QT_SERIES-qmlimportscanner-exclude-subtrees.patch"
   apply_patch_if_needed "$QTWAYLAND_SRC" "$PATCH_DIR/qtwayland-$QT_SERIES-webos-wayland-version.patch"
 
-  # In Qt 6.11 the client-side wayland platform plugin code is in qtbase, not
+  # Since Qt 6.11 the client-side wayland platform plugin code is in qtbase, not
   # qtwayland. This keeps the webOS magic-remote cursor opt-out built in.
   apply_patch_if_needed "$QTBASE_SRC" "$PATCH_DIR/qtbase-$QT_SERIES-webos-no-cursor-set.patch"
 }

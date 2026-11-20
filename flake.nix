@@ -30,7 +30,7 @@
       systems = [ "x86_64-linux" "aarch64-darwin" "x86_64-darwin" ];
 
       androidToolchain =
-        builtins.fromJSON (builtins.readFile ./tools/manifests/qt-android-6.11.json);
+        builtins.fromJSON (builtins.readFile ./tools/manifests/qt-android.json);
       androidSdkArgs = {
         platformVersions = [ androidToolchain.android.compileSdk ];
         buildToolsVersions = [ androidToolchain.android.buildTools ];
@@ -507,7 +507,7 @@
             --prefix QML2_IMPORT_PATH : "$qml_import_path"
         '';
 
-      # Shell used by tools/webos-native/build-qt6-611.sh. No nixpkgs Qt here.
+      # Shell used by tools/webos-native/build-qt6.sh. No nixpkgs Qt here.
       sourceBuildPackages = pkgs:
         basePackages pkgs
         ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux (sourceLinuxPackages pkgs)
@@ -608,7 +608,7 @@
       nativeShellHook = pkgs: commonShellHook pkgs + ''
         # This shell intentionally includes Spool's tailored nixpkgs Qt
         # (spoolQt6) for native Linux/macOS development. Do not use it for
-        # tools/webos-native/build-qt6-611.sh.
+        # tools/webos-native/build-qt6.sh.
         export SPOOL_QT_CMAKE_DIR="${pkgs.spoolQt6.qtbase}/lib/cmake/Qt6"
         native_qt_cmake_path="${pkgs.spoolQt6.qtbase}:${pkgs.spoolQt6.qtdeclarative}:${pkgs.spoolQt6.qtsvg}:${pkgs.spoolQt6.qttools}:${pkgs.spoolQt6.qtwebsockets}:${pkgs.spoolQt6.qtshadertools}"
         export CMAKE_PREFIX_PATH="$native_qt_cmake_path''${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
@@ -652,7 +652,7 @@
               # scanner exclusions. Upstream -exclude alone skips only the
               # named directory's direct files, not its vendored descendants.
               patches = (old.patches or []) ++ [
-                ./tools/webos-native/patches/qtdeclarative-6.11-qmlimportscanner-exclude-subtrees.patch
+                ./tools/webos-native/patches/qtdeclarative-6.12-qmlimportscanner-exclude-subtrees.patch
               ];
               # Match the webOS host-tools profile: without an imported qsb,
               # qtdeclarative skips Quick, Controls and styles, not QML tools.

@@ -6,7 +6,7 @@ param(
 
 . (Join-Path $PSScriptRoot 'common.ps1')
 $root = Get-RepositoryRoot
-$manifestPath = Join-Path $root 'tools\manifests\qt-windows-6.11.json'
+$manifestPath = Join-Path $root 'tools\manifests\qt-windows.json'
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
 $qtRoot = Join-Path ([IO.Path]::GetFullPath($OutputDirectory)) "$($manifest.version)\$($manifest.architecture)"
 $downloads = if ($DownloadDirectory) { [IO.Path]::GetFullPath($DownloadDirectory) } elseif ($env:RUNNER_TEMP) {

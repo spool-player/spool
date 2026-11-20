@@ -955,15 +955,15 @@ jobs:
         with:
           path: |
             build/webos-sdk
-            build/qt6-611-host-install
-            build/qt6-611-target-static-install
-            build/qt6-611-target-install
+            build/qt6-612-host-install
+            build/qt6-612-target-static-install
+            build/qt6-612-target-install
             build/webos-thirdparty-build
             build/webos-qcoro
             build/third_party
             .ccache
             mpv/build/webos-libmpv
-          key: webos3-${{ runner.os }}-${{ hashFiles('tools/manifests/streaming-third-party.json', 'tools/prepare-streaming-sources.sh', 'tools/streaming-fingerprint.py', 'tools/check-streaming-dependencies.py', 'tools/cmake/StreamingDependencies.cmake', 'tools/cmake/QuicBatchingProbe/CMakeLists.txt', 'tools/lib/streaming-build.sh', 'tools/patches/curl-*.patch', 'tools/windows/build-streaming-dependencies.ps1', 'flake.nix', 'flake.lock', 'mpv/meson.build', 'build-ipk.sh', 'tools/package-audit.py', 'tools/lib/*.sh', 'tools/manifests/ffmpeg-capabilities.json', 'tools/manifests/toolchain.json', 'tools/manifests/mpv-native.json', 'tools/manifests/qt-webos-6.11.json', 'tools/manifests/webos-third-party.json', 'tools/webos-native/**') }}
+          key: webos3-${{ runner.os }}-${{ hashFiles('tools/manifests/streaming-third-party.json', 'tools/prepare-streaming-sources.sh', 'tools/streaming-fingerprint.py', 'tools/check-streaming-dependencies.py', 'tools/cmake/StreamingDependencies.cmake', 'tools/cmake/QuicBatchingProbe/CMakeLists.txt', 'tools/lib/streaming-build.sh', 'tools/patches/curl-*.patch', 'tools/windows/build-streaming-dependencies.ps1', 'flake.nix', 'flake.lock', 'mpv/meson.build', 'build-ipk.sh', 'tools/package-audit.py', 'tools/lib/*.sh', 'tools/manifests/ffmpeg-capabilities.json', 'tools/manifests/toolchain.json', 'tools/manifests/mpv-native.json', 'tools/manifests/qt-webos.json', 'tools/manifests/webos-third-party.json', 'tools/webos-native/**') }}
           restore-keys: |
             webos3-${{ runner.os }}-
             webos2-${{ runner.os }}-
@@ -995,9 +995,9 @@ jobs:
         with:
           path: |
             build/webos-sdk
-            build/qt6-611-host-install
-            build/qt6-611-target-static-install
-            build/qt6-611-target-install
+            build/qt6-612-host-install
+            build/qt6-612-target-static-install
+            build/qt6-612-target-install
             build/webos-thirdparty-build
             build/webos-qcoro
             build/third_party
@@ -1176,7 +1176,7 @@ jobs:
             build/android/qt
             build/android/deps
             build/android/qcoro
-          key: android6-${{ matrix.abi }}-${{ runner.os }}-${{ steps.cache-inputs.outputs.mpv }}-${{ steps.cache-inputs.outputs.toolchain }}-${{ hashFiles('tools/manifests/streaming-third-party.json', 'tools/prepare-streaming-sources.sh', 'tools/streaming-fingerprint.py', 'tools/check-streaming-dependencies.py', 'tools/cmake/StreamingDependencies.cmake', 'tools/cmake/QuicBatchingProbe/CMakeLists.txt', 'tools/lib/streaming-build.sh', 'tools/patches/curl-*.patch', 'tools/windows/build-streaming-dependencies.ps1', 'tools/android/build-dependencies.sh', 'tools/android/build-qt6.sh', 'tools/android/patches/*.patch', 'tools/ffmpeg-capabilities.py', 'tools/lib/build-common.sh', 'tools/lib/manifest-sources.sh', 'tools/manifests/android-third-party.json', 'tools/manifests/ffmpeg-capabilities.json', 'tools/manifests/toolchain.json', 'tools/manifests/qt-android-6.11.json') }}
+          key: android6-${{ matrix.abi }}-${{ runner.os }}-${{ steps.cache-inputs.outputs.mpv }}-${{ steps.cache-inputs.outputs.toolchain }}-${{ hashFiles('tools/manifests/streaming-third-party.json', 'tools/prepare-streaming-sources.sh', 'tools/streaming-fingerprint.py', 'tools/check-streaming-dependencies.py', 'tools/cmake/StreamingDependencies.cmake', 'tools/cmake/QuicBatchingProbe/CMakeLists.txt', 'tools/lib/streaming-build.sh', 'tools/patches/curl-*.patch', 'tools/windows/build-streaming-dependencies.ps1', 'tools/android/build-dependencies.sh', 'tools/android/build-qt6.sh', 'tools/android/patches/*.patch', 'tools/ffmpeg-capabilities.py', 'tools/lib/build-common.sh', 'tools/lib/manifest-sources.sh', 'tools/manifests/android-third-party.json', 'tools/manifests/ffmpeg-capabilities.json', 'tools/manifests/toolchain.json', 'tools/manifests/qt-android.json') }}
 
       - name: Build cached Android toolchains
         if: ${{ steps.android-cache.outputs.cache-hit != 'true' }}
@@ -1434,7 +1434,7 @@ jobs:
           path: |
             C:\Qt\${{ needs.toolchain.outputs.qt_version }}\${{ needs.toolchain.outputs.qt_windows_kit }}
             C:\Qt\${{ needs.toolchain.outputs.qcoro_windows_prefix }}
-          key: windows-qt-${{ needs.toolchain.outputs.qt_version }}-qcoro-${{ needs.toolchain.outputs.qcoro_revision }}-${{ hashFiles('tools/manifests/qt-windows-6.11.json') }}
+          key: windows-qt-${{ needs.toolchain.outputs.qt_version }}-qcoro-${{ needs.toolchain.outputs.qcoro_revision }}-${{ hashFiles('tools/manifests/qt-windows.json') }}
 
       - name: Install Qt from pinned official archives
         if: steps.qt-cache.outputs.cache-hit != 'true'
@@ -1453,7 +1453,7 @@ jobs:
           path: |
             C:\Qt\${{ needs.toolchain.outputs.qt_version }}\${{ needs.toolchain.outputs.qt_windows_kit }}
             C:\Qt\${{ needs.toolchain.outputs.qcoro_windows_prefix }}
-          key: windows-qt-${{ needs.toolchain.outputs.qt_version }}-qcoro-${{ needs.toolchain.outputs.qcoro_revision }}-${{ hashFiles('tools/manifests/qt-windows-6.11.json') }}
+          key: windows-qt-${{ needs.toolchain.outputs.qt_version }}-qcoro-${{ needs.toolchain.outputs.qcoro_revision }}-${{ hashFiles('tools/manifests/qt-windows.json') }}
 
       - name: Read mpv revision
         id: mpv-revision
