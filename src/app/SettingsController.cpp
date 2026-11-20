@@ -304,15 +304,6 @@ void SettingsController::persistServerOverrides()
     emit serverOverridesChanged();
 }
 
-QVariantMap SettingsController::playbackSnapshot(const QString& sourceId) const
-{
-    QVariantMap result;
-    for (const auto& spec : settingSpecs())
-        if (spec.serverOverridable)
-            result.insert(keyString(spec), effectiveValue(keyString(spec), sourceId));
-    return result;
-}
-
 QString SettingsController::serverPlaybackSummary(const QString& sourceId) const
 {
     const auto rows = m_serverOverrides.value(serverKey(sourceId)).toMap();
