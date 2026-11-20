@@ -1032,6 +1032,10 @@ void SettingsController::applySchemaValue(const SettingSpec& spec, const QVarian
         if (apply && m_player)
             m_player->setAudioOutputMode(m_audioOutputMode);
         break;
+    case SettingTarget::AudioPassthrough:
+        if (m_player && (apply || !m_localSettingsLoaded))
+            m_player->setAudioPassthrough(value.toString());
+        break;
     case SettingTarget::VideoOutputMode:
         m_videoOutputMode = value.toString();
         if (m_player && (apply || !m_localSettingsLoaded))
