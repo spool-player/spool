@@ -12,7 +12,7 @@
     # 26.05 darwin branch, which is maintained to the end of 2026.
     nixpkgs-x86-darwin.url = "github:NixOS/nixpkgs/nixpkgs-26.05-darwin";
     libplacebo-src = {
-      url = "github:haasn/libplacebo/a7a18af88ff0a17c04840dcb3246047bb6b46df3?submodules=1";
+      url = "github:haasn/libplacebo/275f7dea27924cdd34ab2e6c20e448b6bc4fab65?submodules=1";
       flake = false;
     };
     qcoro-src = {
@@ -123,7 +123,7 @@
 
       libplaceboOverlay = final: prev: {
         spoolLibplacebo = prev.libplacebo.overrideAttrs (_: {
-          version = "master-a7a18af";
+          version = "7.387.0";
           src = libplacebo-src;
           patches = [];
         });

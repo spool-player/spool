@@ -3,17 +3,17 @@
     "libplacebo-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1783535157,
-        "narHash": "sha256-cA8+APhpu3m38z5hs2EhsNlLb/xHAy/Tcxi5loFS6j0=",
+        "lastModified": 1792950923,
+        "narHash": "sha256-PYi21y7uAZUsbn9nqn4ZP8QB9iQ9pRvnIKdOtG0WeIw=",
         "owner": "haasn",
         "repo": "libplacebo",
-        "rev": "a7a18af88ff0a17c04840dcb3246047bb6b46df3",
+        "rev": "275f7dea27924cdd34ab2e6c20e448b6bc4fab65",
         "type": "github"
       },
       "original": {
         "owner": "haasn",
         "repo": "libplacebo",
-        "rev": "a7a18af88ff0a17c04840dcb3246047bb6b46df3",
+        "rev": "275f7dea27924cdd34ab2e6c20e448b6bc4fab65",
         "type": "github"
       }
     },
