@@ -39,7 +39,13 @@ if (Test-Path $prefix) { Remove-Item $prefix -Recurse -Force }
 $opensslBuild = Join-Path $builds 'openssl'
 New-Item -ItemType Directory -Force $opensslBuild | Out-Null
 $originalStreamingPath = $env:PATH
+$originalCC = $env:CC
+$originalCXX = $env:CXX
 $env:PATH = "$(Split-Path $nativePerl -Parent);$env:PATH"
+# OpenSSL's VC-WIN64A target writes cl-style flags but takes its compiler
+# from CC, which the mpv toolchain sets to the GNU-style clang driver.
+$env:CC = 'cl'
+$env:CXX = 'cl'
 Push-Location $opensslBuild
 try {
     & $nativePerl (Join-Path $sources 'openssl\Configure') VC-WIN64A no-shared no-apps no-docs no-tests `
@@ -52,6 +58,8 @@ try {
 } finally {
     Pop-Location
     $env:PATH = $originalStreamingPath
+    $env:CC = $originalCC
+    $env:CXX = $originalCXX
 }
 $env:PKG_CONFIG_PATH = Convert-StreamingPath "$prefix/lib/pkgconfig"
 foreach ($name in @('nghttp2', 'nghttp3', 'ngtcp2', 'curl')) {
