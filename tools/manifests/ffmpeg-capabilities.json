@@ -186,6 +186,8 @@
     "aac_adtstoasc",
     "h264_mp4toannexb",
     "hevc_mp4toannexb",
+    "sink",
+    "source",
     "vp9_superframe_split"
   ],
   "platforms": {
