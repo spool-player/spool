@@ -101,6 +101,16 @@
               # rather than the channel's git checkout, so every platform is
               # building the same bytes.
               source = pkgs.fetchurl { inherit (ffmpegPin) url; hash = ffmpegPin.sri; };
+            }).overrideAttrs (old: {
+              # The pinned release already carries the OpenAPV 1.1 fix that
+              # nixpkgs backports to older FFmpeg; applying it again fails.
+              patches = builtins.filter
+                (patch: !pkgs.lib.hasInfix "openapv-1.1-compat" (toString patch))
+                (old.patches or []);
+              # FFmpeg 9.1 removed the OpenGL output device and its switch.
+              configureFlags = builtins.filter
+                (flag: flag != "--enable-opengl" && flag != "--disable-opengl")
+                (old.configureFlags or []);
             });
         in
         if pkgs ? ffmpeg_9-full
@@ -178,8 +188,14 @@
             !(nixpkgs.lib.hasPrefix "--enable-" flag)
             || builtins.elem flag structuralEnableFlags;
         in {
-        spoolFfmpeg = ((spoolFfmpegFor prev).override
-          (nixpkgs.lib.genAttrs ffmpegCapabilities.disabledNixFeatures (_: false))).overrideAttrs (old: {
+        # A feature nixpkgs no longer offers is off already; passing its
+        # switch anyway would fail evaluation.
+        spoolFfmpeg = (let
+            base = spoolFfmpegFor prev;
+            offered = nixpkgs.lib.functionArgs base.override;
+          in base.override (nixpkgs.lib.genAttrs
+            (builtins.filter (feature: offered ? ${feature}) ffmpegCapabilities.disabledNixFeatures)
+            (_: false))).overrideAttrs (old: {
             doCheck = false;
             configureFlags =
               builtins.filter keepInheritedFlag old.configureFlags
