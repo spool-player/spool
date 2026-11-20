@@ -101,12 +101,6 @@
               # rather than the channel's git checkout, so every platform is
               # building the same bytes.
               source = pkgs.fetchurl { inherit (ffmpegPin) url; hash = ffmpegPin.sri; };
-            }).overrideAttrs (old: {
-              # Keep the genuine HLS seek fixture/reference unchanged across
-              # CPU counts; the direct generator otherwise auto-slices video.
-              patches = (old.patches or []) ++ [
-                ./tools/patches/ffmpeg-fate-hls-fixed-slice-count.patch
-              ];
             });
         in
         if pkgs ? ffmpeg_9-full
