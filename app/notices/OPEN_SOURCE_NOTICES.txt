@@ -36,6 +36,7 @@ Major bundled components
   Vulkan Loader               Apache-2.0
   MoltenVK                    Apache-2.0
   libdovi                     MIT
+  dav1d (Android)             BSD-2-Clause
   curl                        curl license
   OpenSSL                     Apache-2.0
   nghttp2                     MIT

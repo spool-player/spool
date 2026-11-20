@@ -62,6 +62,11 @@
           "sha256": "75967a8288ff16044a86d1af462b96d2e75c435937efb75f2bb4102ab0382f29"
         }
       }
+    },
+    "dav1d": {
+      "revision": "6c7bee685677fd997a431302be4fea8ea4017606",
+      "url": "https://codeload.github.com/videolan/dav1d/tar.gz/6c7bee685677fd997a431302be4fea8ea4017606",
+      "sha256": "725d0ebe5bd19316aaaeee84a170b0f6f3930fc7cf53fa0c5bbe3c86ba1c2b15"
     }
   }
 }

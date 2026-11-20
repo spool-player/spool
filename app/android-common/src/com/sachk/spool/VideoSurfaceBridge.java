@@ -1,11 +1,15 @@
 package com.sachk.spool;
 
 import android.app.Activity;
+import android.media.MediaCodecInfo;
+import android.media.MediaCodecList;
+import android.os.Build;
 import android.view.Gravity;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
+import java.util.Locale;
 
 /**
  * The video plane, underneath everything Qt draws.
@@ -27,6 +31,46 @@ public final class VideoSurfaceBridge {
 
     private VideoSurfaceBridge()
     {
+    }
+
+    /**
+     * Whether a hardware decoder exists for this video MIME type. Direct
+     * output can only show what MediaCodec decodes in hardware: a format the
+     * device lacks (AV1 on every Shield TV) would play as a black picture.
+     * When the platform cannot be asked, the answer is yes, which keeps the
+     * direct path the viewer chose.
+     */
+    public static boolean hasHardwareDecoder(String mime)
+    {
+        try {
+            MediaCodecList list = new MediaCodecList(MediaCodecList.REGULAR_CODECS);
+            for (MediaCodecInfo info : list.getCodecInfos()) {
+                if (info.isEncoder() || !supportsType(info, mime))
+                    continue;
+                if (Build.VERSION.SDK_INT >= 29) {
+                    if (info.isHardwareAccelerated())
+                        return true;
+                    continue;
+                }
+                // Before Android 10 the software decoders are known by name.
+                String name = info.getName().toLowerCase(Locale.ROOT);
+                if (!name.startsWith("omx.google.") && !name.startsWith("c2.android.")
+                    && !name.contains(".sw."))
+                    return true;
+            }
+            return false;
+        } catch (RuntimeException e) {
+            return true;
+        }
+    }
+
+    private static boolean supportsType(MediaCodecInfo info, String mime)
+    {
+        for (String type : info.getSupportedTypes()) {
+            if (type.equalsIgnoreCase(mime))
+                return true;
+        }
+        return false;
     }
 
     /**
