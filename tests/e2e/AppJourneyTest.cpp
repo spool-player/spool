@@ -469,7 +469,7 @@ private:
     qint64 deviceLaunchEpoch = 0;
 };
 enum class TextSurface { Window, LibraryRow };
-enum class TextPreprocess { Original, Neutral, Inverse, Positive, Adaptive };
+enum class TextPreprocess { Original, Neutral, Inverse, SmoothInverse, Positive, Adaptive };
 struct Words {
     QString text;
     QList<qsizetype> starts;
@@ -695,9 +695,10 @@ public:
         QString inputPath = imagePath;
         const bool neutralText = preprocess == TextPreprocess::Neutral;
         const bool highContrast = preprocess == TextPreprocess::Inverse;
+        const bool smoothInverse = preprocess == TextPreprocess::SmoothInverse;
         const bool positiveContrast = preprocess == TextPreprocess::Positive;
         const bool adaptiveContrast = preprocess == TextPreprocess::Adaptive;
-        const int scale = mode == 6 || positiveContrast || adaptiveContrast ? 2 : 1;
+        const int scale = mode == 6 || smoothInverse || positiveContrast || adaptiveContrast ? 2 : 1;
         if (scale > 1) {
             // Small captions beside a focus outline can be omitted even by
             // text-block segmentation. Resample only the actual framebuffer;
@@ -798,6 +799,23 @@ public:
                         }
                     }
                 }
+            } else if (smoothInverse) {
+                // Preserve anti-aliased light glyphs on dark controls (e.g.
+                // flat buttons on compact mobile viewports) by smoothly mapping
+                // dark theme surfaces to white ink background without bloating
+                // thin strokes via hard binary thresholding.
+                const QImage source = image.convertToFormat(QImage::Format_RGB32);
+                image = QImage(source.width(), source.height(), QImage::Format_Grayscale8);
+                for (int y = 0; y < source.height(); ++y) {
+                    const auto *sourcePixels = reinterpret_cast<const QRgb *>(source.constScanLine(y));
+                    auto *pixels = image.scanLine(y);
+                    for (int x = 0; x < source.width(); ++x) {
+                        const QRgb pixel = sourcePixels[x];
+                        const int luma = (77 * qRed(pixel) + 150 * qGreen(pixel) + 29 * qBlue(pixel) + 128) >> 8;
+                        const int scaled = (180 - luma) * 255 / (180 - 40);
+                        pixels[x] = uint8_t(std::clamp(scaled, 0, 255));
+                    }
+                }
             } else if (highContrast) {
                 // Focused rows can defeat page segmentation even after scaling.
                 // Preserve their actual light glyphs against a binary background.
@@ -810,6 +828,7 @@ public:
             }
             inputPath += adaptiveContrast ? QStringLiteral(".ocr-adaptive.png")
                 : positiveContrast        ? QStringLiteral(".ocr-positive.png")
+                : smoothInverse           ? QStringLiteral(".ocr-smooth-inverse.png")
                 : highContrast            ? QStringLiteral(".ocr-contrast.png")
                 : neutralText             ? QStringLiteral(".ocr-neutral.png")
                                           : QStringLiteral(".ocr.png");
@@ -952,6 +971,8 @@ public:
                         candidate = locate(words(imagePath, 6, region.topLeft(), TextPreprocess::Neutral));
                     if (candidate.isEmpty())
                         candidate = locate(words(imagePath, 6, region.topLeft(), TextPreprocess::Inverse));
+                    if (candidate.isEmpty())
+                        candidate = locate(words(imagePath, 11, region.topLeft(), TextPreprocess::SmoothInverse));
                     if (candidate.isEmpty()) {
                         const QList<Words> positiveLines
                             = words(imagePath, 11, region.topLeft(), TextPreprocess::Positive);
