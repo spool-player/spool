@@ -3,12 +3,12 @@
 @@ -33,6 +33,11 @@
  #define input_event_usec time.tv_usec
  #endif
- 
+
 +// Older kernel headers, such as the webOS SDK's, predate palm rejection.
 +#ifndef MT_TOOL_PALM
 +#define MT_TOOL_PALM 0x02
 +#endif
 +
  #include <math.h>
- 
+
  #if QT_CONFIG(mtdev)
