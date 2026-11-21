@@ -185,6 +185,7 @@ FocusScope {
     }
 
     function topLeftVisibleCandidate(outerViewport) {
+        listView.forceLayout()
         return InputKeys.topLeftVisibleCandidate(listView, outerViewport)
     }
 
