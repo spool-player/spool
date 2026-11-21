@@ -791,7 +791,9 @@ public:
                             const size_t idx = row + size_t(x);
                             if (insideH[idx] || insideV[idx]) {
                                 const int luma = lumas[idx];
-                                const int scaled = (luma - 12) * 255 / (112 - 12);
+                                // Keep anti-aliased glyph edges on mid-bright accent buttons
+                                // (luma ~120) intact instead of clipping them to pure white.
+                                const int scaled = (luma - 20) * 255 / (180 - 20);
                                 pixels[x] = uint8_t(std::clamp(scaled, 0, 255));
                             } else {
                                 pixels[x] = 255;
@@ -802,52 +804,19 @@ public:
             } else if (smoothInverse) {
                 // Preserve anti-aliased light glyphs on dark controls (e.g.
                 // flat buttons on compact mobile viewports) by smoothly mapping
-                // dark theme surfaces to white ink background and upscaling 2x
-                // with a separable Catmull-Rom kernel instead of Qt's bilinear
-                // filter, which smears 1px strokes at 8-9px glyph heights.
+                // dark theme surfaces to white ink background.
                 const QImage source = image.convertToFormat(QImage::Format_RGB32);
                 const int w = source.width();
                 const int h = source.height();
-                QImage mapped(w, h, QImage::Format_Grayscale8);
+                image = QImage(w, h, QImage::Format_Grayscale8);
                 for (int y = 0; y < h; ++y) {
                     const auto *sourcePixels = reinterpret_cast<const QRgb *>(source.constScanLine(y));
-                    auto *pixels = mapped.scanLine(y);
+                    auto *pixels = image.scanLine(y);
                     for (int x = 0; x < w; ++x) {
                         const QRgb pixel = sourcePixels[x];
                         const int luma = (77 * qRed(pixel) + 150 * qGreen(pixel) + 29 * qBlue(pixel) + 128) >> 8;
                         const int scaled = (180 - luma) * 255 / (180 - 40);
                         pixels[x] = uint8_t(std::clamp(scaled, 0, 255));
-                    }
-                }
-                // Pixel-center-aligned 2x Catmull-Rom (t = +-0.25 => [-3, 29, 111, -9] / 128).
-                const auto catmullQuarter = [](int far, int near, int center, int opposite) -> uint8_t {
-                    return uint8_t(std::clamp((-3 * far + 29 * near + 111 * center - 9 * opposite + 64) >> 7, 0, 255));
-                };
-                QImage horiz(w * 2, h, QImage::Format_Grayscale8);
-                for (int y = 0; y < h; ++y) {
-                    const auto *src = mapped.constScanLine(y);
-                    auto *dst = horiz.scanLine(y);
-                    for (int x = 0; x < w; ++x) {
-                        const int xm2 = std::max(0, x - 2);
-                        const int xm1 = std::max(0, x - 1);
-                        const int xp1 = std::min(w - 1, x + 1);
-                        const int xp2 = std::min(w - 1, x + 2);
-                        dst[2 * x] = catmullQuarter(src[xm2], src[xm1], src[x], src[xp1]);
-                        dst[2 * x + 1] = catmullQuarter(src[xp2], src[xp1], src[x], src[xm1]);
-                    }
-                }
-                image = QImage(w * 2, h * 2, QImage::Format_Grayscale8);
-                for (int y = 0; y < h; ++y) {
-                    const auto *rm2 = horiz.constScanLine(std::max(0, y - 2));
-                    const auto *rm1 = horiz.constScanLine(std::max(0, y - 1));
-                    const auto *rc = horiz.constScanLine(y);
-                    const auto *rp1 = horiz.constScanLine(std::min(h - 1, y + 1));
-                    const auto *rp2 = horiz.constScanLine(std::min(h - 1, y + 2));
-                    auto *even = image.scanLine(2 * y);
-                    auto *odd = image.scanLine(2 * y + 1);
-                    for (int x = 0; x < w * 2; ++x) {
-                        even[x] = catmullQuarter(rm2[x], rm1[x], rc[x], rp1[x]);
-                        odd[x] = catmullQuarter(rp2[x], rp1[x], rc[x], rm1[x]);
                     }
                 }
             } else if (highContrast) {
@@ -866,10 +835,50 @@ public:
                 : highContrast            ? QStringLiteral(".ocr-contrast.png")
                 : neutralText             ? QStringLiteral(".ocr-neutral.png")
                                           : QStringLiteral(".ocr.png");
+            // Upscale smooth grayscale passes 2x with a separable Catmull-Rom
+            // kernel instead of Qt's bilinear filter, which smears 1px strokes
+            // at 8-9px glyph heights on compact mobile viewports.
+            const auto catmullUpscale2x = [](const QImage& mapped) {
+                const int w = mapped.width();
+                const int h = mapped.height();
+                // Pixel-center-aligned 2x Catmull-Rom (t = +-0.25 => [-3, 29, 111, -9] / 128).
+                const auto catmullQuarter = [](int far, int near, int center, int opposite) -> uint8_t {
+                    return uint8_t(std::clamp((-3 * far + 29 * near + 111 * center - 9 * opposite + 64) >> 7, 0, 255));
+                };
+                QImage horiz(w * 2, h, QImage::Format_Grayscale8);
+                for (int y = 0; y < h; ++y) {
+                    const auto *src = mapped.constScanLine(y);
+                    auto *dst = horiz.scanLine(y);
+                    for (int x = 0; x < w; ++x) {
+                        const int xm2 = std::max(0, x - 2);
+                        const int xm1 = std::max(0, x - 1);
+                        const int xp1 = std::min(w - 1, x + 1);
+                        const int xp2 = std::min(w - 1, x + 2);
+                        dst[2 * x] = catmullQuarter(src[xm2], src[xm1], src[x], src[xp1]);
+                        dst[2 * x + 1] = catmullQuarter(src[xp2], src[xp1], src[x], src[xm1]);
+                    }
+                }
+                QImage upscaled(w * 2, h * 2, QImage::Format_Grayscale8);
+                for (int y = 0; y < h; ++y) {
+                    const auto *rm2 = horiz.constScanLine(std::max(0, y - 2));
+                    const auto *rm1 = horiz.constScanLine(std::max(0, y - 1));
+                    const auto *rc = horiz.constScanLine(y);
+                    const auto *rp1 = horiz.constScanLine(std::min(h - 1, y + 1));
+                    const auto *rp2 = horiz.constScanLine(std::min(h - 1, y + 2));
+                    auto *even = upscaled.scanLine(2 * y);
+                    auto *odd = upscaled.scanLine(2 * y + 1);
+                    for (int x = 0; x < w * 2; ++x) {
+                        even[x] = catmullQuarter(rm2[x], rm1[x], rc[x], rp1[x]);
+                        odd[x] = catmullQuarter(rp2[x], rp1[x], rc[x], rm1[x]);
+                    }
+                }
+                return upscaled;
+            };
             QSaveFile file(inputPath);
-            const QImage output = smoothInverse ? image
-                                                : image.scaled(image.width() * scale, image.height() * scale,
-                                                      Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+            const QImage output = (smoothInverse || positiveContrast)
+                ? catmullUpscale2x(image)
+                : image.scaled(
+                      image.width() * scale, image.height() * scale, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
             require(file.open(QIODevice::WriteOnly)
                     && file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)
                     && output.save(&file, "PNG") && file.commit(),
@@ -1181,8 +1190,8 @@ QByteArray media(const QString& directory, const QProcessEnvironment& environmen
     run(ffmpeg,
         { "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i",
             "color=c=blue:s=640x360:r=10:d=90", "-vf",
-            "drawbox=x=0:y=0:w=640:h=180:color=red:t=fill:enable='lt(t,10)',"
-            "drawbox=x=0:y=0:w=640:h=180:color=lime:t=fill:enable='gte(t,10)'",
+            "drawbox=x=0:y=0:w=640:h=180:color=red:t=fill:enable='lt(t,12)',"
+            "drawbox=x=0:y=0:w=640:h=180:color=lime:t=fill:enable='gte(t,12)'",
             "-an", "-c:v", "ffv1", "-level", "3", "-g", "1", "-threads", "1", path },
         environment, {}, 60000);
     QFile file(path);
@@ -1753,10 +1762,11 @@ SPOOL_TEST_MAIN("app-journey")
             "resumed episode did not stop before explicit restart");
         const qsizetype reportsBeforeRemote = fixture.reports.size();
         fixturePhase = QStringLiteral("episode-remote");
-        // Use 4s so slow CI runners still have >5s of pause-settlement headroom
-        // before the 10s red-to-lime band boundary (matching resumeEpisode's +5s
-        // window) while staying distinct from both 0s restart and ~20s resume.
-        require(fixture.sendRemotePlay(40000000), "real remote event socket was not connected");
+        // Use 5.5s so stopping preserves resume progress (>= 5s threshold in
+        // isMeaningfulResumePosition, keeping "Start from beginning" visible
+        // on fast runners) while still leaving 6.5s of pause-settlement
+        // headroom before the 12s red-to-lime band boundary.
+        require(fixture.sendRemotePlay(55000000), "real remote event socket was not connected");
         journey.await([&] { return journey.state()["playback"].toObject()["loaded"].toBool(); },
             "real inbound remote Play did not load the selected episode");
         journey.command({ "pause" });
@@ -1767,7 +1777,7 @@ SPOOL_TEST_MAIN("app-journey")
                 return std::any_of(fixture.reports.cbegin() + reportsBeforeRemote, fixture.reports.cend(),
                     [](const QJsonObject& report) {
                         return report["endpoint"] == "/Sessions/Playing" && report["ItemId"] == "journey-episode"
-                            && report["PositionTicks"].toVariant().toLongLong() == 40000000;
+                            && report["PositionTicks"].toVariant().toLongLong() == 55000000;
                     });
             },
             "cached local resume progress overrode the explicit inbound remote start position");
@@ -1784,7 +1794,7 @@ SPOOL_TEST_MAIN("app-journey")
                     const auto frame = journey.capture(true);
                     remoteRed = frameHasBands(frame, 0);
                     remoteGreen = frameHasBands(frame, 1);
-                    return remotePosition > 3.5 && remotePosition < 9.5 && remoteRed;
+                    return remotePosition > 5.0 && remotePosition < 11.5 && remoteRed;
                 },
                 "inbound remote start did not decode the explicitly requested position");
         } catch (const std::exception&) {
