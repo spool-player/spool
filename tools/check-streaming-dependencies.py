@@ -27,7 +27,15 @@ if version != manifest['curl']['version']:
 for package, library in [('openssl', 'openssl'), ('nghttp2', 'libnghttp2'),
                          ('nghttp3', 'libnghttp3'), ('ngtcp2', 'libngtcp2')]:
     pc = args.prefix / 'lib/pkgconfig' / (library + '.pc')
-    match = re.search(r'^Version:\s*(\S+)', pc.read_text(), re.M)
+    if pc.exists():
+        match = re.search(r'^Version:\s*(\S+)', pc.read_text(), re.M)
+    elif package == 'openssl':
+        # OpenSSL's MSVC install writes no pkg-config file; its installed
+        # version header states the same release.
+        header = args.prefix / 'include/openssl/opensslv.h'
+        match = re.search(r'^#\s*define\s+OPENSSL_VERSION_STR\s+"([^"]+)"', header.read_text(), re.M)
+    else:
+        match = None
     if not match or match[1] != manifest[package]['version']:
         parser.error(f'{package} version does not match pin')
 for name in ['ssl', 'crypto']:
