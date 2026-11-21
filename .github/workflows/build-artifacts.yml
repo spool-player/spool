@@ -877,6 +877,20 @@ jobs:
             -m qtshadertools qttasktree qtwebsockets qtimageformats
       - name: Build actual source Qt, media closure, and tvOS app
         run: bash tools/build-tvos.sh
+      # The journeys drive the simulator from a native macOS controller,
+      # which builds in the Nix shell like the macOS job.
+      - uses: ./.github/actions/install-nix
+        if: matrix.sdk == 'appletvsimulator'
+        with:
+          nix_conf: |
+            experimental-features = nix-command flakes
+            connect-timeout = 30
+            download-attempts = 5
+      - uses: cachix/cachix-action@3ba601ff5bbb07c7220846facfa2cd81eeee15a1 # v16
+        if: matrix.sdk == 'appletvsimulator'
+        with:
+          name: spool
+          skipPush: true
       - name: Build native host controller for tvOS application journeys
         if: matrix.sdk == 'appletvsimulator'
         run: nix develop .#native -c env DEPLOY_APP=0 bash tools/build-macos.sh

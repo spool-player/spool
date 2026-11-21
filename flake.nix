@@ -211,6 +211,17 @@
       };
       pinnedQtOverlay = final: prev:
         let
+          # A channel older than the pinned Qt (the Intel macOS one) carries
+          # nixpkgs patches written for its own Qt. Where the unstable
+          # channel, which packages the pinned release, has a file of the same
+          # path, use that one.
+          qtPatchesFor = patches: map (patch:
+            let
+              path = toString patch;
+              parts = final.lib.splitString "/pkgs/development/libraries/qt-6/" path;
+              current = "${nixpkgs}/pkgs/development/libraries/qt-6/${final.lib.last parts}";
+            in if builtins.length parts == 2 && current != path && builtins.pathExists current
+              then current else patch) patches;
           srcs = builtins.mapAttrs (name: sha256: {
             version = toolchain.qt.version;
             src = final.fetchurl {
@@ -231,18 +242,18 @@
                   "skip-missing-qml-directory.patch" "515cbbacfba9f4259c9c3b0714a31222c2b4c879.diff" ];
                 stale = patch: builtins.any (s: nixpkgs.lib.hasSuffix s (baseNameOf (toString patch))) superseded;
                 inherited = old.patches or [];
-              in if builtins.any stale inherited
+              in qtPatchesFor (if builtins.any stale inherited
                 then builtins.filter (patch: !stale patch) inherited
                   ++ [ "${nixpkgs}/pkgs/development/libraries/qt-6/modules/qtbase/macdeployqt-fixes.patch" ]
-                else inherited;
+                else inherited);
             });
             qtModule = qtPrev.qtModule.override { inherit srcs; };
             qtdeclarative = qtPrev.qtdeclarative.overrideAttrs (old: {
               # The Intel maintenance channel backports this TableView fix.
               # It is already in the pinned Qt release; applying it again fails.
-              patches = builtins.filter (patch:
+              patches = qtPatchesFor (builtins.filter (patch:
                 !final.lib.hasSuffix "8a2c82be6ad90e3f2a0760d8bab1e3a8cdb2473a.diff" (toString patch))
-                (old.patches or []);
+                (old.patches or []));
             });
           })) // {
             override = prev.qt6.override;
