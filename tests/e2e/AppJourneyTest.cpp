@@ -800,17 +800,17 @@ public:
                 QString clean;
                 for (const QChar ch : line.text) {
                     if (ch.isLetterOrNumber() || ch == QLatin1Char(' ') || ch == QLatin1Char('-')
-                        || ch == QLatin1Char(':') || ch == QLatin1Char('/'))
+                        || ch == QLatin1Char(':'))
                         clean += ch;
                 }
                 clean = clean.simplified();
                 if (clean.isEmpty())
                     continue;
                 if (!summary.isEmpty())
-                    summary += QStringLiteral(" | ");
+                    summary += QStringLiteral("; ");
                 summary += clean;
-                if (summary.size() >= 220) {
-                    summary.truncate(220);
+                if (summary.size() >= 110) {
+                    summary.truncate(110);
                     break;
                 }
             }
@@ -887,8 +887,18 @@ public:
                         candidate = locate(words(imagePath, 6, region.topLeft(), TextPreprocess::Neutral));
                     if (candidate.isEmpty())
                         candidate = locate(words(imagePath, 6, region.topLeft(), TextPreprocess::Inverse));
+                    if (candidate.isEmpty()) {
+                        const QList<Words> positiveLines
+                            = words(imagePath, 11, region.topLeft(), TextPreprocess::Positive);
+                        candidate = locate(positiveLines);
+                        if (candidate.isEmpty()) {
+                            const QString pos = summarize(positiveLines);
+                            if (!pos.isEmpty() && lastObserved.size() < 40)
+                                lastObserved = pos;
+                        }
+                    }
                     if (candidate.isEmpty())
-                        candidate = locate(words(imagePath, 11, region.topLeft(), TextPreprocess::Positive));
+                        candidate = locate(words(imagePath, 11, region.topLeft(), TextPreprocess::Adaptive));
                     if (candidate.isEmpty())
                         candidate = locate(words(imagePath, 3, region.topLeft(), TextPreprocess::Adaptive));
                     if (!candidate.isEmpty()) {
@@ -910,7 +920,7 @@ public:
                 failure.c_str(), scroll ? 90000 : 30000);
         } catch (const std::runtime_error& error) {
             if (!lastObserved.isEmpty())
-                throw std::runtime_error(std::string(error.what()) + " [observed: " + lastObserved.toStdString() + "]");
+                throw std::runtime_error(std::string(error.what()) + " (observed: " + lastObserved.toStdString() + ")");
             throw;
         }
         return found;

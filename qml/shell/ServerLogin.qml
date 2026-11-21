@@ -255,7 +255,10 @@ FocusScope {
                              step = "account"
                              usernameField.text = ""
                              password.text = ""
-                             Qt.callLater(() => usernameField.focusRow())
+                             Qt.callLater(() => {
+                                 if (step === "account" && !password.activeFocus && !usernameField.activeFocus)
+                                     usernameField.focusRow()
+                             })
                          }, reason => {
                              if (current())
                                  fail(reason)

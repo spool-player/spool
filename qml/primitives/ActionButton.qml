@@ -70,10 +70,11 @@ T.Control {
                 maximumLineCount: 1
                 Accessible.ignored: true
             }
-            implicitWidth: Math.ceil(labelMeasure.implicitWidth) + 4 + (buttonIcon.visible ? buttonIcon.width
+            readonly property real maxContentWidth: Math.max(0, parent.width - Metrics.scaled(34))
+            readonly property bool needsElide: implicitWidth > maxContentWidth
+            implicitWidth: Math.ceil(labelMeasure.implicitWidth) + 8 + (buttonIcon.visible ? buttonIcon.width
                                                                                              + Metrics.scaled(8) : 0)
-            width: buttonIcon.visible ? Math.min(implicitWidth, Math.max(0, parent.width - Metrics.scaled(34))) : Math.max(
-                                            0, parent.width - Metrics.scaled(34))
+            width: buttonIcon.visible ? Math.min(implicitWidth, maxContentWidth) : maxContentWidth
             height: Math.max(buttonLabel.implicitHeight, buttonIcon.visible ? buttonIcon.height : 0)
 
             MaterialIcon {
@@ -100,7 +101,7 @@ T.Control {
                 font.pixelSize: Metrics.bodySizePx
                 font.weight: root.kind === "primary" || root.kind === "blue" || root.kind === "danger" ? Font.DemiBold :
                                                                                                          Font.Medium
-                elide: Text.ElideRight
+                elide: buttonContent.needsElide ? Text.ElideRight : Text.ElideNone
                 maximumLineCount: 1
                 Accessible.ignored: true
             }
