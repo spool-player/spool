@@ -1006,6 +1006,8 @@ public:
                         candidate = locate(words(imagePath, 6, region.topLeft(), TextPreprocess::Inverse));
                     if (candidate.isEmpty())
                         candidate = locate(words(imagePath, 11, region.topLeft(), TextPreprocess::SmoothInverse));
+                    if (candidate.isEmpty())
+                        candidate = locate(words(imagePath, 6, region.topLeft(), TextPreprocess::SmoothInverse));
                     if (candidate.isEmpty()) {
                         const QList<Words> positiveLines
                             = words(imagePath, 11, region.topLeft(), TextPreprocess::Positive);
