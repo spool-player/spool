@@ -5,7 +5,7 @@ index d1b5694df62..7d9eef816e0 100644
 @@ -1302,6 +1302,10 @@ bool deployQmlImports(const QString &appBundlePath, DeploymentInfo deploymentInf
      if (qmlImportScannerPath.isEmpty())
          qmlImportScannerPath = QCoreApplication::applicationDirPath() + "/qmlimportscanner";
- 
+
 +    // Fallback: Pass qml import scanner via environment variable
 +    if (!QFile::exists(qmlImportScannerPath))
 +        qmlImportScannerPath = ::qgetenv("NIX_QMLIMPORTSCANNER");
@@ -30,5 +30,5 @@ index d1b5694df62..7d9eef816e0 100644
 +    auto envQmlImportPaths = ::qgetenv("QML2_IMPORT_PATH").split(':');
 +    for (const QString &importPath : envQmlImportPaths)
          argumentList << "-importPath" << importPath;
- 
+
      // run qmlimportscanner

@@ -1,5 +1,5 @@
 diff --git a/src/plugins/platforms/cocoa/qcocoawindow.h b/src/plugins/platforms/cocoa/qcocoawindow.h
-index 10d228c..ad1012b 100644
+index 10d228c..8319ca5 100644
 --- a/src/plugins/platforms/cocoa/qcocoawindow.h
 +++ b/src/plugins/platforms/cocoa/qcocoawindow.h
 @@ -10,6 +10,7 @@
@@ -7,29 +7,38 @@ index 10d228c..ad1012b 100644
  #include <QRect>
  #include <QPointer>
 +#include <optional>
- 
+
  #ifndef QT_NO_OPENGL
  #include "qcocoaglcontext.h"
-@@ -235,6 +236,7 @@ public: // for QNSView
+@@ -199,6 +200,7 @@ protected:
+     void toggleMaximized();
+     void toggleFullScreen();
+     bool isTransitioningToFullScreen() const;
++    void replayPendingFullScreenState();
+
+     bool startSystemMove() override;
+
+@@ -235,6 +237,8 @@ public: // for QNSView
      NSView *m_view = nil;
- 
+
      Qt::WindowStates m_lastReportedWindowState = Qt::WindowNoState;
 +    std::optional<Qt::WindowStates> m_pendingFullScreenState;
- 
++    bool m_isTransitioningFromFullScreen = false;
+
      static QPointer<QCocoaWindow> s_windowUnderMouse;
- 
+
 diff --git a/src/plugins/platforms/cocoa/qcocoawindow.mm b/src/plugins/platforms/cocoa/qcocoawindow.mm
-index 935645c..3ca979e 100644
+index 935645c..249da4f 100644
 --- a/src/plugins/platforms/cocoa/qcocoawindow.mm
 +++ b/src/plugins/platforms/cocoa/qcocoawindow.mm
 @@ -882,6 +882,15 @@ void QCocoaWindow::setWindowFlags(Qt::WindowFlags flags)
  */
  void QCocoaWindow::setWindowState(Qt::WindowStates state)
  {
-+    if (window()->isVisible() && isTransitioningToFullScreen()) {
-+        // qt_fullScreen is only set by NSWindowDidEnterFullScreenNotification.
-+        // Until then, applying a normal state sees an already-normal window
-+        // and loses the request. Keep only the latest explicit Qt request.
++    if (window()->isVisible() && (isTransitioningToFullScreen() || m_isTransitioningFromFullScreen)) {
++        // AppKit drops toggleFullScreen: calls while an enter or exit
++        // transition is already in flight. Keep only the latest explicit Qt
++        // request and replay it after the active transition completes.
 +        m_pendingFullScreenState = state;
 +        return;
 +    }
@@ -38,32 +47,81 @@ index 935645c..3ca979e 100644
      if (window()->isVisible())
          applyWindowState(state); // Window state set for hidden windows take effect when show() is called
  }
-@@ -1048,6 +1057,28 @@ void QCocoaWindow::windowDidEnterFullScreen()
-     setWindowFlags(window()->flags());
- 
-     handleWindowStateChanged();
-+
-+    // A native titlebar entry has no pending Qt request. Do not undo it.
+@@ -1036,11 +1045,39 @@ bool QCocoaWindow::isTransitioningToFullScreen() const
+     return window.styleMask & NSWindowStyleMaskFullScreen && !window.qt_fullScreen;
+ }
+
++void QCocoaWindow::replayPendingFullScreenState()
++{
++    // A native titlebar transition has no pending Qt request. Do not undo it.
 +    // A newer explicit request made during state delivery clears the pending
 +    // state in setWindowState(), and must likewise not be overwritten here.
 +    // Defer past AppKit's notification stack: calling toggleFullScreen:
-+    // synchronously inside NSWindowDidEnterFullScreenNotification logs
-+    // "not in fullscreen state" and drops the exit on macOS 15.
-+    if (m_pendingFullScreenState) {
-+        const auto requestedState = *m_pendingFullScreenState;
-+        const QPointer<QWindow> target(window());
-+        QMetaObject::invokeMethod(
-+            target,
-+            [this, target, requestedState] {
-+                if (!target || target->handle() != this)
-+                    return;
-+                if (!m_pendingFullScreenState || *m_pendingFullScreenState != requestedState)
-+                    return;
-+                m_pendingFullScreenState.reset();
-+                target->setWindowStates(requestedState);
-+            },
-+            Qt::QueuedConnection);
-+    }
++    // synchronously inside NSWindowDid{Enter,Exit}FullScreenNotification logs
++    // a transition error and drops the request on macOS 15+.
++    if (!m_pendingFullScreenState)
++        return;
++
++    const auto requestedState = *m_pendingFullScreenState;
++    const QPointer<QWindow> target(window());
++    QMetaObject::invokeMethod(
++        target,
++        [this, target, requestedState] {
++            if (!target || target->handle() != this)
++                return;
++            if (!m_pendingFullScreenState || *m_pendingFullScreenState != requestedState)
++                return;
++            m_pendingFullScreenState.reset();
++            target->setWindowStates(requestedState);
++        },
++        Qt::QueuedConnection);
++}
++
+ void QCocoaWindow::windowDidEnterFullScreen()
+ {
+     if (!isContentView())
+         return;
+
++    m_isTransitioningFromFullScreen = false;
++
+     Q_ASSERT_X(m_view.window.qt_fullScreen, "QCocoaWindow",
+         "FullScreen category processes window notifications first");
+
+@@ -1048,6 +1085,7 @@ void QCocoaWindow::windowDidEnterFullScreen()
+     setWindowFlags(window()->flags());
+
+     handleWindowStateChanged();
++    replayPendingFullScreenState();
  }
- 
+
  void QCocoaWindow::windowWillExitFullScreen()
+@@ -1055,6 +1093,8 @@ void QCocoaWindow::windowWillExitFullScreen()
+     if (!isContentView())
+         return;
+
++    m_isTransitioningFromFullScreen = true;
++
+     // The NSWindow needs to be resizable, otherwise we'll end up with
+     // a weird zoom animation. The styleMask will be reset below.
+     m_view.window.styleMask |= NSWindowStyleMaskResizable;
+@@ -1065,6 +1105,8 @@ void QCocoaWindow::windowDidExitFullScreen()
+     if (!isContentView())
+         return;
+
++    m_isTransitioningFromFullScreen = false;
++
+     Q_ASSERT_X(!m_view.window.qt_fullScreen, "QCocoaWindow",
+         "FullScreen category processes window notifications first");
+
+@@ -1076,6 +1118,11 @@ void QCocoaWindow::windowDidExitFullScreen()
+     // Deliver update of QWindow state
+     handleWindowStateChanged();
+
++    if (m_pendingFullScreenState) {
++        replayPendingFullScreenState();
++        return;
++    }
++
+     if (requestedState != windowState() && requestedState != Qt::WindowFullScreen) {
+         // We were only going out of full screen as an intermediate step before
+         // progressing into the final step, so re-sync the desired state.
