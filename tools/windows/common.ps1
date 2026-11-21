@@ -228,6 +228,19 @@ function Initialize-WindowsMpvBuildEnvironment {
         (Join-Path $env:ProgramFiles 'NASM'),
         (Join-Path $env:ProgramFiles 'Git\usr\bin')
     )
+    # Visual Studio bundles an x64 LLVM matched to its MSVC STL headers (for
+    # example VS 18.12's MSVC 14.52 STL rejects standalone LLVM 20 with
+    # STL1000). Prefer Visual Studio's bundled LLVM when it carries the full
+    # clang/lld/llvm-rc toolchain so C++ dependencies compile against the
+    # active STL headers.
+    if ($env:VSINSTALLDIR) {
+        $vsLlvmBin = Join-Path $env:VSINSTALLDIR 'VC\Tools\Llvm\x64\bin'
+        $vsLlvmTools = @('clang.exe', 'clang++.exe', 'clang-cl.exe', 'lld-link.exe', 'llvm-rc.exe')
+        if ((Test-Path -LiteralPath $vsLlvmBin) -and
+            (@($vsLlvmTools | Where-Object { -not (Test-Path -LiteralPath (Join-Path $vsLlvmBin $_) -PathType Leaf) }).Count -eq 0)) {
+            $toolDirectories += $vsLlvmBin
+        }
+    }
     foreach ($directory in $toolDirectories) {
         if (Test-Path -LiteralPath $directory) {
             $env:PATH = "$directory;$env:PATH"
