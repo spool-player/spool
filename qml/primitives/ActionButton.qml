@@ -57,7 +57,17 @@ T.Control {
         Item {
             id: buttonContent
             anchors.centerIn: parent
-            implicitWidth: buttonLabel.implicitWidth + (buttonIcon.visible ? buttonIcon.width + Metrics.scaled(8) : 0)
+            // Measure unelided text independently of buttonLabel's anchored width
+            // so Qt 6.12 elided layout updates cannot feed back into width.
+            TextMetrics {
+                id: labelMetrics
+                font: buttonLabel.font
+                text: root.text
+            }
+            implicitWidth: Math.ceil(Math.max(labelMetrics.advanceWidth, labelMetrics.width)) + (buttonIcon.visible
+                                                                                                 ? buttonIcon.width
+                                                                                                   + Metrics.scaled(8) :
+                                                                                                   0)
             width: Math.min(implicitWidth, Math.max(0, parent.width - Metrics.scaled(34)))
             height: Math.max(buttonLabel.implicitHeight, buttonIcon.visible ? buttonIcon.height : 0)
 

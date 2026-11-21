@@ -1303,10 +1303,7 @@ jobs:
             build/android/app-x86_64/test-phases.json
             build/android/app-x86_64/traditional-results.json
             build/android/app-x86_64/e2e-results.json
-            build/android/app-x86_64/device-tests-*/**/native-result.json
-            build/android/app-x86_64/device-tests-*/**/controller-result.json
-            build/android/app-x86_64/device-tests-*/**/attempt.log
-            build/android/app-x86_64/device-tests-*/**/*.png
+            build/android/launch-test/*/safe-export/**
             build/android/launch-test/*/*.png
           if-no-files-found: ignore
           retention-days: 7
