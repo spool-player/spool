@@ -1740,25 +1740,50 @@ SPOOL_TEST_MAIN("app-journey")
             "resumed episode did not stop before explicit restart");
         const qsizetype reportsBeforeRemote = fixture.reports.size();
         fixturePhase = QStringLiteral("episode-remote");
-        require(fixture.sendRemotePlay(70000000), "real remote event socket was not connected");
+        // Use 4s so slow CI runners still have >5s of pause-settlement headroom
+        // before the 10s red-to-lime band boundary (matching resumeEpisode's +5s
+        // window) while staying distinct from both 0s restart and ~20s resume.
+        require(fixture.sendRemotePlay(40000000), "real remote event socket was not connected");
         journey.await([&] { return journey.state()["playback"].toObject()["loaded"].toBool(); },
             "real inbound remote Play did not load the selected episode");
         journey.command({ "pause" });
+        journey.await([&] { return journey.state()["playback"].toObject()["paused"].toBool(); },
+            "inbound remote episode did not pause before observing its requested position");
         journey.await(
             [&] {
                 return std::any_of(fixture.reports.cbegin() + reportsBeforeRemote, fixture.reports.cend(),
                     [](const QJsonObject& report) {
                         return report["endpoint"] == "/Sessions/Playing" && report["ItemId"] == "journey-episode"
-                            && report["PositionTicks"].toVariant().toLongLong() == 70000000;
+                            && report["PositionTicks"].toVariant().toLongLong() == 40000000;
                     });
             },
             "cached local resume progress overrode the explicit inbound remote start position");
-        journey.await(
-            [&] {
-                const double position = journey.state()["playback"].toObject()["position"].toDouble();
-                return position > 6.5 && position < 9.5 && frameHasBands(journey.capture(true), 0);
-            },
-            "inbound remote start did not decode the explicitly requested position");
+        double remotePosition = -1;
+        bool remotePaused = false;
+        bool remoteRed = false;
+        bool remoteGreen = false;
+        try {
+            journey.await(
+                [&] {
+                    const auto playback = journey.state()["playback"].toObject();
+                    remotePosition = playback["position"].toDouble();
+                    remotePaused = playback["paused"].toBool();
+                    const auto frame = journey.capture(true);
+                    remoteRed = frameHasBands(frame, 0);
+                    remoteGreen = frameHasBands(frame, 1);
+                    return remotePosition > 3.5 && remotePosition < 9.5 && remoteRed;
+                },
+                "inbound remote start did not decode the explicitly requested position");
+        } catch (const std::exception&) {
+            throw std::runtime_error(
+                QStringLiteral("inbound remote start did not decode the explicitly requested position "
+                               "(position=%1, paused=%2, red=%3, green=%4)")
+                    .arg(remotePosition)
+                    .arg(remotePaused)
+                    .arg(remoteRed)
+                    .arg(remoteGreen)
+                    .toStdString());
+        }
         journey.command({ "stop" });
         journey.await([&] { return !journey.state()["playback"].toObject()["active"].toBool(); },
             "remote episode did not stop before explicit restart");
@@ -1769,6 +1794,8 @@ SPOOL_TEST_MAIN("app-journey")
         journey.await([&] { return journey.state()["playback"].toObject()["loaded"].toBool(); },
             "explicit episode restart did not load");
         journey.command({ "pause" });
+        journey.await([&] { return journey.state()["playback"].toObject()["paused"].toBool(); },
+            "explicit episode restart did not pause before observing the beginning");
         journey.await(
             [&] {
                 return std::any_of(fixture.reports.cbegin() + reportsBeforeRestart, fixture.reports.cend(),
@@ -1778,12 +1805,23 @@ SPOOL_TEST_MAIN("app-journey")
                     });
             },
             "local resume precedence overrode explicit Play from start");
-        journey.await(
-            [&] {
-                return journey.state()["playback"].toObject()["position"].toDouble() < 5.0
-                    && frameHasBands(journey.capture(true), 0);
-            },
-            "explicit episode restart did not decode the beginning");
+        double restartPosition = -1;
+        bool restartRed = false;
+        try {
+            journey.await(
+                [&] {
+                    restartPosition = journey.state()["playback"].toObject()["position"].toDouble();
+                    restartRed = frameHasBands(journey.capture(true), 0);
+                    return restartPosition < 8.0 && restartRed;
+                },
+                "explicit episode restart did not decode the beginning");
+        } catch (const std::exception&) {
+            throw std::runtime_error(
+                QStringLiteral("explicit episode restart did not decode the beginning (position=%1, red=%2)")
+                    .arg(restartPosition)
+                    .arg(restartRed)
+                    .toStdString());
+        }
 
         // EOF is driven by the real finite media, not a synthetic controller
         // signal. The decoded restart and server receipt prove repeat crossed
