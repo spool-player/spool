@@ -145,6 +145,7 @@ build_qtbase() {
       -B "$BUILD_ROOT/qtbase" \
       -GNinja \
       -DANDROID_PLATFORM="android-$ANDROID_API" \
+      -DQT_ALLOW_DOWNLOAD=ON \
       -DQT_BUILD_TESTS=OFF \
       -DGLESv2_INCLUDE_DIR="$NDK_SYSROOT/usr/include" \
       -DEGL_INCLUDE_DIR="$NDK_SYSROOT/usr/include" \
