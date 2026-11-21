@@ -271,6 +271,7 @@ apply_local_patches() {
   apply_patch_if_needed "$QTBASE_SRC" "$PATCH_DIR/qtbase-$QT_SERIES-webos-qelfparser.patch"
   apply_patch_if_needed "$QTBASE_SRC" "$PATCH_DIR/qtbase-$QT_SERIES-webos-wayland-no-opengl-forward-decl.patch"
   apply_patch_if_needed "$QTBASE_SRC" "$PATCH_DIR/qtbase-$QT_SERIES-webos-qplatformwindow-private-moc.patch"
+  apply_patch_if_needed "$QTBASE_SRC" "$PATCH_DIR/qtbase-$QT_SERIES-webos-mt-tool-palm.patch"
   apply_patch_if_needed "$QTDECLARATIVE_SRC" \
     "$PATCH_DIR/qtdeclarative-$QT_SERIES-qmlimportscanner-exclude-subtrees.patch"
   apply_patch_if_needed "$QTWAYLAND_SRC" "$PATCH_DIR/qtwayland-$QT_SERIES-webos-wayland-version.patch"

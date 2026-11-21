@@ -18,6 +18,7 @@
     "tools/webos-native/patches/qtbase-6.12-webos-qelfparser.patch",
     "tools/webos-native/patches/qtbase-6.12-webos-wayland-no-opengl-forward-decl.patch",
     "tools/webos-native/patches/qtbase-6.12-webos-qplatformwindow-private-moc.patch",
+    "tools/webos-native/patches/qtbase-6.12-webos-mt-tool-palm.patch",
     "tools/webos-native/patches/qtbase-6.12-webos-no-cursor-set.patch",
     "tools/webos-native/patches/qtwayland-6.12-webos-wayland-version.patch"
   ],

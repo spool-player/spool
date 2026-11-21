@@ -222,7 +222,20 @@
           qt6 = (prev.qt6.overrideScope (_qtFinal: qtPrev: {
             inherit srcs;
             # qtbase takes its source directly; the other modules use qtModule.
-            qtbase = qtPrev.qtbase.override { inherit (srcs.qtbase) src version; };
+            # nixpkgs-26.05-darwin carries its 6.11 qmlimportscanner and
+            # macdeployqt patches, which do not apply to the pinned release;
+            # take the consolidated replacement the 6.12 channel ships.
+            qtbase = (qtPrev.qtbase.override { inherit (srcs.qtbase) src version; }).overrideAttrs (old: {
+              patches = let
+                superseded = [ "find-qmlimportscanner.patch" "qmlimportscanner-import-path.patch"
+                  "skip-missing-qml-directory.patch" "515cbbacfba9f4259c9c3b0714a31222c2b4c879.diff" ];
+                stale = patch: builtins.any (s: nixpkgs.lib.hasSuffix s (baseNameOf (toString patch))) superseded;
+                inherited = old.patches or [];
+              in if builtins.any stale inherited
+                then builtins.filter (patch: !stale patch) inherited
+                  ++ [ "${nixpkgs}/pkgs/development/libraries/qt-6/modules/qtbase/macdeployqt-fixes.patch" ]
+                else inherited;
+            });
             qtModule = qtPrev.qtModule.override { inherit srcs; };
             qtdeclarative = qtPrev.qtdeclarative.overrideAttrs (old: {
               # The Intel maintenance channel backports this TableView fix.

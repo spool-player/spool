@@ -203,7 +203,10 @@ SPOOL_TEST_MAIN("script-runtime")
                         require(false, failure);
                     };
                     requireNonce(!nonce.isEmpty(), "benchmark cache-busting nonce is empty");
-                    requireNonce(!speedNonces.contains(nonce), "benchmark cache-busting nonce is duplicated");
+                    // Qt may resend a GET whose reply this fixture cut short; that is
+                    // the same request again, not a reused cache-busting nonce.
+                    requireNonce(target.path() == QStringLiteral("/speed-truncated") || !speedNonces.contains(nonce),
+                        "benchmark cache-busting nonce is duplicated");
                     speedNonces.insert(nonce);
                     require(!request.contains("Cookie:"), "benchmark does not load shared cookies");
                     require(request.contains("Accept-Encoding: identity"), "benchmark requests uncompressed bytes");

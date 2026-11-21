@@ -121,7 +121,7 @@ PlatformStreamingMemoryState platformStreamingMemoryState()
         && host_statistics64(host, HOST_VM_INFO64, reinterpret_cast<host_info64_t>(&state), &count) == KERN_SUCCESS;
     mach_port_deallocate(mach_task_self(), host);
     if (success)
-        return { qint64(state.free_count + state.inactive_count) * pageSize, true };
+        return { qint64(state.free_count + state.inactive_count) * qint64(pageSize), true };
 #endif
 #endif
     return {};

@@ -28,6 +28,10 @@ normal `./build-ipk.sh` pipeline; no manual shared-Qt build is needed.
 - Includes `moc_qplatformwindow_p.cpp` so the private `QPlatformWindow` moc
   output links in the static build.
 
+`qtbase-6.12-webos-mt-tool-palm.patch`
+- Defines `MT_TOOL_PALM` for the evdev touch handler: Qt 6.12 rejects palms,
+  and the webOS SDK's kernel headers predate the constant.
+
 `qtbase-6.12-webos-wayland-no-opengl-forward-decl.patch`
 - Moves the `QPlatformOpenGLContext` forward declaration out of the
   `QT_CONFIG(opengl)` guard so the non-OpenGL webOS Wayland build compiles.
