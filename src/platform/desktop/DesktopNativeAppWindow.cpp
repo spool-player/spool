@@ -105,7 +105,12 @@ void NativeAppWindow::resizeEvent(QResizeEvent *event)
     QQuickView::resizeEvent(event);
 }
 
-void NativeAppWindow::handlePlatformSurfaceCreated() { }
+void NativeAppWindow::handlePlatformSurfaceCreated()
+{
+#ifdef Q_OS_MACOS
+    configureMacOSTitlebar();
+#endif
+}
 
 void NativeAppWindow::handlePlatformSurfaceAboutToBeDestroyed() { }
 

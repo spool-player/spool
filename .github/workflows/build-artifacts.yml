@@ -930,6 +930,8 @@ jobs:
           name: internal-tvos-simulator-arm64
           path: |
             ${{ runner.temp }}/tvos-simulator-arm64.tar.gz
+            build/tvos/smoke/safe-export
+            build/tvos/smoke/launch-result.json
           retention-days: ${{ inputs.release && 1 || 7 }}
       - name: Save coherent Apple dependency cache
         if: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release && steps.tvos-source-cache.outputs.cache-hit != 'true' }}
@@ -1521,6 +1523,8 @@ jobs:
 
       - name: Build application
         shell: pwsh
+        env:
+          MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
         run: tools\windows\build.ps1 -Clean -CMakeArguments '-DSPOOL_TEST_RENDER_BACKEND=opengl'
 
 
