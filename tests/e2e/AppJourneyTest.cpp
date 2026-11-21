@@ -1359,8 +1359,21 @@ SPOOL_TEST_MAIN("app-journey")
             journey.command({ "key", "ok" });
         journey.text("incorrect-password");
         journey.command({ "key", "ok" });
-        journey.await(
-            [&] { return fixture.rejectedLogins == 1; }, "wrong password was not rejected by the real login path");
+        try {
+            journey.await(
+                [&] { return fixture.rejectedLogins == 1; }, "wrong password was not rejected by the real login path");
+        } catch (const std::exception&) {
+            try {
+                journey.capture();
+            } catch (const std::exception&) {
+            }
+            throw std::runtime_error(QStringLiteral("wrong password was not rejected by the real login path "
+                                                    "(rejected=%1, successful=%2, unexpected=%3)")
+                    .arg(fixture.rejectedLogins)
+                    .arg(fixture.successfulLogins)
+                    .arg(fixture.unexpected.size())
+                    .toStdString());
+        }
         journey.label("Wrong username or password");
         journey.text("journey-password");
         journey.command({ "key", "ok" });

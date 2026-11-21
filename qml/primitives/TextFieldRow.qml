@@ -63,6 +63,7 @@ T.Control {
         }
         if (field.activeFocus)
             field.focus = false
+        Qt.inputMethod.hide()
         InputKeys.focus(row)
     }
 
