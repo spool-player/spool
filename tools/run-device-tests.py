@@ -52,7 +52,7 @@ def command(arguments, *, check=True, timeout=30, input=None, env=None):
 
 def diagnostic(text):
     # Only controlled native test diagnostics. Never print provider/app payloads.
-    markers = ("video result:", "orientation:", "viewport:", "first video frame", "native presentation:",
+    markers = ("video result:", "orientation:", "viewport:", "first video frame", "native presentation:", "native OSD:",
                "render context handoff did not complete", "render context was not ready",
                "failed to initialize mpv", "tvOS audio smoke:", "tvOS credentials smoke:",
                "An error was encountered processing the command", "dyld[", "spool-test-require:")

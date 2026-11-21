@@ -7,6 +7,7 @@
 #include "TestMain.h"
 
 #include <QDir>
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QGuiApplication>
 #include <QImage>
@@ -173,16 +174,24 @@ bool containsNeutralOsd(const QImage& image, const QImage& baseline)
 {
     if (image.size() != baseline.size())
         return false;
+    const QImage img = image.convertToFormat(QImage::Format_RGB32);
+    const QImage base = baseline.convertToFormat(QImage::Format_RGB32);
     int neutral = 0;
-    for (int y = 0; y < image.height(); ++y) {
-        for (int x = 0; x < image.width(); ++x) {
+    for (int y = 0; y < img.height(); ++y) {
+        const auto *baseRow = reinterpret_cast<const QRgb *>(base.constScanLine(y));
+        const auto *imgRow = reinterpret_cast<const QRgb *>(img.constScanLine(y));
+        for (int x = 0; x < img.width(); ++x) {
             // Check text over the fixture's black letterbox, not antialiased
             // text blended into the red/blue video or a particular font weight.
-            if (baseline.pixelColor(x, y) != QColor(Qt::black))
+            const QRgb basePixel = baseRow[x];
+            if (qRed(basePixel) != 0 || qGreen(basePixel) != 0 || qBlue(basePixel) != 0)
                 continue;
-            const QColor color = image.pixelColor(x, y);
-            const int high = std::max({ color.red(), color.green(), color.blue() });
-            const int low = std::min({ color.red(), color.green(), color.blue() });
+            const QRgb color = imgRow[x];
+            const int r = qRed(color);
+            const int g = qGreen(color);
+            const int b = qBlue(color);
+            const int high = std::max({ r, g, b });
+            const int low = std::min({ r, g, b });
             if (high <= 16)
                 continue;
             if (high - low > 8)
@@ -240,7 +249,7 @@ SPOOL_TEST_MAIN("mpv-video-item")
     if (api == "vulkan")
         std::fprintf(stderr, "requested Vulkan scene graph\n");
     QSurfaceFormat format;
-#if defined(Q_OS_TVOS) || defined(Q_OS_ANDROID)
+#if defined(SPOOL_APPLE_MOBILE) || defined(Q_OS_ANDROID)
     format.setRenderableType(QSurfaceFormat::OpenGLES);
     format.setVersion(3, 0);
 #else
@@ -303,7 +312,7 @@ SPOOL_TEST_MAIN("mpv-video-item")
         },
         Qt::DirectConnection);
 #endif
-#if defined(Q_OS_TVOS) || defined(Q_OS_ANDROID)
+#if defined(SPOOL_APPLE_MOBILE) || defined(Q_OS_ANDROID)
     window.showFullScreen();
 #else
     window.show();
@@ -311,7 +320,7 @@ SPOOL_TEST_MAIN("mpv-video-item")
     app.processEvents();
     const auto captureItem = [&] {
         const QImage image = window.grabWindow();
-#if defined(Q_OS_TVOS) || defined(Q_OS_ANDROID)
+#if defined(SPOOL_APPLE_MOBILE) || defined(Q_OS_ANDROID)
         if (image.isNull())
             return image;
         const qreal xScale = qreal(image.width()) / window.contentItem()->width();
@@ -323,20 +332,34 @@ SPOOL_TEST_MAIN("mpv-video-item")
     };
     const auto waitForPresentedFrame = [&](const auto& matches) {
         bool matched = false;
+        QElapsedTimer lastCheck;
         QEventLoop loop;
         QTimer timeout;
         timeout.setSingleShot(true);
-        QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+        QObject::connect(&timeout, &QTimer::timeout, &loop, [&] {
+            if (!matched && matches(captureItem()))
+                matched = true;
+            loop.quit();
+        });
         QObject::connect(
             &window, &QQuickWindow::frameSwapped, &loop,
             [&] {
-                if (!matched && matches(captureItem())) {
+                if (matched)
+                    return;
+                if (lastCheck.isValid() && lastCheck.elapsed() < 100)
+                    return;
+                lastCheck.start();
+                if (matches(captureItem())) {
                     matched = true;
                     loop.quit();
                 }
             },
             Qt::QueuedConnection);
+#if defined(SPOOL_APPLE_MOBILE) || defined(Q_OS_ANDROID)
+        timeout.start(15000);
+#else
         timeout.start(5000);
+#endif
         // UIKit returns to UIApplicationMain only for EventLoopExec, not a
         // manual processEvents pump. Read back after its real presentation.
         loop.exec();
@@ -346,7 +369,7 @@ SPOOL_TEST_MAIN("mpv-video-item")
     // Reusing an item after detach must reset first-frame state and publish
     // the new context, including when Qt replaces the render target on resize.
     for (const QSize size : { QSize(320, 180), QSize(480, 270) }) {
-#if defined(Q_OS_TVOS) || defined(Q_OS_ANDROID)
+#if defined(SPOOL_APPLE_MOBILE) || defined(Q_OS_ANDROID)
         // The mobile platform owns the fullscreen native window; resize the
         // real video viewport instead of requesting a desktop window size.
         viewportFraction = size.width() == 320 ? 1.0 : 2.0 / 3.0;
@@ -369,6 +392,7 @@ SPOOL_TEST_MAIN("mpv-video-item")
         }
         if (!handle || mpv_set_option_string(handle, "terminal", verbose ? "yes" : "no") < 0
             || mpv_set_option_string(handle, "vo", "libmpv") < 0 || mpv_set_option_string(handle, "hwdec", "no") < 0
+            || mpv_set_option_string(handle, "keep-open", "yes") < 0
             || mpv_set_option_string(handle, "osd-color", "#FFFFFFFF") < 0
             || mpv_set_option_string(handle, "osd-font-size", "48") < 0
             || mpv_set_option_string(handle, "osd-fonts-dir", osdFonts.constData()) < 0
@@ -427,7 +451,7 @@ SPOOL_TEST_MAIN("mpv-video-item")
             actualFormat.isEmpty() ? "(legacy renderer)" : actualFormat.constData());
 #endif
         const QImage beforeOsd = captureItem();
-        const char *osdCommand[] = { "show-text", "SDR white", "10000", nullptr };
+        const char *osdCommand[] = { "show-text", "SDR white", "20000", nullptr };
         double beforeOsdPosition = -1;
         const int beforeOsdPositionStatus = mpv_get_property(handle, "time-pos", MPV_FORMAT_DOUBLE, &beforeOsdPosition);
         const int osdCommandStatus = mpv_command(handle, osdCommand);
