@@ -790,7 +790,32 @@ public:
     {
         QRect found;
         QRect previous;
+        QString lastObserved;
         const std::string failure = "expected user-visible label was not rendered: " + text.toStdString();
+        const auto summarize = [](const QList<Words>& lines) {
+            QString summary;
+            for (const auto& line : lines) {
+                if (line.text.isEmpty() || line.text.contains(QStringLiteral("://")))
+                    continue;
+                QString clean;
+                for (const QChar ch : line.text) {
+                    if (ch.isLetterOrNumber() || ch == QLatin1Char(' ') || ch == QLatin1Char('-')
+                        || ch == QLatin1Char(':') || ch == QLatin1Char('/'))
+                        clean += ch;
+                }
+                clean = clean.simplified();
+                if (clean.isEmpty())
+                    continue;
+                if (!summary.isEmpty())
+                    summary += QStringLiteral(" | ");
+                summary += clean;
+                if (summary.size() >= 220) {
+                    summary.truncate(220);
+                    break;
+                }
+            }
+            return summary;
+        };
         const auto locate = [&](const QList<Words>& lines) {
             for (const auto& line : lines)
                 if (line.text.compare(text, Qt::CaseInsensitive) == 0)
@@ -800,61 +825,94 @@ public:
                 if (!bounds.isEmpty())
                     return bounds;
             }
+            for (qsizetype index = 0; index + 1 < lines.size(); ++index) {
+                const auto& first = lines[index];
+                const auto& second = lines[index + 1];
+                if (first.rectangles.isEmpty() || second.rectangles.isEmpty())
+                    continue;
+                QRect firstBox;
+                for (const QRect& rect : first.rectangles)
+                    firstBox = firstBox.united(rect);
+                QRect secondBox;
+                for (const QRect& rect : second.rectangles)
+                    secondBox = secondBox.united(rect);
+                const int maxHeight = std::max(firstBox.height(), secondBox.height());
+                if (secondBox.top() < firstBox.top() || secondBox.top() - firstBox.bottom() > maxHeight * 2)
+                    continue;
+                Words combined = first;
+                const qsizetype offset = combined.text.size() + 1;
+                combined.text += QLatin1Char(' ') + second.text;
+                for (qsizetype w = 0; w < second.starts.size(); ++w) {
+                    combined.starts.append(offset + second.starts[w]);
+                    combined.rectangles.append(second.rectangles[w]);
+                }
+                const QRect bounds = combined.phraseBounds(text);
+                if (!bounds.isEmpty())
+                    return bounds;
+            }
             return QRect {};
         };
-        await(
-            [&] {
-                const QImage frame = capture();
-                QString imagePath = screenshotPath;
-                QRect region;
-                if (surface == TextSurface::LibraryRow) {
-                    const auto row = capturedState["visual"].toObject()["libraryRow"].toObject();
-                    const double ratio = capturedState["window"].toObject()["devicePixelRatio"].toDouble(1);
-                    region = QRectF(row["x"].toDouble() * ratio, row["y"].toDouble() * ratio,
-                        row["width"].toDouble() * ratio, row["height"].toDouble() * ratio)
-                                 .toAlignedRect()
-                                 .intersected(frame.rect());
-                    if (region.isEmpty())
-                        return false;
-                    imagePath = libraryTextPath();
-                    QSaveFile file(imagePath);
-                    require(file.open(QIODevice::WriteOnly)
-                            && file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)
-                            && frame.copy(region).save(&file, "PNG") && file.commit(),
-                        "actual rendered library row could not be read for caption navigation");
-                }
-                QRect candidate
-                    = locate(words(imagePath, surface == TextSurface::LibraryRow ? 6 : 11, region.topLeft()));
-                // Sparse-page segmentation can omit text touching a focus outline.
-                // Read the same real frame as a text block rather than accepting a
-                // larger heading's unrelated hit region or manufacturing a label.
-                if (candidate.isEmpty() && surface == TextSurface::Window)
-                    candidate = locate(words(imagePath, 6));
-                if (candidate.isEmpty())
-                    candidate = locate(words(imagePath, 6, region.topLeft(), TextPreprocess::Neutral));
-                if (candidate.isEmpty())
-                    candidate = locate(words(imagePath, 6, region.topLeft(), TextPreprocess::Inverse));
-                if (candidate.isEmpty())
-                    candidate = locate(words(imagePath, 11, region.topLeft(), TextPreprocess::Positive));
-                if (candidate.isEmpty())
-                    candidate = locate(words(imagePath, 3, region.topLeft(), TextPreprocess::Adaptive));
-                if (!candidate.isEmpty()) {
-                    if (surface == TextSurface::Window
-                        || (!previous.isEmpty() && (candidate.center() - previous.center()).manhattanLength() <= 2
-                            && std::abs(candidate.width() - previous.width()) <= 2
-                            && std::abs(candidate.height() - previous.height()) <= 2)) {
-                        found = candidate;
-                        return true;
+        try {
+            await(
+                [&] {
+                    const QImage frame = capture();
+                    QString imagePath = screenshotPath;
+                    QRect region;
+                    if (surface == TextSurface::LibraryRow) {
+                        const auto row = capturedState["visual"].toObject()["libraryRow"].toObject();
+                        const double ratio = capturedState["window"].toObject()["devicePixelRatio"].toDouble(1);
+                        region = QRectF(row["x"].toDouble() * ratio, row["y"].toDouble() * ratio,
+                            row["width"].toDouble() * ratio, row["height"].toDouble() * ratio)
+                                     .toAlignedRect()
+                                     .intersected(frame.rect());
+                        if (region.isEmpty())
+                            return false;
+                        imagePath = libraryTextPath();
+                        QSaveFile file(imagePath);
+                        require(file.open(QIODevice::WriteOnly)
+                                && file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)
+                                && frame.copy(region).save(&file, "PNG") && file.commit(),
+                            "actual rendered library row could not be read for caption navigation");
                     }
-                    previous = candidate;
+                    const QList<Words> primaryLines
+                        = words(imagePath, surface == TextSurface::LibraryRow ? 6 : 11, region.topLeft());
+                    lastObserved = summarize(primaryLines);
+                    QRect candidate = locate(primaryLines);
+                    // Sparse-page segmentation can omit text touching a focus outline.
+                    // Read the same real frame as a text block rather than accepting a
+                    // larger heading's unrelated hit region or manufacturing a label.
+                    if (candidate.isEmpty() && surface == TextSurface::Window)
+                        candidate = locate(words(imagePath, 6));
+                    if (candidate.isEmpty())
+                        candidate = locate(words(imagePath, 6, region.topLeft(), TextPreprocess::Neutral));
+                    if (candidate.isEmpty())
+                        candidate = locate(words(imagePath, 6, region.topLeft(), TextPreprocess::Inverse));
+                    if (candidate.isEmpty())
+                        candidate = locate(words(imagePath, 11, region.topLeft(), TextPreprocess::Positive));
+                    if (candidate.isEmpty())
+                        candidate = locate(words(imagePath, 3, region.topLeft(), TextPreprocess::Adaptive));
+                    if (!candidate.isEmpty()) {
+                        if (surface == TextSurface::Window
+                            || (!previous.isEmpty() && (candidate.center() - previous.center()).manhattanLength() <= 2
+                                && std::abs(candidate.width() - previous.width()) <= 2
+                                && std::abs(candidate.height() - previous.height()) <= 2)) {
+                            found = candidate;
+                            return true;
+                        }
+                        previous = candidate;
+                        return false;
+                    }
+                    previous = {};
+                    if (scroll)
+                        command({ "key", "down" });
                     return false;
-                }
-                previous = {};
-                if (scroll)
-                    command({ "key", "down" });
-                return false;
-            },
-            failure.c_str(), scroll ? 90000 : 30000);
+                },
+                failure.c_str(), scroll ? 90000 : 30000);
+        } catch (const std::runtime_error& error) {
+            if (!lastObserved.isEmpty())
+                throw std::runtime_error(std::string(error.what()) + " [observed: " + lastObserved.toStdString() + "]");
+            throw;
+        }
         return found;
     }
     void click(const QString& text, bool scroll = false, bool right = false)

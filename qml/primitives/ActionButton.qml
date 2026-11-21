@@ -57,19 +57,23 @@ T.Control {
         Item {
             id: buttonContent
             anchors.centerIn: parent
-            // Measure unelided text independently of buttonLabel's anchored width
-            // so Qt 6.12 elided layout updates cannot feed back into width.
-            // Add small slack so subpixel CoreText shaping never elides short labels.
-            TextMetrics {
-                id: labelMetrics
-                font: buttonLabel.font
+            // Measure unelided text with an unconstrained AppText using the exact
+            // same variable font shaping path without feeding buttonLabel's elided
+            // width back into buttonContent.width on Qt 6.12.
+            AppText {
+                id: labelMeasure
+                visible: false
                 text: root.text
+                font.pixelSize: buttonLabel.font.pixelSize
+                font.weight: buttonLabel.font.weight
+                elide: Text.ElideNone
+                maximumLineCount: 1
+                Accessible.ignored: true
             }
-            implicitWidth: Math.ceil(Math.max(labelMetrics.advanceWidth, labelMetrics.width,
-                                              labelMetrics.tightBoundingRect.width)) + 4 + (buttonIcon.visible
-                                                                                            ? buttonIcon.width
-                                                                                              + Metrics.scaled(8) : 0)
-            width: Math.min(implicitWidth, Math.max(0, parent.width - Metrics.scaled(34)))
+            implicitWidth: Math.ceil(labelMeasure.implicitWidth) + 4 + (buttonIcon.visible ? buttonIcon.width
+                                                                                             + Metrics.scaled(8) : 0)
+            width: buttonIcon.visible ? Math.min(implicitWidth, Math.max(0, parent.width - Metrics.scaled(34))) : Math.max(
+                                            0, parent.width - Metrics.scaled(34))
             height: Math.max(buttonLabel.implicitHeight, buttonIcon.visible ? buttonIcon.height : 0)
 
             MaterialIcon {

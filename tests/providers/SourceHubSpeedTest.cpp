@@ -1,5 +1,6 @@
 #include "ProviderFixture.h"
 #include "TestMain.h"
+#include "TestRequire.h"
 #include "cache/DatabaseManager.h"
 #include "provider/PlaybackSource.h"
 #include "provider/ProviderRegistry.h"
@@ -19,13 +20,7 @@
 using namespace Spool;
 
 namespace {
-void require(bool condition, const char *message)
-{
-    if (!condition) {
-        std::cerr << message << '\n';
-        std::exit(1);
-    }
-}
+using SpoolTests::require;
 void waitUntil(const std::function<bool()>& condition, const char *message)
 {
     QElapsedTimer timer;
