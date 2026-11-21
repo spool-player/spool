@@ -333,6 +333,7 @@ QCoro::Task<PagedMovieItems> LocalProvider::fetchBrowsePage(
         page.exhausted = end >= page.totalRecordCount;
         if (!page.exhausted)
             page.nextCursor = QString::number(end);
+        page.seekable = wholeLibrary;
     }
     co_return page;
 }
@@ -393,6 +394,11 @@ QCoro::Task<std::vector<MovieItem>> LocalProvider::fetchSimilarItems(QString, in
     co_return {};
 }
 
+QCoro::Task<std::vector<MovieItem>> LocalProvider::fetchRelatedMedia(QString, QString)
+{
+    co_return {};
+}
+
 QCoro::Task<PersonCredits> LocalProvider::fetchItemsByPerson(QString, int)
 {
     co_return {};
@@ -400,11 +406,21 @@ QCoro::Task<PersonCredits> LocalProvider::fetchItemsByPerson(QString, int)
 
 QCoro::Task<std::vector<LibraryItem>> LocalProvider::fetchLibraries()
 {
+    // The offline source is always registered so a download can appear the
+    // moment it finishes, but with nothing downloaded there is no library to
+    // offer. Local files are a library only once someone chooses a folder.
+    if (m_roots.isEmpty() && m_downloadedFiles.isEmpty())
+        co_return {};
     LibraryItem library;
     library.id = QLatin1String(kLibraryId);
     library.name = m_libraryName;
     library.collectionType = QStringLiteral("movies");
     co_return std::vector<LibraryItem> { library };
+}
+
+QCoro::Task<std::vector<BrowseIndexEntry>> LocalProvider::fetchBrowseIndex(BrowseDescriptor, QVariantMap)
+{
+    co_return {};
 }
 
 QCoro::Task<QVariantMap> LocalProvider::fetchLibraryFilterOptions(QString, QString)

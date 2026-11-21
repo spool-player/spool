@@ -27,6 +27,7 @@
 
 #include <QDebug>
 #include <QPixmapCache>
+#include <QPointer>
 #include <QSet>
 #include <QStringList>
 #include <QTimer>
@@ -186,6 +187,12 @@ AppController::AppController(
     m_content = new ContentModelController(m_catalog, m_prefetch, this);
     m_search = new SearchController(provider->search(), m_prefetch, this);
     m_itemState = new UserItemStateController(provider->itemState(), m_browse, m_home, m_content, m_search, this);
+    m_sleepTimerClock.start();
+    m_sleepTimer.setInterval(1000);
+    connect(&m_sleepTimer, &QTimer::timeout, this, [this]() {
+        if (!stopIfSleepTimerExpired())
+            emit sleepTimerChanged();
+    });
     connect(m_player, &PlayerController::watchedPersistenceRequested, m_itemState,
         &UserItemStateController::persistPlaybackWatched);
     connect(m_itemState, &UserItemStateController::playedChanged, m_playQueue, &PlayQueueController::updatePlayed);
@@ -227,19 +234,44 @@ AppController::AppController(
         }
         playQueueCurrent(false);
     });
+    connect(m_playQueue, &PlayQueueController::queueChanged, this, [this]() {
+        m_player->setQueueState(
+            m_playQueue->nowPlayingQueue(), inGroup() ? QString() : m_playQueue->repeatMode(), m_playQueue->shuffled());
+    });
+    connect(m_group, &GroupPlaybackController::groupChanged, this, [this]() {
+        // The server owns group repetition; local modes must not leak out of it.
+        if (inGroup()) {
+            cancelSleepTimer();
+            m_playQueue->setRepeatMode(QStringLiteral("RepeatNone"));
+        }
+        m_player->setQueueState(
+            m_playQueue->nowPlayingQueue(), inGroup() ? QString() : m_playQueue->repeatMode(), m_playQueue->shuffled());
+    });
     connect(m_browse, &BrowseSessionController::reloadRequested, this, [this]() { beginBrowse(); });
     connect(m_browse, &BrowseSessionController::moreItemsRequested, this, &AppController::loadMoreCurrentItems);
+    connect(m_browse, &BrowseSessionController::blockRequested, this, &AppController::loadBrowseBlock);
+    connect(m_browse, &BrowseSessionController::blockAbandoned, this,
+        [this](int start) { m_catalog->cancelBrowseJump(m_browse->descriptor(), start); });
+    connect(m_browse, &BrowseSessionController::indexRequested, this, &AppController::loadBrowseIndex);
     connect(m_database, &DatabaseManager::recoveryNotice, this, &AppController::showToast);
     {
         connect(m_group, &GroupPlayback::queuePlaybackRequested, this, [this](qint64 positionTicks) {
+            QPointer<AppController> guard(this);
             MovieItem item = m_playQueue->currentItem();
             if (item.id.isEmpty())
+                return;
+            const auto generation = cancelPendingPlaybackRequests();
+            if (!guard || !m_playbackLoadGeneration.isCurrent(generation))
                 return;
             item.resumeTicks = std::max<qint64>(0, positionTicks);
             if (m_player->sessionActive() && m_activePlaybackItem.id != item.id)
                 m_player->stopWithReason(QStringLiteral("syncplay-group-switch"));
+            if (!guard || !m_playbackLoadGeneration.isCurrent(generation))
+                return;
             m_activePlaybackItem = item;
             setBusy(true, QStringLiteral("Joining the group…"));
+            if (!guard || !m_playbackLoadGeneration.isCurrent(generation))
+                return;
             Async::runScoped(
                 this, startPlayback(item, true), []() {},
                 [this](const std::exception_ptr& error) {
@@ -288,12 +320,13 @@ AppController::AppController(
     });
     connect(m_provider, &Provider::sessionEnded, this, &AppController::resetApplicationState);
 
-    connect(m_player, &PlayerController::stopRequested, this, [this] {
-        m_playbackLoadGeneration.invalidate();
-        m_playQueue->cancelEpisodeSuccessors();
-        cancelEpisodicPlaybackSelection();
-        setPlaybackTransition(false);
-        setBusy(false);
+    connect(m_player, &PlayerController::stopRequested, this, [this](const QString& reason) {
+        // The group-switch callback already retired the old App request and
+        // owns the new handoff. Other Stops must retire every pending lookup.
+        if (reason == QStringLiteral("syncplay-group-switch"))
+            return;
+        cancelSleepTimer();
+        cancelPendingPlaybackRequests(true);
     });
     connect(m_player, &PlayerController::playbackStopped, this, &AppController::handlePlaybackStopped);
     connect(m_player, &PlayerController::playbackSeekOutsideStream, this,
@@ -389,7 +422,7 @@ AppController::AppController(
         [this](const QString& itemId, qint64 positionTicks, const QString&, bool retryableCodecFailure,
             int audioStreamIndex, int subtitleStreamIndex) {
             const bool syncPlayActive = inGroup();
-            if (itemId.isEmpty() || itemId != m_activePlaybackItem.id)
+            if (itemId.isEmpty() || itemId != m_activePlaybackItem.id || m_playbackLookupPending)
                 return;
             // A quality the server cannot deliver should cost the viewer the
             // quality, not the thing they were watching.
@@ -498,9 +531,17 @@ QCoro::Task<void> AppController::initializeAsync()
 
 void AppController::resetApplicationState()
 {
-    m_remotePlaybackRequestGeneration.invalidate();
+    cancelSleepTimer();
+    m_playQueue->setRepeatMode(QStringLiteral("RepeatNone"));
+    cancelPendingPlaybackRequests(true);
     resetVisibleModels();
+    m_playQueue->clear();
     m_activePlaybackItem = {};
+    m_activePlaybackStreams.clear();
+    m_activeAudioStreamIndex = -1;
+    m_activeSubtitleStreamIndex = -1;
+    m_qualityFallbackBitrate = -1;
+    m_qualityFallbackHeight = 0;
 }
 
 void AppController::resetVisibleModels()
@@ -513,6 +554,7 @@ void AppController::resetVisibleModels()
     m_home->reset();
     m_content->reset();
     m_search->reset();
+    m_itemState->reset();
     m_libraryLoadGeneration.invalidate();
     m_libraryListGeneration.invalidate();
     m_browse->reset();
@@ -590,10 +632,14 @@ void AppController::fetchPlayItem(const QString& itemId, bool fromStart, PlayDes
 {
     if (itemId.isEmpty() || !m_catalog)
         return;
+    cancelPendingPlaybackRequests();
+    const auto generation = m_playbackLoadGeneration.current();
+    m_playbackLookupPending = true;
     setBusy(true, QStringLiteral("Loading item for playback…"));
-    Async::runScoped(
-        this, m_catalog->fetchItemDetails(itemId),
+    Async::runLatest(
+        this, m_catalog->fetchItemDetails(itemId), m_playbackLoadGeneration, generation,
         [this, fromStart, destination](const MovieItem& item) {
+            m_playbackLookupPending = false;
             setBusy(false);
             if (!destinationIsCurrent(destination))
                 return;
@@ -603,6 +649,7 @@ void AppController::fetchPlayItem(const QString& itemId, bool fromStart, PlayDes
                 showToast(QStringLiteral("Item not found."));
         },
         [this, destination](const std::exception_ptr& error) {
+            m_playbackLookupPending = false;
             setBusy(false);
             if (!destinationIsCurrent(destination))
                 return;
@@ -688,7 +735,9 @@ void AppController::playAlbumFrom(const MovieItem& track, bool fromStart, PlayDe
         return;
     }
 
-    const quint64 generation = ++m_albumQueueGeneration;
+    cancelPendingPlaybackRequests();
+    const quint64 generation = m_albumQueueGeneration;
+    m_playbackLookupPending = true;
     setBusy(true, QStringLiteral("Loading album…"));
     // The same descriptor ContentModelController uses for album children, so
     // there is one definition of what an album contains.
@@ -697,6 +746,7 @@ void AppController::playAlbumFrom(const MovieItem& track, bool fromStart, PlayDe
         [this, generation, track, fromStart, destination](const PagedMovieItems& page) {
             if (generation != m_albumQueueGeneration)
                 return;
+            m_playbackLookupPending = false;
             setBusy(false);
             if (!destinationIsCurrent(destination))
                 return;
@@ -712,6 +762,7 @@ void AppController::playAlbumFrom(const MovieItem& track, bool fromStart, PlayDe
         [this, generation, track, fromStart, destination](const std::exception_ptr&) {
             if (generation != m_albumQueueGeneration)
                 return;
+            m_playbackLookupPending = false;
             setBusy(false);
             if (!destinationIsCurrent(destination))
                 return;
@@ -719,6 +770,30 @@ void AppController::playAlbumFrom(const MovieItem& track, bool fromStart, PlayDe
             // the album is a worse outcome than not playing at all.
             playQueuedItem(track, fromStart, destination);
         });
+}
+
+RequestGeneration::Token AppController::cancelPendingPlaybackRequests(bool cancelGroup)
+{
+    const QPointer<AppController> guard(this);
+    // Item details, album/episode expansion and negotiation are stages of the
+    // same play request. A newer request or Stop retires every earlier stage.
+    const auto generation = m_playbackLoadGeneration.next();
+    ++m_albumQueueGeneration;
+    ++m_episodeQueueGeneration;
+    m_episodeQueuePending = false;
+    m_playbackLookupPending = false;
+    m_playQueue->cancelEpisodeSuccessors();
+    m_remotePlaybackRequestGeneration.invalidate();
+    m_syncPlayQueueRequestGeneration.invalidate();
+    if (cancelGroup)
+        m_group->cancelPendingPlayback();
+    if (!guard || !m_playbackLoadGeneration.isCurrent(generation))
+        return generation;
+    setPlaybackTransition(false);
+    if (!guard || !m_playbackLoadGeneration.isCurrent(generation))
+        return generation;
+    setBusy(false);
+    return generation;
 }
 
 void AppController::stopPlayback()
@@ -740,11 +815,7 @@ void AppController::playLocalFiles(const QList<QUrl>& urls, bool append)
         showToast(QStringLiteral("Leave the playback group before opening local files."));
         return;
     }
-    m_playbackLoadGeneration.invalidate();
-    m_playQueue->cancelEpisodeSuccessors();
-    cancelEpisodicPlaybackSelection();
-    setBusy(false);
-    setPlaybackTransition(false);
+    cancelPendingPlaybackRequests();
     if (m_player->sessionActive())
         m_player->stopWithReason(QStringLiteral("local-file-switch"));
     m_activePlaybackItem = {};
@@ -780,6 +851,7 @@ void AppController::playLocalQueueNext(PlayDestination destination)
     }
     if (!m_playQueue->next())
         return;
+    cancelPendingPlaybackRequests();
     playQueueCurrent(false);
 }
 
@@ -808,6 +880,7 @@ void AppController::playLocalQueuePrevious(PlayDestination destination)
     }
     if (!m_playQueue->previous())
         return;
+    cancelPendingPlaybackRequests();
     playQueueCurrent(true);
 }
 
@@ -823,17 +896,90 @@ void AppController::playQueueItem(int index)
     }
     // A second click on the row already playing used to tear mpv down and
     // restart the same track from the top, which is never what the click meant.
-    if (index == m_playQueue->currentIndex() && m_player->sessionActive())
+    if (index == m_playQueue->currentIndex() && m_player->sessionActive()) {
+        cancelPendingPlaybackRequests();
         return;
+    }
 
     if (inGroup()) {
         // Jumping the group, not just this client.
+        cancelPendingPlaybackRequests();
         m_group->requestPlayItem(queueEntryId(index));
         return;
     }
     if (!m_playQueue->playAt(index))
         return;
+    cancelPendingPlaybackRequests();
     playQueueCurrent(false);
+}
+
+void AppController::setRepeatMode(const QString& mode)
+{
+    if (!inGroup())
+        m_playQueue->setRepeatMode(mode);
+}
+
+QString AppController::sleepTimerMode() const
+{
+    switch (m_playbackStopPolicy.mode()) {
+    case PlaybackStopPolicy::Mode::AfterCurrent:
+        return QStringLiteral("afterCurrent");
+    case PlaybackStopPolicy::Mode::Timed:
+        return QStringLiteral("timed");
+    case PlaybackStopPolicy::Mode::Off:
+        return QStringLiteral("off");
+    }
+    return QStringLiteral("off");
+}
+
+int AppController::sleepTimerRemainingSeconds() const
+{
+    return m_playbackStopPolicy.remainingSeconds(m_sleepTimerClock.elapsed());
+}
+
+void AppController::setSleepTimerMinutes(int minutes)
+{
+    if (minutes == 0) {
+        cancelSleepTimer();
+        return;
+    }
+    if (minutes < 0) {
+        stopAfterCurrentItem();
+        return;
+    }
+    if (inGroup() || !m_player->sessionActive()
+        || !m_playbackStopPolicy.setDuration(minutes, m_sleepTimerClock.elapsed()))
+        return;
+    m_sleepTimer.start();
+    emit sleepTimerChanged();
+}
+
+void AppController::stopAfterCurrentItem()
+{
+    if (inGroup() || !m_player->sessionActive()
+        || !m_playbackStopPolicy.setAfterCurrent(m_activePlaybackItem.id.toStdString()))
+        return;
+    m_sleepTimer.stop();
+    emit sleepTimerChanged();
+}
+
+void AppController::cancelSleepTimer()
+{
+    if (!m_playbackStopPolicy.cancel())
+        return;
+    m_sleepTimer.stop();
+    emit sleepTimerChanged();
+}
+
+bool AppController::stopIfSleepTimerExpired()
+{
+    if (!m_playbackStopPolicy.takeExpired(m_sleepTimerClock.elapsed()))
+        return false;
+    m_sleepTimer.stop();
+    emit sleepTimerChanged();
+    stopPlayback();
+    showToast(QStringLiteral("Sleep timer finished."));
+    return true;
 }
 
 // Previewed locally even in a group. Waiting on a round trip per step would
@@ -881,9 +1027,10 @@ void AppController::removeQueueItem(int index)
     // has no player to act on it — the row that was playing is gone, so
     // something has to take its place or stop.
     if (m_playQueue->currentIndex() < 0) {
-        m_player->stopWithReason(QStringLiteral("queue-cleared"));
+        stopPlayback();
         return;
     }
+    cancelPendingPlaybackRequests();
     playQueueCurrent(false);
 }
 
@@ -936,9 +1083,48 @@ void AppController::loadMoreCurrentItems()
         m_libraryLoadGeneration, loadGeneration, onDone, onError);
 }
 
+void AppController::loadBrowseBlock(int start)
+{
+    const BrowseDescriptor descriptor = m_browse->descriptor();
+    if (!descriptor.isValid() || !m_catalog->signedIn()) {
+        m_browse->blockFailed(start);
+        return;
+    }
+    const RequestGeneration::Token loadGeneration = m_libraryLoadGeneration.current();
+    const QString cacheKey = m_browse->cacheKey();
+    const QVariantMap query = descriptor.kind == BrowseKind::Library ? m_browse->query() : QVariantMap {};
+    Async::runLatest(
+        this, m_catalog->fetchBrowsePage(descriptor, start, m_browse->blockSize(), query, std::nullopt),
+        m_libraryLoadGeneration, loadGeneration,
+        [this, start, cacheKey](const PagedMovieItems& page) { m_browse->applyBlock(start, page, cacheKey); },
+        [this, start](const std::exception_ptr& error) {
+            if (const QString message = exceptionMessage(error); message != QLatin1String("action_cancelled"))
+                qWarning() << "browse block failed" << start << message;
+            m_browse->blockFailed(start);
+        });
+}
+
+void AppController::loadBrowseIndex()
+{
+    const BrowseDescriptor descriptor = m_browse->descriptor();
+    if (!descriptor.isValid() || !m_catalog->signedIn())
+        return;
+    const RequestGeneration::Token loadGeneration = m_libraryLoadGeneration.current();
+    const QString cacheKey = m_browse->cacheKey();
+    QVariantMap query = descriptor.kind == BrowseKind::Library ? m_browse->query() : QVariantMap {};
+    Async::runLatest(
+        this, m_catalog->fetchBrowseIndex(descriptor, std::move(query)), m_libraryLoadGeneration, loadGeneration,
+        [this, cacheKey](const std::vector<BrowseIndexEntry>& entries) { m_browse->setExactIndex(entries, cacheKey); },
+        [this, cacheKey](const std::exception_ptr& error) {
+            qWarning() << "browse index failed" << exceptionMessage(error);
+            m_browse->indexFailed(cacheKey);
+        });
+}
+
 void AppController::playQueuedItems(
     const std::vector<MovieItem>& items, int startIndex, bool fromStart, PlayDestination destination)
 {
+    cancelPendingPlaybackRequests();
     if (dispatchRemotePlay(destination, items, startIndex, fromStart))
         return;
     if (!m_playQueue->playNow(items, startIndex)) {
@@ -1009,12 +1195,12 @@ void AppController::playEpisodicContainer(const QString& seriesId, const QString
 {
     if (seriesId.isEmpty())
         return;
-    if (m_episodeQueuePending)
-        return;
+    cancelPendingPlaybackRequests();
     m_episodeQueuePending = true;
+    m_playbackLookupPending = true;
     const auto destination = userPlayDestination();
 
-    const quint64 generation = ++m_episodeQueueGeneration;
+    const quint64 generation = m_episodeQueueGeneration;
     setBusy(true,
         seasonId.isEmpty() ? QStringLiteral("Finding the next episode…")
                            : QStringLiteral("Finding the next episode in this season…"));
@@ -1024,6 +1210,7 @@ void AppController::playEpisodicContainer(const QString& seriesId, const QString
             if (generation != m_episodeQueueGeneration)
                 return;
             m_episodeQueuePending = false;
+            m_playbackLookupPending = false;
             setBusy(false);
             if (!destinationIsCurrent(destination))
                 return;
@@ -1045,6 +1232,7 @@ void AppController::playEpisodicContainer(const QString& seriesId, const QString
             if (generation != m_episodeQueueGeneration)
                 return;
             m_episodeQueuePending = false;
+            m_playbackLookupPending = false;
             setBusy(false);
             if (!destinationIsCurrent(destination))
                 return;
@@ -1059,6 +1247,7 @@ void AppController::cancelEpisodicPlaybackSelection()
         return;
     ++m_episodeQueueGeneration;
     m_episodeQueuePending = false;
+    m_playbackLookupPending = false;
     setBusy(false);
 }
 
@@ -1068,6 +1257,7 @@ void AppController::playQueuedItem(const MovieItem& item, bool fromStart, PlayDe
         playEpisodeWithContext(item, 0, fromStart, destination);
         return;
     }
+    cancelPendingPlaybackRequests();
     if (dispatchRemotePlay(destination, std::span(&item, 1), 0, fromStart))
         return;
     if (!m_playQueue->playNow(item)) {
@@ -1086,8 +1276,10 @@ void AppController::playEpisodeWithContext(
         return;
     }
 
-    const quint64 generation = ++m_episodeQueueGeneration;
+    cancelPendingPlaybackRequests();
+    const quint64 generation = m_episodeQueueGeneration;
     m_episodeQueuePending = true;
+    m_playbackLookupPending = true;
     setBusy(true, direction == 0 ? QStringLiteral("Loading episode queue…") : QStringLiteral("Finding episode…"));
     Async::runScoped(
         this, m_catalog->fetchEpisodes(episode.seriesId),
@@ -1095,6 +1287,7 @@ void AppController::playEpisodeWithContext(
             if (generation != m_episodeQueueGeneration)
                 return;
             m_episodeQueuePending = false;
+            m_playbackLookupPending = false;
             setBusy(false);
             if (!destinationIsCurrent(destination))
                 return;
@@ -1148,6 +1341,7 @@ void AppController::playEpisodeWithContext(
             if (generation != m_episodeQueueGeneration)
                 return;
             m_episodeQueuePending = false;
+            m_playbackLookupPending = false;
             setBusy(false);
             if (!destinationIsCurrent(destination))
                 return;
@@ -1232,21 +1426,39 @@ void AppController::playQueueCurrent(bool fromStart, std::optional<qint64> expli
 QCoro::Task<void> AppController::startPlayback(MovieItem playItem, bool startPaused, bool forceTranscode,
     int audioStreamIndex, int subtitleStreamIndex, bool restartActive)
 {
+    if (m_shuttingDown || stopIfSleepTimerExpired())
+        co_return;
+    m_playQueue->cancelEpisodeSuccessors();
     Diagnostics::Task task(QStringLiteral("playback_negotiate"),
         { { QStringLiteral("itemId"), playItem.id }, { QStringLiteral("title"), playItem.title },
             { QStringLiteral("type"), playItem.itemType } });
+    const QPointer<AppController> guard(this);
     const RequestGeneration::Token generation = m_playbackLoadGeneration.next();
 
     if (!forceTranscode)
         m_codecFallbackAttempted = false;
-    PlaybackSession session = co_await m_playback->resolvePlayback(playItem, forceTranscode);
-    if (!m_playbackLoadGeneration.isCurrent(generation))
+    PlaybackSession session;
+    try {
+        session = co_await m_playback->resolvePlayback(playItem, forceTranscode);
+    } catch (const std::exception&) {
+        if (!guard || !m_playbackLoadGeneration.isCurrent(generation))
+            co_return;
+        throw;
+    }
+    if (!guard || !m_playbackLoadGeneration.isCurrent(generation))
         co_return;
     if (!forceTranscode && playItem.itemType == QStringLiteral("Episode") && !playItem.seriesId.isEmpty()) {
-        const QByteArray storedSelection
-            = co_await m_database->loadCacheEntryAsync(QString::fromLatin1(kSeriesTrackSelectionNamespace),
-                seriesTrackSelectionKey(m_catalog->libraryScopeKey(), playItem.seriesId));
-        if (!m_playbackLoadGeneration.isCurrent(generation))
+        QByteArray storedSelection;
+        try {
+            storedSelection
+                = co_await m_database->loadCacheEntryAsync(QString::fromLatin1(kSeriesTrackSelectionNamespace),
+                    seriesTrackSelectionKey(m_catalog->libraryScopeKey(), playItem.seriesId));
+        } catch (const std::exception&) {
+            if (!guard || !m_playbackLoadGeneration.isCurrent(generation))
+                co_return;
+            throw;
+        }
+        if (!guard || !m_playbackLoadGeneration.isCurrent(generation))
             co_return;
         SeriesAudioPreference storedAudioPreference;
         int storedSubtitleStreamIndex = -1;
@@ -1291,10 +1503,12 @@ QCoro::Task<void> AppController::startPlayback(MovieItem playItem, bool startPau
     }
     if (!restartActive && !forceTranscode) {
         co_await m_settings->applyDeferredTrackDefaults();
-        if (!m_playbackLoadGeneration.isCurrent(generation))
+        if (!guard || !m_playbackLoadGeneration.isCurrent(generation))
             co_return;
     }
     m_activePlaybackStreams = session.mediaStreams;
+    session.repeatMode = inGroup() ? QString() : m_playQueue->repeatMode();
+    session.shuffled = m_playQueue->shuffled();
     m_activeMediaSourceId = session.mediaSourceId;
     m_activeSourceBitrate = session.sourceBitrate;
     m_activeSourceHeight = session.sourceHeight;
@@ -1302,12 +1516,25 @@ QCoro::Task<void> AppController::startPlayback(MovieItem playItem, bool startPau
     m_activePlayMethod = session.playMethod;
     const int fileAudioDelayMs = restartActive ? m_player->fileAudioDelayMs() : 0;
     const int subtitleDelayMs = restartActive ? m_player->subtitleDelayMs() : 0;
+    // Network replies may run before the timer event after a blocked loop.
+    if (!guard || !m_playbackLoadGeneration.isCurrent(generation) || stopIfSleepTimerExpired())
+        co_return;
+    if (m_playbackStopPolicy.playbackStarting(playItem.id.toStdString()))
+        emit sleepTimerChanged();
     setBusy(false);
+    if (!guard || !m_playbackLoadGeneration.isCurrent(generation))
+        co_return;
     m_player->play(session, startPaused);
     m_playingAccountId = m_provider->accountOf(session.itemId);
+    if (!guard || !m_playbackLoadGeneration.isCurrent(generation))
+        co_return;
     if (restartActive) {
         m_player->setFileAudioDelayMs(fileAudioDelayMs);
+        if (!guard || !m_playbackLoadGeneration.isCurrent(generation))
+            co_return;
         m_player->setSubtitleDelayMs(subtitleDelayMs);
+        if (!guard || !m_playbackLoadGeneration.isCurrent(generation))
+            co_return;
     }
 
     const QString itemId = playItem.id;
@@ -1348,6 +1575,7 @@ void AppController::shutdown()
         return;
     m_shuttingDown = true;
     qInfo() << "app: shutdown requested";
+    cancelSleepTimer();
     m_player->prepareForShutdown();
     m_prefetch->stop();
     m_provider->shutdown();
@@ -1646,7 +1874,7 @@ void AppController::selectStreamingQuality(qint64 bitrate, int height)
     // given when the stream was resolved, so a new ceiling only takes effect
     // through a fresh resolution. Resume where the viewer was, keeping the
     // audio and subtitle tracks they had selected.
-    if (!m_player->sessionActive() || m_activePlaybackItem.id.isEmpty())
+    if (m_playbackLookupPending || !m_player->sessionActive() || m_activePlaybackItem.id.isEmpty())
         return;
     const qint64 positionTicks = static_cast<qint64>(m_player->positionSeconds() * 10'000'000.0);
     const MovieItem resumeItem = PlaybackFailurePolicy::retryItem(m_activePlaybackItem, positionTicks);
@@ -1676,23 +1904,23 @@ void AppController::handlePlaybackStopped(
         : MovieItem {};
     m_itemState->recordPlaybackStopped(m_activePlaybackItem, itemId, positionTicks, watched, successor, reportId);
     m_playQueue->updateResumeTicks(itemId, watched ? 0 : positionTicks);
-    if (!reachedEnd || m_activePlaybackItem.id != itemId || inGroup()) {
+    if (!reachedEnd || m_activePlaybackItem.id != itemId || m_playbackLookupPending || inGroup()) {
         setPlaybackTransition(false);
         return;
     }
-    bool continueQueue = false;
-    if (m_repeatMode == QStringLiteral("RepeatOne")) {
-        continueQueue = m_playQueue->currentIndex() >= 0;
-    } else {
-        continueQueue = m_playQueue->next();
-        if (!continueQueue && m_repeatMode == QStringLiteral("RepeatAll") && m_playQueue->rowCount() > 0)
-            continueQueue = m_playQueue->playAt(0);
+    if (stopIfSleepTimerExpired())
+        return;
+    if (m_playbackStopPolicy.takeCompleted(m_activePlaybackItem.id.toStdString())) {
+        emit sleepTimerChanged();
+        stopPlayback();
+        return;
     }
+    const bool continueQueue = m_playQueue->advanceAfterCompletion();
     if (continueQueue) {
         // Hold the surface across the gap while the next (or repeated) item is
         // negotiated and decoded.
         setPlaybackTransition(true);
-        playQueueCurrent(m_repeatMode == QStringLiteral("RepeatOne"));
+        playQueueCurrent(m_playQueue->repeatMode() == QStringLiteral("RepeatOne"));
     } else {
         setPlaybackTransition(true);
         m_playQueue->enqueueEpisodeSuccessors(m_activePlaybackItem);

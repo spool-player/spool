@@ -9,6 +9,12 @@ FocusScope {
     property Component remoteControls: null
     property string pinLabel: "Account PIN"
     property string pinExplanation: "Cancelling keeps your current account active."
+    // Offered with a PIN the provider says can be remembered.
+    property string rememberLabel: ""
+    property string rememberDescription: ""
+    property bool remember: false
+    readonly property bool rememberOffered: kind === "homePin" && !!rememberLabel && provider
+                                            && provider.arguments.remember === true
     property var sortChoices: []
     readonly property string kind: provider ? String(provider.arguments.kind || "") : ""
     readonly property bool choosing: kind === "playlist" || kind === "collection"
@@ -38,10 +44,17 @@ FocusScope {
     }
     function submitPin() {
         const value = pin.text
+        // No PIN is empty; an empty answer is a stray Enter, and a provider
+        // may take it as consent rather than refuse it.
+        if (!value)
+            return
         pin.text = ""
-        provider.complete({
-                              pin: value
-                          })
+        const answers = {
+            pin: value
+        }
+        if (rememberOffered)
+            answers.remember = remember
+        provider.complete(answers)
     }
     function recoverListFocus(view) {
         const candidate = InputKeys.topLeftVisibleCandidate(view, view)
@@ -185,6 +198,14 @@ FocusScope {
             visible: root.kind === "homePin"
             text: root.pinExplanation
             wrapMode: Text.WordWrap
+        }
+        ToggleRow {
+            Layout.fillWidth: true
+            visible: root.rememberOffered
+            title: root.rememberLabel
+            description: root.rememberDescription
+            checked: root.remember
+            onToggled: checked => root.remember = checked
         }
         ListView {
             id: list

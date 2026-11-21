@@ -134,7 +134,6 @@ RowLayout {
         id: volumeControls
 
         readonly property bool showSlider: Settings.values["playback/showVolumeSlider"] !== false
-        property real lastAudibleVolume: 100
 
         visible: root.overlay.desktopControlsAvailable
         Layout.minimumWidth: visible ? root.overlay.dp(showSlider ? 254 : 28) : 0
@@ -143,7 +142,8 @@ RowLayout {
         spacing: root.overlay.dp(10)
 
         MaterialIcon {
-            name: root.overlay.hasPlayer && root.overlay.player.volume === 0 ? "volume_off" : "volume_up"
+            name: root.overlay.hasPlayer && (root.overlay.player.muted || root.overlay.player.volume === 0)
+                  ? "volume_off" : "volume_up"
             iconColor: muteHover.hovered ? Theme.textPrimary : Theme.textSecondary
             iconSize: root.overlay.dp(38)
 
@@ -152,17 +152,8 @@ RowLayout {
             }
 
             TapHandler {
-                onTapped: {
-                    if (!root.overlay.hasPlayer)
-                        return
-                    const volume = Number(root.overlay.player.volume)
-                    if (volume > 0) {
-                        volumeControls.lastAudibleVolume = volume
-                        root.overlay.player.setVolume(0)
-                    } else {
-                        root.overlay.player.setVolume(Math.max(1, volumeControls.lastAudibleVolume))
-                    }
-                }
+                onTapped: if (root.overlay.hasPlayer)
+                              root.overlay.player.toggleMuted()
             }
         }
 

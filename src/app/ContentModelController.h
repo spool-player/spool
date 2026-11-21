@@ -4,6 +4,7 @@
 #include "../models/MovieGridModel.h"
 #include "../provider/Catalog.h"
 
+#include <QHash>
 #include <QObject>
 #include <QString>
 #include <QVariantList>
@@ -22,9 +23,12 @@ class ContentModelController final : public QObject {
     Q_PROPERTY(Spool::MovieGridModel *detailSeasons READ detailSeasons CONSTANT)
     Q_PROPERTY(Spool::MovieGridModel *detailSeasonOptions READ detailSeasonOptions CONSTANT)
     Q_PROPERTY(Spool::MovieGridModel *detailSimilarItems READ detailSimilarItems CONSTANT)
+    Q_PROPERTY(Spool::MovieGridModel *detailTrailers READ detailTrailers CONSTANT)
+    Q_PROPERTY(Spool::MovieGridModel *detailExtras READ detailExtras CONSTANT)
     Q_PROPERTY(Spool::MovieGridModel *linkedItems READ linkedItems CONSTANT)
     Q_PROPERTY(QVariantList personItemRows READ personItemRows NOTIFY personItemsChanged)
     Q_PROPERTY(bool detailRowsBusy READ detailRowsBusy NOTIFY detailRowsChanged)
+    Q_PROPERTY(bool detailItemBusy READ detailItemBusy NOTIFY detailItemChanged)
     Q_PROPERTY(int detailContextInitialIndex READ detailContextInitialIndex NOTIFY detailRowsChanged)
     Q_PROPERTY(bool personItemsBusy READ personItemsBusy NOTIFY personItemsChanged)
 
@@ -43,6 +47,14 @@ public:
     {
         return &m_detailSimilarItems;
     }
+    MovieGridModel *detailTrailers()
+    {
+        return &m_detailTrailers;
+    }
+    MovieGridModel *detailExtras()
+    {
+        return &m_detailExtras;
+    }
     QVariantList personItemRows() const;
     MovieGridModel *linkedItems()
     {
@@ -51,6 +63,10 @@ public:
     bool detailRowsBusy() const
     {
         return m_detailRowsBusy;
+    }
+    bool detailItemBusy() const
+    {
+        return m_detailItemBusy;
     }
     int detailContextInitialIndex() const
     {
@@ -103,9 +119,15 @@ private:
     MovieGridModel m_detailSeasons;
     MovieGridModel m_detailSeasonOptions;
     MovieGridModel m_detailSimilarItems;
+    MovieGridModel m_detailTrailers;
+    MovieGridModel m_detailExtras;
     std::vector<PersonItemSection> m_personItemSections;
     MovieGridModel m_linkedItems;
     MovieItem m_detailItem;
+    // Recently fetched details, shown at once when an item is reopened while
+    // the fresh copy loads. Small: a browsing session revisits a handful.
+    QHash<QString, MovieItem> m_detailCache;
+    bool m_detailItemBusy = false;
     bool m_detailRowsBusy = false;
     int m_detailContextInitialIndex = 0;
     RequestGeneration m_detailRowsGeneration;

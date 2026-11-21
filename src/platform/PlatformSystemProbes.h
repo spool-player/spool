@@ -22,6 +22,8 @@ struct PlatformMemoryPolicy {
     int artworkDivisor = 32;
     qint64 minimumArtworkBytes = 0;
     qint64 maximumArtworkBytes = 0;
+    // Below this much memory, caches and the demuxer take half.
+    qint64 lowMemoryBytes = 1536LL * 1024LL * 1024LL;
 };
 
 PlatformCpuProbe platformCpuProbe(int logicalCpus);

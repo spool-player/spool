@@ -97,6 +97,27 @@ function Get-DefaultQCoroRoot {
 
 # Include the working tree and build contract, not just the submodule commit:
 # local edits must never reuse a DLL or disposable source mirror from before them.
+function Get-PreferredWindowsLlvmBin {
+    # Visual Studio bundles an x64 LLVM matched to its MSVC STL headers (for
+    # example VS 18.12's MSVC 14.52 STL rejects standalone LLVM 20 with
+    # STL1000). Prefer Visual Studio's bundled LLVM when it carries the full
+    # clang/lld/llvm-rc toolchain so both libmpv builds and revision checks
+    # resolve the same compiler binary.
+    if ($env:VSINSTALLDIR) {
+        $vsLlvmBin = Join-Path $env:VSINSTALLDIR 'VC\Tools\Llvm\x64\bin'
+        $vsLlvmTools = @('clang.exe', 'clang++.exe', 'clang-cl.exe', 'lld-link.exe', 'llvm-rc.exe')
+        if ((Test-Path -LiteralPath $vsLlvmBin) -and
+            (@($vsLlvmTools | Where-Object { -not (Test-Path -LiteralPath (Join-Path $vsLlvmBin $_) -PathType Leaf) }).Count -eq 0)) {
+            return $vsLlvmBin
+        }
+    }
+    $standalone = Join-Path $env:ProgramFiles 'LLVM\bin'
+    if (Test-Path -LiteralPath $standalone) {
+        return $standalone
+    }
+    return $null
+}
+
 function Get-MpvSourceRevision {
     $root = Get-RepositoryRoot
     $mpv = Join-Path $root 'mpv'
@@ -125,9 +146,14 @@ function Get-MpvSourceRevision {
     )) {
         $inputs.Add("$file=$((Get-FileHash -LiteralPath (Join-Path $root $file) -Algorithm SHA256).Hash)")
     }
+    $preferredLlvm = Get-PreferredWindowsLlvmBin
     foreach ($name in @('cl.exe', 'clang.exe', 'lld-link.exe')) {
-        $tool = Get-Command $name -ErrorAction Stop
-        $inputs.Add("$name=$((Get-FileHash -LiteralPath $tool.Source -Algorithm SHA256).Hash)")
+        $toolPath = if ($preferredLlvm -and $name -ne 'cl.exe' -and (Test-Path -LiteralPath (Join-Path $preferredLlvm $name) -PathType Leaf)) {
+            Join-Path $preferredLlvm $name
+        } else {
+            (Get-Command $name -ErrorAction Stop).Source
+        }
+        $inputs.Add("$name=$((Get-FileHash -LiteralPath $toolPath -Algorithm SHA256).Hash)")
     }
     $sha = [Security.Cryptography.SHA256]::Create()
     try {
@@ -207,6 +233,10 @@ function Initialize-WindowsMpvBuildEnvironment {
         (Join-Path $env:ProgramFiles 'NASM'),
         (Join-Path $env:ProgramFiles 'Git\usr\bin')
     )
+    $preferredLlvm = Get-PreferredWindowsLlvmBin
+    if ($preferredLlvm) {
+        $toolDirectories += $preferredLlvm
+    }
     foreach ($directory in $toolDirectories) {
         if (Test-Path -LiteralPath $directory) {
             $env:PATH = "$directory;$env:PATH"

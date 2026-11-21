@@ -12,6 +12,8 @@ FocusScope {
     property var shell
     readonly property var contextRow: detailRowsLoader.item ? detailRowsLoader.item.contextRow : null
     readonly property var peopleRow: detailRowsLoader.item ? detailRowsLoader.item.peopleRow : null
+    readonly property var trailersRow: detailRowsLoader.item ? detailRowsLoader.item.trailersRow : null
+    readonly property var extrasRow: detailRowsLoader.item ? detailRowsLoader.item.extrasRow : null
     readonly property var similarRow: detailRowsLoader.item ? detailRowsLoader.item.similarRow : null
     readonly property var seasonPickerList: seasonPickerPanel.menuList
     readonly property var routeContext: RoutePolicy.detailsContext(shell ? shell.routeArgs : ({}), Browse.items)
@@ -28,9 +30,29 @@ FocusScope {
                                                                                              || item.title
                                                                                              || item.seriesName
                                                                                              || "Selected item")
-    readonly property string seriesTitle: item.seriesName || (typeText === "Series" ? titleText : "")
+    // The route's copy can know the series before the full details do; a
+    // line that is on screen must not vanish while they load.
+    readonly property string seriesTitle: item.seriesName || routeItem.seriesName || (typeText === "Series" ? titleText :
+                                                                                                              "")
     readonly property string seasonTitleText: seasonTitle()
-    readonly property string seriesIdText: item.seriesId || ""
+    readonly property string seriesIdText: item.seriesId || routeItem.seriesId || ""
+    readonly property string overviewText: item.overview || routeItem.overview || ""
+    // First load of an item with nothing cached: hold the space its overview
+    // and credits will take, so they fill in rather than push the page.
+    readonly property bool detailsPending: Content.detailItemBusy && !fullDetailItem.movieId
+    readonly property bool detailsSettled: !Content.detailItemBusy && Boolean(fullDetailItem.movieId)
+    // How much space to hold comes from the last page of the same account
+    // and type to finish loading: servers differ (Plex seasons carry no
+    // summary, Jellyfin films list four kinds of credit), and a guess that
+    // is wrong either way moves the page twice instead of not at all.
+    readonly property string layoutKey: String(routeItem.movieId || "").split(":")[0] + ":" + typeText
+    readonly property var expectedLayout: (shell && shell.detailLayoutMemory[layoutKey]) || defaultLayout(typeText)
+    // From the data, never from the slots' children: an Item that starts out
+    // invisible makes its children report invisible too, so a slot sized by
+    // them could never grow past zero.
+    readonly property bool overviewPlaceholderShown: detailsPending && expectedLayout.overview && overviewText.length
+                                                     === 0
+    readonly property bool creditsPlaceholderShown: detailsPending && expectedLayout.credits > 0
     readonly property string seasonIdText: typeText === "Season" ? String(item.movieId || "") : String(item.seasonId
                                                                                                        || "")
 
@@ -64,7 +86,7 @@ FocusScope {
                                                                              && seriesIdText.length > 0
                                                                              && seasonIdText.length > 0
     readonly property bool canPlayAlbum: albumDetail && contextCount > 0
-    readonly property bool showPrimaryAction: canPlayEpisodicContainer || canPlayAlbum || (selectedIndex >= 0
+    readonly property bool showPrimaryAction: canPlayEpisodicContainer || canPlayAlbum || (Boolean(item.movieId)
                                                                                            && canPlay)
 
     readonly property bool hasProgress: Number(item.resumeTicks || 0) > 0 && Number(item.runtimeTicks || 0) > 0
@@ -90,7 +112,8 @@ FocusScope {
         if (!fullDetailItem.movieId || !mediaInfoAvailable)
             return null
         const smart = String(Settings.values["audio/trackMode"] || "Default") === "Smart"
-        return Content.detailMediaInfo(smart ? String(Settings.values["subtitles/language"] || "") : "")
+        const language = Settings.values["audio/language"] || Settings.values["subtitles/language"] || ""
+        return Content.detailMediaInfo(smart ? String(language) : "")
     }
     readonly property real copyWidth: showSideArt ? Math.min(width * 0.56, Metrics.scaled(940)) : width - contentMargin
                                                     * 2
@@ -98,6 +121,8 @@ FocusScope {
     readonly property int contextCount: Content.detailSeasons ? Content.detailSeasons.count : 0
     readonly property int seasonOptionCount: Content.detailSeasonOptions ? Content.detailSeasonOptions.count : 0
     readonly property int similarCount: Content.detailSimilarItems ? Content.detailSimilarItems.count : 0
+    readonly property int trailerCount: Content.detailTrailers ? Content.detailTrailers.count : 0
+    readonly property int extraCount: Content.detailExtras ? Content.detailExtras.count : 0
     readonly property bool contextPosterCards: typeText === "Series" || typeText === "BoxSet"
     readonly property bool contextItemsPossible: albumDetail || contextPosterCards || ((typeText === "Episode"
                                                                                         || typeText === "Season")
@@ -112,16 +137,17 @@ FocusScope {
     readonly property var metadataPeople: fullDetailItem.people && fullDetailItem.people.length > 0
                                           ? fullDetailItem.people : (item.people || [])
     readonly property var people: metadataPeople
-    readonly property bool reservePeopleRow: loadingDetailRows && !fullDetailItem.movieId && (typeText === "Movie"
-                                                                                              || typeText === "Series"
-                                                                                              || typeText === "Episode"
-                                                                                              || typeText === "Season")
+    // Seasons rarely carry their own cast, so reserving a row for one only
+    // drew a heading that then vanished.
+    readonly property bool reservePeopleRow: detailsPending && expectedLayout.people
     readonly property bool showPeopleRow: people.length > 0 || reservePeopleRow
     readonly property var genreList: fullDetailItem.genres && fullDetailItem.genres.length > 0 ? fullDetailItem.genres :
                                                                                                  (item.genres || [])
     readonly property var studioList: fullDetailItem.studios && fullDetailItem.studios.length > 0
                                       ? fullDetailItem.studios : (item.studios || [])
-    readonly property var metadataRows: buildMetadataRows()
+    // Partial genres and studios from the route copy would be reshuffled when
+    // the credits arrive above them; the placeholder holds the space instead.
+    readonly property var metadataRows: detailsPending ? [] : buildMetadataRows()
     readonly property bool showMetadataPanel: metadataRows.length > 0
     readonly property bool showSeriesLink: (typeText === "Episode" || typeText === "Season") && seriesIdText.length > 0
                                            && seriesTitle.length > 0
@@ -171,7 +197,7 @@ FocusScope {
                     root.focusOverflow(root.overflowIndex)
             })
         }
-        function onExtensionSupportChanged(accountId) {
+        function onCapabilitySupportChanged(accountId) {
             if (root.overflowOpen)
                 root.loadProviderActions()
         }
@@ -197,7 +223,10 @@ FocusScope {
         property bool enabledButton: true
         signal activated
 
-        width: primary ? Math.min(Math.max(implicitWidth, 190), 320) : Math.min(Math.max(implicitWidth, 132), 230)
+        width: Math.min(actionRow.width, primary ? Math.min(Math.max(implicitWidth, Metrics.scaled(190)), Metrics.scaled(
+                                                                320)) : Math.min(Math.max(implicitWidth, Metrics.scaled(
+                                                                                              132)), Metrics.scaled(
+                                                                                     230)))
         text: label
         kind: primary ? "primary" : "secondary"
         enabled: enabledButton
@@ -236,23 +265,27 @@ FocusScope {
         signal activated
 
         visible: label.length > 0
-        implicitWidth: linkColumn.implicitWidth
+        implicitWidth: linkText.implicitWidth + linkIcon.implicitWidth + linkRow.spacing
         implicitHeight: linkColumn.implicitHeight
+        Layout.maximumWidth: root.copyWidth
         focus: true
 
         Column {
             id: linkColumn
             anchors.left: parent.left
+            anchors.right: parent.right
             anchors.top: parent.top
             spacing: 2
 
             Row {
                 id: linkRow
+                width: parent.width
                 spacing: 8
 
                 AppText {
                     id: linkText
                     anchors.verticalCenter: parent.verticalCenter
+                    width: Math.max(0, linkRow.width - linkIcon.width - linkRow.spacing)
                     text: link.label
                     color: link.activeFocus || hover.hovered ? Theme.textPrimary : Theme.textSecondary
                     font.pixelSize: root.detailTitlePx
@@ -262,6 +295,7 @@ FocusScope {
                 }
 
                 MaterialIcon {
+                    id: linkIcon
                     anchors.verticalCenter: linkText.verticalCenter
                     name: link.dropdown ? "expand_more" : "chevron_right"
                     iconSize: Math.max(20, Math.round(root.detailTitlePx * 0.45))
@@ -410,7 +444,7 @@ FocusScope {
 
         width: parent ? parent.width : implicitWidth
         height: implicitHeight
-        implicitHeight: visible ? block.implicitHeight : 0
+        implicitHeight: hasRows ? block.implicitHeight : 0
         visible: hasRows
         focus: true
         onRowsChanged: normalizeSelection()
@@ -495,6 +529,68 @@ FocusScope {
         scheduleActiveRouteRefresh()
     }
 
+    onVisibleChanged: {
+        // The player's browse sheet reuses Content's detail rows while this
+        // resident page is hidden. Reclaim them when the page returns.
+        loadedDetailKey = ""
+        if (visible)
+            scheduleActiveRouteRefresh()
+    }
+
+    function defaultLayout(type) {
+        // Seasons on every server tried carried no summary or credits of their own.
+        switch (type) {
+        case "Movie":
+            return {
+                "overview": true,
+                "credits": 4,
+                "people": true
+            }
+        case "Series":
+            return {
+                "overview": true,
+                "credits": 3,
+                "people": true
+            }
+        case "Episode":
+            return {
+                "overview": true,
+                "credits": 2,
+                "people": true
+            }
+        default:
+            return {
+                "overview": false,
+                "credits": 0,
+                "people": false
+            }
+        }
+    }
+
+    onDetailsSettledChanged: if (detailsSettled)
+                                 Qt.callLater(rememberLayout)
+    function rememberLayout() {
+        if (!shell || !detailsSettled)
+            return
+        // Credits vary from item to item. Holding too much leaves room in the
+        // panel, too little moves the page, so lean on the larger recent count
+        // and let it shrink one row per load.
+        const credits = compactEpisodicDetail ? Math.min(2, metadataRows.length) : metadataRows.length
+        const previous = shell.detailLayoutMemory[layoutKey]
+        shell.rememberDetailLayout(layoutKey, {
+                                       "overview": overviewText.length > 0,
+                                       "credits": Math.max(credits, previous ? previous.credits - 1 : 0),
+                                       "people": people.length > 0
+                                   })
+    }
+
+    onFullDetailItemChanged: {
+        if (fullDetailItem.movieId) {
+            syncUserState()
+            Qt.callLater(root.refreshDetailRows)
+        }
+    }
+
     onRouteActiveChanged: {
         if (routeActive)
             enterRoute(false)
@@ -513,10 +609,45 @@ FocusScope {
         }
     }
     function currentMediaItem() {
+        if (focusZone === "trailers" && trailersRow && trailersRow.currentIndex >= 0)
+            return Content.detailTrailers.get(trailersRow.currentIndex)
+        if (focusZone === "extras" && extrasRow && extrasRow.currentIndex >= 0)
+            return Content.detailExtras.get(extrasRow.currentIndex)
         return item
     }
 
+    // Every navigation that lands here is a fresh entry, even to the item
+    // already shown: playback hands back the page it started from, and focus
+    // belongs on its primary action again. Deferred so the route's bindings
+    // have settled first.
+    Connections {
+        target: Router
+        function onRouteChanged() {
+            Qt.callLater(function () {
+                if (!root.routeActive)
+                    return
+                root.seasonPickerOpen = false
+                root.overflowOpen = false
+                root.enterRoute(true)
+            })
+        }
+    }
+
+    // The route's copy of the item is rebuilt whenever its source row
+    // changes, often with the same item in it. Only a different item resets
+    // focus and refetches; anything else would blank the page mid-load.
+    property string enteredItemId: ""
+    // Space a first load reserved for this item's overview and credits; the
+    // slots keep it so a smaller answer leaves room rather than a jump.
+    property real heldOverviewHeight: 0
+    property real heldCreditsHeight: 0
     onRouteItemChanged: {
+        const id = String(routeItem.movieId || "")
+        if (id === enteredItemId)
+            return
+        enteredItemId = id
+        heldOverviewHeight = 0
+        heldCreditsHeight = 0
         seasonPickerOpen = false
         overflowOpen = false
         if (routeActive)
@@ -530,12 +661,12 @@ FocusScope {
     }
 
     function scheduleActiveRouteRefresh() {
-        if (!routeActive || routeRefreshScheduled)
+        if (!routeActive || !visible || routeRefreshScheduled)
             return
         routeRefreshScheduled = true
         Qt.callLater(function () {
             root.routeRefreshScheduled = false
-            if (!root.routeActive)
+            if (!root.routeActive || !root.visible)
                 return
             root.refreshDetailRows()
             root.refreshItemDetail()
@@ -547,10 +678,6 @@ FocusScope {
         function onDetailRowsChanged() {
             root.updateDetailCounts()
             root.rebuildSeasonEntries()
-        }
-        function onDetailItemChanged() {
-            if (root.fullDetailItem.movieId)
-                root.syncUserState()
         }
     }
 
@@ -627,6 +754,18 @@ FocusScope {
         if (similarRow)
             similarRow.currentIndex = similarCount > 0 ? Math.max(0, Math.min(similarRow.currentIndex, similarCount - 1)) :
                                                          0
+        if (trailersRow)
+            trailersRow.currentIndex = trailerCount > 0 ? Math.max(0, Math.min(trailersRow.currentIndex, trailerCount
+                                                                               - 1)) : -1
+        if (extrasRow)
+            extrasRow.currentIndex = extraCount > 0 ? Math.max(0, Math.min(extrasRow.currentIndex, extraCount - 1)) : -1
+        if (routeActive && ((focusZone === "trailers" && trailerCount === 0) || (focusZone === "extras" && extraCount
+                                                                                 === 0)))
+            focusDefaultAction()
+        // Position before the episodes are first drawn: a deferred call let
+        // one frame show the row from episode 1 and then jump to the one to
+        // play. The deferred call stays for a row not laid out yet.
+        positionContextRow()
         Qt.callLater(positionContextRow)
     }
 
@@ -641,6 +780,8 @@ FocusScope {
     }
 
     function refreshDetailRows() {
+        if (!routeActive || !visible)
+            return
         const itemId = item.movieId || ""
         const key = itemId + ":" + typeText + ":" + seriesIdText + ":" + seasonIdText
         if (key === loadedDetailKey)
@@ -651,6 +792,10 @@ FocusScope {
             contextRow.currentIndex = 0
         if (similarRow)
             similarRow.currentIndex = 0
+        if (trailersRow)
+            trailersRow.currentIndex = 0
+        if (extrasRow)
+            extrasRow.currentIndex = 0
         Content.loadDetailRows(itemId, typeText, seriesIdText, seasonIdText)
     }
 
@@ -741,6 +886,10 @@ FocusScope {
             zones.push("context")
         if (showPeopleRow)
             zones.push("people")
+        if (trailerCount > 0)
+            zones.push("trailers")
+        if (extraCount > 0)
+            zones.push("extras")
         if (showSimilarRow)
             zones.push("similar")
         return zones
@@ -755,12 +904,16 @@ FocusScope {
             return actionRow
         if (zone === "metadata")
             return metadataPanel
-        if (zone === "context" || zone === "people" || zone === "similar")
+        if (zone === "context" || zone === "people" || zone === "trailers" || zone === "extras" || zone === "similar")
             detailRowsLoader.forced = true
         if (zone === "context")
             return contextRow
         if (zone === "people")
             return peopleRow
+        if (zone === "trailers")
+            return trailersRow
+        if (zone === "extras")
+            return extrasRow
         return similarRow
     }
 
@@ -777,6 +930,10 @@ FocusScope {
             contextRow.focusList()
         else if (zone === "people")
             peopleRow.focusList()
+        else if (zone === "trailers")
+            trailersRow.focusList()
+        else if (zone === "extras")
+            extrasRow.focusList()
         else if (zone === "similar")
             similarRow.focusList()
         else
@@ -809,16 +966,9 @@ FocusScope {
     }
 
     function orderedActions() {
-        const actions = []
-        if (showPrimaryAction)
-            actions.push(primaryAction)
-        if (showPrimaryAction && hasProgress)
-            actions.push(restartAction)
-        actions.push(playedAction)
-        actions.push(favoriteAction)
-        if (showContextPlaybackActions || mediaInfoAvailable || showLetterboxdAction || showExternalActions)
-            actions.push(menuAction)
-        return actions
+        return [primaryAction, restartAction, playedAction, favoriteAction, menuAction].filter(function (action) {
+            return action.visible
+        })
     }
 
     function focusActionIndex(index) {
@@ -828,11 +978,37 @@ FocusScope {
         focusZone = "actions"
         actionIndex = Math.max(0, Math.min(index, actions.length - 1))
         InputKeys.focus(actions[actionIndex])
+        InputKeys.positionChild(detailsFlick, actions[actionIndex])
         return true
     }
 
     function focusNextAction(delta) {
         return focusActionIndex(actionIndex + delta)
+    }
+
+    function focusActionVertically(delta) {
+        const actions = orderedActions()
+        const current = actions[actionIndex]
+        if (!current)
+            return false
+        let next = -1
+        let nearestRow = Infinity
+        let nearestColumn = Infinity
+        const center = current.x + current.width / 2
+        for (let index = 0; index < actions.length; ++index) {
+            const candidate = actions[index]
+            const rowDistance = (candidate.y - current.y) * delta
+            if (rowDistance <= 1)
+                continue
+            const columnDistance = Math.abs(candidate.x + candidate.width / 2 - center)
+            if (rowDistance < nearestRow - 1 || (Math.abs(rowDistance - nearestRow) <= 1 && columnDistance
+                                                 < nearestColumn)) {
+                next = index
+                nearestRow = rowDistance
+                nearestColumn = columnDistance
+            }
+        }
+        return next >= 0 && focusActionIndex(next)
     }
 
     function activatePrimary(fromStart) {
@@ -847,9 +1023,16 @@ FocusScope {
             App.playEpisodicContainer(seriesId, typeText === "Season" ? seasonIdText : "")
             return
         }
-        if (selectedIndex < 0 || !canPlay)
+        const itemId = String(item.movieId || "")
+        if (itemId.length <= 0 || !canPlay)
             return
-        App.playFromModel(itemModel, selectedIndex, fromStart === true)
+        // The model can change after this page was opened. Resolve the ID
+        // again at activation, and fetch it directly if it has left the model.
+        const index = RoutePolicy.modelIndexForItemId(itemModel, itemId, selectedIndex)
+        if (index >= 0)
+            App.playFromModel(itemModel, index, fromStart === true)
+        else
+            App.playItemId(itemId, fromStart === true)
     }
 
     function playDetailContext(shuffled) {
@@ -862,15 +1045,13 @@ FocusScope {
     function toggleFavorite() {
         if (!item.movieId)
             return
-        favoriteState = !favoriteState
-        ItemState.setFavorite(item.movieId, favoriteState)
+        ItemState.setFavorite(item.movieId, !favoriteState)
     }
 
     function togglePlayed() {
         if (!item.movieId)
             return
-        playedState = !playedState
-        ItemState.setPlayed(item.movieId, playedState)
+        ItemState.setPlayed(item.movieId, !playedState)
     }
 
     function overflowOptions() {
@@ -964,7 +1145,10 @@ FocusScope {
             return
         if (typeText === "Series") {
             if (shell)
-                shell.openDetailsAt(Content.detailSeasons, index, "season", detailsReturnRoute)
+                shell.openDetailsAt(Content.detailSeasons, index, "season", detailsReturnRoute, {
+                                        "seriesId": String(item.movieId || ""),
+                                        "seriesName": titleText
+                                    })
             return
         }
         if (albumDetail) {
@@ -973,6 +1157,11 @@ FocusScope {
         }
         if (shell)
             shell.openDetailsAt(Content.detailSeasons, index, "context", detailsReturnRoute)
+    }
+
+    function playRelatedMedia(model, index) {
+        if (!App.busy && model && index >= 0 && index < model.count)
+            App.playFromModel(model, index)
     }
 
     function openSimilarItem(index) {
@@ -1031,6 +1220,8 @@ FocusScope {
                 focusOverflow(0)
                 return true
             }
+            if (focusZone === "actions" && focusActionVertically(key === Qt.Key_Down ? 1 : -1))
+                return true
             return moveFocusZone(key === Qt.Key_Down ? 1 : -1)
         }
         if (focusZone === "actions") {
@@ -1063,6 +1254,10 @@ FocusScope {
             contextRow.activate()
         } else if (focusZone === "people") {
             peopleRow.activate()
+        } else if (focusZone === "trailers") {
+            trailersRow.activate()
+        } else if (focusZone === "extras") {
+            extrasRow.activate()
         } else if (focusZone === "similar") {
             similarRow.activate()
         } else if (focusZone === "overflow") {
@@ -1101,6 +1296,10 @@ FocusScope {
             return contextRow.longPress()
         if (focusZone === "similar")
             return similarRow.longPress()
+        if (focusZone === "trailers")
+            return trailersRow.longPress()
+        if (focusZone === "extras")
+            return extrasRow.longPress()
         return focusZone === "actions" && shell ? shell.openItemMenu(item, orderedActions()[actionIndex], {
                                                                          "deferBackdropDismissal": true,
                                                                          "containerId": actionContainerId,
@@ -1276,13 +1475,30 @@ FocusScope {
         color: Theme.bg
     }
 
+    // The backdrop's address changes as the route copy gives way to the
+    // full item, and a fresh Image is blank until it decodes, so the art
+    // blinked off for a frame. The last ready backdrop stays up underneath
+    // until its replacement is ready.
     Image {
+        id: heldBackdrop
+        anchors.fill: parent
+        fillMode: Image.PreserveAspectCrop
+        visible: root.backgroundArt.length > 0 && backdrop.status !== Image.Ready
+        opacity: status === Image.Ready ? 0.34 : 0
+        asynchronous: true
+        cache: true
+    }
+
+    Image {
+        id: backdrop
         anchors.fill: parent
         source: root.backgroundArt
         fillMode: Image.PreserveAspectCrop
         opacity: status === Image.Ready ? 0.34 : 0
         asynchronous: true
         cache: true
+        onStatusChanged: if (status === Image.Ready)
+                             heldBackdrop.source = source
     }
 
     Rectangle {
@@ -1402,23 +1618,78 @@ FocusScope {
                         metadata: root.metadataLine()
                     }
 
-                    AppText {
+                    // The overview, or the space held for it. The slot keeps the
+                    // tallest height it has held for this item, so a shorter or
+                    // missing overview leaves room instead of pulling the
+                    // actions up under the eye.
+                    Item {
+                        id: overviewSlot
+                        readonly property real contentHeight: root.overviewText.length > 0
+                                                              ? overviewLabel.implicitHeight :
+                                                                root.overviewPlaceholderShown
+                                                                ? overviewProbe.implicitHeight : 0
                         Layout.fillWidth: true
                         Layout.topMargin: root.compactEpisodicDetail ? 2 : 8
-                        visible: Boolean(root.item.overview && root.item.overview.length > 0)
-                        text: root.item.overview || ""
-                        color: Theme.textSecondary
-                        wrapMode: Text.Wrap
-                        font.pixelSize: Metrics.bodySizePx + 1
-                        lineHeight: 1.18
-                        maximumLineCount: root.compactEpisodicDetail ? (root.typeText === "Season" ? 3 : 4) : 5
-                        elide: Text.ElideRight
+                        Layout.preferredHeight: Math.max(contentHeight, root.heldOverviewHeight)
+                        visible: Layout.preferredHeight > 0
+                        onContentHeightChanged: if (root.overviewPlaceholderShown)
+                                                    root.heldOverviewHeight = Math.max(root.heldOverviewHeight,
+                                                                                       contentHeight)
+
+                        AppText {
+                            id: overviewLabel
+                            width: parent.width
+                            visible: root.overviewText.length > 0
+                            text: root.overviewText
+                            color: Theme.textSecondary
+                            wrapMode: Text.Wrap
+                            font.pixelSize: Metrics.bodySizePx + 1
+                            lineHeight: 1.18
+                            maximumLineCount: root.compactEpisodicDetail ? (root.typeText === "Season" ? 3 : 4) : 5
+                            elide: Text.ElideRight
+                        }
+
+                        // Same face and line height as the overview, so the bars
+                        // take exactly the lines they stand in for.
+                        AppText {
+                            id: overviewProbe
+                            visible: false
+                            text: root.compactEpisodicDetail ? "A\nA" : "A\nA\nA"
+                            font.pixelSize: Metrics.bodySizePx + 1
+                            lineHeight: 1.18
+                        }
+
+                        Item {
+                            id: overviewPlaceholder
+                            width: parent.width
+                            height: overviewProbe.implicitHeight
+                            visible: root.overviewPlaceholderShown
+                            Accessible.ignored: true
+
+                            Repeater {
+                                model: root.compactEpisodicDetail ? 2 : 3
+                                delegate: Rectangle {
+                                    required property int index
+                                    readonly property real line: overviewPlaceholder.height / (
+                                                                     root.compactEpisodicDetail ? 2 : 3)
+                                    y: index * line + line * 0.18
+                                    width: overviewPlaceholder.width * (index === (root.compactEpisodicDetail ? 1 : 2)
+                                                                        ? 0.62 : 0.96)
+                                    height: line * 0.64
+                                    radius: Theme.radiusSmall
+                                    color: Theme.bgHover
+                                    opacity: 0.8
+                                }
+                            }
+                        }
                     }
 
-                    Row {
+                    Flow {
                         id: actionRow
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 0
                         Layout.topMargin: root.compactEpisodicDetail ? 8 : 18
-                        spacing: 10
+                        spacing: Metrics.scaled(10)
 
                         DetailAction {
                             id: primaryAction
@@ -1449,7 +1720,7 @@ FocusScope {
                             iconName: root.playedState ? "visibility" : "visibility_off"
                             label: root.playedState ? "Mark unwatched" : "Mark watched"
                             checked: root.playedState
-                            enabledButton: root.selectedIndex >= 0
+                            enabledButton: Boolean(root.item.movieId)
                             onActivated: root.togglePlayed()
                         }
 
@@ -1458,7 +1729,7 @@ FocusScope {
                             iconName: root.favoriteState ? "favorite" : "favorite_border"
                             label: root.favoriteState ? "Remove favourite" : "Add favourite"
                             checked: root.favoriteState
-                            enabledButton: root.selectedIndex >= 0
+                            enabledButton: Boolean(root.item.movieId)
                             onActivated: root.toggleFavorite()
                         }
 
@@ -1468,7 +1739,7 @@ FocusScope {
                             label: "More"
                             checked: root.overflowOpen
                             visible: String(root.item.movieId || "").length > 0
-                            enabledButton: root.selectedIndex >= 0
+                            enabledButton: Boolean(root.item.movieId)
                             onActivated: root.toggleOverflow()
                         }
                     }
@@ -1481,14 +1752,72 @@ FocusScope {
                         font.pixelSize: Metrics.metaSizePx
                     }
 
-                    MetadataPanel {
-                        id: metadataPanel
+                    // The credits panel, or the space held for it; like the
+                    // overview slot it never gives back height it has held.
+                    Item {
+                        id: creditsSlot
+                        readonly property real contentHeight: metadataPanel.hasRows ? metadataPanel.implicitHeight :
+                                                                                      root.creditsPlaceholderShown
+                                                                                      ? metadataPlaceholder.height : 0
                         Layout.fillWidth: true
                         Layout.topMargin: root.compactEpisodicDetail ? 12 : 28
-                        rows: root.compactEpisodicDetail ? root.metadataRows.slice(0, 2) : root.metadataRows
-                        onActivated: (kind, value) => root.activateMetadata(kind, value)
-                        onLeaveUp: root.focusActionRow()
-                        onLeaveDown: root.focusFirstMediaRow()
+                        Layout.preferredHeight: Math.max(contentHeight, root.heldCreditsHeight)
+                        visible: Layout.preferredHeight > 0
+                        onContentHeightChanged: if (root.creditsPlaceholderShown)
+                                                    root.heldCreditsHeight = Math.max(root.heldCreditsHeight,
+                                                                                      contentHeight)
+
+                        Surface {
+                            id: metadataPlaceholder
+                            width: parent.width
+                            readonly property int rowCount: Math.max(1, root.expectedLayout.credits)
+                            // Measured, not guessed: a few pixels per row adds up
+                            // to a visible nudge when four credit rows arrive.
+                            readonly property int rowHeight: chipProbe.implicitHeight
+                            height: rowCount * rowHeight + (rowCount - 1) * 12 + 34
+                            visible: root.creditsPlaceholderShown
+                            baseColor: Theme.floatingPanel
+                            radius: Theme.radiusPanel
+                            Accessible.ignored: true
+
+                            MetadataChip {
+                                id: chipProbe
+                                visible: false
+                                text: "Ag"
+                            }
+
+                            Column {
+                                anchors.fill: parent
+                                anchors.margins: 17
+                                spacing: 12
+                                Repeater {
+                                    model: metadataPlaceholder.rowCount
+                                    delegate: Row {
+                                        spacing: 16
+                                        Rectangle {
+                                            width: 72
+                                            height: metadataPlaceholder.rowHeight
+                                            radius: Theme.radiusSmall
+                                            color: Theme.bgHover
+                                        }
+                                        Rectangle {
+                                            width: Metrics.scaled(240)
+                                            height: metadataPlaceholder.rowHeight
+                                            radius: Theme.radiusSmall
+                                            color: Theme.bgHover
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        MetadataPanel {
+                            id: metadataPanel
+                            rows: root.compactEpisodicDetail ? root.metadataRows.slice(0, 2) : root.metadataRows
+                            onActivated: (kind, value) => root.activateMetadata(kind, value)
+                            onLeaveUp: root.focusActionRow()
+                            onLeaveDown: root.focusFirstMediaRow()
+                        }
                     }
                 }
 
@@ -1556,7 +1885,8 @@ FocusScope {
                 property bool forced: false
                 readonly property int estimatedRowHeight: Math.round(root.rowPosterWidth * 1.5) + Metrics.scaled(94)
                 readonly property int estimatedRows: Number(root.showContextRow || root.reserveContextRow) + Number(
-                                                         root.showPeopleRow) + Number(root.showSimilarRow)
+                                                         root.showPeopleRow) + Number(root.showSimilarRow) + Number(
+                                                         root.trailerCount > 0) + Number(root.extraCount > 0)
                 active: forced || detailsFlick.contentY + detailsFlick.height * 1.5 >= y
                 // zoneTarget() needs the rows to exist synchronously when it
                 // forces them for focus; flipping asynchronous off completes
@@ -1568,18 +1898,27 @@ FocusScope {
                     id: detailRowsArea
                     property alias contextRow: contextRowItem
                     property alias peopleRow: peopleRowItem
+                    property alias trailersRow: trailersRowItem
+                    property alias extrasRow: extrasRowItem
                     property alias similarRow: similarRowItem
                     readonly property int rowSpacing: Metrics.sectionGapPx
                     readonly property int visibleRowCount: (contextRowItem.visible ? 1 : 0) + (peopleRowItem.visible
                                                                                                ? 1 : 0) + (
-                                                               similarRowItem.visible ? 1 : 0)
+                                                               similarRowItem.visible ? 1 : 0) + (
+                                                               trailersRowItem.visible ? 1 : 0) + (
+                                                               extrasRowItem.visible ? 1 : 0)
                     readonly property int rowsHeight: contextRowItem.height + peopleRowItem.height
+                                                      + trailersRowItem.height + extrasRowItem.height
                                                       + similarRowItem.height + Math.max(0, visibleRowCount - 1)
                                                       * rowSpacing
                     readonly property int contextY: 0
                     readonly property int peopleY: contextY + (contextRowItem.visible ? contextRowItem.height + rowSpacing :
                                                                                         0)
-                    readonly property int similarY: peopleY + (peopleRowItem.visible ? peopleRowItem.height + rowSpacing :
+                    readonly property int trailersY: peopleY + (peopleRowItem.visible ? peopleRowItem.height + rowSpacing :
+                                                                                        0)
+                    readonly property int extrasY: trailersY + (trailersRowItem.visible ? trailersRowItem.height + rowSpacing :
+                                                                                          0)
+                    readonly property int similarY: extrasY + (extrasRowItem.visible ? extrasRowItem.height + rowSpacing :
                                                                                        0)
                     implicitHeight: rowsHeight + root.contentMargin
 
@@ -1628,6 +1967,48 @@ FocusScope {
                         enabledRow: root.showPeopleRow
                         reserveWhenEmpty: root.reservePeopleRow
                         onActivated: (index, person) => root.openPerson(person)
+                    }
+
+                    MediaRow {
+                        id: trailersRowItem
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.leftMargin: root.contentMargin
+                        anchors.rightMargin: root.contentMargin
+                        y: detailRowsArea.trailersY
+                        title: "Trailers"
+                        model: Content.detailTrailers
+                        shell: root.shell
+                        cardKind: "landscape"
+                        cardWidth: root.rowLandscapeWidth
+                        cardGap: root.rowGap
+                        enabledRow: root.trailerCount > 0
+                        onActiveFocusChanged: {
+                            if (activeFocus)
+                                root.focusZone = "trailers"
+                        }
+                        onActivated: index => root.playRelatedMedia(Content.detailTrailers, index)
+                    }
+
+                    MediaRow {
+                        id: extrasRowItem
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.leftMargin: root.contentMargin
+                        anchors.rightMargin: root.contentMargin
+                        y: detailRowsArea.extrasY
+                        title: "Extras"
+                        model: Content.detailExtras
+                        shell: root.shell
+                        cardKind: "landscape"
+                        cardWidth: root.rowLandscapeWidth
+                        cardGap: root.rowGap
+                        enabledRow: root.extraCount > 0
+                        onActiveFocusChanged: {
+                            if (activeFocus)
+                                root.focusZone = "extras"
+                        }
+                        onActivated: index => root.playRelatedMedia(Content.detailExtras, index)
                     }
 
                     MediaRow {
@@ -1788,7 +2169,7 @@ FocusScope {
         checkedFor: function (entry) {
             return entry && String(entry.seasonId || "") === root.currentSeasonId
         }
-        onCurrentIndexChanged: root.seasonPickerIndex = currentIndex
+        onMoved: index => root.seasonPickerIndex = index
         onDismissed: root.closeSeasonPicker()
         onAccepted: entry => root.selectSeason(entry)
     }

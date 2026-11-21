@@ -10,6 +10,12 @@ bool configurePlatformEnvironment(const QString&)
 {
     if (!qEnvironmentVariableIsSet("QT_QPA_PLATFORM"))
         qputenv("QT_QPA_PLATFORM", QByteArrayLiteral("wayland"));
+    // Without a platform theme a QGuiApplication has no native file dialog,
+    // so Qt drew its own light, hard-to-read QML one. The desktop portal
+    // opens the system's chooser on KDE, GNOME and others, and Qt falls back
+    // to its own dialog where no portal is running. A user's choice stands.
+    if (!qEnvironmentVariableIsSet("QT_QPA_PLATFORMTHEME"))
+        qputenv("QT_QPA_PLATFORMTHEME", QByteArrayLiteral("xdgdesktopportal"));
     if (qEnvironmentVariableIsSet("SPOOL_VERBOSE_QT")) {
         qputenv("QT_DEBUG_PLUGINS", QByteArrayLiteral("1"));
         qputenv("QT_LOGGING_RULES",

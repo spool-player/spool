@@ -5,10 +5,11 @@ import QtQuick.Layouts
 import "../theme"
 import "../primitives"
 
-// Choosing where media comes from: official providers first, then the
-// community's, then any provider by link. Installing and signing in are one
-// step from here, and the same page updates or removes what is installed.
-// A curated build has no link row, and a bundled one only its own providers.
+// Adding an account: pick the service your media is on and sign in. Whether
+// that service's provider still has to be downloaded, or updated first, is
+// Spool's business, not the viewer's -- choosing a tile does whatever it
+// takes and then opens its sign-in. Spool's own services come first, then
+// the community's; a provider shared as a link is one quiet button below.
 FocusScope {
     id: root
 
@@ -17,98 +18,96 @@ FocusScope {
     property bool linkEditing: false
     property var menuEntry: null
     property var removingEntry: null
+    // "grid" or "link": where remote focus is.
+    property string focusArea: "grid"
+    property string problemText: ""
 
-    // Section headers only once there is more than one section.
-    readonly property var rows: {
-        const community = Store.storeAvailable && (Store.community.length > 0 || Store.loading)
-        const out = community ? [
-                                    {
-                                        "kind": "header",
-                                        "title": "By Spool"
-                                    }
-                                ] : []
-        out.push(...Store.official)
-        if (community) {
-            out.push({
-                         "kind": "header",
-                         "title": "Community",
-                         "loading": Store.loading
-                     })
-            out.push(...Store.community)
-        }
-        if (Store.storeAvailable && Store.linksAllowed)
-            out.push({
-                         "kind": "link",
-                         "id": "link"
-                     })
+    readonly property bool firstAccount: !Providers.hasAccounts
+    readonly property var entries: {
+        const out = Store.official.map(entry => Object.assign({}, entry, {
+                                                                  "community": false
+                                                              }))
+        if (Store.storeAvailable)
+            out.push(...Store.community.map(entry => Object.assign({}, entry, {
+                                                                       "community": true
+                                                                   })))
         return out
     }
+    readonly property bool linkAvailable: Store.storeAvailable && Store.linksAllowed
 
-    // Headers come and go as the store loads; stay on the same entry.
+    // The store loads in pieces; stay on the same service as it does.
     property string currentId: ""
-    onRowsChanged: {
-        const index = rows.findIndex(row => row.kind !== "header" && row.id === currentId)
-        list.currentIndex = index >= 0 ? index : step(-1, 1)
-    }
-
-    function step(from, delta) {
-        let index = from + delta
-        while (index >= 0 && index < rows.length && rows[index].kind === "header")
-            index += delta
-        return index >= 0 && index < rows.length ? index : from
+    onEntriesChanged: {
+        const index = entries.findIndex(entry => entry.id === currentId)
+        tiles.currentIndex = index >= 0 ? index : Math.min(Math.max(0, tiles.currentIndex), entries.length - 1)
     }
 
     focus: true
     Component.onCompleted: {
         Store.refresh(true)
-        list.currentIndex = step(-1, 1)
-        InputKeys.focus(list)
+        tiles.currentIndex = 0
+        InputKeys.focus(tiles)
     }
 
     function stateOf(entry) {
-        if (entry.kind === "link")
-            return Store.busy.url ? "busy" : "link"
-        if (entry.busy)
+        if (!entry)
+            return ""
+        if (entry.busy || pendingSetup === entry.id)
             return "busy"
         if (!entry.compatible)
-            return entry.installed ? "installed" : "incompatible"
-        if (entry.updateAvailable)
-            return "update"
-        return entry.installed ? "installed" : "get"
+            return entry.installed ? "ready" : "unavailable"
+        return "ready"
+    }
+
+    function accountCount(entry) {
+        return Providers.accounts.filter(account => account.moduleId === entry.id).length
+    }
+
+    function detailText(entry) {
+        switch (stateOf(entry)) {
+        case "busy":
+            return "Getting ready…"
+        case "unavailable":
+            return "Needs a newer version of Spool"
+        }
+        const accounts = accountCount(entry)
+        if (accounts > 0)
+            return accounts === 1 ? "1 account added · Add another" : accounts + " accounts added · Add another"
+        return entry.summary || ""
     }
 
     function beginSetup(id) {
         pendingSetup = ""
-        const context = Providers.beginSetup(id)
+        // A service already signed in to starts from that sign-in, the way a
+        // Plex app lists the account's other servers; a provider that cannot
+        // reuse it just asks again.
+        const signedIn = Providers.accounts.find(account => account.moduleId === id)
+        const context = signedIn ? Providers.beginSetup(id, signedIn.id, "addServer") : Providers.beginSetup(id)
         if (context)
             shell.openProviderScreen(context)
     }
 
-    function activateRow(index) {
-        const entry = rows[index]
-        if (!entry)
+    // One action whatever the provider's state: get it current, then sign in.
+    function activateEntry(index) {
+        const entry = entries[index]
+        if (!entry || stateOf(entry) !== "ready")
             return
-        switch (stateOf(entry)) {
-        case "link":
-            linkEditing = true
-            Qt.callLater(() => {
-                const item = list.itemAtIndex(index)
-                if (item)
-                    item.focusField()
-            })
-            break
-        case "update":
-            pendingSetup = entry.id
-            Store.update(entry.id)
-            break
-        case "installed":
-            beginSetup(entry.id)
-            break
-        case "get":
+        problemText = ""
+        if (!entry.installed) {
             pendingSetup = entry.id
             Store.install(entry.id)
-            break
+        } else if (entry.updateAvailable && entry.compatible) {
+            pendingSetup = entry.id
+            Store.update(entry.id)
+        } else {
+            beginSetup(entry.id)
         }
+    }
+
+    function openLink() {
+        linkEditing = true
+        focusArea = "link"
+        Qt.callLater(() => linkField.focusField())
     }
 
     function submitLink(text) {
@@ -117,57 +116,36 @@ FocusScope {
             return
         pendingSetup = "*"
         Store.addFromUrl(url)
+        closeLink()
+    }
+
+    function closeLink() {
         linkEditing = false
-        InputKeys.focus(list)
+        focusArea = "grid"
+        InputKeys.focus(tiles)
     }
 
     function openMenu(index) {
-        const entry = rows[index]
-        if (!entry || !entry.installed)
+        const entry = entries[index]
+        if (!entry || !entry.installed || entry.removable === false || entry.bundled)
             return false
         menuEntry = entry
         menuLoader.active = true
         return true
     }
 
-    readonly property var menuActions: {
-        const entry = menuEntry
-        if (!entry)
-            return []
-        const out = [
-                  {
-                      "label": "Add an account",
-                      "value": "setup"
-                  }
-              ]
-        if (entry.updateAvailable)
-            out.push({
-                         "label": "Update to " + entry.version,
-                         "value": "update"
-                     })
-        if (entry.removable !== false && !entry.bundled)
-            out.push({
-                         "label": "Remove",
-                         "value": "remove"
-                     })
-        return out
-    }
-
     function choose(index) {
         const entry = menuEntry
-        const action = menuActions[index] ? menuActions[index].value : ""
         closeMenu()
-        if (action === "setup")
-            beginSetup(entry.id)
-        else if (action === "update")
-            Store.update(entry.id)
-        else if (action === "remove")
+        if (index === 0)
+            activateEntry(entries.findIndex(candidate => candidate.id === entry.id))
+        else if (index === 1)
             removingEntry = entry
     }
 
     function closeMenu() {
         menuLoader.active = false
-        InputKeys.focus(list)
+        InputKeys.focus(tiles)
     }
 
     function activate() {
@@ -175,17 +153,22 @@ FocusScope {
             return removeConfirmation.item.activate()
         if (menuLoader.item)
             return menuLoader.item.activate()
-        activateRow(list.currentIndex)
+        if (focusArea === "link") {
+            if (!linkEditing)
+                openLink()
+            return
+        }
+        activateEntry(tiles.currentIndex)
     }
 
     function longPress() {
-        return openMenu(list.currentIndex)
+        return focusArea === "grid" && openMenu(tiles.currentIndex)
     }
 
     function back() {
         if (removingEntry) {
             removingEntry = null
-            InputKeys.focus(list)
+            InputKeys.focus(tiles)
             return true
         }
         if (menuLoader.item) {
@@ -193,8 +176,7 @@ FocusScope {
             return true
         }
         if (linkEditing) {
-            linkEditing = false
-            InputKeys.focus(list)
+            closeLink()
             return true
         }
         return false
@@ -209,12 +191,32 @@ FocusScope {
             return false
         if (phase !== "press")
             return InputKeys.isDirection(key)
-        if (key === Qt.Key_Down)
-            list.currentIndex = step(list.currentIndex, 1)
-        else if (key === Qt.Key_Up)
-            list.currentIndex = step(list.currentIndex, -1)
-        else if (key === Qt.Key_Menu || key === Qt.Key_M)
-            return openMenu(list.currentIndex)
+        const columns = Math.max(1, tiles.columns)
+        if (focusArea === "link") {
+            if (key === Qt.Key_Up) {
+                focusArea = "grid"
+                InputKeys.focus(tiles)
+            }
+            return InputKeys.isDirection(key)
+        }
+        const index = tiles.currentIndex
+        if (key === Qt.Key_Left && index % columns > 0)
+            tiles.currentIndex = index - 1
+        else if (key === Qt.Key_Right && index % columns < columns - 1 && index + 1 < entries.length)
+            tiles.currentIndex = index + 1
+        else if (key === Qt.Key_Up && index >= columns)
+            tiles.currentIndex = index - columns
+        else if (key === Qt.Key_Down) {
+            if (index + columns < entries.length)
+                tiles.currentIndex = index + columns
+            else if (Math.floor(index / columns) < Math.floor((entries.length - 1) / columns))
+                tiles.currentIndex = entries.length - 1
+            else if (linkAvailable) {
+                focusArea = "link"
+                linkButton.forceActiveFocus()
+            }
+        } else if (key === Qt.Key_Menu || key === Qt.Key_M)
+            return openMenu(index)
         else
             return InputKeys.isDirection(key)
         return true
@@ -226,8 +228,9 @@ FocusScope {
             if (root.pendingSetup === id || root.pendingSetup === "*")
                 root.beginSetup(id)
         }
-        function onProblem() {
+        function onProblem(message) {
             root.pendingSetup = ""
+            root.problemText = message
         }
     }
 
@@ -236,17 +239,19 @@ FocusScope {
         color: Theme.bg
     }
 
-    Item {
-        id: column
-        anchors.top: parent.top
-        anchors.bottom: parent.bottom
-        anchors.horizontalCenter: parent.horizontalCenter
-        width: Math.min(parent.width - Metrics.pageMarginPx * 2, Metrics.scaled(880))
+    Flickable {
+        id: flick
+        anchors.fill: parent
+        contentWidth: width
+        contentHeight: column.implicitHeight + Metrics.pageMarginPx * 2
+        boundsBehavior: Flickable.StopAtBounds
+        clip: true
 
         ColumnLayout {
-            id: header
+            id: column
+            x: (flick.width - width) / 2
             y: Math.max(Metrics.pageMarginPx, Metrics.scaled(56))
-            width: parent.width
+            width: Math.min(flick.width - Metrics.pageMarginPx * 2, Metrics.scaled(1120))
             spacing: Metrics.scaled(10)
 
             RowLayout {
@@ -254,7 +259,7 @@ FocusScope {
                 spacing: Metrics.scaled(14)
 
                 IconButton {
-                    visible: Providers.hasAccounts
+                    visible: !root.firstAccount
                     iconName: "arrow_back"
                     accessibleName: "Back"
                     onClicked: Router.pop("accounts")
@@ -262,148 +267,127 @@ FocusScope {
 
                 AppText {
                     Layout.fillWidth: true
-                    text: "Add a provider"
+                    text: root.firstAccount ? "Welcome to Spool" : "Add an account"
                     font.pixelSize: Metrics.scaled(44)
                     font.weight: Font.DemiBold
                     elide: Text.ElideRight
+                }
+
+                BusySpinner {
+                    Layout.preferredWidth: Metrics.scaled(24)
+                    Layout.preferredHeight: Metrics.scaled(24)
+                    running: Store.loading
+                    visible: running
                 }
             }
 
             AppText {
                 Layout.fillWidth: true
-                text: "Choose where your media comes from. You can add as many as you like."
+                text: root.firstAccount ? "Where's your media? Choose the service it's on and sign in." :
+                                          "Choose a service and sign in. You can add as many as you like."
                 color: Theme.textSecondary
                 font.pixelSize: Metrics.scaled(20)
                 wrapMode: Text.WordWrap
             }
             AppText {
                 Layout.fillWidth: true
-                visible: Store.error.length > 0
+                visible: Store.error.length > 0 && root.entries.length === 0
                 text: Store.error
                 color: Theme.errorText
                 font.pixelSize: Metrics.bodySizePx
                 wrapMode: Text.Wrap
             }
-        }
 
-        ListView {
-            id: list
-            anchors.top: header.bottom
-            anchors.topMargin: Metrics.scaled(32)
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.bottom: parent.bottom
-            clip: true
-            model: root.rows
-            currentIndex: 0
-            onCurrentIndexChanged: root.currentId = root.rows[currentIndex] ? String(root.rows[currentIndex].id || "") :
-                                                                              ""
-            focus: true
-            keyNavigationEnabled: false
-            boundsBehavior: Flickable.StopAtBounds
-            highlightMoveDuration: 0
-            spacing: Metrics.scaled(14)
-            footer: Item {
-                width: list.width
-                height: Metrics.pageMarginPx
-            }
+            GridView {
+                id: tiles
 
-            delegate: Item {
-                id: slot
-                required property int index
-                required property var modelData
-                readonly property bool isHeader: modelData.kind === "header"
+                readonly property real minimumTile: Metrics.scaled(250)
+                readonly property int columns: Math.max(1, Math.floor(width / minimumTile))
 
-                function focusField() {
-                    linkField.focusRow()
+                Layout.fillWidth: true
+                Layout.topMargin: Metrics.scaled(26)
+                Layout.preferredHeight: Math.ceil(count / columns) * cellHeight
+                interactive: false
+                focus: true
+                keyNavigationEnabled: false
+                highlightMoveDuration: 0
+                model: root.entries
+                cellWidth: Math.floor(width / columns)
+                cellHeight: Metrics.scaled(212)
+                onCurrentIndexChanged: {
+                    root.currentId = root.entries[currentIndex] ? String(root.entries[currentIndex].id || "") : ""
+                    const item = currentItem
+                    if (!item || !activeFocus)
+                        return
+                    const bounds = item.mapToItem(flick.contentItem, 0, 0, item.width, item.height)
+                    if (bounds.y < flick.contentY)
+                        flick.contentY = Math.max(0, bounds.y - Metrics.scaled(24))
+                    else if (bounds.y + bounds.height > flick.contentY + flick.height)
+                        flick.contentY = bounds.y + bounds.height + Metrics.scaled(24) - flick.height
                 }
 
-                width: list.width
-                height: isHeader ? Metrics.scaled(index === 0 ? 32 : 56) : row.height
+                delegate: Item {
+                    id: slot
 
-                AppText {
-                    visible: slot.isHeader
-                    anchors.left: parent.left
-                    anchors.leftMargin: Metrics.scaled(4)
-                    anchors.bottom: parent.bottom
-                    anchors.bottomMargin: Metrics.scaled(4)
-                    text: String(slot.modelData.title || "").toUpperCase()
-                    color: Theme.textMuted
-                    font.pixelSize: Metrics.scaled(15)
-                    font.weight: Font.DemiBold
-                    font.letterSpacing: Metrics.scaled(1)
-                }
+                    required property int index
+                    required property var modelData
+                    readonly property string serviceState: root.stateOf(modelData)
+                    readonly property bool current: GridView.isCurrentItem && Metrics.keyboardFocusActive
+                                                    && tiles.activeFocus && root.focusArea === "grid"
 
-                BusySpinner {
-                    anchors.right: parent.right
-                    anchors.bottom: parent.bottom
-                    width: Metrics.scaled(18)
-                    height: width
-                    running: slot.isHeader && Boolean(slot.modelData.loading)
-                    visible: running
-                }
+                    width: tiles.cellWidth
+                    height: tiles.cellHeight
 
-                Rectangle {
-                    id: row
-                    visible: !slot.isHeader
-                    readonly property int index: slot.index
-                    readonly property var modelData: slot.modelData
-                    readonly property string state: root.stateOf(modelData)
-                    readonly property bool current: slot.ListView.isCurrentItem && Metrics.keyboardFocusActive
-                                                    && list.activeFocus
-                    readonly property bool isLink: modelData.kind === "link"
-
-                    width: list.width
-                    height: isLink && root.linkEditing ? linkForm.implicitHeight + Metrics.scaled(40) : Math.max(
-                                                             Metrics.touchTargetPx, Metrics.scaled(104))
-                    radius: Theme.radiusPanel
-                    color: current ? Theme.focusedFill : hover.hovered ? Theme.bgHover : Theme.bgRaised
-                    border.width: current ? Theme.focusBorderWidth : Theme.hoverBorderWidth
-                    border.color: current ? Theme.accent : Theme.border
-
-                    RowLayout {
+                    Rectangle {
                         anchors.fill: parent
-                        anchors.leftMargin: Metrics.scaled(24)
-                        anchors.rightMargin: Metrics.scaled(24)
-                        spacing: Metrics.scaled(22)
-                        visible: !(row.isLink && root.linkEditing)
-
-                        Loader {
-                            Layout.preferredWidth: Metrics.scaled(64)
-                            Layout.preferredHeight: Metrics.scaled(64)
-                            sourceComponent: row.isLink ? linkIcon : providerIcon
-                            Component {
-                                id: providerIcon
-                                ProviderIcon {
-                                    source: row.modelData.iconUrl || ""
-                                    name: row.modelData.name || ""
-                                    seed: row.modelData.id || ""
-                                    // The folders provider is built in and has no package icon.
-                                    symbol: row.modelData.id === "spool.local" ? "computer" : ""
-                                }
-                            }
-                            Component {
-                                id: linkIcon
-                                Rectangle {
-                                    radius: Math.round(width * 0.22)
-                                    color: Theme.bgPanel
-                                    MaterialIcon {
-                                        anchors.centerIn: parent
-                                        name: "link"
-                                        iconSize: Metrics.scaled(32)
-                                        iconColor: Theme.textSecondary
-                                    }
-                                }
-                            }
-                        }
+                        anchors.margins: Metrics.scaled(8)
+                        radius: Theme.radiusPanel
+                        color: slot.current ? Theme.focusedFill : hover.hovered ? Theme.bgHover : Theme.bgRaised
+                        border.width: slot.current ? Theme.focusBorderWidth : Theme.hoverBorderWidth
+                        border.color: slot.current ? Theme.accent : Theme.border
+                        opacity: slot.serviceState === "unavailable" ? 0.55 : 1
 
                         ColumnLayout {
-                            Layout.fillWidth: true
-                            spacing: Metrics.scaled(4)
+                            anchors.fill: parent
+                            anchors.margins: Metrics.scaled(20)
+                            spacing: Metrics.scaled(8)
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: Metrics.scaled(12)
+
+                                ProviderIcon {
+                                    Layout.preferredWidth: Metrics.scaled(64)
+                                    Layout.preferredHeight: Metrics.scaled(64)
+                                    source: slot.modelData.iconUrl || ""
+                                    name: slot.modelData.name || ""
+                                    seed: slot.modelData.id || ""
+                                    // The folders provider is built in and has no package icon.
+                                    symbol: slot.modelData.id === "spool.local" ? "computer" : ""
+                                }
+                                Item {
+                                    Layout.fillWidth: true
+                                }
+                                BusySpinner {
+                                    Layout.preferredWidth: Metrics.scaled(26)
+                                    Layout.preferredHeight: Metrics.scaled(26)
+                                    Layout.alignment: Qt.AlignTop
+                                    running: slot.serviceState === "busy"
+                                    visible: running
+                                }
+                                MaterialIcon {
+                                    Layout.alignment: Qt.AlignTop
+                                    visible: root.accountCount(slot.modelData) > 0 && slot.serviceState === "ready"
+                                    name: "check_circle"
+                                    iconSize: Metrics.scaled(24)
+                                    iconColor: Theme.accent
+                                }
+                            }
 
                             AppText {
                                 Layout.fillWidth: true
-                                text: row.isLink ? "Add from a link" : row.modelData.name || ""
+                                Layout.topMargin: Metrics.scaled(4)
+                                text: slot.modelData.name || ""
                                 font.pixelSize: Metrics.scaled(24)
                                 font.weight: Font.DemiBold
                                 elide: Text.ElideRight
@@ -412,101 +396,108 @@ FocusScope {
 
                             SecondaryText {
                                 Layout.fillWidth: true
-                                text: row.state === "incompatible" ? "Needs a newer Spool" : row.isLink
-                                                                     ? "Install a provider someone has shared with you" :
-                                                                       row.modelData.summary || ""
-                                visible: text.length > 0
-                                color: Theme.textSecondary
+                                Layout.fillHeight: true
+                                text: root.detailText(slot.modelData)
+                                color: slot.serviceState === "unavailable" ? Theme.textMuted : Theme.textSecondary
                                 font.pixelSize: Metrics.scaled(17)
+                                wrapMode: Text.WordWrap
                                 elide: Text.ElideRight
-                                maximumLineCount: 1
+                                maximumLineCount: 2
+                                verticalAlignment: Text.AlignTop
                             }
-                        }
 
-                        // One action per row, named for what pressing the row does.
-                        Rectangle {
-                            Layout.preferredHeight: Metrics.scaled(44)
-                            Layout.preferredWidth: Math.max(Metrics.scaled(120), chipText.implicitWidth + Metrics.scaled(
-                                                                40))
-                            visible: row.state !== "incompatible" && row.state !== "busy"
-                            radius: height / 2
-                            color: row.state === "get" || row.state === "update" ? Theme.accentDim : Theme.bgPanel
-                            border.width: Theme.hoverBorderWidth
-                            border.color: row.state === "get" || row.state === "update" ? Theme.accentDim : Theme.border
-
+                            // Not made by Spool: said once, plainly, without
+                            // turning the choice into a lecture.
                             AppText {
-                                id: chipText
-                                anchors.centerIn: parent
-                                text: ({
-                                           "get": "Install",
-                                           "update": "Update",
-                                           "installed": "Add account",
-                                           "link": "Paste link"
-                                       })[row.state] || ""
-                                font.pixelSize: Metrics.scaled(17)
+                                visible: slot.modelData.community === true
+                                text: "Community"
+                                color: Theme.textMuted
+                                font.pixelSize: Metrics.scaled(14)
                                 font.weight: Font.DemiBold
+                                font.letterSpacing: Metrics.scaled(1)
                             }
                         }
 
-                        BusySpinner {
-                            Layout.preferredWidth: Metrics.scaled(24)
-                            Layout.preferredHeight: Metrics.scaled(24)
-                            running: row.state === "busy"
-                            visible: running
-                        }
-                    }
-
-                    ColumnLayout {
-                        id: linkForm
-                        anchors.left: parent.left
-                        anchors.right: parent.right
-                        anchors.verticalCenter: parent.verticalCenter
-                        anchors.margins: Metrics.scaled(20)
-                        visible: row.isLink && root.linkEditing
-                        spacing: Metrics.scaled(10)
-
-                        TextFieldRow {
-                            id: linkField
-                            Layout.fillWidth: true
-                            label: "Link"
-                            placeholderText: "https://github.com/you/spool-provider"
-                            inputMethodHints: Qt.ImhUrlCharactersOnly | Qt.ImhNoAutoUppercase | Qt.ImhNoPredictiveText
-                            onAccepted: root.submitLink(text)
+                        HoverHandler {
+                            id: hover
                         }
 
-                        RowLayout {
-                            Layout.alignment: Qt.AlignRight
-                            spacing: Metrics.scaled(10)
-                            ActionButton {
-                                text: "Cancel"
-                                kind: "flat"
-                                onClicked: root.back()
+                        TapHandler {
+                            acceptedButtons: Qt.LeftButton | Qt.RightButton
+                            onTapped: (point, button) => {
+                                tiles.currentIndex = slot.index
+                                root.focusArea = "grid"
+                                if (button === Qt.RightButton)
+                                    root.openMenu(slot.index)
+                                else
+                                    root.activateEntry(slot.index)
                             }
-                            ActionButton {
-                                text: "Add"
-                                kind: "primary"
-                                enabled: linkField.text.trim().length > 0
-                                onClicked: root.submitLink(linkField.text)
-                            }
+                            onLongPressed: root.openMenu(slot.index)
                         }
                     }
+                }
+            }
 
-                    HoverHandler {
-                        id: hover
-                        enabled: !(row.isLink && root.linkEditing)
+            RowLayout {
+                Layout.alignment: Qt.AlignHCenter
+                Layout.topMargin: Metrics.scaled(12)
+                visible: root.pendingSetup === "*" || root.problemText.length > 0
+                spacing: Metrics.scaled(10)
+                BusySpinner {
+                    Layout.preferredWidth: Metrics.scaled(20)
+                    Layout.preferredHeight: Metrics.scaled(20)
+                    running: root.pendingSetup === "*"
+                    visible: running
+                }
+                AppText {
+                    text: root.pendingSetup === "*" ? "Getting the provider from that link…" : root.problemText
+                    color: root.pendingSetup === "*" ? Theme.textSecondary : Theme.errorText
+                    font.pixelSize: Metrics.bodySizePx
+                    wrapMode: Text.Wrap
+                }
+            }
+
+            ActionButton {
+                id: linkButton
+                Layout.alignment: Qt.AlignHCenter
+                Layout.topMargin: Metrics.scaled(18)
+                visible: root.linkAvailable && !root.linkEditing
+                kind: "flat"
+                iconName: "link"
+                text: "Have a link to a provider?"
+                onClicked: root.openLink()
+            }
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.maximumWidth: Metrics.scaled(720)
+                Layout.alignment: Qt.AlignHCenter
+                Layout.topMargin: Metrics.scaled(18)
+                visible: root.linkEditing
+                spacing: Metrics.scaled(10)
+
+                TextFieldRow {
+                    id: linkField
+                    Layout.fillWidth: true
+                    label: "Link"
+                    placeholderText: "https://github.com/you/spool-provider"
+                    inputMethodHints: Qt.ImhUrlCharactersOnly | Qt.ImhNoAutoUppercase | Qt.ImhNoPredictiveText
+                    onAccepted: root.submitLink(text)
+                }
+
+                RowLayout {
+                    Layout.alignment: Qt.AlignRight
+                    spacing: Metrics.scaled(10)
+                    ActionButton {
+                        text: "Cancel"
+                        kind: "flat"
+                        onClicked: root.closeLink()
                     }
-
-                    TapHandler {
-                        enabled: !(row.isLink && root.linkEditing)
-                        acceptedButtons: Qt.LeftButton | Qt.RightButton
-                        onTapped: (point, button) => {
-                            list.currentIndex = row.index
-                            if (button === Qt.RightButton)
-                                root.openMenu(row.index)
-                            else
-                                root.activateRow(row.index)
-                        }
-                        onLongPressed: root.openMenu(row.index)
+                    ActionButton {
+                        text: "Add"
+                        kind: "primary"
+                        enabled: linkField.text.trim().length > 0
+                        onClicked: root.submitLink(linkField.text)
                     }
                 }
             }
@@ -519,9 +510,9 @@ FocusScope {
         active: false
         sourceComponent: OptionPickerDialog {
             visible: true
-            anchorItem: list.currentItem
+            anchorItem: tiles.currentItem
             title: root.menuEntry ? root.menuEntry.name : ""
-            options: root.menuActions.map(action => action.label)
+            options: ["Add an account", "Remove from this device"]
             onSelected: index => root.choose(index)
             onDismissed: root.closeMenu()
         }
@@ -532,19 +523,18 @@ FocusScope {
         active: Boolean(root.removingEntry)
         z: 210
         sourceComponent: ConfirmationDialog {
-            title: "Remove provider?"
-            message: "Remove " + root.removingEntry.name
-                     + " and its saved accounts from this device? Your server accounts and media will not be deleted."
-            confirmText: "Remove provider"
+            title: "Remove " + root.removingEntry.name + "?"
+            message: "Its accounts are signed out on this device. Nothing on your server is deleted, and you can add it again any time."
+            confirmText: "Remove"
             destructive: true
             onAccepted: {
                 Store.uninstall(root.removingEntry.id)
                 root.removingEntry = null
-                InputKeys.focus(list)
+                InputKeys.focus(tiles)
             }
             onDismissed: {
                 root.removingEntry = null
-                InputKeys.focus(list)
+                InputKeys.focus(tiles)
             }
         }
     }

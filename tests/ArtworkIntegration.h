@@ -2,6 +2,7 @@
 
 #include "app/ArtworkImageProvider.h"
 #include "app/ArtworkService.h"
+#include "app/BrowseSessionController.h"
 #include "models/MovieGridModel.h"
 #include "provider/ArtworkSource.h"
 #include <QBuffer>
@@ -11,7 +12,12 @@
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QTemporaryDir>
+#include <QTimer>
 #include <QUrlQuery>
+
+#include <algorithm>
+#include <memory>
+#include <vector>
 
 class ArtworkIntegration final : public QObject, public Spool::ArtworkSource {
     Q_OBJECT
@@ -94,6 +100,80 @@ public:
         engine->rootContext()->setContextProperty("NativeWindow", window);
         engine->rootContext()->setContextProperty("Settings", settings);
     }
+    // A name-sorted library of `rows` titles behind a server that answers
+    // each block `latencyMs` later, through the real browse controller: the
+    // sparse model, block scheduling, letter index and seek the page uses.
+    Q_INVOKABLE QObject *prepareSparseLibrary(
+        QObject *libraries, QObject *window, QObject *settings, int rows, int latencyMs)
+    {
+        sparseTitles.clear();
+        for (int i = 0; i < rows; ++i) {
+            // Skewed like a real library: lots of S, T and M, few Q and X.
+            static const char *const starts[] = { "S", "S", "T", "M", "B", "A", "C", "D", "H", "L", "P", "R", "W", "F",
+                "G", "N", "K", "J", "E", "I", "O", "V", "Y", "Z", "U", "1" };
+            const QString title = QString::fromLatin1(starts[(i * 7919) % 26])
+                + QStringLiteral("ample %1").arg((i * 104729) % 1000003, 7, 10, QLatin1Char('0'));
+            sparseTitles.push_back(title);
+        }
+        std::sort(sparseTitles.begin(), sparseTitles.end(),
+            [](const QString& a, const QString& b) { return a.compare(b, Qt::CaseInsensitive) < 0; });
+        sparse = std::make_unique<Spool::BrowseSessionController>(nullptr);
+        // Returned to QML below: without this the engine would own, and
+        // delete, what the unique_ptr also deletes.
+        QQmlEngine::setObjectOwnership(sparse.get(), QQmlEngine::CppOwnership);
+        QQmlEngine::setObjectOwnership(sparse->items(), QQmlEngine::CppOwnership);
+        blockRequests = 0;
+        QObject::connect(
+            sparse.get(), &Spool::BrowseSessionController::blockRequested, this, [this, latencyMs](int start) {
+                ++blockRequests;
+                QTimer::singleShot(latencyMs, this,
+                    [this, start] { sparse->applyBlock(start, sparsePage(start), sparse->cacheKey()); });
+            });
+        QObject::connect(sparse.get(), &Spool::BrowseSessionController::indexRequested, this, [this, latencyMs] {
+            QTimer::singleShot(latencyMs, this, [this] { sparse->setExactIndex({}, sparse->cacheKey()); });
+        });
+        Spool::LibraryItem library;
+        library.id = QStringLiteral("01234567:library");
+        library.name = QStringLiteral("Films");
+        library.collectionType = QStringLiteral("movies");
+        sparse->enterLibrary(library, { { QStringLiteral("sortBy"), QStringLiteral("SortName") } });
+        sparse->setPage(sparsePage(0), QStringLiteral("profile:library"), false);
+        requestedItems.clear();
+        engine->rootContext()->setContextProperty("Browse", sparse.get());
+        engine->rootContext()->setContextProperty("Libraries", libraries);
+        engine->rootContext()->setContextProperty("NativeWindow", window);
+        engine->rootContext()->setContextProperty("Settings", settings);
+        return sparse.get();
+    }
+    Q_INVOKABLE int sparseBlockRequests() const
+    {
+        return blockRequests;
+    }
+    Q_INVOKABLE bool sparseRowLoaded(int row) const
+    {
+        return sparse && sparse->items()->isLoaded(row);
+    }
+    Spool::PagedMovieItems sparsePage(int start) const
+    {
+        Spool::PagedMovieItems page;
+        page.startIndex = start;
+        page.limit = 100;
+        page.totalRecordCount = static_cast<int>(sparseTitles.size());
+        page.seekable = true;
+        const int end = std::min(page.totalRecordCount, start + 100);
+        for (int row = start; row < end; ++row) {
+            Spool::MovieItem item;
+            item.id = QStringLiteral("01234567:library-%1").arg(row);
+            item.title = sparseTitles[static_cast<size_t>(row)];
+            item.itemType = QStringLiteral("Movie");
+            item.posterTag = QStringLiteral("poster");
+            page.items.push_back(std::move(item));
+        }
+        page.exhausted = end >= page.totalRecordCount;
+        if (!page.exhausted)
+            page.nextCursor = QString::number(end);
+        return page;
+    }
     void expose(QQmlEngine *engine)
     {
         engine->rootContext()->setContextProperty("ArtworkModel", &model);
@@ -112,4 +192,7 @@ public:
     Spool::ArtworkService artwork;
     QTcpServer server;
     QByteArray png;
+    std::vector<QString> sparseTitles;
+    std::unique_ptr<Spool::BrowseSessionController> sparse;
+    int blockRequests = 0;
 };

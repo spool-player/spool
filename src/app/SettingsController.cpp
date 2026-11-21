@@ -910,6 +910,12 @@ void SettingsController::applySchemaValue(const SettingSpec& spec, const QVarian
         if (apply)
             applyArtworkEncoding();
         break;
+    case SettingTarget::ArtworkDownloads:
+        // Applied on load too: the worker starts adaptive and must hear a
+        // fixed choice before its first request.
+        if (m_artwork)
+            m_artwork->setDownloadLimit(value.toString() == QLatin1String("auto") ? 0 : value.toInt());
+        break;
     case SettingTarget::AudioTrackMode:
         m_subtitlePreferences.audioMode = value.toString();
         if (apply) {

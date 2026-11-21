@@ -46,6 +46,7 @@ class ArtworkImageResponse;
 
 class ArtworkService final : public QObject, public ArtworkPrefetcher {
     Q_OBJECT
+    Q_PROPERTY(QString downloadStatus READ downloadStatus NOTIFY downloadStatusChanged)
 public:
     ArtworkService(QString cacheDirectory, qint64 networkCacheBytes, int byteCacheBytes, int decodeThreads,
         TlsTrustController *tlsTrust, QObject *parent = nullptr);
@@ -65,9 +66,18 @@ public:
     // the server's own encoded-image cache is shared rather than duplicated.
     void setArtworkEncoding(const QString& format, int webpQuality, int jpegQuality);
     QQuickImageResponse *requestImageResponse(const QString& id, const QSize& requestedSize);
-    void prefetch(const QStringList& urls) override;
+    void prefetch(const QStringList& urls, bool retarget = false) override;
     void cancelPrefetches() override;
     void releaseMemory(bool aggressive);
+    // Artwork downloads open at once per server: zero adapts to the server's
+    // latency and load, a positive number is fixed.
+    void setDownloadLimit(int fixed);
+    // What the adaptive limit has settled on, per server, for settings.
+    QString downloadStatus() const
+    {
+        return m_downloadStatus;
+    }
+    void setDownloadStatus(QString status);
     // How much artwork is still on its way: requests that have not produced an
     // image yet, plus images decoded but not yet handed to the scene graph.
     // Zero means everything asked for has arrived, which is what "wait until
@@ -146,6 +156,10 @@ private:
     QTimer m_deliveryTimer;
     int m_deliveredThisTick = 0;
     int m_nextRequestId = 1;
+    QString m_downloadStatus;
+
+signals:
+    void downloadStatusChanged();
 };
 
 } // namespace Spool

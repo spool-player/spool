@@ -299,6 +299,17 @@ export function createSource() {
     require(registry.networkConsent().isEmpty() && !login->closed(),
         "cancel local search dismisses its host consent without closing login");
     registry.resolveNetworkConsent(dismissedConsentId, true);
+    // Closing a sign-in dismisses the prompt it was waiting on.
+    auto *closing = qobject_cast<ProviderUiContext *>(registry.beginSetup("fixture.test"));
+    engine.globalObject().setProperty("closing", engine.newQObject(closing));
+    engine.evaluate(QStringLiteral(R"JS(
+        var closedConsentRejected = false;
+        closing.allowLanDiscovery().then(function() {}, function() { closedConsentRejected = true; });
+    )JS"));
+    waitFor([&] { return !registry.networkConsent().isEmpty(); });
+    closing->close();
+    waitFor([&] { return engine.globalObject().property("closedConsentRejected").toBool(); });
+    require(registry.networkConsent().isEmpty(), "closing login dismisses pending host consent");
     engine.evaluate(QStringLiteral(R"JS(
         var consentReady = false;
         login.allowLanDiscovery().then(function() { consentReady = true; });
@@ -317,13 +328,13 @@ export function createSource() {
             && engine.globalObject().property("unrelatedCompleted").toBool();
     });
     require(!login->closed(), "cancelling discovery leaves unrelated manual/UDP request scopes usable");
+    // Once approved for this provider, searching again is not asked again.
     engine.evaluate(QStringLiteral(R"JS(
-        var closedConsentRejected = false;
-        login.allowLanDiscovery().then(function() {}, function() { closedConsentRejected = true; });
+        var searchedAgain = false;
+        login.allowLanDiscovery().then(function() { searchedAgain = true; });
     )JS"));
-    waitFor([&] { return !registry.networkConsent().isEmpty(); });
+    waitFor([&] { return engine.globalObject().property("searchedAgain").toBool(); });
+    require(registry.networkConsent().isEmpty(), "an approved provider searches without another prompt");
     login->close();
-    waitFor([&] { return engine.globalObject().property("closedConsentRejected").toBool(); });
-    require(registry.networkConsent().isEmpty(), "closing login dismisses pending host consent");
     return 0;
 }

@@ -59,8 +59,32 @@ profile through that provider's sign-in screen. A switch stays on the profile
 page while it connects or asks for a PIN; cancellation or failure keeps the
 previous viewer and offers retry/reconnect instead of pretending the switch
 succeeded. Protected profiles that need interaction stay locked on startup.
-Search uses only the viewers selected for Home, never the combined permissions
-of an adult and child profile saved on the same server.
+Search uses all enabled, authorized watching profiles regardless of the Home
+provider filter, never the combined permissions of an adult and child profile
+saved on the same server.
+
+### Settings and navigation
+
+Settings opens a category index with common controls and a direct **Zoom**
+shortcut. Search matches setting names, descriptions and aliases; choosing a
+result opens its category and surrounding controls without changing values.
+Back restores the query, selection and scroll position. **Ctrl+F** searches
+Settings when that page owns input; text composition and modal editors keep
+their existing ownership.
+
+Mouse scrolling and keyboard navigation can coexist. If the selected card is
+offscreen, the first direction selects the top-left usable visible card without
+scrolling back. That complete held gesture is consumed until physical release;
+the next press navigates normally. **Move** is explicit in the library menu:
+moving keeps the library selected and the viewport stable until **Done**.
+
+Home's provider chooser switches between **All providers** and one provider
+without changing enabled accounts, watching profiles or global search. The
+choice is saved on this device. Installed-provider pages show version,
+installation source, update controls and provider-owned settings. Jellyfin and
+Emby account settings expose server-backed audio/subtitle preferences where
+the current user is allowed to change them; failed writes retain the draft.
+Watching-profile choosers show the provider's logo and installed version.
 
 ### Desktop file drops
 
@@ -81,7 +105,8 @@ shows identity, versions, declared capabilities, network origins and changes;
 self-supplied publisher names and byte digests are not authentication.
 Multiple packages require individual consent. Mixed package/media drops ask
 which operation to perform before installing or playing anything. Drops wait
-while another editor or approval dialog owns input.
+while another editor or approval dialog owns input. **Ctrl+O** also respects
+those dialogs instead of opening a second picker.
 
 ### Offline downloads
 
@@ -734,6 +759,69 @@ signature prevents launch. This requires no Apple developer certificate,
 exercises the real sandboxed Keychain consumer, and does not sign or provision
 the separately built device IPA.
 
+## iOS
+
+iOS builds produce an unsigned ARM64 `.ipa` when that platform succeeds in CI.
+Installation requires your own Apple signing identity and provisioning profile;
+the download is not App Store- or TestFlight-distributed. Simulator startup is
+not proof of device playback.
+
+Native builds require macOS, Xcode, GNU patch (`brew install gpatch`) and matching
+host/iOS Qt kits at the version in `tools/manifests/toolchain.json`.
+Set `QT_HOST_PATH` and `QT_TARGET_PREFIX`, then run `tools/build-ios.sh`; it
+builds the patched host QML import scanner before configuring the app.
+`APPLE_SDK=iphonesimulator` selects the simulator; the default is `iphoneos`.
+The device architecture defaults to `arm64`, the official Qt simulator kit to
+`x86_64`. Apple Silicon Macs require Rosetta for this simulator kit; the review
+workflow uses an Intel macOS runner. A custom source-built Qt kit can select
+`APPLE_ARCH=arm64` for the simulator. The deployment baseline is iOS 17,
+matching [Qt 6.11's supported configuration](https://doc.qt.io/qt-6.11/ios.html).
+The shared
+`tools/apple/build-dependencies.sh` verifies existing dependency pins and builds
+static FFmpeg, curl/OpenSSL, subtitle libraries, libplacebo, mpv and QCoro for
+the selected SDK. Qt and application code use OpenGL ES; no desktop AppKit,
+IOKit, dynamic provider loader or desktop command socket is included.
+
+App Store review builds force bundled-only provider code and include only pins
+whose catalogue-derived `appleAppStore` flag is exactly `true`. Provider checkout
+overrides and downloaded provider updates are not permitted. Account sign-in
+still uses the bundled provider screens and system browser.
+
+Tokens use device-only Keychain items, retained for background audio after the
+first unlock. Media data stays in the sandbox; caches/logs are disposable and
+application data is excluded from backup. Video pauses when hidden, while
+audio uses the system playback session and lock-screen/AirPods transport
+commands. Interruptions and disconnected audio routes pause playback.
+Video remains full-bleed; touch controls respect the device safe areas.
+
+Local-network access is prompted by iOS when connecting to a user-selected LAN
+server. If access was denied, enable **Settings → Spool → Local Network**.
+UDP discovery explicitly reports `discovery_unavailable`: this bundle does not
+request Apple's restricted multicast entitlement. Manual addresses and
+consented HTTP discovery remain available. Plain-HTTP connections to
+user-owned servers require the included ATS exception and an App Review
+explanation. No camera, microphone, photo-library or broad-storage permission
+is requested. Diagnostics use the native share sheet.
+
+To export a signed archive, set `APPLE_ARCHIVE=1`, `APPLE_DEVELOPMENT_TEAM`, and
+`APPLE_EXPORT_OPTIONS` (your Xcode ExportOptions.plist); unsigned simulator
+builds are the default verification path. The privacy manifest declares local
+preferences, file metadata, free disk space and monotonic timing APIs; App
+Store submission still requires the developer's privacy/legal declarations,
+signing, entitlement review and device playback/route/lifecycle testing.
+
+Package an unsigned device bundle with:
+
+```sh
+bash tools/package-ios.sh \
+  build/apple/iphoneos-arm64/app/Release-iphoneos/Spool.app dist/ios
+```
+
+The packager verifies the embedded version and actual iOS ARM64 Mach-O closure;
+it does not sign the app. CI keeps the simulator archive internal and publishes
+only `spool-ios-device-arm64`. The reusable iOS workflow also accepts manual
+dispatch on `big-refactor`.
+
 ## Android development
 
 The Android toolchain is pinned to SDK 36, Build Tools 36.0.0 and NDK
@@ -875,6 +963,10 @@ has rejected a visibly rendered Resume control. All platform builds, package
 audits and signing checks remain required; successful artifacts do not imply
 those platforms' native tests passed.
 
+Native incremental builds validate referenced immutable Nix store items rather
+than treating CMake's generated object-path suffixes as missing dependencies.
+Real garbage-collected dependencies still invalidate the cached build.
+
 Build and run the same complete host suite as CI with `nix run .#tests`, or run
 already-built targets with:
 
@@ -951,6 +1043,10 @@ and lavapipe Vulkan drivers. The nested compositor provides a real input seat
 and native foreground activation while the product still uses Wayland; a
 seatless headless compositor cannot exercise foreground-only behavior.
 Neither harness connects to the user's display.
+
+Repeatable isolated native profiling uses the same private graphics session.
+See [profiling workflows](docs/debug/memory-profiling.md) for benchmark captures,
+machine-readable summaries and the limits of software-renderer baselines.
 
 The isolated Linux CPU driver package includes a bounded Mesa Wayland WSI
 clock-domain correction. Automatic FIFO targets remain in the swapchain's

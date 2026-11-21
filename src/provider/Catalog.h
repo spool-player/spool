@@ -33,6 +33,11 @@ public:
     virtual QCoro::Task<PagedMovieItems> fetchBrowsePage(
         BrowseDescriptor descriptor, int startIndex, int limit, QVariantMap queryOptions, std::optional<QString> cursor)
         = 0;
+    // Gives up on a jump into a seekable listing (a fetchBrowsePage at
+    // startIndex without a cursor) that the view has since left, so it stops
+    // holding a request slot. The fetch then fails; a source that cannot
+    // cancel lets it finish.
+    virtual void cancelBrowseJump(const BrowseDescriptor&, int) { }
     virtual QCoro::Task<MovieItem> fetchItemDetails(QString itemId) = 0;
     virtual QCoro::Task<std::vector<MovieItem>> fetchSeasons(QString seriesId) = 0;
     virtual QCoro::Task<std::vector<MovieItem>> fetchEpisodes(QString seriesId, QString seasonId = {}) = 0;
@@ -40,6 +45,10 @@ public:
     virtual QCoro::Task<std::vector<MovieItem>> fetchNextUpEpisodes(int limit = 24) = 0;
     virtual QCoro::Task<std::vector<MovieItem>> fetchLatestItems(QString parentId = {}, int limit = 24) = 0;
     virtual QCoro::Task<std::vector<MovieItem>> fetchSimilarItems(QString itemId, int limit = 24) = 0;
+    // Server-indexed trailers ("trailers") and extras ("extras") for an item,
+    // as ordinary playable rows. Optional: a source without related media
+    // returns an empty list.
+    virtual QCoro::Task<std::vector<MovieItem>> fetchRelatedMedia(QString itemId, QString kind) = 0;
     virtual QCoro::Task<PersonCredits> fetchItemsByPerson(QString personId, int maximumItems = 4000) = 0;
 
     // The top-level libraries the home page and the rail are built from.
@@ -47,6 +56,12 @@ public:
     // The genres, years and the like a library can be filtered by; empty
     // when the source offers no filtering.
     virtual QCoro::Task<QVariantMap> fetchLibraryFilterOptions(QString libraryId, QString collectionType = {}) = 0;
+    // How a name-sorted library, genre or studio listing divides by first
+    // character, in ascending order. Optional: a source without one returns
+    // an empty list and the letters are estimated instead.
+    virtual QCoro::Task<std::vector<BrowseIndexEntry>> fetchBrowseIndex(
+        BrowseDescriptor descriptor, QVariantMap queryOptions)
+        = 0;
     virtual QCoro::Task<std::vector<MovieItem>> fetchItemsByIds(QStringList itemIds) = 0;
 
     // Locally observed user state outranks asynchronously hydrated snapshots

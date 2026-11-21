@@ -15,6 +15,7 @@ FocusScope {
     }
 
     AppShell {
+        objectName: "appShell"
         anchors.fill: parent
     }
 }

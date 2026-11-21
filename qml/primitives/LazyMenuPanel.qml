@@ -9,6 +9,9 @@ Loader {
 
     property bool open: false
     property var model: []
+    // The owner's row, normally bound to the owner's own property. The panel
+    // never writes it, so that binding survives; the person's moves arrive
+    // through moved() instead.
     property int currentIndex: 0
     property Item edgeEscapeItem: null
     property string title: ""
@@ -20,13 +23,36 @@ Loader {
     property bool resetVisible: false
     property bool resetEnabled: false
     readonly property var menuList: item ? item.menuList : null
+    property bool rebuilding: false
 
+    signal moved(int index)
     signal accepted(var entry, int index)
     signal dismissed
     signal reset
 
     active: open
     height: active ? maximumHeight : 0
+
+    // A new model resets a ListView to its first row. Owners rebuild their
+    // entries on every toggle and expand, so swap the model without telling
+    // them and put the list back on their row.
+    function syncModel() {
+        if (!menuList)
+            return
+        rebuilding = true
+        menuList.model = model
+        rebuilding = false
+        syncCurrent()
+    }
+
+    function syncCurrent() {
+        if (menuList && menuList.currentIndex !== currentIndex)
+            menuList.currentIndex = Math.min(currentIndex, menuList.count - 1)
+    }
+
+    onLoaded: syncModel()
+    onModelChanged: syncModel()
+    onCurrentIndexChanged: syncCurrent()
 
     sourceComponent: PopupMenuPanel {
         id: panel
@@ -63,11 +89,10 @@ Loader {
                 id: list
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                model: root.model
                 entryProvider: index => root.model[index]
-                currentIndex: root.currentIndex
                 edgeEscapeItem: root.edgeEscapeItem
-                onCurrentIndexChanged: root.currentIndex = currentIndex
+                onCurrentIndexChanged: if (!root.rebuilding)
+                                           root.moved(currentIndex)
                 onDismissed: root.dismissed()
                 onAccepted: index => root.accepted(root.model[index], index)
 

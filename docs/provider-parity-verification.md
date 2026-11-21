@@ -116,6 +116,43 @@ and 3840×2160, at 100% and 150% zoom, in confirmed, pending, error and opted-ou
 states: 48 images. It uses the application's bundled fonts and offscreen software
 rendering. It does not open a desktop window or contact a real media server.
 
+## Real application journey coverage
+
+`app-journey` launches the built Spool product and drives its existing `spoolet`
+interface, rendered labels and normal pointer/remote input. The shipped Jellyfin
+provider talks to a private authenticated loopback server; the fixture supplies
+protocol responses and records requests, not navigation or playback decisions.
+The journey extends login, settings, download/offline playback and stale-progress
+coverage with these transitions:
+
+| Transition | Observable proof | Regression caught |
+| --- | --- | --- |
+| Played filter → empty library → Reset → remote OK | Server sees `IsPlayed`; browse becomes empty, then restores both items; Back closes only the menu and OK opens the movie | Filter lost in provider translation, stale results, or focus stranded after model replacement |
+| Movie → related episode → Back → movie → Back → library → remote OK | Real episode details are fetched; distinct episode/movie headings establish restored identity and remote selection | Retained details rebound to the child, skipped parent route, or lost browse selection |
+| Repeat current item → actual media EOF | New playback negotiation and server start receipt at zero with `RepeatOne`, followed by decoded red-over-blue beginning frames | Menu changes only visual state, repeat fails to restart, or restart incorrectly resumes old progress |
+| Timed sleep → After current item with repeat still enabled → EOF | Remaining-time and after-current labels; end-position stop receipt, watched mutation, and no further negotiation/playback during a bounded observation window | Timer replacement fails or repeat takes precedence over the requested stop |
+
+Run the already-built journey in an isolated Linux GPU session:
+
+```sh
+nix develop .#native -c bash tools/test-gpu-session.sh \
+  build/linux-release-local-providers/app/spool-e2e-tests --child app-journey
+```
+
+Build `spool-e2e-tests` (which depends on the matching `spool` and `spoolet`)
+first. The native shell supplies the pinned display/Mesa runtime; FFmpeg and
+Tesseract with English data must also be available. Each wait has a deadline;
+EOF cases seek the paused, finite 90-second fixture near its end rather than
+waiting for full playback or altering the product clock. Existing Android/tvOS
+adapters run the same journey against driver-owned isolated emulators/simulators;
+the test does not accept a user device. Do not substitute Qt offscreen/minimal or
+the Qt Quick software renderer for this GPU journey.
+
+Failures retain private screenshots, allowlisted fixture counters and app logs in
+the reported artifact directory. Do not publish raw logs or control descriptors.
+These cases are executable coverage, not a claim of a completed platform run;
+record actual execution results separately.
+
 ## Limits
 
 Loopback and protocol fixtures verify host behavior and request contracts; they do

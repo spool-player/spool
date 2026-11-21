@@ -46,7 +46,7 @@ ListView {
 
     function firstEnabled(start, step) {
         const direction = step < 0 ? -1 : 1
-        for (let index = Math.max(0, Math.min(count - 1, start)); index >= 0 && index < count; index += direction)
+        for (let index = start; index >= 0 && index < count; index += direction)
             if (isRowEnabled(index))
                 return index
         return -1

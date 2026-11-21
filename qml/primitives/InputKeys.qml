@@ -98,6 +98,41 @@ QtObject {
         return view.currentIndex === index
     }
 
+    function selectionVisiblyUsable(view, clipItem) {
+        const selected = view.itemAtIndex(view.currentIndex)
+        if (!view.activeFocus || !selected)
+            return false
+        const rect = selected.mapToItem(clipItem, 0, 0, selected.width, selected.height)
+        const viewport = view.mapToItem(clipItem, 0, 0, view.width, view.height)
+        const width = Math.max(0, Math.min(rect.x + rect.width, viewport.x + viewport.width, clipItem.width) - Math.max(
+                                   rect.x, viewport.x, 0))
+        const height = Math.max(0, Math.min(rect.y + rect.height, viewport.y + viewport.height, clipItem.height) - Math.max(
+                                    rect.y, viewport.y, 0))
+        if (width * height / Math.max(1, rect.width * rect.height) >= focusRecoveryVisibleThreshold)
+            return true
+        // Large zoom can make one control exceed the viewport. Keep the
+        // existing preferred partial-candidate fallback usable in that case.
+        if ((rect.height > view.height || rect.width > view.width) && width > 0 && height > 0) {
+            const candidate = topLeftVisibleCandidate(view, clipItem)
+            return Boolean(candidate && candidate.index === view.currentIndex)
+        }
+        return false
+    }
+
+    function consumeRecoveryGesture(gesture, key, phase, repeat, recovered) {
+        if (phase === "release") {
+            if (!repeat && gesture.key === key)
+                gesture.key = 0
+            return true
+        }
+        if (gesture.key === key)
+            return true
+        if (!recovered)
+            return false
+        gesture.key = key
+        return true
+    }
+
     function isAccept(key, includeSpace) {
         return key === Qt.Key_Return || key === Qt.Key_Enter || key === Qt.Key_Select || (includeSpace !== false && key
                                                                                           === Qt.Key_Space)

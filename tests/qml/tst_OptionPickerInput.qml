@@ -77,9 +77,9 @@ TestCase {
     }
 
     function test_pointerSelectionDoesNotClickThrough() {
-        const panel = findChild(picker, "optionPickerPanel")
-        verify(panel)
-        const point = panel.mapToItem(testCase, panel.width / 2, Metrics.scaled(8) + picker.rowHeight / 2)
+        const list = findChild(picker, "optionPickerList")
+        verify(list)
+        const point = list.mapToItem(testCase, list.width / 2, picker.rowHeight / 2)
         mouseClick(testCase, point.x, point.y, Qt.LeftButton)
         compare(selectedSpy.count, 1)
         compare(selectedSpy.signalArguments[0][0], 0)

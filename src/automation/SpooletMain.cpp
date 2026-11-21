@@ -42,7 +42,12 @@ QJsonObject help()
                         QStringLiteral("text TEXT | text --stdin (commit to the focused editable field; no echo)"),
                         QStringLiteral(
                             "downloads list | options ITEM_ID | start ITEM_ID INDEX | cancel|retry|remove|play JOB_ID"),
-                        QStringLiteral("settings get [KEY] | settings set KEY JSON_VALUE") } },
+                        QStringLiteral("settings get [KEY] | settings set KEY JSON_VALUE"),
+                        QStringLiteral("open browse|resume|next-up|context|similar INDEX (select like a person would)"),
+                        QStringLiteral("item-state QUALIFIED_ID [played|favorite true|false | position SECONDS] "
+                                       "(writes through the provider, then reads the item back from the server)"),
+                        QStringLiteral("capture start ABS_DIR [SETTLE_MS] [MAX_MS] | capture status | capture stop "
+                                       "(saves each visibly changed frame until the screen settles)") } },
                 { QStringLiteral("notes"),
                     QStringLiteral(
                         "All stdout is JSON. Commands are bounded and never prompt. When multiple instances run, "
@@ -195,6 +200,52 @@ int main(int argc, char **argv)
         } else {
             return error(QStringLiteral(
                 "Usage: downloads list | options ITEM_ID | start ITEM_ID INDEX | cancel|retry|remove|play JOB_ID"));
+        }
+    } else if (command == QStringLiteral("open")) {
+        bool valid = false;
+        const int index = arguments.size() == 2 ? arguments.last().toInt(&valid) : -1;
+        if (!valid || index < 0)
+            return error(QStringLiteral("Usage: open browse|resume|next-up|context|similar INDEX"));
+        args.insert(QStringLiteral("source"), arguments.first());
+        args.insert(QStringLiteral("index"), index);
+    } else if (command == QStringLiteral("item-state")) {
+        if (arguments.size() != 1 && arguments.size() != 3)
+            return error(
+                QStringLiteral("Usage: item-state QUALIFIED_ID [played|favorite true|false | position SECONDS]"));
+        args.insert(QStringLiteral("id"), arguments.first());
+        if (arguments.size() == 3) {
+            const QString field = arguments.at(1);
+            const QString value = arguments.at(2);
+            args.insert(QStringLiteral("field"), field);
+            if (field == QStringLiteral("position")) {
+                bool valid = false;
+                const double seconds = value.toDouble(&valid);
+                if (!valid || !std::isfinite(seconds) || seconds < 0)
+                    return error(QStringLiteral("Position must be nonnegative seconds"));
+                args.insert(QStringLiteral("value"), seconds);
+            } else if (value == QStringLiteral("true") || value == QStringLiteral("false")) {
+                args.insert(QStringLiteral("value"), value == QStringLiteral("true"));
+            } else {
+                return error(QStringLiteral("played and favorite take true or false"));
+            }
+        }
+    } else if (command == QStringLiteral("capture")) {
+        const QString action = arguments.isEmpty() ? QString() : arguments.takeFirst();
+        if (action == QStringLiteral("start") && count(1, 3)) {
+            command = QStringLiteral("capture-start");
+            args.insert(QStringLiteral("dir"), arguments.first());
+            for (int index = 1; index < arguments.size(); ++index) {
+                bool valid = false;
+                const int value = arguments.at(index).toInt(&valid);
+                if (!valid || value <= 0)
+                    return error(QStringLiteral("Capture timings are positive milliseconds"));
+                args.insert(index == 1 ? QStringLiteral("settleMs") : QStringLiteral("maxMs"), value);
+            }
+        } else if ((action == QStringLiteral("status") || action == QStringLiteral("stop")) && count(0, 0)) {
+            command = QStringLiteral("capture-") + action;
+        } else {
+            return error(
+                QStringLiteral("Usage: capture start ABS_DIR [SETTLE_MS] [MAX_MS] | capture status | capture stop"));
         }
     } else if (command == QStringLiteral("settings")) {
         if (arguments.isEmpty())

@@ -1,5 +1,8 @@
 #include "UpdateController.h"
 
+#include "common/AsyncTask.h"
+#include "common/RangedDownload.h"
+
 #if defined(SPOOL_ANDROID)
 #include "android/AndroidUpdateInstaller.h"
 #elif defined(SPOOL_WEBOS)
@@ -15,7 +18,6 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
-#include <QSaveFile>
 #include <QVersionNumber>
 
 namespace Spool {
@@ -352,12 +354,6 @@ void UpdateController::download()
         fail(QStringLiteral("Could not create a safe location for the update."));
         return;
     }
-    m_output = std::make_unique<QSaveFile>(packagePath());
-    if (!m_output->open(QIODevice::WriteOnly)) {
-        fail(QStringLiteral("Could not create the update file."));
-        return;
-    }
-    m_hash = std::make_unique<QCryptographicHash>(QCryptographicHash::Sha256);
     m_receivedBytes = 0;
     m_totalBytes = m_release.packageSize;
     m_bytesPerSecond = 0;
@@ -371,66 +367,50 @@ void UpdateController::download()
     QNetworkRequest request(m_release.packageUrl);
     configureRequest(request, 30000);
     request.setRawHeader("Accept", "application/octet-stream");
-    m_reply = m_network->get(request);
-    restrictRedirects(m_reply);
-    connect(m_reply, &QNetworkReply::readyRead, this, &UpdateController::consumeDownloadData);
-    connect(m_reply, &QNetworkReply::finished, this, &UpdateController::finishDownload);
+    m_download = new RangedDownload(m_network, request, packagePath(), this);
+    m_download->setLanes(2);
+    m_download->setExpectedBytes(m_release.packageSize);
+    m_download->setPrepareReply(restrictRedirects);
+    connect(m_download, &RangedDownload::progress, this, [this] {
+        m_receivedBytes = m_download->receivedBytes();
+        emit progressChanged();
+    });
+    connect(m_download, &RangedDownload::finished, this, &UpdateController::finishDownload);
+    m_download->start();
 }
 
-void UpdateController::consumeDownloadData()
+void UpdateController::finishDownload(const QString& error)
 {
-    if (!m_reply || !m_output || !m_hash)
-        return;
-    while (m_reply->bytesAvailable() > 0) {
-        const QByteArray bytes = m_reply->read(kReadBufferBytes);
-        if (bytes.isEmpty())
-            break;
-        if (bytes.size() > m_release.packageSize - m_receivedBytes) {
-            resetDownload();
-            fail(QStringLiteral("The downloaded package exceeds its expected size and was discarded."));
-            return;
-        }
-        if (m_output->write(bytes) != bytes.size()) {
-            resetDownload();
-            fail(QStringLiteral("The update file could not be written."));
-            return;
-        }
-        m_hash->addData(bytes);
-        m_receivedBytes += bytes.size();
-    }
-    emit progressChanged();
-}
-
-void UpdateController::finishDownload()
-{
-    consumeDownloadData();
-    if (!m_reply)
-        return;
-    QNetworkReply *reply = m_reply;
-    m_reply = nullptr;
+    m_download->deleteLater();
+    m_download = nullptr;
     m_speedTimer.stop();
-    const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-    const bool networkOk = reply->error() == QNetworkReply::NoError && status >= 200 && status < 300;
-    const QString networkError = reply->errorString();
-    reply->deleteLater();
-
-    const bool sizeOk = m_receivedBytes == m_release.packageSize;
-    const bool hashOk = m_hash && m_hash->result().toHex() == m_release.packageSha256;
-    if (!networkOk || !sizeOk || !hashOk || !m_output || !m_output->commit()) {
-        resetDownload();
-        if (!networkOk)
-            fail(QStringLiteral("The update download failed: %1").arg(networkError));
-        else if (!sizeOk)
-            fail(QStringLiteral("The downloaded package has the wrong size and was discarded."));
-        else if (!hashOk)
-            fail(QStringLiteral("The downloaded package failed its SHA-256 check and was discarded."));
-        else
-            fail(QStringLiteral("The verified update could not be saved."));
+    if (!error.isEmpty()) {
+        QFile::remove(packagePath());
+        fail(QStringLiteral("The update download failed: %1").arg(error));
         return;
     }
+    // The parts arrive out of order, so the package is hashed once it is
+    // whole, and off the GUI thread: it is tens of megabytes on a television.
+    m_verifying = true;
+    const quint64 verification = ++m_verification;
+    Async::background([path = packagePath()] {
+        QFile file(path);
+        QCryptographicHash hash(QCryptographicHash::Sha256);
+        return file.open(QIODevice::ReadOnly) && hash.addData(&file) ? hash.result().toHex() : QByteArray();
+    }).then(this, [this, verification](const QByteArray& digest) { verifyPackage(verification, digest); });
+}
 
-    m_output.reset();
-    m_hash.reset();
+void UpdateController::verifyPackage(quint64 verification, const QByteArray& digest)
+{
+    if (verification != m_verification || m_stage != Stage::Downloading)
+        return;
+    m_verifying = false;
+    if (digest != m_release.packageSha256) {
+        QFile::remove(packagePath());
+        fail(digest.isEmpty() ? QStringLiteral("The downloaded update could not be read back.")
+                              : QStringLiteral("The downloaded package failed its SHA-256 check and was discarded."));
+        return;
+    }
 #if defined(SPOOL_WEBOS)
     constexpr auto packagePermissions
         = QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ReadGroup | QFileDevice::ReadOther;
@@ -444,6 +424,9 @@ void UpdateController::finishDownload()
     emit progressChanged();
     m_packageReady = true;
     setStage(Stage::Ready);
+    // Choosing to download was choosing to update; a second press to install
+    // asked the same question again.
+    install();
 }
 
 void UpdateController::cancelDownload()
@@ -499,6 +482,7 @@ void UpdateController::retry()
     if (m_packageReady) {
         m_errorText.clear();
         setStage(Stage::Ready);
+        install();
         return;
     }
     if (!m_release.packageUrl.isEmpty() && !m_release.packageSha256.isEmpty())
@@ -531,10 +515,17 @@ void UpdateController::resetDownload()
         m_reply->deleteLater();
         m_reply = nullptr;
     }
-    if (m_output)
-        m_output->cancelWriting();
-    m_output.reset();
-    m_hash.reset();
+    ++m_verification;
+    if (m_download || m_verifying) {
+        if (m_download) {
+            disconnect(m_download, nullptr, this, nullptr);
+            m_download->abort();
+            m_download->deleteLater();
+            m_download = nullptr;
+        }
+        m_verifying = false;
+        QFile::remove(packagePath());
+    }
 }
 
 } // namespace Spool

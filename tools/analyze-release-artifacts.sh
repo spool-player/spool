@@ -59,13 +59,19 @@ for asset in "${assets[@]}"; do
       [[ -n "$data_archive" ]] || { echo "missing IPK data archive: $base" >&2; exit 1; }
       tar -xf "$data_archive" -C "$root"
       ;;
-    *.ipa)
+    *-tvOS-arm64.ipa|*-iOS-arm64.ipa)
       # Audit archive paths, embedded version, device platform and Mach-O closure
       # before letting scanners read any extracted unsigned/signable payload.
-      python3 "$root_dir/tools/package-audit.py" tvos-ipa "$asset" \
+      ipa_platform=tvos
+      [[ "$asset" != *-iOS-arm64.ipa ]] || ipa_platform=ios
+      python3 "$root_dir/tools/package-audit.py" "$ipa_platform-ipa" "$asset" \
         --version "$version" --extract "$root"
       python3 "$root_dir/tools/package-audit.py" inventory "$root" \
         --output "$report_dir/$base.inventory.tsv"
+      ;;
+    *.ipa)
+      echo "unrecognized IPA platform: $base" >&2
+      exit 1
       ;;
   esac
   "$SYFT" "dir:$root" --source-name spool --source-version "$version" \

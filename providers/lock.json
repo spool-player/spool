@@ -4,37 +4,37 @@
     {
       "id": "spool.jellyfin",
       "appleAppStore": true,
-      "version": "0.2.13",
-      "archive": "bundled/spool.jellyfin-0.2.13.szo",
-      "sha256": "4f1331f17657dd6ff1ffb1c396149ac00c4393ac02dea44a185901111f07a897"
+      "version": "0.2.15",
+      "archive": "bundled/spool.jellyfin-0.2.15.szo",
+      "sha256": "65efc71022a12f02caf19560c53f6404d2e49037c4b8bf29a6a73dcd233823a6"
     },
     {
       "id": "spool.emby",
       "appleAppStore": true,
-      "version": "0.1.8",
-      "archive": "bundled/spool.emby-0.1.8.szo",
-      "sha256": "14f9a36a8e7317b2cf51ed1ebcea3d74e346f2897ac18cec6e8eddf7aa290ea8"
+      "version": "0.1.10",
+      "archive": "bundled/spool.emby-0.1.10.szo",
+      "sha256": "ee2ab45c03e1dd94011fcaefddae6030baf1c46e2554d2974a69f79227363a6b"
     },
     {
       "id": "spool.plex",
       "appleAppStore": true,
-      "version": "0.1.9",
-      "archive": "bundled/spool.plex-0.1.9.tar.zst",
-      "sha256": "d7d4b8412d45b3ae04151ec1c6e32680736c6443783ce4d8de168ad9dc89679a"
+      "version": "0.2.1",
+      "archive": "bundled/spool.plex-0.2.1.szo",
+      "sha256": "36a9712c8afdc3f9e9836df104676a55fe10854aeb57056af1aed7035870939e"
     },
     {
       "id": "spool.stremio",
       "appleAppStore": false,
-      "version": "0.1.2",
-      "archive": "bundled/spool.stremio-0.1.2.tar.zst",
-      "sha256": "b403491c4cd9129fbaef1a4f381a87357bdac98edb5c4d04087365dd13e7d05c"
+      "version": "0.1.3",
+      "archive": "bundled/spool.stremio-0.1.3.szo",
+      "sha256": "b438e9acb27690ab14cfb72baa40fc9cea299d7a4e12282ac78fdb430efc9351"
     },
     {
       "id": "example.open-movies",
       "appleAppStore": true,
-      "version": "1.1.1",
-      "archive": "bundled/example.open-movies-1.1.1.tar.zst",
-      "sha256": "20fe53ea93eeea93b87ca324f4e04464301267e48d3cf717ed59e92586586ab8"
+      "version": "1.1.2",
+      "archive": "bundled/example.open-movies-1.1.2.szo",
+      "sha256": "e9d7f10328309c2810049c86aa8a4f0a70fd24bc91dcad666fe6a2d52f819c7f"
     }
   ]
 }

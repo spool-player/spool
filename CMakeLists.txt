@@ -9,7 +9,7 @@ endif()
 project(SpoolWebOS VERSION "${SPOOL_VERSION}" LANGUAGES C CXX)
 
 set(SPOOL_APPLE_MOBILE OFF)
-if(CMAKE_SYSTEM_NAME STREQUAL "tvOS")
+if(IOS OR CMAKE_SYSTEM_NAME STREQUAL "tvOS")
     set(SPOOL_APPLE_MOBILE ON)
 endif()
 
@@ -23,6 +23,9 @@ if(CMAKE_CROSSCOMPILING AND NOT ANDROID AND NOT SPOOL_APPLE_MOBILE)
 endif()
 option(SPOOL_WEBOS "Build the webOS Starfish/native-surface client" ${SPOOL_WEBOS_DEFAULT})
 option(TOUCHSCREEN "Enable mobile touchscreen interactions (runtime-disabled on TVs)" ${ANDROID})
+if(IOS)
+    set(TOUCHSCREEN ON)
+endif()
 option(SPOOL_DEV_BUILD "Favor faster local development builds over smallest release artifacts" OFF)
 option(SPOOL_DIAGNOSTICS "Build debug lifecycle/process/watchdog diagnostics" OFF)
 option(SPOOL_DIAGNOSTICS_STACKDUMP "Allow diagnostics to request gdb stack dumps" OFF)
@@ -226,6 +229,8 @@ set(SPOOL_SHELL_SOURCES
     src/app/ArtworkImageProvider.cpp
     src/app/ArtworkImageProvider.h
     src/app/ArtworkPrefetcher.h
+    src/app/ArtworkConcurrency.cpp
+    src/app/ArtworkConcurrency.h
     src/app/ArtworkService.cpp
     src/app/ArtworkService.h
     src/app/TrickplayDecoder.cpp
@@ -234,6 +239,8 @@ set(SPOOL_SHELL_SOURCES
     src/app/TrickplayService.h
     src/app/TrickplayPreviewItem.cpp
     src/app/TrickplayPreviewItem.h
+    src/app/BrowseIndex.cpp
+    src/app/BrowseIndex.h
     src/app/BrowseSessionController.cpp
     src/app/BrowseSessionController.h
     src/app/ContentModelController.cpp
@@ -264,6 +271,7 @@ set(SPOOL_SHELL_SOURCES
     src/app/LibraryQuery.h
     src/app/MemoryBudget.cpp
     src/app/MemoryBudget.h
+    src/app/PlaybackStopPolicy.h
     src/app/RouterController.cpp
     src/app/RouterController.h
     src/app/SettingsController.cpp
@@ -288,6 +296,8 @@ set(SPOOL_SHELL_SOURCES
     src/common/AsyncTask.h
     src/common/LogRotation.h
     src/common/MetaJson.h
+    src/common/RangedDownload.cpp
+    src/common/RangedDownload.h
     src/common/RequestGeneration.h
     src/common/TlsTrust.cpp
     src/common/TlsTrust.h
@@ -564,6 +574,7 @@ qt_add_qml_module(spool
         qml/browse/ListBrowseView.qml
         qml/browse/RowStackView.qml
         qml/pages/HomePage.qml
+        qml/pages/HomeProviderPicker.qml
         qml/pages/ItemDetailsPage.qml
         qml/pages/CollectionEditorPage.qml
         qml/pages/LocalFolders.qml
@@ -618,6 +629,8 @@ qt_add_qml_module(spool
         qml/primitives/MetadataChip.qml
         qml/primitives/MenuListView.qml
         qml/primitives/ListScrollBar.qml
+        qml/primitives/LetterScrollBar.qml
+        qml/primitives/LetterScale.js
         qml/primitives/MenuRow.qml
         qml/primitives/SecondaryText.qml
         qml/primitives/NavGrid.qml
@@ -633,6 +646,7 @@ qt_add_qml_module(spool
         qml/primitives/SettingRow.qml
         qml/primitives/SliderRow.qml
         qml/primitives/Surface.qml
+        qml/primitives/SwitchIndicator.qml
         qml/primitives/TechMetadataLine.qml
         qml/primitives/TechnicalDetailsBar.qml
         qml/primitives/TextFieldRow.qml
@@ -858,6 +872,8 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
 
     set(SPOOL_TESTS_app
         browse-session-controller tests/app/BrowseSessionControllerTest.cpp
+        browse-sparse-listing tests/app/BrowseSparseListingTest.cpp
+        artwork-concurrency tests/app/ArtworkConcurrencyTest.cpp
         settings-schema tests/app/SettingsSchemaTest.cpp
         settings-controller tests/app/SettingsControllerTest.cpp
         settings-sync-controller tests/app/SettingsSyncControllerTest.cpp
@@ -883,6 +899,7 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
         request-generation tests/common/RequestGenerationTest.cpp
         diagnostic-redaction tests/common/DiagnosticRedactionTest.cpp
         tls-trust tests/common/TlsTrustTest.cpp
+        ranged-download tests/common/RangedDownloadTest.cpp
         browse-descriptor tests/common/BrowseDescriptorTest.cpp
         meta-json tests/common/MetaJsonTest.cpp
         bounded-zstd tests/common/BoundedZstdTest.cpp
@@ -1115,6 +1132,8 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
                 "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/PackageAuditTest.py"
                 "${CMAKE_CURRENT_SOURCE_DIR}/tools/package-audit.py"
         )
+        add_test(NAME webos-tooling
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/WebosToolingTest.py")
     endif()
     add_test(NAME module-seam
         COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-module-seam.sh"
@@ -1131,6 +1150,15 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/RenderBenchmarkReportTest.py"
             "${CMAKE_CURRENT_SOURCE_DIR}/tools/compare-render-benchmark.py"
     )
+    add_test(NAME altstore-source
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/AltStoreSourceTest.py"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools/apple/altstore-source.py"
+    )
+    add_test(NAME player-setup-report
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/PlayerSetupReportTest.py"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools/report-player-setup.py")
     add_test(NAME test-driver-ordering
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/TestDriverTest.py")
 
@@ -1138,7 +1166,7 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
     # desktop controller consumer therefore belongs to the serial GPU phase.
     set(SPOOL_E2E_SOURCES tests/TestRunner.cpp tests/QmlTestRunner.cpp tests/ExtensionIntegration.h
         tests/ArtworkIntegration.h tests/player/MpvVideoItemTest.cpp tests/player/MpvFullscreenTest.cpp
-        tests/player/PlayerControllerTest.cpp
+        tests/player/PlayerControllerTest.cpp tests/player/PlayerSetupBenchmark.cpp
         tests/e2e/AppJourneyTest.cpp tests/e2e/JellyfinFixture.cpp)
     if(APPLE AND NOT SPOOL_APPLE_MOBILE)
         set_source_files_properties(tests/player/MpvFullscreenTest.cpp PROPERTIES LANGUAGE OBJCXX)
@@ -1149,7 +1177,7 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
     file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/native-spoolet-path.txt"
         CONTENT "$<TARGET_FILE:spoolet>\n")
     target_include_directories(spool-e2e-tests PRIVATE tests src "${CMAKE_CURRENT_BINARY_DIR}/generated")
-    target_compile_definitions(spool-e2e-tests PRIVATE TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    target_compile_definitions(spool-e2e-tests PRIVATE SPOOL_E2E_BINARY=1 TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
         SPOOL_E2E_APP="$<TARGET_FILE:spool>" SPOOL_E2E_SPOOLET="$<TARGET_FILE:spoolet>")
     if(SPOOL_TEST_RENDER_BACKEND STREQUAL "opengl")
         target_compile_definitions(spool-e2e-tests PRIVATE SPOOL_TEST_OPENGL_ONLY=1)
@@ -1169,6 +1197,7 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
         VERBATIM)
         set(SPOOL_QML_TESTS
             route-policy tests/qml/tst_RoutePolicy.qml
+            row-stack-view tests/qml/tst_RowStackView.qml
             key-router tests/qml/tst_KeyRouter.qml
             player-overlay-input tests/qml/tst_PlayerOverlayInput.qml
             popup-menu-input tests/qml/tst_PopupMenuInput.qml
@@ -1193,6 +1222,7 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
             input-latency-warning tests/qml/tst_InputLatencyWarning.qml
             player-seek-bar-hover tests/qml/tst_PlayerSeekBarHover.qml
             list-scroll-bar tests/qml/tst_ListScrollBar.qml
+            letter-scroll-bar tests/qml/tst_LetterScrollBar.qml
             inline-slider tests/qml/tst_InlineSlider.qml
         )
         list(APPEND SPOOL_QML_TESTS
@@ -1203,7 +1233,8 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
         list(APPEND SPOOL_QML_TESTS
             extension-integration tests/qml/tst_ExtensionIntegration.qml
             provider-forms tests/qml/tst_ProviderForms.qml
-            artwork-integration tests/qml/tst_ArtworkIntegration.qml)
+            artwork-integration tests/qml/tst_ArtworkIntegration.qml
+            library-scale-profile tests/qml/tst_LibraryScaleProfile.qml)
         if(QT6_IS_SHARED_LIBS_BUILD)
             set_property(TARGET spool-e2e-tests PROPERTY QT_QML_MODULE_NO_IMPORT_SCAN TRUE)
         else()
@@ -1226,8 +1257,10 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
                 tests/qml/tst_ExtensionIntegration.qml
                 tests/qml/tst_ProviderForms.qml
                 tests/qml/tst_ArtworkIntegration.qml
+                tests/qml/tst_LibraryScaleProfile.qml
                 tests/qml/tst_PlayerSeekBarHover.qml
                 tests/qml/tst_OptionPickerInput.qml
+                tests/qml/tst_LetterScrollBar.qml
         )
 
         set(qml_registry "${CMAKE_CURRENT_BINARY_DIR}/generated/QmlTestSelectors.cpp")
@@ -1238,7 +1271,7 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
             math(EXPR qml_source_index "${qml_index} + 1")
             list(GET SPOOL_QML_TESTS ${qml_index} qml_test_name)
             list(GET SPOOL_QML_TESTS ${qml_source_index} qml_test_source)
-            if(qml_test_name MATCHES "^(subtitle-settings-panel|remote-control-page|provider-install-dialog|provider-shell|player-seek-bar-hover|media-row|extension-integration|provider-forms|artwork-integration|option-picker-input)$")
+            if(qml_test_name MATCHES "^(subtitle-settings-panel|remote-control-page|provider-install-dialog|provider-shell|player-seek-bar-hover|media-row|extension-integration|provider-forms|artwork-integration|library-scale-profile|option-picker-input)$")
                 set(qml_input ":/qt/qml/Spool/${qml_test_source}")
             else()
                 set(qml_input "${CMAKE_CURRENT_SOURCE_DIR}/${qml_test_source}")
@@ -1246,23 +1279,68 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
             set(qml_environment "")
             if(qml_test_name MATCHES "^(extension-integration|provider-shell)$")
                 set(qml_environment "qputenv(\"SPOOL_EXTENSION_INTEGRATION\", \"1\");")
-            elseif(qml_test_name STREQUAL "artwork-integration")
+            elseif(qml_test_name MATCHES "^(artwork-integration|library-scale-profile)$")
                 set(qml_environment "qputenv(\"SPOOL_ARTWORK_INTEGRATION\", \"1\");")
             endif()
             file(APPEND "${qml_registry}" "int test${qml_index}(int argc, char **argv) { ${qml_environment} return spoolRunQml(argc, argv, \"${qml_input}\"); }\nconst bool registered${qml_index} = SpoolTests::registerTest(\"${qml_test_name}\", &test${qml_index});\n")
         endforeach()
         file(APPEND "${qml_registry}" "}\n")
         target_sources(spool-e2e-tests PRIVATE "${qml_registry}")
-        add_test(NAME gui-e2e-native COMMAND spool-e2e-tests --run-all --workers 1 --timeout-ms 600000 --results "${CMAKE_CURRENT_BINARY_DIR}/e2e-results.json")
+        # On a Linux host the GUI selectors always get the private Weston/Xvfb
+        # session, so a bare `ctest` cannot open windows on the developer's
+        # desktop (or be disturbed by them using it).
+        if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ANDROID)
+            set(SPOOL_E2E_SESSION bash "${CMAKE_CURRENT_SOURCE_DIR}/tools/test-gpu-session.sh")
+        else()
+            set(SPOOL_E2E_SESSION "")
+        endif()
+        add_test(NAME gui-e2e-native COMMAND ${SPOOL_E2E_SESSION} $<TARGET_FILE:spool-e2e-tests> --run-all --workers 1 --timeout-ms 600000 --results "${CMAKE_CURRENT_BINARY_DIR}/e2e-results.json")
         set_tests_properties(gui-e2e-native PROPERTIES LABELS e2e ENVIRONMENT "${SPOOL_TEST_ENV}" TIMEOUT 0)
+        add_test(NAME player-setup-performance
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/report-player-setup.py"
+                "${CMAKE_CURRENT_BINARY_DIR}/player-setup-benchmark.json")
+        set_tests_properties(player-setup-performance PROPERTIES LABELS e2e DEPENDS gui-e2e-native)
+        # Exercise the event-thread lifecycle with a controllable client API.
+        # Keep this separate from the core targets so the fake symbols cannot
+        # interpose on the real libmpv used by the other player tests.
+        find_package(Threads REQUIRED)
+        add_executable(mpv-lifecycle-tests
+            tests/player/MpvLifecycleTest.cpp
+            src/player/MpvLifecycle.cpp)
+        target_include_directories(mpv-lifecycle-tests PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/src"
+            "${MPV_ACTIVE_SOURCE_DIR}"
+            "${MPV_ACTIVE_SOURCE_DIR}/include")
+        # Native builds normally obtain installed headers from the libmpv
+        # target. Import those paths without linking its real client symbols.
+        foreach(mpv_headers_target IN ITEMS PkgConfig::MPV MPV::MPV)
+            if(TARGET ${mpv_headers_target})
+                target_include_directories(mpv-lifecycle-tests SYSTEM PRIVATE
+                    "$<TARGET_PROPERTY:${mpv_headers_target},INTERFACE_INCLUDE_DIRECTORIES>")
+            endif()
+        endforeach()
+        target_link_libraries(mpv-lifecycle-tests PRIVATE Qt6::Core Threads::Threads)
+        set_target_properties(mpv-lifecycle-tests PROPERTIES
+            AUTOMOC OFF
+            AUTOUIC OFF
+            AUTORCC OFF)
+        add_test(NAME mpv-lifecycle COMMAND mpv-lifecycle-tests)
+        set_tests_properties(mpv-lifecycle PROPERTIES LABELS e2e ENVIRONMENT "${SPOOL_TEST_ENV}" TIMEOUT 0)
         foreach(test_target IN ITEMS spool-tests spool-e2e-tests)
             set_target_properties(${test_target} PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF
                 INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL OFF)
         endforeach()
         set_tests_properties(provider-sdk-tool local-provider-overrides ffmpeg-capability-generator module-seam
-            network-shaper render-benchmark-report test-driver-ordering PROPERTIES LABELS traditional)
+            network-shaper render-benchmark-report altstore-source player-setup-report test-driver-ordering PROPERTIES LABELS traditional)
         if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-            set_tests_properties(package-audit PROPERTIES LABELS traditional)
+            set_tests_properties(package-audit webos-tooling PROPERTIES LABELS traditional)
+            # Exercise the actual curl scheduler/counters, not just its exposed
+            # option values. Meson tests are disabled in packaged native builds.
+            find_library(SPOOL_CURL_TEST_MPV NAMES mpv HINTS ${MPV_LIBRARY_DIRS} REQUIRED)
+            add_test(NAME curl-transport
+                COMMAND "${Python3_EXECUTABLE}" "${MPV_ACTIVE_SOURCE_DIR}/test/curl_transport.py"
+                    --libmpv "${SPOOL_CURL_TEST_MPV}" -v)
+            set_tests_properties(curl-transport PROPERTIES LABELS traditional TIMEOUT 180)
         endif()
     endif()
     if(SPOOL_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")

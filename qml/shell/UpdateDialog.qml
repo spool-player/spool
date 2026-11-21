@@ -105,9 +105,9 @@ FocusScope {
 
     function routeKey(key, phase, repeat) {
         if (InputKeys.isBack(key, false, false)) {
-            if (phase === "release")
+            if (phase === "press" && !repeat)
                 back()
-            return true
+            return phase === "press"
         }
         if (!InputKeys.isDirection(key))
             return InputKeys.isAccept(key)
@@ -160,6 +160,8 @@ FocusScope {
         anchors.fill: parent
         color: Theme.overlayScrimStrong
     }
+
+    PopupShield {}
 
     Surface {
         anchors.centerIn: parent

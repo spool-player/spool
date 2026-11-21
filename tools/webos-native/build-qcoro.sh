@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+PHASE="${1:-all}"
+if (( $# > 1 )); then echo "usage: $0 [fetch|build|all]" >&2; exit 2; fi
+case "$PHASE" in
+  -h|--help) echo "usage: $0 [fetch|build|all]"; exit 0 ;;
+  fetch|build|all) ;;
+  *) echo "usage: $0 [fetch|build|all]" >&2; exit 2 ;;
+esac
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=tools/lib/build-common.sh
 source "$ROOT/tools/lib/build-common.sh"
@@ -11,7 +19,6 @@ source "$ROOT/tools/webos-native/nixos-sdk-compat.sh"
 
 MANIFEST="${WEBOS_THIRD_PARTY_MANIFEST:-$ROOT/tools/manifests/webos-third-party.json}"
 QT_MANIFEST="${QT_MANIFEST:-$ROOT/tools/manifests/qt-webos-6.11.json}"
-PHASE="${1:-all}"
 QT_STATIC="${QT_STATIC:-1}"
 QT_VERSION="${QT_VERSION:-$(manifest_qt_field "$QT_MANIFEST" qtVersion)}"
 QT_BUILD_TAG="${QT_VERSION%.*}"
@@ -49,10 +56,6 @@ if [[ "$PHASE" == "fetch" ]]; then
   exit 0
 fi
 
-if [[ "$PHASE" != "all" && "$PHASE" != "build" ]]; then
-  echo "usage: $0 [fetch|build|all]" >&2
-  exit 2
-fi
 
 if [[ ! -f "$QT_TARGET_PREFIX/lib/cmake/Qt6/Qt6Config.cmake" ]]; then
   echo "error: target Qt prefix is missing at $QT_TARGET_PREFIX" >&2

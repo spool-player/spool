@@ -10,6 +10,15 @@ QtObject {
     readonly property color border: "#2A2A2A"
     readonly property color borderStrong: "#3A3A3A"
 
+    // Text entry has to read as a place to type from across a room. The panel
+    // greys sit within a few steps of the page and of each other, so a field
+    // drawn in them vanished on both; these hold a 3:1 edge against the page
+    // and the panel greys and keep the hint text above 4.5:1.
+    readonly property color inputFill: "#262626"
+    readonly property color inputFillActive: "#2E2E2E"
+    readonly property color inputBorder: "#737373"
+    readonly property color inputBorderHover: "#909090"
+
     readonly property color textPrimary: "#EDEDED"
     readonly property color textSecondary: "#C6C6C6"
     readonly property color textMuted: "#9C9C9C"

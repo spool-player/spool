@@ -1,4 +1,5 @@
 import QtQuick
+import QtCore as Persist
 import QtQuick.Layouts
 import "../theme"
 import "../primitives"
@@ -123,8 +124,8 @@ KeyRouter {
                          }
     }
 
-    // Qt's logical pixel on Android is exactly an Android dp, and Android has
-    // already decided what a dp should be for the panel in front of it: a
+    // Android dp and iOS points are distance-corrected logical pixels. Android
+    // has already decided what a dp should be for the panel in front of it: a
     // handset reports a few hundred dp across because it is held at arm's
     // length, and a television reports about 960x540 because it is watched
     // from across a room. Scoring that television viewport at 1.0 is what
@@ -135,7 +136,7 @@ KeyRouter {
     Binding {
         target: Metrics
         property: "baselinePx"
-        value: Platform.isAndroid ? 720 : 1440
+        value: Platform.isAndroid || Platform.isMobile ? 720 : 1440
         restoreMode: Binding.RestoreNone
     }
 
@@ -215,7 +216,6 @@ KeyRouter {
     property var providerOverlay: null
     property var downloadsReturnFocus: null
     property bool downloadsDestinationRequested: false
-    property var personItem: ({})
     property var pendingPlaybackBackItem: ({})
     textInputActive: Qt.inputMethod.visible || InputKeys.isTextInputItem(root.Window.window
                                                                          ? root.Window.window.activeFocusItem : null)
@@ -393,11 +393,32 @@ KeyRouter {
                 root.applyInitializedRoute()
         }
         function onAccountSetupStarted(accountId) {
+            // The accounts page shows the new profile connecting, and keeps
+            // any failure beside it; success needs nothing from the viewer.
+            root.linkingAccountId = accountId
             Router.reset("accounts", {
                              "onboarding": accountId
                          })
             root.navigationTarget = routeStack
             InputKeys.focus(routeStack)
+        }
+        // A new sign-in opens straight into its library. The profile just
+        // signed in to is what Spool opens with from now on, unless this
+        // server was already set to ask who is watching; both are changed on
+        // the accounts page, not asked about after every sign-in.
+        function onAccountSelectionFinished(accountId, selected) {
+            if (accountId !== root.linkingAccountId)
+                return
+            root.linkingAccountId = ""
+            if (!selected)
+                return
+            const account = Providers.accounts.find(entry => entry.id === accountId)
+            if (!account || String(account.startupMode || "") !== "ask")
+                Providers.setStartupChoice(accountId, "always")
+            Providers.finishOnboarding(accountId)
+            root.goHome()
+            if (account)
+                toast.show("Signed in" + (account.detail ? " to " + account.detail : ""))
         }
         function onComponentRequested(context) {
             root.providerOverlay = context
@@ -417,6 +438,9 @@ KeyRouter {
         if (root.networkConsentPending)
             Providers.resolveNetworkConsent(String(root.networkConsent.id), false)
     }
+    // The account whose sign-in has just finished and is still connecting.
+    property string linkingAccountId: ""
+
     function showToastAction(message, actionText, callback) {
         toast.showAction(message, actionText, callback)
     }
@@ -456,17 +480,8 @@ KeyRouter {
             }
         } else if (root.route === "personDetails") {
             const personId = String(args.personId || "")
-            if (personId.length <= 0) {
+            if (personId.length <= 0)
                 Router.reset("home")
-            } else {
-                personItem = {
-                    id: personId,
-                    name: String(args.personName || "Person"),
-                    role: String(args.personRole || ""),
-                    type: String(args.personType || "Person")
-                }
-                Content.loadPersonItems(personItem.id)
-            }
         }
         Router.finishRecovery()
         return true
@@ -614,11 +629,58 @@ KeyRouter {
                                   ? request.source : "", request ? request.focusIndex : 0)
     }
 
-    function openDetailsAt(model, index, source, returnRoute) {
+    function openDetailsAt(model, index, source, returnRoute, parent) {
         const nextModel = model || (Browse.items)
-        return commitDetailsRoute(RoutePolicy.detailsRouteAt(nextModel, index, source, returnRoute, route), source,
+        return commitDetailsRoute(RoutePolicy.detailsRouteAt(nextModel, index, source, returnRoute, route, parent), source,
                                   index)
+    }
 
+    // Details pages remember, per account and item type, how much overview
+    // and credit space their last fully loaded page took, so the next first
+    // load holds the right space. Kept here and on disk, so it outlives a
+    // trimmed page and a restart; keys are opaque account prefixes and types.
+    readonly property var detailLayoutMemory: {
+        try {
+            return JSON.parse(detailLayoutStore.memory)
+        } catch (error) {
+            return ({})
+        }
+    }
+    function rememberDetailLayout(key, layout) {
+        const memory = Object.assign({}, detailLayoutMemory)
+        if (JSON.stringify(memory[key]) === JSON.stringify(layout))
+            return
+        memory[key] = layout
+        detailLayoutStore.memory = JSON.stringify(memory)
+    }
+    Persist.Settings {
+        id: detailLayoutStore
+        category: "detailLayout"
+        property string memory: "{}"
+    }
+
+    // spoolet open: select an item the way a person would, so automation
+    // exercises the same route, model and snapshot as a real selection.
+    function automationOpen(source, index) {
+        const page = activePage
+        const onDetails = route === "itemDetails" && page
+        if (source === "context" && onDetails && page.openContextItem) {
+            if (index < 0 || index >= Content.detailSeasons.count)
+                return false
+            page.openContextItem(index)
+            return true
+        }
+        if (source === "similar" && onDetails && page.openSimilarItem) {
+            if (index < 0 || index >= Content.detailSimilarItems.count)
+                return false
+            page.openSimilarItem(index)
+            return true
+        }
+        const model = source === "browse" ? Browse.items : source === "resume" ? Home.resumeItems : source === "next-up"
+                                                                                 ? Home.nextUpItems : null
+        if (!model || index < 0 || index >= model.count)
+            return false
+        return openDetailsAt(model, index, source === "browse" ? "movies" : source, route)
     }
 
     function openSeriesDetails(seriesId, seriesName, returnRoute) {
@@ -927,22 +989,20 @@ KeyRouter {
     }
 
     function openPerson(person) {
-        personItem = person || ({})
-        const personId = String(personItem.id || "")
+        const personId = String(person && person.id || "")
         if (personId.length <= 0)
             return false
-        if (Content)
-            Content.loadPersonItems(personId)
-        if (route === "personDetails") {
-            InputKeys.focus(routeStack)
-            return true
+        const args = {
+            personId: personId,
+            personName: String(person.name || "Person"),
+            personRole: String(person.role || ""),
+            personType: String(person.type || "Person"),
+            personImageTag: String(person.imageTag || "")
         }
-        pushRoute("personDetails", {
-                      personId: personId,
-                      personName: String(personItem.name || "Person"),
-                      personRole: String(personItem.role || ""),
-                      personType: String(personItem.type || "Person")
-                  })
+        if (route === "personDetails" && String(routeArgs.personId || "") === personId)
+            replaceRoute("personDetails", args)
+        else
+            pushRoute("personDetails", args)
         return true
     }
 
@@ -1124,7 +1184,7 @@ KeyRouter {
 
             TopBar {
                 id: navBar
-                anchors.rightMargin: openFilesButton.visible ? openFilesButton.width + Metrics.scaled(14) : 0
+                trailingCells: openFilesButton.visible ? 1 : 0
                 objectName: "shellNavigationBar"
                 anchors.left: parent.left
                 anchors.right: parent.right
@@ -1158,9 +1218,9 @@ KeyRouter {
             IconButton {
                 id: openFilesButton
                 objectName: "shellOpenFiles"
-                anchors.right: parent.right
-                anchors.rightMargin: Metrics.scaled(14)
+                x: navBar.x + navBar.trailingCellCenterX - width / 2
                 y: navBar.y + (navBar.height - height) / 2
+                railStyle: true
                 visible: root.desktopFilesAvailable && navBar.visible && !root.playerHoldsScreen
                 enabled: !root.fileInputBlocked && !(root.fileDropDialog && root.fileDropDialog.opened)
                 iconName: "folder_open"
@@ -1230,11 +1290,25 @@ KeyRouter {
     DropArea {
         id: desktopDropArea
         objectName: "shellDesktopDropArea"
+        property var enteredUrls: []
+        function copyUrls(urls) {
+            return Array.from(urls, url => String(url))
+        }
+        onEntered: drag => {
+            // Native MIME data can expire before drop. Own values, never the event wrapper.
+            const urls = copyUrls(drag.urls)
+            enteredUrls = drag.hasUrls ? urls : []
+        }
+        onExited: enteredUrls = []
         anchors.fill: parent
         enabled: root.desktopFilesAvailable
         onDropped: drop => {
-            if (drop.hasUrls && root.fileDropDialog) {
-                root.fileDropDialog.submitUrls(drop.urls)
+            // Read the native getter once while this event is alive; do no work until drop.
+            const freshUrls = copyUrls(drop.urls)
+            const urls = drop.hasUrls ? (freshUrls.length > 0 ? freshUrls : enteredUrls.slice()) : []
+            enteredUrls = []
+            if (urls.length > 0 && root.fileDropDialog) {
+                root.fileDropDialog.submitUrls(urls)
                 drop.acceptProposedAction()
             }
         }

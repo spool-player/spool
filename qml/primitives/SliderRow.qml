@@ -102,9 +102,12 @@ SettingRow {
             Layout.preferredHeight: Math.max(Metrics.scaled(34), Math.round(Metrics.controlHeightPx * 0.78))
             Layout.alignment: Qt.AlignVCenter
             radius: Theme.radiusMedium
-            color: Theme.bgRaised
+            // Only drawn as a field where it is one; on a TV it is a readout.
+            color: valueField.readOnly ? Theme.bgRaised : valueField.activeFocus ? Theme.inputFillActive :
+                                                                                   Theme.inputFill
+
             border.width: valueField.activeFocus ? Theme.focusBorderWidth : Theme.hoverBorderWidth
-            border.color: valueField.activeFocus ? Theme.accent : Theme.border
+            border.color: valueField.activeFocus ? Theme.accent : valueField.readOnly ? Theme.border : Theme.inputBorder
             antialiasing: true
 
             AppText {

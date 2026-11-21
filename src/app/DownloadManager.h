@@ -29,6 +29,8 @@ public:
     DownloadManager(
         SourceHub *sources, QString dataRoot, TlsTrustController *trust = nullptr, QObject *parent = nullptr);
     ~DownloadManager() override;
+    // Inventory rows are a snapshot of the last change: constructed once per
+    // change (not per progress-driven status read) and shared implicitly.
     QVariantList jobs() const;
     QString destination() const
     {
@@ -80,7 +82,9 @@ signals:
 private:
     struct Job;
     QCoro::Task<void> prepare(std::shared_ptr<Job> job);
-    QCoro::Task<void> release(DownloadPlan plan);
+    // Releasing an acquired plan must not depend on the manager's lifetime:
+    // the provider hub owns the acquisition and its normal release path.
+    static QCoro::Task<void> release(SourceHub *sources, DownloadPlan plan);
     void transfer(const std::shared_ptr<Job>& job, DownloadPlan plan);
     void consume(const std::shared_ptr<Job>& job);
     void finish(const std::shared_ptr<Job>& job, const QString& error = {});
@@ -95,6 +99,10 @@ private:
     AndroidDownloadStorage *m_androidStorage;
     QHash<QString, std::shared_ptr<Job>> m_jobs;
     QStringList m_order;
+    mutable QVariantList m_jobsSnapshot;
+    mutable QVariantList m_libraryFilesSnapshot;
+    mutable bool m_jobsSnapshotValid = false;
+    mutable bool m_libraryFilesSnapshotValid = false;
 #if defined(SPOOL_WEBOS)
     bool m_enabled = false;
 #else

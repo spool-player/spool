@@ -14,6 +14,7 @@ FocusScope {
 
     function routeKey(key, phase, repeat) {
         if (root.inputKeys.isBack(key, false, false)) {
+            // Back claims both phases; only the release dismisses.
             if (phase === "release")
                 root.trustController.cancel()
             return true

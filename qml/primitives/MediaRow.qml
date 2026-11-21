@@ -40,6 +40,7 @@ FocusScope {
     readonly property bool hasHeaderAction: typeof headerAction === "function"
     property var contextMenu: null
     property bool moveMode: false
+    property bool publishingMove: false
     property bool dragActive: false
     property int dragSourceIndex: -1
     property int dragTargetIndex: -1
@@ -50,7 +51,6 @@ FocusScope {
     property var dragCardData: ({})
     // Lets even the final card be positioned at the start of the viewport.
     property bool allowTrailingSpace: false
-    property int modelRevision: 0
     readonly property bool delegatesPresented: presentation.delegatesReady
 
     readonly property int count: modelCount()
@@ -75,27 +75,57 @@ FocusScope {
     visible: rowVisible
     onVisibleChanged: if (!visible && (moveMode || dragActive))
                           finishMove()
-    onActiveFocusChanged: if (!activeFocus && (moveMode || dragActive))
+    onActiveFocusChanged: if (!activeFocus && !publishingMove && (moveMode || dragActive))
                               finishMove()
     focus: true
 
-    Component.onCompleted: resetPresentation()
+    // Row stacks recycle whole rows, so one row can go from a JS array of
+    // libraries to an item model of episodes. Qt's card pool keeps cards
+    // built for the old kind of model and hands them to the new one, which
+    // reads null role data and can crash inside the delegate model. When the
+    // kind changes, assign the model with reuse off: that drains the pool and
+    // destroys the released cards instead of recycling them.
+    property string boundModelKind: ""
+    function modelKind(value) {
+        if (!value)
+            return ""
+        return Array.isArray(value) ? "list" : value.rowCount !== undefined ? "item" : "other"
+    }
+    function bindModel() {
+        const kind = modelKind(root.model)
+        if (kind === boundModelKind) {
+            listView.model = root.model
+            return
+        }
+        boundModelKind = kind
+        listView.reuseItems = false
+        listView.model = root.model
+        listView.reuseItems = true
+    }
+
+    Component.onCompleted: {
+        bindModel()
+        resetPresentation()
+    }
     onAtomicPopulateChanged: Qt.callLater(resetPresentation)
     onModelChanged: {
-        ++modelRevision
-        if (moveMode || dragActive)
+        bindModel()
+        if (!publishingMove && (moveMode || dragActive))
             finishMove()
-        Qt.callLater(resetPresentation)
+        if (!publishingMove)
+            Qt.callLater(resetPresentation)
     }
     onCountChanged: {
-        ++modelRevision
-        currentIndex = count > 0 ? Math.max(0, Math.min(currentIndex, count - 1)) : -1
-        if (moveMode || dragActive)
-            finishMove()
+        if (!publishingMove) {
+            currentIndex = count > 0 ? Math.max(0, Math.min(currentIndex, count - 1)) : -1
+            if (moveMode || dragActive)
+                finishMove()
+        }
         // The view rewrites its currentIndex internally on model changes;
         // re-assert ours once it has processed them.
         Qt.callLater(syncViewCurrentIndex)
-        Qt.callLater(resetPresentation)
+        if (!publishingMove)
+            Qt.callLater(resetPresentation)
     }
     onCurrentIndexChanged: syncViewCurrentIndex()
     onReorderEnabledChanged: if (!reorderEnabled && (moveMode || dragActive))
@@ -116,23 +146,12 @@ FocusScope {
         target: root.model && root.model.rowCount !== undefined ? root.model : null
         ignoreUnknownSignals: true
 
-        function onDataChanged() {
-            ++root.modelRevision
-        }
         function onModelReset() {
-            ++root.modelRevision
-            root.finishMove()
-            root.currentIndex = root.count > 0 ? Math.max(0, Math.min(root.currentIndex, root.count - 1)) : -1
+            if (!root.publishingMove) {
+                root.finishMove()
+                root.currentIndex = root.count > 0 ? Math.max(0, Math.min(root.currentIndex, root.count - 1)) : -1
+            }
             Qt.callLater(root.syncViewCurrentIndex)
-        }
-        function onRowsInserted() {
-            ++root.modelRevision
-        }
-        function onRowsMoved() {
-            ++root.modelRevision
-        }
-        function onRowsRemoved() {
-            ++root.modelRevision
         }
     }
 
@@ -140,9 +159,7 @@ FocusScope {
         return ModelAccess.count(model)
     }
 
-    // revision is unused but must stay in the signature: bindings pass
-    // modelRevision so a model change re-evaluates them.
-    function itemAt(index, revision) {
+    function itemAt(index) {
         return ModelAccess.at(model, index)
     }
 
@@ -160,6 +177,15 @@ FocusScope {
 
     function topLeftVisibleCandidate(outerViewport) {
         return InputKeys.topLeftVisibleCandidate(listView, outerViewport)
+    }
+
+    function selectionVisiblyUsable(outerViewport) {
+        if (headerButton.activeFocus)
+            return true
+        for (let index = 0; index < carouselButtons.children.length; ++index)
+            if (carouselButtons.children[index].activeFocus)
+                return true
+        return InputKeys.selectionVisiblyUsable(listView, outerViewport)
     }
 
     function focusIndexWithoutScrolling(index) {
@@ -281,12 +307,16 @@ FocusScope {
                                               "deferBackdropDismissal": Boolean(deferBackdropDismissal)
                                           }))
     }
-    function beginMoveById(libraryId) {
-        for (let index = 0; index < count; ++index) {
+    function libraryIndex(libraryId) {
+        for (let index = 0; index < count; ++index)
             if (String(itemAt(index).libraryId || "") === libraryId)
-                return beginMove(index)
-        }
-        return false
+                return index
+        return -1
+    }
+
+    function beginMoveById(libraryId) {
+        const index = libraryIndex(libraryId)
+        return index >= 0 && beginMove(index)
     }
 
     function beginMove(index) {
@@ -312,14 +342,27 @@ FocusScope {
     function moveTo(from, to) {
         if (!moveMode || !reorderEnabled || from < 0 || to < 0 || from >= count || to >= count)
             return false
-        if (from !== to && !moveItem(from, to))
-            return false
-        currentIndex = to
-        syncViewCurrentIndex()
-        listView.forceLayout()
-        listView.positionViewAtIndex(to, ListView.Contain)
-        focusList()
-        return true
+        const libraryId = String(itemAt(from).libraryId || "")
+        const scrollOffset = listView.contentX - listView.originX
+        publishingMove = true
+        try {
+            if (from !== to && !moveItem(from, to))
+                return false
+            const movedIndex = libraryIndex(libraryId)
+            if (movedIndex < 0) {
+                finishMove()
+                return false
+            }
+            currentIndex = movedIndex
+            syncViewCurrentIndex()
+            listView.forceLayout()
+            listView.contentX = listView.originX + scrollOffset
+            listView.positionViewAtIndex(movedIndex, ListView.Contain)
+            focusList()
+            return true
+        } finally {
+            publishingMove = false
+        }
     }
 
     function moveSelected(direction) {
@@ -387,27 +430,46 @@ FocusScope {
             id: card
 
             required property int index
-            readonly property var cardData: root.itemAt(index, root.modelRevision)
-            readonly property var cardItem: root.cardKind === "library" ? (cardData.item || ({})) : cardData
+            required property var modelData
+            // Qt supplies a live role object for our native models, and the
+            // element itself for a QVariantList/JS array. Read the item role
+            // directly so one changed row does not re-fetch every card.
+            readonly property var cardData: modelData || ({})
+            readonly property var cardItem: {
+                // Bindings can evaluate before cardData's own binding lands
+                // during delegate construction; treat that as empty.
+                const data = cardData || ({})
+                const itemRole = data.item
+                return libraryCard ? (itemRole || ({})) : itemRole !== undefined ? itemRole : data
+            }
             readonly property bool libraryCard: root.cardKind === "library"
             readonly property bool personCard: root.cardKind === "person"
-            readonly property var badge: root.cardBadge ? root.cardBadge(cardData) : null
+            readonly property var badge: root.cardBadge ? root.cardBadge(cardData || ({})) : null
+
+            // The same ordering hazard as cardItem: a binding below can run
+            // before cardData's does, while it is still null. Reading a role
+            // off null failed the binding and left, say, a library card with
+            // no name until something else made it re-evaluate.
+            function role(name) {
+                const data = cardData || modelData
+                return data ? data[name] : undefined
+            }
 
             width: root.cardWidth
             height: listView.height
             shell: libraryCard || personCard ? null : root.shell
             kind: libraryCard ? "landscape" : personCard ? "poster" : root.cardKind
             item: cardItem || ({})
-            titleOverride: libraryCard ? String(cardData.name || "") : personCard ? String(cardData.name || "") : ""
-            subtitleOverride: libraryCard ? String(badge && badge.detail || cardData.collectionType || "") : personCard
-                                            ? String(cardData.role || cardData.type || "") : ""
+            titleOverride: libraryCard || personCard ? String(role("name") || "") : ""
+            subtitleOverride: libraryCard ? String(badge && badge.detail || role("collectionType") || "") : personCard
+                                            ? String(role("role") || role("type") || "") : ""
             showSubtitle: !libraryCard || Boolean(badge && badge.detail)
             badgeIcon: badge ? badge.iconUrl : ""
             badgeText: badge ? String(badge.text || "") : ""
             emphasizedTitle: libraryCard
             imageOverride: libraryCard ? Art.url(cardItem, "landscape") : personCard ? Art.url(cardItem, "poster") : ""
-            fallbackIcon: libraryCard ? Theme.libraryIcon(cardData.collectionType) : personCard ? "person" : ""
-            fallbackTint: libraryCard ? Theme.libraryTint(cardData.name) : "transparent"
+            fallbackIcon: libraryCard ? Theme.libraryIcon(role("collectionType")) : personCard ? "person" : ""
+            fallbackTint: libraryCard ? Theme.libraryTint(role("name")) : "transparent"
             useSeriesPoster: root.useSeriesPoster
             preferEpisodeTitle: root.preferEpisodeTitle
             focused: root.keyboardFocusActive && root.focusVisible && card.index === listView.currentIndex
@@ -580,7 +642,7 @@ FocusScope {
         leftMargin: root.focusPadding
         rightMargin: root.allowTrailingSpace ? Math.max(root.focusPadding, width - root.cardWidth) : root.focusPadding
         reuseItems: true
-        model: root.model
+        // Assigned by bindModel(), never bound: see boundModelKind.
         delegate: cardDelegate
 
         highlightFollowsCurrentItem: true

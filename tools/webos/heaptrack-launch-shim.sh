@@ -20,6 +20,30 @@ preload="$appdir/lib/heaptrack/libheaptrack_preload.so"
 marker="${SPOOL_HEAPTRACK_MARKER:-/tmp/spool-heaptrack.on}"
 breadcrumb="${SPOOL_HEAPTRACK_BREADCRUMB:-/tmp/spool-heaptrack.last}"
 
+# Benchmark configuration is data, never a sourced shell program. Only an
+# explicitly installed profiling/benchmark IPK contains this launch shim.
+bench_marker="${SPOOL_BENCH_MARKER:-/tmp/spool-benchmark.on}"
+if [ -r "$bench_marker" ] && [ -x "$real" ]; then
+    if {
+        IFS= read -r bench_version &&
+        IFS= read -r bench_mode &&
+        IFS= read -r bench_iterations &&
+        IFS= read -r bench_library &&
+        IFS= read -r bench_cold &&
+        IFS= read -r bench_list &&
+        IFS= read -r bench_scroll &&
+        IFS= read -r bench_output
+    } < "$bench_marker" && [ "${bench_version:-}" = "spool-benchmark-v1" ]; then
+        export SPOOL_BENCH="$bench_mode"
+        export SPOOL_BENCH_ITERATIONS="$bench_iterations"
+        export SPOOL_BENCH_LIBRARY="$bench_library"
+        export SPOOL_BENCH_COLD="$bench_cold"
+        export SPOOL_BENCH_LIST_MODE="$bench_list"
+        export SPOOL_BENCH_SCROLL_STEPS="$bench_scroll"
+        export SPOOL_BENCH_OUT="$bench_output"
+    fi
+fi
+
 # bigalloc: size-gated allocation tracer. Backtraces only allocations >=
 # threshold (default 1 MiB) and periodically dumps the live big-alloc set with
 # stacks. Far lower overhead/crash exposure than heaptrack (which unwinds every

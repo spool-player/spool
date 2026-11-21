@@ -392,6 +392,18 @@ struct PagedMovieItems {
     int limit = 0;
     std::optional<QString> nextCursor;
     bool exhausted = true;
+    // Any row can be fetched by number and totalRecordCount is exact, so a
+    // browse can load only what is on screen instead of walking from the top.
+    bool seekable = false;
+};
+
+// How a name-sorted listing divides by leading character, in listing order:
+// "#" for anything before A, then the letters. Counts, not offsets.
+struct BrowseIndexEntry {
+    QString label;
+    int count = 0;
+
+    friend bool operator==(const BrowseIndexEntry&, const BrowseIndexEntry&) = default;
 };
 
 struct PlaybackQueueItem {
@@ -422,6 +434,9 @@ struct PlaybackSession {
     int subtitleStreamIndex = -1;
     bool codecFallback = false;
     bool restoreStreamSelection = false;
+    // Empty when the server owns group queue policy; do not report a local mode.
+    QString repeatMode = QStringLiteral("RepeatNone");
+    bool shuffled = false;
 };
 
 QString exceptionMessage(const std::exception_ptr& exception);
