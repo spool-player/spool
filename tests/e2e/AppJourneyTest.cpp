@@ -721,16 +721,81 @@ public:
             }
             if (positiveContrast || adaptiveContrast) {
                 // Preserve standard BT.601 luma for adaptive thresholding, or
-                // binarize dark captions on coloured controls for sparse OCR.
+                // isolate dark captions inside bright/coloured controls onto a
+                // clean white canvas so dark-theme backgrounds cannot invert OCR.
                 const QImage source = image.convertToFormat(QImage::Format_RGB32);
-                image = QImage(source.size(), QImage::Format_Grayscale8);
-                for (int y = 0; y < source.height(); ++y) {
-                    const auto *sourcePixels = reinterpret_cast<const QRgb *>(source.constScanLine(y));
-                    auto *pixels = image.scanLine(y);
-                    for (int x = 0; x < source.width(); ++x) {
-                        const QRgb pixel = sourcePixels[x];
-                        const int luma = (77 * qRed(pixel) + 150 * qGreen(pixel) + 29 * qBlue(pixel) + 128) >> 8;
-                        pixels[x] = adaptiveContrast ? luma : luma > 64 ? 255 : 0;
+                const int width = source.width();
+                const int height = source.height();
+                image = QImage(width, height, QImage::Format_Grayscale8);
+                if (adaptiveContrast) {
+                    for (int y = 0; y < height; ++y) {
+                        const auto *sourcePixels = reinterpret_cast<const QRgb *>(source.constScanLine(y));
+                        auto *pixels = image.scanLine(y);
+                        for (int x = 0; x < width; ++x) {
+                            const QRgb pixel = sourcePixels[x];
+                            pixels[x] = (77 * qRed(pixel) + 150 * qGreen(pixel) + 29 * qBlue(pixel) + 128) >> 8;
+                        }
+                    }
+                } else {
+                    std::vector<uint8_t> lumas(size_t(width) * size_t(height));
+                    std::vector<uint8_t> insideH(size_t(width) * size_t(height), 0);
+                    constexpr int kBrightLuma = 96;
+                    constexpr int kMaxStrokeH = 24;
+                    constexpr int kMaxStrokeV = 18;
+                    for (int y = 0; y < height; ++y) {
+                        const auto *sourcePixels = reinterpret_cast<const QRgb *>(source.constScanLine(y));
+                        const size_t row = size_t(y) * size_t(width);
+                        int lastBright = -kMaxStrokeH - 1;
+                        for (int x = 0; x < width; ++x) {
+                            const QRgb pixel = sourcePixels[x];
+                            const uint8_t luma
+                                = uint8_t((77 * qRed(pixel) + 150 * qGreen(pixel) + 29 * qBlue(pixel) + 128) >> 8);
+                            lumas[row + size_t(x)] = luma;
+                            if (luma >= kBrightLuma)
+                                lastBright = x;
+                            if (x - lastBright <= kMaxStrokeH)
+                                insideH[row + size_t(x)] = 1;
+                        }
+                        int nextBright = width + kMaxStrokeH + 1;
+                        for (int x = width - 1; x >= 0; --x) {
+                            if (lumas[row + size_t(x)] >= kBrightLuma)
+                                nextBright = x;
+                            if (nextBright - x > kMaxStrokeH)
+                                insideH[row + size_t(x)] = 0;
+                        }
+                    }
+                    std::vector<uint8_t> insideV(size_t(width) * size_t(height), 0);
+                    for (int x = 0; x < width; ++x) {
+                        int lastBright = -kMaxStrokeV - 1;
+                        for (int y = 0; y < height; ++y) {
+                            const size_t idx = size_t(y) * size_t(width) + size_t(x);
+                            if (lumas[idx] >= kBrightLuma)
+                                lastBright = y;
+                            if (y - lastBright <= kMaxStrokeV)
+                                insideV[idx] = 1;
+                        }
+                        int nextBright = height + kMaxStrokeV + 1;
+                        for (int y = height - 1; y >= 0; --y) {
+                            const size_t idx = size_t(y) * size_t(width) + size_t(x);
+                            if (lumas[idx] >= kBrightLuma)
+                                nextBright = y;
+                            if (nextBright - y > kMaxStrokeV)
+                                insideV[idx] = 0;
+                        }
+                    }
+                    for (int y = 0; y < height; ++y) {
+                        const size_t row = size_t(y) * size_t(width);
+                        auto *pixels = image.scanLine(y);
+                        for (int x = 0; x < width; ++x) {
+                            const size_t idx = row + size_t(x);
+                            if (insideH[idx] || insideV[idx]) {
+                                const int luma = lumas[idx];
+                                const int scaled = (luma - 12) * 255 / (112 - 12);
+                                pixels[x] = uint8_t(std::clamp(scaled, 0, 255));
+                            } else {
+                                pixels[x] = 255;
+                            }
+                        }
                     }
                 }
             } else if (highContrast) {
@@ -891,10 +956,15 @@ public:
                         const QList<Words> positiveLines
                             = words(imagePath, 11, region.topLeft(), TextPreprocess::Positive);
                         candidate = locate(positiveLines);
+                        if (candidate.isEmpty())
+                            candidate = locate(words(imagePath, 6, region.topLeft(), TextPreprocess::Positive));
                         if (candidate.isEmpty()) {
                             const QString pos = summarize(positiveLines);
-                            if (!pos.isEmpty() && lastObserved.size() < 40)
-                                lastObserved = pos;
+                            if (!pos.isEmpty()) {
+                                const QString combined
+                                    = QStringLiteral("pos: ") + pos + QStringLiteral("; ") + lastObserved;
+                                lastObserved = combined.left(110);
+                            }
                         }
                     }
                     if (candidate.isEmpty())
