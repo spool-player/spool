@@ -117,8 +117,9 @@
         then pinned pkgs.ffmpeg_9-full
         # The x86_64-darwin maintenance branch predates FFmpeg 9. Its generic
         # derivation supports newer upstream versions; discard its two obsolete
-        # FFmpeg 8 configure switches when building the newer source.
-        else (pinned (pkgs.ffmpeg-full.override { withCelt = false; })).overrideAttrs (old: {
+        # FFmpeg 8 configure switches when building the newer source, and
+        # disable lcevcdec because 26.05 ships 4.1.0 while FFmpeg 9.1 needs >= 4.2.
+        else (pinned (pkgs.ffmpeg-full.override { withCelt = false; withLcevcdec = false; })).overrideAttrs (old: {
           configureFlags = builtins.filter (flag:
             !builtins.elem flag [ "--disable-libcelt" "--disable-libshaderc" ])
             old.configureFlags;
