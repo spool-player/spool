@@ -802,19 +802,47 @@ public:
             } else if (smoothInverse) {
                 // Preserve anti-aliased light glyphs on dark controls (e.g.
                 // flat buttons on compact mobile viewports) by smoothly mapping
-                // dark theme surfaces to white ink background without bloating
-                // thin strokes via hard binary thresholding.
+                // dark theme surfaces to white ink background and upscaling 2x
+                // with a separable Catmull-Rom kernel instead of Qt's bilinear
+                // filter, which smears 1px strokes at 8-9px glyph heights.
                 const QImage source = image.convertToFormat(QImage::Format_RGB32);
-                image = QImage(source.width(), source.height(), QImage::Format_Grayscale8);
-                for (int y = 0; y < source.height(); ++y) {
+                const int w = source.width();
+                const int h = source.height();
+                QImage mapped(w, h, QImage::Format_Grayscale8);
+                for (int y = 0; y < h; ++y) {
                     const auto *sourcePixels = reinterpret_cast<const QRgb *>(source.constScanLine(y));
-                    auto *pixels = image.scanLine(y);
-                    for (int x = 0; x < source.width(); ++x) {
+                    auto *pixels = mapped.scanLine(y);
+                    for (int x = 0; x < w; ++x) {
                         const QRgb pixel = sourcePixels[x];
                         const int luma = (77 * qRed(pixel) + 150 * qGreen(pixel) + 29 * qBlue(pixel) + 128) >> 8;
                         const int scaled = (180 - luma) * 255 / (180 - 40);
                         pixels[x] = uint8_t(std::clamp(scaled, 0, 255));
                     }
+                }
+                const auto catmullMid = [](int a, int b, int c, int d) -> uint8_t {
+                    return uint8_t(std::clamp((-a + 9 * b + 9 * c - d + 8) >> 4, 0, 255));
+                };
+                QImage horiz(w * 2, h, QImage::Format_Grayscale8);
+                for (int y = 0; y < h; ++y) {
+                    const auto *src = mapped.constScanLine(y);
+                    auto *dst = horiz.scanLine(y);
+                    for (int x = 0; x < w; ++x) {
+                        dst[2 * x] = src[x];
+                        dst[2 * x + 1] = catmullMid(
+                            src[std::max(0, x - 1)], src[x], src[std::min(w - 1, x + 1)], src[std::min(w - 1, x + 2)]);
+                    }
+                }
+                image = QImage(w * 2, h * 2, QImage::Format_Grayscale8);
+                for (int y = 0; y < h; ++y) {
+                    const auto *r0 = horiz.constScanLine(std::max(0, y - 1));
+                    const auto *r1 = horiz.constScanLine(y);
+                    const auto *r2 = horiz.constScanLine(std::min(h - 1, y + 1));
+                    const auto *r3 = horiz.constScanLine(std::min(h - 1, y + 2));
+                    auto *even = image.scanLine(2 * y);
+                    auto *odd = image.scanLine(2 * y + 1);
+                    std::memcpy(even, r1, size_t(w * 2));
+                    for (int x = 0; x < w * 2; ++x)
+                        odd[x] = catmullMid(r0[x], r1[x], r2[x], r3[x]);
                 }
             } else if (highContrast) {
                 // Focused rows can defeat page segmentation even after scaling.
@@ -833,13 +861,12 @@ public:
                 : neutralText             ? QStringLiteral(".ocr-neutral.png")
                                           : QStringLiteral(".ocr.png");
             QSaveFile file(inputPath);
+            const QImage output = smoothInverse ? image
+                                                : image.scaled(image.width() * scale, image.height() * scale,
+                                                      Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
             require(file.open(QIODevice::WriteOnly)
                     && file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)
-                    && image
-                        .scaled(image.width() * scale, image.height() * scale, Qt::IgnoreAspectRatio,
-                            Qt::SmoothTransformation)
-                        .save(&file, "PNG")
-                    && file.commit(),
+                    && output.save(&file, "PNG") && file.commit(),
                 "captured OCR image could not be normalized");
         }
         QStringList arguments { inputPath, "stdout", "-l", "eng", "--psm", QString::number(mode) };
