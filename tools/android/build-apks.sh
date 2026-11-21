@@ -154,6 +154,13 @@ PY
       fi
       if [[ $attempt -lt 3 ]]; then
         echo "Retrying $apk_target after transient Gradle/Maven failure (attempt $((attempt + 1))/3)..." >&2
+        local gradlew
+        for gradlew in "$build"/android-build*/gradlew; do
+          if [[ -x "$gradlew" ]]; then
+            "$gradlew" --stop >/dev/null 2>&1 || true
+          fi
+        done
+        rm -rf "${GRADLE_USER_HOME:-$HOME/.gradle}/caches/modules-2/metadata-"* 2>/dev/null || true
         sleep $((attempt * 15))
       fi
     done
