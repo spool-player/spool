@@ -674,10 +674,18 @@ jobs:
       - name: Build macOS app
         env:
           SPOOL_MACOS_CREDENTIAL_SERVICE: ${{ inputs.enable_macos_signing && 'com.sachk.spool' || '' }}
+          # Hosted macOS runners expose Apple's paravirtualized Metal GPU, where
+          # MoltenVK vkQueueSubmit hangs (kIOGPUCommandBufferCallbackErrorHang).
+          # Keep the shipped Spool.app unchanged (Vulkan default + bundled
+          # MoltenVK, verified by the runtime load step below) and run the
+          # hosted e2e suite on real macOS OpenGL, matching the Windows CI gate.
+          SPOOL_TEST_RENDER_BACKEND: opengl
         run: nix develop .#native --no-write-lock-file -c bash tools/build-macos.sh
 
 
       - name: Run macOS traditional and real GUI e2e tests
+        env:
+          SPOOL_RENDER_API: opengl
         run: nix develop .#native --no-write-lock-file -c python tools/run-tests.py --build-dir build/macos/app --workers 4
 
       - name: Lint compiled QML
@@ -1285,6 +1293,23 @@ jobs:
         env:
           SPOOL_ANDROID_FORM_FACTOR: tv
         run: nix develop .#android -c bash tools/android/emulator-launch-test.sh
+
+      - name: Upload Android native test diagnostics on failure
+        if: ${{ matrix.abi == 'x86_64' && failure() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: internal-android-x86_64-unified-tests
+          path: |
+            build/android/app-x86_64/test-phases.json
+            build/android/app-x86_64/traditional-results.json
+            build/android/app-x86_64/e2e-results.json
+            build/android/app-x86_64/device-tests-*/**/native-result.json
+            build/android/app-x86_64/device-tests-*/**/controller-result.json
+            build/android/app-x86_64/device-tests-*/**/attempt.log
+            build/android/app-x86_64/device-tests-*/**/*.png
+            build/android/launch-test/*/*.png
+          if-no-files-found: ignore
+          retention-days: 7
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
         with:

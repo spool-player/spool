@@ -968,6 +968,8 @@ def app_journey(platform, output, timeout, regression=None):
                               "port": service.server_address[1], "token": service.token})
     environment = dict(os.environ, SPOOL_E2E_DEVICE_JOURNEY_OWNER=str(capability),
                        SPOOL_E2E_ARTIFACT_DIR=str(output))
+    if platform == "android":
+        environment["SPOOL_E2E_ADB"] = owner.tool
     thread = threading.Thread(target=service.serve_forever, daemon=True)
     thread.start()
     process = None
