@@ -160,8 +160,11 @@ export function createSource(configuration) {
                 { "preferredMaxHeight", 1080 }, { "unlimitedLocalNetwork", true }, { "preferRemux", false } }
                                                   : QVariantMap {};
         });
+        resolvedPreferences.clear();
         resolve(melbourne);
         resolve(nj);
+        waitUntil([&] { return resolvedPreferences.contains(melbourne) && resolvedPreferences.contains(nj); },
+            "resolved preference events arrive");
         require(resolvedPreferences.value(melbourne).value("bitrate").toLongLong() == 20'000'000
                 && resolvedPreferences.value(melbourne).value("height").toInt() == 1080
                 && resolvedPreferences.value(melbourne).value("local").toBool()
@@ -173,7 +176,10 @@ export function createSource(configuration) {
             "actual script resolve calls receive only their account's quality preferences");
         custom = false;
         hub.refreshPlaybackPreferences();
+        resolvedPreferences.remove(melbourne);
         resolve(melbourne);
+        waitUntil(
+            [&] { return resolvedPreferences.contains(melbourne); }, "refreshed resolved preference event arrives");
         require(resolvedPreferences.value(melbourne).value("bitrate").toLongLong() == 90'000'000
                 && resolvedPreferences.value(melbourne).value("height").toInt() == 2160,
             "clearing a server override restores the global quality preferences at resolve");
