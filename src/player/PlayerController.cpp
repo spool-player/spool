@@ -588,11 +588,11 @@ bool PlayerController::configureAndInitializeMpv(mpv_handle *handle, const MpvPr
         "--input-vo-keyboard=no",
         "--input-cursor=no",
         "--terminal=no",
-        "--osc=no",
     };
-    char *embeddingArguments[std::size(embeddingOptions) + 4] {};
+    char *embeddingArguments[std::size(embeddingOptions) + 5] {};
+    size_t argumentCount = 0;
     for (size_t i = 0; i < std::size(embeddingOptions); ++i)
-        embeddingArguments[i] = embeddingOptions[i];
+        embeddingArguments[argumentCount++] = embeddingOptions[i];
     // --gpu-api picks one of mpv's own ra_ctx backends: a native context and
     // swapchain of its own. Video and idle handles use --vo=libmpv, while
     // audio uses --vo=null below. None owns a desktop surface. The embedded
@@ -609,17 +609,20 @@ bool PlayerController::configureAndInitializeMpv(mpv_handle *handle, const MpvPr
     // nothing to constrain. The option stays at auto for both.
     QByteArray softwareDecodeOption = QByteArrayLiteral("--hwdec=no");
     if (!preparation.hardwareDecoding)
-        embeddingArguments[std::size(embeddingOptions)] = softwareDecodeOption.data();
+        embeddingArguments[argumentCount++] = softwareDecodeOption.data();
     char audioVideoOutputOption[] = "--vo=null";
     char audioVideoTrackOption[] = "--vid=no";
     char audioDisplayOption[] = "--audio-display=no";
     if (!preparation.needsVideoSurface) {
         embeddingArguments[0] = audioVideoOutputOption;
-        // Keep the argument list contiguous when hardware decoding is enabled.
-        size_t index = std::size(embeddingOptions) + (preparation.hardwareDecoding ? 0 : 1);
-        embeddingArguments[index++] = audioVideoTrackOption;
-        embeddingArguments[index] = audioDisplayOption;
+        embeddingArguments[argumentCount++] = audioVideoTrackOption;
+        embeddingArguments[argumentCount++] = audioDisplayOption;
     }
+    char oscOption[] = "--osc=no";
+    // Builds without Lua (such as iOS and tvOS) omit the osc option entirely,
+    // and mpv_initialize_opts rejects unknown command-line options.
+    if (mpv_set_option_string(handle, "osc", "no") != MPV_ERROR_OPTION_NOT_FOUND)
+        embeddingArguments[argumentCount++] = oscOption;
     if (preparation.userConfig)
         qInfo() << "player: user mpv config enabled; embedding overrides vo, gpu-api, gpu-context,"
                    " wid, force-window, idle, keep-open, input-vo-keyboard, input-cursor, terminal and osc";
