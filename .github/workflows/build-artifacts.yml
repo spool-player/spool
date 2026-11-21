@@ -1447,6 +1447,8 @@ jobs:
 
       - name: Build application
         shell: pwsh
+        env:
+          MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
         run: tools\windows\build.ps1 -Clean -CMakeArguments '-DSPOOL_TEST_RENDER_BACKEND=opengl'
 
 
