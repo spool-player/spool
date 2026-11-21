@@ -144,6 +144,22 @@ settings["qml-root-path"] = [sys.argv[2]]
 path.write_text(json.dumps(settings, indent=2) + "\n")
 PY
   done
+  local gradle_home="${GRADLE_USER_HOME:-$HOME/.gradle}"
+  mkdir -p "$gradle_home/init.d"
+  cat > "$gradle_home/init.d/spool-maven-mirror.gradle" <<'GRADLE'
+allprojects {
+    buildscript {
+        repositories {
+            google()
+            maven { url = uri("https://maven-central.storage-download.googleapis.com/maven2/") }
+        }
+    }
+    repositories {
+        google()
+        maven { url = uri("https://maven-central.storage-download.googleapis.com/maven2/") }
+    }
+}
+GRADLE
   local build_apk_target
   build_apk_target() {
     local apk_target="$1"
