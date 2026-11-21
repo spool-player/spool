@@ -92,7 +92,7 @@ env:
   # PRs consume public caches but never receive publishing credentials.
   SPOOL_CACHE_WRITE: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
 concurrency:
-  group: build-artifacts-${{ github.ref }}
+  group: build-artifacts-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: true
 
 jobs:
