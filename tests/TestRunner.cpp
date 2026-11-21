@@ -60,9 +60,9 @@ int invoke(const char *name, int argc, char **argv)
 QString fixturePath(const char *relativePath)
 {
 #ifdef SPOOL_MOBILE_TEST_BUNDLE
-    static const QDir root(mobileFixtureRoot());
+    const QDir root(mobileFixtureRoot());
 #else
-    static const QDir root(QStringLiteral(TEST_SOURCE_DIR));
+    const QDir root(QStringLiteral(TEST_SOURCE_DIR));
 #endif
     return root.filePath(QString::fromUtf8(relativePath));
 }
@@ -306,10 +306,12 @@ void finishReceipt()
 {
     if (receiptPath.isEmpty())
         return;
+    const QString targetPath = receiptPath;
+    receiptPath.clear();
 #ifdef SPOOL_MOBILE_TEST_BUNDLE
     nativeStage("receipt-handler-entry");
 #endif
-    const bool saved = save(receiptPath, receipt);
+    const bool saved = save(targetPath, receipt);
 #ifdef SPOOL_MOBILE_TEST_BUNDLE
     if (diagnosticLogReady) {
         std::fprintf(stderr, "native stage: receipt-handler-return saved=%d\n", int(saved));
@@ -698,6 +700,10 @@ int main(int argc, char **argv)
             receipt.insert(QStringLiteral("selectors"), selectors);
             receipt.insert(QStringLiteral("status"), QStringLiteral("passed"));
             receipt.insert(QStringLiteral("exitCode"), 0);
+            finishReceipt();
+#ifdef SPOOL_MOBILE_TEST_BUNDLE
+            SpoolTests::cleanupMobileFixtures();
+#endif
             return 0;
         }
 #ifdef SPOOL_MOBILE_TEST_BUNDLE
@@ -768,5 +774,9 @@ int main(int argc, char **argv)
         nativeStage("status-assigned");
 #endif
     }
+    finishReceipt();
+#ifdef SPOOL_MOBILE_TEST_BUNDLE
+    SpoolTests::cleanupMobileFixtures();
+#endif
     return result;
 }
