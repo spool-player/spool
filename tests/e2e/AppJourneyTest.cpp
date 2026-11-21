@@ -819,30 +819,36 @@ public:
                         pixels[x] = uint8_t(std::clamp(scaled, 0, 255));
                     }
                 }
-                const auto catmullMid = [](int a, int b, int c, int d) -> uint8_t {
-                    return uint8_t(std::clamp((-a + 9 * b + 9 * c - d + 8) >> 4, 0, 255));
+                // Pixel-center-aligned 2x Catmull-Rom (t = +-0.25 => [-3, 29, 111, -9] / 128).
+                const auto catmullQuarter = [](int far, int near, int center, int opposite) -> uint8_t {
+                    return uint8_t(std::clamp((-3 * far + 29 * near + 111 * center - 9 * opposite + 64) >> 7, 0, 255));
                 };
                 QImage horiz(w * 2, h, QImage::Format_Grayscale8);
                 for (int y = 0; y < h; ++y) {
                     const auto *src = mapped.constScanLine(y);
                     auto *dst = horiz.scanLine(y);
                     for (int x = 0; x < w; ++x) {
-                        dst[2 * x] = src[x];
-                        dst[2 * x + 1] = catmullMid(
-                            src[std::max(0, x - 1)], src[x], src[std::min(w - 1, x + 1)], src[std::min(w - 1, x + 2)]);
+                        const int xm2 = std::max(0, x - 2);
+                        const int xm1 = std::max(0, x - 1);
+                        const int xp1 = std::min(w - 1, x + 1);
+                        const int xp2 = std::min(w - 1, x + 2);
+                        dst[2 * x] = catmullQuarter(src[xm2], src[xm1], src[x], src[xp1]);
+                        dst[2 * x + 1] = catmullQuarter(src[xp2], src[xp1], src[x], src[xm1]);
                     }
                 }
                 image = QImage(w * 2, h * 2, QImage::Format_Grayscale8);
                 for (int y = 0; y < h; ++y) {
-                    const auto *r0 = horiz.constScanLine(std::max(0, y - 1));
-                    const auto *r1 = horiz.constScanLine(y);
-                    const auto *r2 = horiz.constScanLine(std::min(h - 1, y + 1));
-                    const auto *r3 = horiz.constScanLine(std::min(h - 1, y + 2));
+                    const auto *rm2 = horiz.constScanLine(std::max(0, y - 2));
+                    const auto *rm1 = horiz.constScanLine(std::max(0, y - 1));
+                    const auto *rc = horiz.constScanLine(y);
+                    const auto *rp1 = horiz.constScanLine(std::min(h - 1, y + 1));
+                    const auto *rp2 = horiz.constScanLine(std::min(h - 1, y + 2));
                     auto *even = image.scanLine(2 * y);
                     auto *odd = image.scanLine(2 * y + 1);
-                    std::memcpy(even, r1, size_t(w * 2));
-                    for (int x = 0; x < w * 2; ++x)
-                        odd[x] = catmullMid(r0[x], r1[x], r2[x], r3[x]);
+                    for (int x = 0; x < w * 2; ++x) {
+                        even[x] = catmullQuarter(rm2[x], rm1[x], rc[x], rp1[x]);
+                        odd[x] = catmullQuarter(rp2[x], rp1[x], rc[x], rm1[x]);
+                    }
                 }
             } else if (highContrast) {
                 // Focused rows can defeat page segmentation even after scaling.
