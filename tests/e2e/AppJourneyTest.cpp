@@ -699,13 +699,20 @@ public:
         const bool neutralAdaptive = preprocess == TextPreprocess::NeutralAdaptive;
         const bool positiveContrast = preprocess == TextPreprocess::Positive;
         const bool adaptiveContrast = preprocess == TextPreprocess::Adaptive;
+        const bool needsPreprocess
+            = neutralText || highContrast || smoothInverse || neutralAdaptive || positiveContrast || adaptiveContrast;
         int scale = mode == 6 || smoothInverse || neutralAdaptive || positiveContrast || adaptiveContrast ? 2 : 1;
-        if (scale > 1 || neutralAdaptive) {
+        QImage image;
+        if (scale > 1 || needsPreprocess) {
+            image = QImage(imagePath);
+            require(!image.isNull(), "captured OCR image could not be read");
+            if (std::max(image.width(), image.height()) >= 2000)
+                scale = 1;
+        }
+        if (scale > 1 || needsPreprocess) {
             // Small captions beside a focus outline can be omitted even by
             // text-block segmentation. Resample only the actual framebuffer;
             // recognized bounds below return to its physical pixel space.
-            QImage image(imagePath);
-            require(!image.isNull(), "captured OCR image could not be read");
             if (neutralText) {
                 // Chromatic artwork and focus outlines can merge with neutral
                 // glyphs. Remove only that noise; never synthesize label pixels.
@@ -829,7 +836,7 @@ public:
                 const int w = source.width();
                 const int h = source.height();
                 const int maxDim = std::max(w, h);
-                scale = maxDim < 960 ? 3 : (maxDim < 2000 ? 2 : 1);
+                scale = maxDim < 960 ? 4 : (maxDim < 2000 ? 2 : 1);
                 image = QImage(w, h, QImage::Format_Grayscale8);
                 for (int y = 0; y < h; ++y) {
                     const auto *sourcePixels = reinterpret_cast<const QRgb *>(source.constScanLine(y));
@@ -846,6 +853,59 @@ public:
                             const int scaled = (160 - luma) * 255 / (160 - 32);
                             pixels[x] = uint8_t(std::clamp(scaled, 0, 255));
                         }
+                    }
+                }
+                // Strip long straight axis-aligned rules (e.g. TV-mode neutral
+                // white focus frames around buttons like Close) that invert to
+                // solid closed black boxes and cause Tesseract to drop short
+                // enclosed captions on both sparse and block segmentation.
+                const int minRuleLength = std::max(44, maxDim / 50);
+                std::vector<uint8_t> eraseRule(size_t(w) * size_t(h), 0);
+                for (int y = 0; y < h; ++y) {
+                    const auto *row = image.constScanLine(y);
+                    const size_t rowOffset = size_t(y) * size_t(w);
+                    int x = 0;
+                    while (x < w) {
+                        while (x < w && row[x] >= 160)
+                            ++x;
+                        const int start = x;
+                        while (x < w && row[x] < 160)
+                            ++x;
+                        if (x - start >= minRuleLength) {
+                            for (int k = start; k < x; ++k)
+                                eraseRule[rowOffset + size_t(k)] = 1;
+                        }
+                    }
+                }
+                for (int x = 0; x < w; ++x) {
+                    int y = 0;
+                    while (y < h) {
+                        while (y < h && image.constScanLine(y)[x] >= 160)
+                            ++y;
+                        const int start = y;
+                        while (y < h && image.constScanLine(y)[x] < 160)
+                            ++y;
+                        if (y - start >= minRuleLength) {
+                            for (int k = start; k < y; ++k)
+                                eraseRule[size_t(k) * size_t(w) + size_t(x)] = 1;
+                        }
+                    }
+                }
+                for (int y = 0; y < h; ++y) {
+                    auto *row = image.scanLine(y);
+                    const size_t rowOffset = size_t(y) * size_t(w);
+                    for (int x = 0; x < w; ++x) {
+                        if (!eraseRule[rowOffset + size_t(x)])
+                            continue;
+                        row[x] = 255;
+                        if (y > 0)
+                            image.scanLine(y - 1)[x] = 255;
+                        if (y + 1 < h)
+                            image.scanLine(y + 1)[x] = 255;
+                        if (x > 0)
+                            row[x - 1] = 255;
+                        if (x + 1 < w)
+                            row[x + 1] = 255;
                     }
                 }
             } else if (highContrast) {
@@ -904,14 +964,20 @@ public:
                 }
                 return upscaled;
             };
-            const auto catmullUpscale3x = [](const QImage& mapped) {
+            const auto catmullUpscale4x = [](const QImage& mapped) {
                 const int w = mapped.width();
                 const int h = mapped.height();
-                // Pixel-center-aligned 3x Catmull-Rom (t = +-1/3 => [-1, 9, 21, -2] / 27).
-                const auto catmullThird = [](int far, int near, int center, int opposite) -> uint8_t {
-                    return uint8_t(std::clamp((-far + 9 * near + 21 * center - 2 * opposite + 13) / 27, 0, 255));
+                // Pixel-center-aligned 4x Catmull-Rom:
+                // t = 3/8 => [-45, 399, 745, -75] / 1024; t = 1/8 => [-7, 93, 987, -49] / 1024.
+                const auto catmullThreeEighths = [](int far, int near, int center, int opposite) -> uint8_t {
+                    return uint8_t(
+                        std::clamp((-45 * far + 399 * near + 745 * center - 75 * opposite + 512) >> 10, 0, 255));
                 };
-                QImage horiz(w * 3, h, QImage::Format_Grayscale8);
+                const auto catmullOneEighth = [](int far, int near, int center, int opposite) -> uint8_t {
+                    return uint8_t(
+                        std::clamp((-7 * far + 93 * near + 987 * center - 49 * opposite + 512) >> 10, 0, 255));
+                };
+                QImage horiz(w * 4, h, QImage::Format_Grayscale8);
                 for (int y = 0; y < h; ++y) {
                     const auto *src = mapped.constScanLine(y);
                     auto *dst = horiz.scanLine(y);
@@ -920,36 +986,40 @@ public:
                         const int xm1 = std::max(0, x - 1);
                         const int xp1 = std::min(w - 1, x + 1);
                         const int xp2 = std::min(w - 1, x + 2);
-                        dst[3 * x] = catmullThird(src[xm2], src[xm1], src[x], src[xp1]);
-                        dst[3 * x + 1] = src[x];
-                        dst[3 * x + 2] = catmullThird(src[xp2], src[xp1], src[x], src[xm1]);
+                        dst[4 * x] = catmullThreeEighths(src[xm2], src[xm1], src[x], src[xp1]);
+                        dst[4 * x + 1] = catmullOneEighth(src[xm2], src[xm1], src[x], src[xp1]);
+                        dst[4 * x + 2] = catmullOneEighth(src[xp2], src[xp1], src[x], src[xm1]);
+                        dst[4 * x + 3] = catmullThreeEighths(src[xp2], src[xp1], src[x], src[xm1]);
                     }
                 }
-                QImage upscaled(w * 3, h * 3, QImage::Format_Grayscale8);
+                QImage upscaled(w * 4, h * 4, QImage::Format_Grayscale8);
                 for (int y = 0; y < h; ++y) {
                     const auto *rm2 = horiz.constScanLine(std::max(0, y - 2));
                     const auto *rm1 = horiz.constScanLine(std::max(0, y - 1));
                     const auto *rc = horiz.constScanLine(y);
                     const auto *rp1 = horiz.constScanLine(std::min(h - 1, y + 1));
                     const auto *rp2 = horiz.constScanLine(std::min(h - 1, y + 2));
-                    auto *row0 = upscaled.scanLine(3 * y);
-                    auto *row1 = upscaled.scanLine(3 * y + 1);
-                    auto *row2 = upscaled.scanLine(3 * y + 2);
-                    for (int x = 0; x < w * 3; ++x) {
-                        row0[x] = catmullThird(rm2[x], rm1[x], rc[x], rp1[x]);
-                        row1[x] = rc[x];
-                        row2[x] = catmullThird(rp2[x], rp1[x], rc[x], rm1[x]);
+                    auto *row0 = upscaled.scanLine(4 * y);
+                    auto *row1 = upscaled.scanLine(4 * y + 1);
+                    auto *row2 = upscaled.scanLine(4 * y + 2);
+                    auto *row3 = upscaled.scanLine(4 * y + 3);
+                    for (int x = 0; x < w * 4; ++x) {
+                        row0[x] = catmullThreeEighths(rm2[x], rm1[x], rc[x], rp1[x]);
+                        row1[x] = catmullOneEighth(rm2[x], rm1[x], rc[x], rp1[x]);
+                        row2[x] = catmullOneEighth(rp2[x], rp1[x], rc[x], rm1[x]);
+                        row3[x] = catmullThreeEighths(rp2[x], rp1[x], rc[x], rm1[x]);
                     }
                 }
                 return upscaled;
             };
             QSaveFile file(inputPath);
             const QImage output = (smoothInverse || neutralAdaptive || positiveContrast)
-                ? (scale == 3          ? catmullUpscale3x(image)
+                ? (scale == 4          ? catmullUpscale4x(image)
                           : scale == 2 ? catmullUpscale2x(image)
                                        : image)
-                : image.scaled(
-                      image.width() * scale, image.height() * scale, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+                : (scale == 1 ? image
+                              : image.scaled(image.width() * scale, image.height() * scale, Qt::IgnoreAspectRatio,
+                                    Qt::SmoothTransformation));
             require(file.open(QIODevice::WriteOnly)
                     && file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)
                     && output.save(&file, "PNG") && file.commit(),
