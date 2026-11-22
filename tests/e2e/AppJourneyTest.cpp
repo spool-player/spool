@@ -1707,7 +1707,7 @@ SPOOL_TEST_MAIN("app-journey")
         journey.command({ "key", "back" });
         journey.command({ "key", "back" });
         journey.label("Appearance");
-        journey.click("Downloads");
+        journey.click("Downloads", true);
         journey.click("Play saved files offline", true);
         journey.label("Journey Film");
         journey.label("Downloaded");
@@ -1732,8 +1732,26 @@ SPOOL_TEST_MAIN("app-journey")
             },
             "saved download did not enter real embedded playback");
         journey.command({ "pause" });
-        journey.await([&] { return journey.state()["playback"].toObject()["paused"].toBool(); },
-            "asynchronous pause did not settle before exact paused-frame seeking");
+        QJsonObject lastPauseState;
+        try {
+            journey.await(
+                [&] {
+                    lastPauseState = journey.state()["playback"].toObject();
+                    return lastPauseState["paused"].toBool();
+                },
+                "asynchronous pause did not settle before exact paused-frame seeking");
+        } catch (const std::exception&) {
+            throw std::runtime_error(
+                QStringLiteral("asynchronous pause did not settle before exact paused-frame seeking "
+                               "(active=%1, loaded=%2, paused=%3, failed=%4, position=%5, duration=%6)")
+                    .arg(lastPauseState["active"].toBool())
+                    .arg(lastPauseState["loaded"].toBool())
+                    .arg(lastPauseState["paused"].toBool())
+                    .arg(lastPauseState["failed"].toBool())
+                    .arg(lastPauseState["position"].toDouble(), 0, 'f', 2)
+                    .arg(lastPauseState["duration"].toDouble(), 0, 'f', 2)
+                    .toStdString());
+        }
         journey.command({ "seek", "2" });
         journey.await(
             [&] {

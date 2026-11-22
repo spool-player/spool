@@ -271,6 +271,7 @@ namespace {
             // Qt owns the external-command bracket and binds this item's FBO.
             // Nested begin/end calls enqueue RHI state inside that bracket.
             if (m_lifecycle.hasPendingHandle()) {
+                QQuickOpenGLUtils::resetOpenGLState();
                 m_lifecycle.releaseContext();
                 if (auto *next = m_lifecycle.nextHandle())
                     createRenderContext(next);
@@ -291,6 +292,12 @@ namespace {
             QOpenGLFramebufferObject *fbo = framebufferObject();
             if (!fbo)
                 return;
+
+            // Qt's QQuickFramebufferObject boundary does not restore all GL
+            // raster/VAO/blend/scissor state between frames; libmpv requires
+            // default OpenGL state before every render pass.
+            QQuickOpenGLUtils::resetOpenGLState();
+            fbo->bind();
 
             mpv_opengl_fbo mpfbo {};
             mpfbo.fbo = static_cast<int>(fbo->handle());

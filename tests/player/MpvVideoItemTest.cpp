@@ -390,6 +390,8 @@ SPOOL_TEST_MAIN("mpv-video-item")
             std::fprintf(stderr, "failed to enable mpv logging\n");
             return 1;
         }
+        if (handle)
+            mpv_request_log_messages(handle, "warn");
         if (!handle || mpv_set_option_string(handle, "terminal", verbose ? "yes" : "no") < 0
             || mpv_set_option_string(handle, "vo", "libmpv") < 0 || mpv_set_option_string(handle, "hwdec", "no") < 0
             || mpv_set_option_string(handle, "keep-open", "yes") < 0
@@ -494,6 +496,19 @@ SPOOL_TEST_MAIN("mpv-video-item")
                     std::fprintf(stderr, "\n");
                 }
                 mpv_free_node_contents(&dimensions);
+            }
+            int drained = 0;
+            while (drained < 64) {
+                mpv_event *event = mpv_wait_event(handle, 0.0);
+                if (!event || event->event_id == MPV_EVENT_NONE)
+                    break;
+                if (event->event_id == MPV_EVENT_LOG_MESSAGE) {
+                    const auto *msg = static_cast<const mpv_event_log_message *>(event->data);
+                    if (msg && msg->prefix && msg->level && msg->text) {
+                        std::fprintf(stderr, "mpv[%s][%s]: %s", msg->prefix, msg->level, msg->text);
+                        ++drained;
+                    }
+                }
             }
             const QString capturePath = QDir::tempPath() + QStringLiteral("/mpv-video-item-failure.png");
             const QImage frame = !rendered || !upright ? beforeOsd : captureItem();

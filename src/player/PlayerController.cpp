@@ -3151,15 +3151,19 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_
         });
         break;
     }
-    case MPV_EVENT_FILE_LOADED:
+    case MPV_EVENT_FILE_LOADED: {
         // Runtime snapshots may wait for the VO. Query on this core's event
         // thread, whose captured handle lives until the event loop is joined,
         // so GUI synchronization remains available to the renderer.
         logColorDiagnostics(handle);
-        postMpvEvent(generation, [this, generation]() {
+        int mpvPaused = 0;
+        const bool hasMpvPaused = mpv_get_property(handle, "pause", MPV_FORMAT_FLAG, &mpvPaused) >= 0;
+        postMpvEvent(generation, [this, generation, hasMpvPaused, mpvPaused]() {
             m_mpvLifecycle.completeFileLoad();
             qInfo() << "player: file loaded";
             m_fileLoaded = true;
+            if (hasMpvPaused)
+                m_paused = mpvPaused != 0;
             // Only video can strain the renderer, and only once per playback:
             // a step down rebuilds the core, which lands back here.
             if (!m_renderStrainReported && m_mediaKind == QStringLiteral("video"))
@@ -3181,6 +3185,7 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_
                 startProgressReporting();
         });
         break;
+    }
     case MPV_EVENT_PLAYBACK_RESTART:
         postMpvEvent(generation, [this]() {
             qInfo() << "player: playback restart";
