@@ -90,6 +90,10 @@ public:
     };
     HandleSnapshot takePendingHandle();
 
+    // Coalesce libmpv frame wakeups so slow main-thread software renderers
+    // (such as mobile simulators) cannot flood the GUI event queue.
+    void scheduleMpvUpdate();
+
     // Published for lifecycle diagnostics. Creation and destruction happen
     // exclusively in Renderer::render(), with the original GL context current.
     std::atomic<mpv_render_context *> m_renderCtxAtomic { nullptr };
@@ -100,8 +104,11 @@ signals:
     void hdrOutputChanged();
 
 private:
+    void handleMpvUpdate();
+
     static MpvVideoItem *s_instance;
     bool m_hdrOutput = false;
+    std::atomic_bool m_updateScheduled { false };
 
     QMutex m_handleMutex;
     mpv_handle *m_pendingHandle = nullptr;

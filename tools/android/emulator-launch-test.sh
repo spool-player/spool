@@ -107,21 +107,61 @@ done
 }
 export ANDROID_SERIAL
 
+wait_adb_online() {
+  for _ in $(seq 1 30); do
+    if [[ "$("$ADB" -s "$ANDROID_SERIAL" get-state 2>/dev/null)" == device ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+# Android TV API 36 can transiently drop adbd to offline right after
+# sys.boot_completed transitions to 1 while system services settle.
+adb_retry() {
+  local attempt err status
+  for attempt in 1 2 3; do
+    wait_adb_online || return 1
+    err="$(mktemp "$emulator_work/adb-err.XXXXXX")"
+    status=0
+    "$ADB" -s "$ANDROID_SERIAL" "$@" 2>"$err" || status=$?
+    if [[ "$status" -eq 0 ]]; then
+      rm -f "$err"
+      return 0
+    fi
+    if [[ "$attempt" -lt 3 ]] &&
+      { grep -qiE 'offline|closed|not found' "$err" || [[ "$("$ADB" -s "$ANDROID_SERIAL" get-state 2>/dev/null)" != device ]]; }; then
+      rm -f "$err"
+      sleep 2
+      continue
+    fi
+    cat "$err" >&2
+    rm -f "$err"
+    return "$status"
+  done
+}
+
+boot_ready=0
 for _ in $(seq 1 90); do
-  if [[ "$("$ADB" get-state 2>/dev/null)" == device ]] &&
-    [[ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]]; then
+  if [[ "$("$ADB" -s "$ANDROID_SERIAL" get-state 2>/dev/null)" == device ]] &&
+    [[ "$("$ADB" -s "$ANDROID_SERIAL" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]] &&
+    "$ADB" -s "$ANDROID_SERIAL" shell pm path android >/dev/null 2>&1 &&
+    "$ADB" -s "$ANDROID_SERIAL" shell settings get global angle_gl_driver_selection_pkgs >/dev/null 2>&1; then
+    boot_ready=1
     break
   fi
   sleep 2
 done
-[[ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]] || {
+[[ "$boot_ready" == 1 ]] || {
   cat "$EMULATOR_LOG" >&2
   echo "error: Android emulator did not boot" >&2
   exit 1
 }
 # Derive the journey's input mode from the actual OS feature, not an app flag.
 # A TV lane must really be a TV image; handset mode must not borrow TV proof.
-if "$ADB" shell pm has-feature android.software.leanback | tr -d '\r' | grep -qx true; then
+leanback_feature="$(adb_retry shell pm has-feature android.software.leanback | tr -d '\r')"
+if [[ "$leanback_feature" == true ]]; then
   SPOOL_E2E_ANDROID_TV=1
 else
   SPOOL_E2E_ANDROID_TV=0
@@ -137,16 +177,16 @@ export SPOOL_E2E_ANDROID_TV
 # The guest emulator GL translator advertises GLES 3.1 but rejects valid SSBO
 # operations. Use the image's supported guest ANGLE, not a patched Qt/decoder or
 # a software Qt scenegraph. These settings belong only to this isolated device.
-"$ADB" -s "$ANDROID_SERIAL" shell 'test -f /system/lib64/libGLESv2_angle.so || test -f /system/lib/libGLESv2_angle.so' || {
+adb_retry shell 'test -f /system/lib64/libGLESv2_angle.so || test -f /system/lib/libGLESv2_angle.so' || {
   echo 'error: the emulator image does not provide the required guest ANGLE driver' >&2
   exit 1
 }
-angle_packages_before="$("$ADB" -s "$ANDROID_SERIAL" shell settings get global angle_gl_driver_selection_pkgs | tr -d '\r')"
-angle_values_before="$("$ADB" -s "$ANDROID_SERIAL" shell settings get global angle_gl_driver_selection_values | tr -d '\r')"
+angle_packages_before="$(adb_retry shell settings get global angle_gl_driver_selection_pkgs | tr -d '\r')"
+angle_values_before="$(adb_retry shell settings get global angle_gl_driver_selection_values | tr -d '\r')"
 angle_configured=1
-"$ADB" -s "$ANDROID_SERIAL" shell settings put global angle_gl_driver_selection_pkgs \
+adb_retry shell settings put global angle_gl_driver_selection_pkgs \
   com.sachk.spool.tests,com.sachk.spool.e2e_tests,com.sachk.spool
-"$ADB" -s "$ANDROID_SERIAL" shell settings put global angle_gl_driver_selection_values angle,angle,angle
+adb_retry shell settings put global angle_gl_driver_selection_values angle,angle,angle
 
 # Resolves through each launcher category in turn. One package now has to
 # answer to both, so a manifest that lost either entry point fails here rather
@@ -210,9 +250,9 @@ launch_category() {
   printf '%s launched through %s; screenshot at %s\n' "$package" "$category" "$shot"
 }
 
-"$ADB" install -r "$APK"
-"$ADB" install -r "$TEST_APK"
-"$ADB" install -r "$E2E_APK"
+adb_retry install -r "$APK"
+adb_retry install -r "$TEST_APK"
+adb_retry install -r "$E2E_APK"
 status=0
 # The shared driver finishes every traditional native selector before starting
 # real GUI selectors and retains both phase failures.

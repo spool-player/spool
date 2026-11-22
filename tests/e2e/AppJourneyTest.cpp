@@ -551,12 +551,16 @@ public:
                      : QStringList { "--instance", instance };
         QElapsedTimer requestClock;
         requestClock.start();
-        process.start(control, destination + QStringList { "--timeout", "5000" } + args);
+        // Match LocalControl::RequestTimeoutMs (10s) on mobile emulators and
+        // simulators, where software-emulated 4K OpenGL ES playback frames share
+        // the main thread and can transiently push a control round-trip past 5s.
+        const int commandTimeoutMs = device ? 10000 : 5000;
+        process.start(control, destination + QStringList { "--timeout", QString::number(commandTimeoutMs) } + args);
         require(process.waitForStarted(5000), "built spoolet could not start");
         if (!input.isEmpty())
             process.write(input);
         process.closeWriteChannel();
-        require(finish(process, 10000), "spoolet exceeded its deadline");
+        require(finish(process, commandTimeoutMs + 5000), "spoolet exceeded its deadline");
         const qint64 requestElapsedMs = requestClock.elapsed();
         ensureRunning();
         const auto response = QJsonDocument::fromJson(process.readAllStandardOutput()).object();

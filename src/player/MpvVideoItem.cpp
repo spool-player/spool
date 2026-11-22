@@ -224,8 +224,7 @@ namespace {
 
         static void onMpvUpdate(void *ctx)
         {
-            auto *item = static_cast<MpvVideoItem *>(ctx);
-            QMetaObject::invokeMethod(item, "update", Qt::QueuedConnection);
+            static_cast<MpvVideoItem *>(ctx)->scheduleMpvUpdate();
         }
 
         QMetaObject::Connection m_frameSwappedConnection;
@@ -911,6 +910,18 @@ void MpvVideoItem::setMpvHandle(mpv_handle *handle)
         m_releaseCompleted.reset();
         m_attachCompleted = std::make_shared<std::atomic_bool>(false);
     }
+    update();
+}
+
+void MpvVideoItem::scheduleMpvUpdate()
+{
+    if (!m_updateScheduled.exchange(true, std::memory_order_acq_rel))
+        QMetaObject::invokeMethod(this, &MpvVideoItem::handleMpvUpdate, Qt::QueuedConnection);
+}
+
+void MpvVideoItem::handleMpvUpdate()
+{
+    m_updateScheduled.store(false, std::memory_order_release);
     update();
 }
 
