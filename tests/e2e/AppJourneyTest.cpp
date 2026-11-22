@@ -469,7 +469,7 @@ private:
     qint64 deviceLaunchEpoch = 0;
 };
 enum class TextSurface { Window, LibraryRow };
-enum class TextPreprocess { Original, Neutral, Inverse, SmoothInverse, Positive, Adaptive };
+enum class TextPreprocess { Original, Neutral, Inverse, SmoothInverse, NeutralAdaptive, Positive, Adaptive };
 struct Words {
     QString text;
     QList<qsizetype> starts;
@@ -696,10 +696,11 @@ public:
         const bool neutralText = preprocess == TextPreprocess::Neutral;
         const bool highContrast = preprocess == TextPreprocess::Inverse;
         const bool smoothInverse = preprocess == TextPreprocess::SmoothInverse;
+        const bool neutralAdaptive = preprocess == TextPreprocess::NeutralAdaptive;
         const bool positiveContrast = preprocess == TextPreprocess::Positive;
         const bool adaptiveContrast = preprocess == TextPreprocess::Adaptive;
-        const int scale = mode == 6 || smoothInverse || positiveContrast || adaptiveContrast ? 2 : 1;
-        if (scale > 1) {
+        int scale = mode == 6 || smoothInverse || neutralAdaptive || positiveContrast || adaptiveContrast ? 2 : 1;
+        if (scale > 1 || neutralAdaptive) {
             // Small captions beside a focus outline can be omitted even by
             // text-block segmentation. Resample only the actual framebuffer;
             // recognized bounds below return to its physical pixel space.
@@ -819,6 +820,34 @@ public:
                         pixels[x] = uint8_t(std::clamp(scaled, 0, 255));
                     }
                 }
+            } else if (neutralAdaptive) {
+                // Erase chromatic video bands and accent focus outlines to pure
+                // white, invert neutral text (including dim muted detail rows)
+                // onto a clean white canvas, and pair with Sauvola local
+                // thresholding so both unfocused and focused rows read cleanly.
+                const QImage source = image.convertToFormat(QImage::Format_RGB32);
+                const int w = source.width();
+                const int h = source.height();
+                const int maxDim = std::max(w, h);
+                scale = maxDim < 960 ? 3 : (maxDim < 2000 ? 2 : 1);
+                image = QImage(w, h, QImage::Format_Grayscale8);
+                for (int y = 0; y < h; ++y) {
+                    const auto *sourcePixels = reinterpret_cast<const QRgb *>(source.constScanLine(y));
+                    auto *pixels = image.scanLine(y);
+                    for (int x = 0; x < w; ++x) {
+                        const QRgb pixel = sourcePixels[x];
+                        const int r = qRed(pixel);
+                        const int g = qGreen(pixel);
+                        const int b = qBlue(pixel);
+                        if (std::max({ r, g, b }) - std::min({ r, g, b }) > 48) {
+                            pixels[x] = 255;
+                        } else {
+                            const int luma = (77 * r + 150 * g + 29 * b + 128) >> 8;
+                            const int scaled = (160 - luma) * 255 / (160 - 32);
+                            pixels[x] = uint8_t(std::clamp(scaled, 0, 255));
+                        }
+                    }
+                }
             } else if (highContrast) {
                 // Focused rows can defeat page segmentation even after scaling.
                 // Preserve their actual light glyphs against a binary background.
@@ -831,6 +860,7 @@ public:
             }
             inputPath += adaptiveContrast ? QStringLiteral(".ocr-adaptive.png")
                 : positiveContrast        ? QStringLiteral(".ocr-positive.png")
+                : neutralAdaptive         ? QStringLiteral(".ocr-neutral-adaptive.png")
                 : smoothInverse           ? QStringLiteral(".ocr-smooth-inverse.png")
                 : highContrast            ? QStringLiteral(".ocr-contrast.png")
                 : neutralText             ? QStringLiteral(".ocr-neutral.png")
@@ -874,9 +904,50 @@ public:
                 }
                 return upscaled;
             };
+            const auto catmullUpscale3x = [](const QImage& mapped) {
+                const int w = mapped.width();
+                const int h = mapped.height();
+                // Pixel-center-aligned 3x Catmull-Rom (t = +-1/3 => [-1, 9, 21, -2] / 27).
+                const auto catmullThird = [](int far, int near, int center, int opposite) -> uint8_t {
+                    return uint8_t(std::clamp((-far + 9 * near + 21 * center - 2 * opposite + 13) / 27, 0, 255));
+                };
+                QImage horiz(w * 3, h, QImage::Format_Grayscale8);
+                for (int y = 0; y < h; ++y) {
+                    const auto *src = mapped.constScanLine(y);
+                    auto *dst = horiz.scanLine(y);
+                    for (int x = 0; x < w; ++x) {
+                        const int xm2 = std::max(0, x - 2);
+                        const int xm1 = std::max(0, x - 1);
+                        const int xp1 = std::min(w - 1, x + 1);
+                        const int xp2 = std::min(w - 1, x + 2);
+                        dst[3 * x] = catmullThird(src[xm2], src[xm1], src[x], src[xp1]);
+                        dst[3 * x + 1] = src[x];
+                        dst[3 * x + 2] = catmullThird(src[xp2], src[xp1], src[x], src[xm1]);
+                    }
+                }
+                QImage upscaled(w * 3, h * 3, QImage::Format_Grayscale8);
+                for (int y = 0; y < h; ++y) {
+                    const auto *rm2 = horiz.constScanLine(std::max(0, y - 2));
+                    const auto *rm1 = horiz.constScanLine(std::max(0, y - 1));
+                    const auto *rc = horiz.constScanLine(y);
+                    const auto *rp1 = horiz.constScanLine(std::min(h - 1, y + 1));
+                    const auto *rp2 = horiz.constScanLine(std::min(h - 1, y + 2));
+                    auto *row0 = upscaled.scanLine(3 * y);
+                    auto *row1 = upscaled.scanLine(3 * y + 1);
+                    auto *row2 = upscaled.scanLine(3 * y + 2);
+                    for (int x = 0; x < w * 3; ++x) {
+                        row0[x] = catmullThird(rm2[x], rm1[x], rc[x], rp1[x]);
+                        row1[x] = rc[x];
+                        row2[x] = catmullThird(rp2[x], rp1[x], rc[x], rm1[x]);
+                    }
+                }
+                return upscaled;
+            };
             QSaveFile file(inputPath);
-            const QImage output = (smoothInverse || positiveContrast)
-                ? catmullUpscale2x(image)
+            const QImage output = (smoothInverse || neutralAdaptive || positiveContrast)
+                ? (scale == 3          ? catmullUpscale3x(image)
+                          : scale == 2 ? catmullUpscale2x(image)
+                                       : image)
                 : image.scaled(
                       image.width() * scale, image.height() * scale, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
             require(file.open(QIODevice::WriteOnly)
@@ -885,7 +956,7 @@ public:
                 "captured OCR image could not be normalized");
         }
         QStringList arguments { inputPath, "stdout", "-l", "eng", "--psm", QString::number(mode) };
-        if (adaptiveContrast)
+        if (adaptiveContrast || neutralAdaptive)
             arguments << "-c" << "thresholding_method=2";
         arguments << "tsv";
         const QByteArray tsv = run(ocr, arguments, environment);
@@ -1017,6 +1088,10 @@ public:
                         candidate = locate(words(imagePath, 11, region.topLeft(), TextPreprocess::SmoothInverse));
                     if (candidate.isEmpty())
                         candidate = locate(words(imagePath, 6, region.topLeft(), TextPreprocess::SmoothInverse));
+                    if (candidate.isEmpty())
+                        candidate = locate(words(imagePath, 11, region.topLeft(), TextPreprocess::NeutralAdaptive));
+                    if (candidate.isEmpty())
+                        candidate = locate(words(imagePath, 6, region.topLeft(), TextPreprocess::NeutralAdaptive));
                     if (candidate.isEmpty()) {
                         const QList<Words> positiveLines
                             = words(imagePath, 11, region.topLeft(), TextPreprocess::Positive);
