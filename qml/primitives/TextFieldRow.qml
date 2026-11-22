@@ -157,6 +157,13 @@ T.Control {
 
         onTextEdited: row.textEdited(text)
         onAccepted: row.accepted()
+        // QQuickTextInput ignores Return/Enter after emitting accepted() so
+        // callers can attach extra key handlers. In TV mode onAccepted can move
+        // focus onto a non-text row before that press finishes bubbling to
+        // KeyRouter, which would then arm and activate the new row on release.
+        Keys.priority: Keys.AfterItem
+        Keys.onReturnPressed: event => event.accepted = true
+        Keys.onEnterPressed: event => event.accepted = true
 
         // Qt's own caret is one pixel wide, which vanishes on a television
         // and is easy to lose on a dense screen. It holds steady while typing
