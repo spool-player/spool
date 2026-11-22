@@ -289,6 +289,7 @@ AppController::AppController(
     connect(m_provider, &Provider::errorOccurred, this, &AppController::setErrorText);
     connect(m_provider, &SourceHub::browseSourcesChanged, this, [this] {
         m_libraryListGeneration.invalidate();
+        m_librariesLoading = true;
         m_home->setLibrariesLoading(true);
         QSet<QString> accounts;
         for (Provider *source : m_provider->sources())
@@ -553,6 +554,7 @@ void AppController::resetVisibleModels()
     if (m_artwork)
         m_artwork->cancelPrefetches();
     m_libraries.clear();
+    m_librariesLoading = false;
     m_browse->clear();
     m_home->reset();
     m_content->reset();
@@ -591,7 +593,10 @@ void AppController::goHome()
     qInfo() << "app: go home viewKind=" << m_browse->viewKind();
     m_libraryLoadGeneration.invalidate();
     setBusy(false);
-    refreshHomeRows();
+    if (m_librariesLoading || hasMissingSourceLibraries())
+        loadLibraries();
+    else
+        refreshHomeRows();
 }
 
 void AppController::openLibrary(int index)
@@ -1649,9 +1654,22 @@ void AppController::showToast(const QString& message)
     emit toastMessage(message);
 }
 
+bool AppController::hasMissingSourceLibraries() const
+{
+    QSet<QString> loadedAccounts;
+    for (const LibraryItem& library : m_libraries.libraries())
+        loadedAccounts.insert(m_provider->accountOf(library.id));
+    for (Provider *source : m_provider->sources()) {
+        if (!loadedAccounts.contains(source->id()))
+            return true;
+    }
+    return false;
+}
+
 void AppController::loadLibraries()
 {
     m_prefetch->stop();
+    m_librariesLoading = true;
     m_home->setLibrariesLoading(true);
     const RequestGeneration::Token generation = m_libraryListGeneration.next();
     Async::runLatest(
@@ -1660,10 +1678,12 @@ void AppController::loadLibraries()
             m_libraries.setLibraries(libraries);
             setBusy(false);
             refreshHomeRows();
+            m_librariesLoading = false;
             m_home->setLibrariesLoading(false);
         },
         [this](const std::exception_ptr& error) {
             setBusy(false);
+            m_librariesLoading = false;
             m_home->setLibrariesLoading(false);
             setErrorText(exceptionMessage(error));
         });

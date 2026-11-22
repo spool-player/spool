@@ -160,7 +160,7 @@ done
 }
 # Derive the journey's input mode from the actual OS feature, not an app flag.
 # A TV lane must really be a TV image; handset mode must not borrow TV proof.
-leanback_feature="$(adb_retry shell pm has-feature android.software.leanback | tr -d '\r')"
+leanback_feature="$(adb_retry shell 'pm has-feature android.software.leanback || true' | tr -d '\r')"
 if [[ "$leanback_feature" == true ]]; then
   SPOOL_E2E_ANDROID_TV=1
 else
