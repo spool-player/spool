@@ -174,19 +174,25 @@ expected_tv=0
 }
 export SPOOL_E2E_ANDROID_TV
 
-# The guest emulator GL translator advertises GLES 3.1 but rejects valid SSBO
-# operations. Use the image's supported guest ANGLE, not a patched Qt/decoder or
-# a software Qt scenegraph. These settings belong only to this isolated device.
-adb_retry shell 'test -f /system/lib64/libGLESv2_angle.so || test -f /system/lib/libGLESv2_angle.so' || {
-  echo 'error: the emulator image does not provide the required guest ANGLE driver' >&2
-  exit 1
-}
-angle_packages_before="$(adb_retry shell settings get global angle_gl_driver_selection_pkgs | tr -d '\r')"
-angle_values_before="$(adb_retry shell settings get global angle_gl_driver_selection_values | tr -d '\r')"
-angle_configured=1
-adb_retry shell settings put global angle_gl_driver_selection_pkgs \
-  com.sachk.spool.tests,com.sachk.spool.e2e_tests,com.sachk.spool
-adb_retry shell settings put global angle_gl_driver_selection_values angle,angle,angle
+# The phone google_apis image uses guest ANGLE because its legacy GL translator
+# path rejects valid SSBO operations. On Android TV API 36 (r04), guest
+# libGLESv2_angle.so faults with SEGV_ACCERR in rx::BufferVk::directUpdate on
+# the first QRhi glBufferSubData call; keep the emulator's default EGL_emulation
+# path on TV, which routes through host ANGLE (-gpu swangle) with working
+# GLES 3.1 SSBO support rather than a patched Qt/decoder or software scenegraph.
+# These settings belong only to this isolated device.
+if [[ "$SPOOL_E2E_ANDROID_TV" != 1 ]]; then
+  adb_retry shell 'test -f /system/lib64/libGLESv2_angle.so || test -f /system/lib/libGLESv2_angle.so' || {
+    echo 'error: the emulator image does not provide the required guest ANGLE driver' >&2
+    exit 1
+  }
+  angle_packages_before="$(adb_retry shell settings get global angle_gl_driver_selection_pkgs | tr -d '\r')"
+  angle_values_before="$(adb_retry shell settings get global angle_gl_driver_selection_values | tr -d '\r')"
+  angle_configured=1
+  adb_retry shell settings put global angle_gl_driver_selection_pkgs \
+    com.sachk.spool.tests,com.sachk.spool.e2e_tests,com.sachk.spool
+  adb_retry shell settings put global angle_gl_driver_selection_values angle,angle,angle
+fi
 
 # Resolves through each launcher category in turn. One package now has to
 # answer to both, so a manifest that lost either entry point fails here rather
