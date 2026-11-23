@@ -46,10 +46,17 @@ public:
     void setAccurateDecoding(bool accurate);
     void setEnabled(bool enabled);
     bool available() const;
+    bool fetching() const
+    {
+        return m_fetching;
+    }
     QVariantMap frame(double seconds);
     QQuickImageResponse *requestImageResponse(const QString& id);
 signals:
     void changed();
+    // A preview request is (or stops being) on the network; it shares the
+    // playback origin's link, so the transport must not learn from it.
+    void fetchingChanged(bool active);
 
 private:
     friend class TrickplayImageResponse;
@@ -69,6 +76,8 @@ private:
     const ArtworkSource *m_source;
     QNetworkAccessManager *m_network;
     QPointer<QNetworkReply> m_reply;
+    bool m_fetching = false;
+    void setFetching(bool active);
     QThreadPool m_pool;
     TrickplayInfo m_info;
     BifSequence m_bif;

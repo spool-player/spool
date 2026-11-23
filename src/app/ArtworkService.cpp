@@ -345,6 +345,31 @@ private:
         return request;
     }
 
+    void trackNetworkReply(QNetworkReply *reply)
+    {
+        const QString scheme = reply->url().scheme();
+        if (scheme != QLatin1String("http") && scheme != QLatin1String("https"))
+            return;
+        if (++m_networkReplies == 1)
+            publishFetching(true);
+        connect(reply, &QNetworkReply::finished, this, [this] {
+            if (--m_networkReplies == 0)
+                publishFetching(false);
+        });
+    }
+
+    void publishFetching(bool active)
+    {
+        const QPointer<ArtworkService> service = m_service;
+        QMetaObject::invokeMethod(
+            m_service,
+            [service, active] {
+                if (service)
+                    service->setFetching(active);
+            },
+            Qt::QueuedConnection);
+    }
+
     void drainRender()
     {
         ensureNetwork();
@@ -366,6 +391,7 @@ private:
                 peak = std::max(peak, origin.inFlight);
             const qint64 fetchStartedNs = monotonicNs();
             QNetworkReply *reply = m_network->get(cachedRequest(request.url, request.headers));
+            trackNetworkReply(reply);
             m_renderReplies.insert(request.requestId, reply);
             const QString key = request.key;
             auto firstByteNs = std::make_shared<qint64>(-1);
@@ -417,6 +443,7 @@ private:
             const QUrl url = m_prefetchQueue.dequeue();
             const QString key = cacheKeyForUrl(url);
             QNetworkReply *reply = m_network->get(cachedRequest(url));
+            trackNetworkReply(reply);
             m_prefetchReplies.insert(reply);
             connect(reply, &QNetworkReply::finished, this, [this, reply, key]() {
                 m_prefetchReplies.remove(reply);
@@ -486,6 +513,7 @@ private:
     QSet<QNetworkReply *> m_prefetchReplies;
     QHash<QString, Origin> m_origins;
     int m_fixedLimit = 0;
+    int m_networkReplies = 0;
 };
 
 class ArtworkImageResponse final : public QQuickImageResponse {

@@ -380,11 +380,10 @@ QByteArray MpvOptionProfile::preloadedSubtitleStreams(const PlaybackSession& ses
     return values.join(',');
 }
 
-MpvOptionProfile::NetworkProfile MpvOptionProfile::networkProfile(Platform platform, int parallelRequests)
+MpvOptionProfile::NetworkProfile MpvOptionProfile::networkProfile(Platform platform)
 {
-    const int requests = std::clamp(parallelRequests, 1, 4);
-    return platform == Platform::WebOS ? NetworkProfile { 2 * 1024 * 1024, 512 * 1024, requests }
-                                       : NetworkProfile { 4 * 1024 * 1024, 1024 * 1024, requests };
+    return platform == Platform::WebOS ? NetworkProfile { 2 * 1024 * 1024, 512 * 1024, 128 * 1024 }
+                                       : NetworkProfile { 4 * 1024 * 1024, 1024 * 1024, 256 * 1024 };
 }
 
 QByteArray MpvOptionProfile::loadFileOptions(const PlaybackSession& session)
@@ -480,9 +479,9 @@ QByteArray MpvOptionProfile::systemCertificateBundle()
 }
 
 std::vector<MpvOption> MpvOptionProfile::applicationOptions(Platform platform, bool needsVideoSurface,
-    const QString& audioOutputMode, const QByteArray& logPath, const QByteArray& demuxerMaxBytes,
-    const QByteArray& demuxerMaxBackBytes, int parallelRequests, bool embeddedVideo, const QByteArray& shaderCachePath,
-    const QByteArray& certificateBundlePath, RenderQuality quality)
+    const QString& audioOutputMode, const QByteArray& logPath, const StreamingOptions& streaming,
+    const QByteArray& demuxerMaxBytes, const QByteArray& demuxerMaxBackBytes, bool embeddedVideo,
+    const QByteArray& shaderCachePath, const QByteArray& certificateBundlePath, RenderQuality quality)
 {
     const bool webOS = platform == Platform::WebOS;
     const bool android = platform == Platform::Android;
@@ -490,7 +489,7 @@ std::vector<MpvOption> MpvOptionProfile::applicationOptions(Platform platform, b
     // graph everywhere and, on webOS, the software-decode path it reaches for
     // legacy codecs. It used to be clamped to webOS here because nowhere else
     // had a second option; Android does now.
-    const NetworkProfile network = networkProfile(platform, parallelRequests);
+    const NetworkProfile network = networkProfile(platform);
     const QString normalizedAudioOutput = webOS ? audioOutputMode : normalizedAudioOutputMode(audioOutputMode);
     const bool starfishAudio = webOS && !embeddedVideo
         && (audioOutputMode == QStringLiteral("starfish") || audioOutputMode == QStringLiteral("starfish-pcm"));
@@ -505,10 +504,24 @@ std::vector<MpvOption> MpvOptionProfile::applicationOptions(Platform platform, b
         { "cache-pause", "no" },
         { "demuxer-max-bytes", demuxerMaxBytes },
         { "demuxer-max-back-bytes", demuxerMaxBackBytes },
-        { "curl-enabled", "yes" },
+        { "curl-enabled", streaming.enabled ? "yes" : "no" },
         { "curl-buffer-size", QByteArray::number(network.ringBytes) },
         { "curl-max-request-size", QByteArray::number(network.rangeBytes) },
-        { "curl-parallel-requests", QByteArray::number(network.parallelRequests) },
+        { "curl-read-size", QByteArray::number(network.readBytes) },
+        { "curl-parallel-requests", QByteArray::number(streaming.maxRequests) },
+        { "curl-fixed-requests", QByteArray::number(streaming.fixedRequests) },
+        { "curl-explore", streaming.explore ? "yes" : "no" },
+        { "curl-receive-mode",
+            streaming.receiveMode == 2       ? "fixed"
+                : streaming.receiveMode == 0 ? "os-auto"
+                                             : "measured" },
+        { "curl-receive-bytes",
+            QByteArray::number(streaming.receiveBytes > 0 ? streaming.receiveBytes : 4 * 1024 * 1024) },
+        { "curl-http-mode",
+            streaming.httpMode == 3       ? "prefer-h3"
+                : streaming.httpMode == 2 ? "http1"
+                : streaming.httpMode == 1 ? "tcp"
+                                          : "auto" },
         // A connection that goes quiet without closing is retried after this
         // long rather than mpv's 60 s, which outlasts any demuxer cache.
         { "network-timeout", "15" },
@@ -585,7 +598,7 @@ std::vector<MpvOption> MpvOptionProfile::applicationOptions(Platform platform, b
     } else {
         options.push_back({ "vo", needsVideoSurface ? "libmpv" : "null" });
 #if defined(SPOOL_APPLE_MOBILE)
-        options.push_back({ "audio-fallback-to-null", "no" });
+        options.push_back({ "audio-fallback-to-null", android ? "yes" : "no" });
 #else
         options.push_back({ "audio-fallback-to-null", "yes" });
 #endif
@@ -620,12 +633,14 @@ std::vector<MpvOption> MpvOptionProfile::applicationOptions(Platform platform, b
             // mature Android backend and restarts cleanly.
             options.push_back({ "ao", "audiotrack,opensles,null" });
         }
-    }
 #if defined(SPOOL_APPLE_MOBILE)
-    // AudioUnit otherwise enables MixWithOthers and defeats interruption focus.
-    options.push_back({ "ao", "audiounit" });
-    options.push_back({ "audio-exclusive", "yes" });
+        if (!android) {
+            // AudioUnit otherwise enables MixWithOthers and defeats interruption focus.
+            options.push_back({ "ao", "audiounit" });
+            options.push_back({ "audio-exclusive", "yes" });
+        }
 #endif
+    }
 
     const MpvOption applicationOptions[] = {
         { "osd-bar", "no" },

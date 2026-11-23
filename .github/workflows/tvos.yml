@@ -16,7 +16,7 @@ jobs:
   simulator:
     name: Qt mpv tvOS ${{ matrix.sdk }} build (simulator tests; device artifact audit only)
     runs-on: macos-15
-    timeout-minutes: 180
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:

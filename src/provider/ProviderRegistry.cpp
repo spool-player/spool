@@ -12,6 +12,7 @@
 #include <QCoroSignal>
 #include <QCryptographicHash>
 #include <QDateTime>
+#include <QDebug>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
@@ -25,6 +26,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <limits>
 #include <string_view>
 
 namespace Spool {
@@ -56,10 +58,140 @@ namespace {
     {
         return timestamp > 0 && timestamp <= now + 5000 && now - timestamp <= kNetworkMaxAge;
     }
+
+    bool networkNumber(const QVariant& value)
+    {
+        switch (value.metaType().id()) {
+        case QMetaType::Int:
+        case QMetaType::UInt:
+        case QMetaType::LongLong:
+        case QMetaType::ULongLong:
+        case QMetaType::Float:
+        case QMetaType::Double:
+            return std::isfinite(value.toDouble());
+        default:
+            return false;
+        }
+    }
+
+    bool networkInteger(const QVariant& value, qint64 minimum, qint64 maximum)
+    {
+        if (!networkNumber(value))
+            return false;
+        const double number = value.toDouble();
+        // A double at 2^63 cannot be represented by a signed wire integer.
+        if (number >= 9223372036854775808.0 || std::trunc(number) != number)
+            return false;
+        bool valid = false;
+        const qint64 integer = value.toLongLong(&valid);
+        return valid && integer >= minimum && integer <= maximum;
+    }
+
+    QString networkProfileKey(const QVariantMap& point)
+    {
+        return QStringLiteral("%1/%2/%3/%4/%5")
+            .arg(point.value(QStringLiteral("requests")).toInt())
+            .arg(point.value(QStringLiteral("http-version")).toInt())
+            .arg(point.value(QStringLiteral("receive-profile")).toInt())
+            .arg(point.value(QStringLiteral("receive-bytes")).toLongLong())
+            .arg(point.value(QStringLiteral("range-bytes")).toLongLong());
+    }
+
+    QVariantMap networkSample(const QVariant& value, qint64 now)
+    {
+        if (value.metaType().id() != QMetaType::QVariantMap)
+            return {};
+        const QVariantMap point = value.toMap();
+        const auto integer = [&](const char *field, qint64 minimum, qint64 maximum) {
+            return networkInteger(point.value(QLatin1String(field)), minimum, maximum);
+        };
+        const int http = point.value(QStringLiteral("http-version")).toInt();
+        const double rate = point.value(QStringLiteral("ordered-bytes-per-second")).toDouble();
+        const double ttfb = point.value(QStringLiteral("ttfb-ms")).toDouble();
+        if (!integer("requests", 1, 16) || !integer("http-version", 0, 30)
+            || (http != 0 && http != 11 && http != 20 && http != 30) || !integer("receive-profile", 0, 1)
+            || !integer("receive-bytes", 0, 16 * 1024 * 1024) || !integer("range-bytes", 0, 16 * 1024 * 1024)
+            || !integer("updated-at-ms", 1, now + 5000)
+            || !freshNetworkSample(point.value(QStringLiteral("updated-at-ms")).toLongLong(), now)
+            || !integer("source", 1, 2) || !integer("samples", 1, std::numeric_limits<qint64>::max())
+            || !networkNumber(point.value(QStringLiteral("ordered-bytes-per-second"))) || !networkRate(rate)
+            || !networkNumber(point.value(QStringLiteral("ttfb-ms"))) || ttfb < 0 || ttfb > 60000)
+            return {};
+        // Native playback knows its negotiated protocol and request shape;
+        // unknown dimensions are reserved for the independent Qt probe prior.
+        if (point.value(QStringLiteral("source")).toInt() == 2
+            && (http == 0 || point.value(QStringLiteral("range-bytes")).toLongLong() == 0))
+            return {};
+        const bool manual = point.value(QStringLiteral("receive-profile")).toInt() == 1;
+        const qint64 receive = point.value(QStringLiteral("receive-bytes")).toLongLong();
+        if ((manual && receive < 1024 * 1024) || (!manual && receive != 0))
+            return {};
+        // Copy only the wire contract: provider data and transport diagnostics
+        // must never introduce private fields into the persistent history.
+        QVariantMap sample;
+        for (const char *field : { "requests", "http-version", "receive-profile", "receive-bytes", "range-bytes",
+                 "updated-at-ms", "source", "samples" })
+            sample.insert(QLatin1String(field), point.value(QLatin1String(field)).toLongLong());
+        sample.insert(QStringLiteral("ordered-bytes-per-second"), rate);
+        sample.insert(QStringLiteral("ttfb-ms"), ttfb);
+        return sample;
+    }
+
+    using NetworkPoints = QMap<QString, QVariantMap>;
+
+    void mergeNetworkPoint(NetworkPoints& points, const QVariantMap& sample)
+    {
+        const QString key = networkProfileKey(sample);
+        // A probe can replace only another probe of this exact profile.
+        if (points.value(key).value(QStringLiteral("source")).toInt() <= sample.value(QStringLiteral("source")).toInt())
+            points.insert(key, sample);
+    }
+
+    void boundNetworkPoints(NetworkPoints& points)
+    {
+        while (points.size() > 64) {
+            auto oldest = points.begin();
+            for (auto it = points.begin(); it != points.end(); ++it)
+                if (it.value().value(QStringLiteral("updated-at-ms")).toLongLong()
+                    < oldest.value().value(QStringLiteral("updated-at-ms")).toLongLong())
+                    oldest = it;
+            points.erase(oldest);
+        }
+    }
+
+    NetworkPoints networkPoints(const QVariantMap& saved, qint64 now)
+    {
+        NetworkPoints points;
+        if (!networkInteger(saved.value(QStringLiteral("format")), 2, 2))
+            return points;
+        for (const QVariant& value : saved.value(QStringLiteral("transport-samples")).toList()) {
+            const QVariantMap point = networkSample(value, now);
+            if (!point.isEmpty())
+                mergeNetworkPoint(points, point);
+        }
+        boundNetworkPoints(points);
+        return points;
+    }
+
+    QVariantList networkSamples(const NetworkPoints& points)
+    {
+        QVariantList samples;
+        for (const auto& point : points)
+            samples.append(point);
+        return samples;
+    }
+
     bool requiresSignIn(const std::exception& error)
     {
         const std::string_view code(error.what());
         return code == "http_401" || code == "invalid_config" || code == "auth_required" || code == "invalid_token";
+    }
+
+    bool connectionFailure(const std::exception& error)
+    {
+        const std::string_view code(error.what());
+        return code == "network_error" || code == "operation_timeout" || code == "server_unreachable"
+            || code.starts_with("http_5");
     }
 
     // One sentence for the profile that failed to open; provider codes are
@@ -73,7 +205,7 @@ namespace {
             return QStringLiteral("That PIN wasn't accepted. Try again.");
         if (code == "permission_denied")
             return QStringLiteral("This profile doesn't have access to this server.");
-        if (code == "network_error" || code == "operation_timeout" || code == "server_unreachable")
+        if (connectionFailure(error))
             return QStringLiteral("Couldn't reach the server. Check the connection and try again.");
         return QStringLiteral("Couldn't open this profile. Try again.");
     }
@@ -333,6 +465,21 @@ QCoro::Task<void> ProviderRegistry::restore()
     m_startupChoices = root.value(QStringLiteral("startup")).toObject().toVariantMap();
     m_networkProfiles = root.value(QStringLiteral("networkProfiles")).toObject().toVariantMap();
     m_networkEndpoints = root.value(QStringLiteral("networkEndpoints")).toObject().toVariantMap();
+    // The account envelope remains format 2; only incompatible learned rows
+    // are reset, leaving account metadata and credential restoration intact.
+    const qsizetype savedProfiles = m_networkProfiles.size();
+    for (auto it = m_networkProfiles.begin(); it != m_networkProfiles.end();) {
+        if (!networkInteger(it.value().toMap().value(QStringLiteral("format")), 2, 2))
+            it = m_networkProfiles.erase(it);
+        else
+            ++it;
+    }
+    if (m_networkProfiles.size() > 64) {
+        const QString key = m_networkProfiles.firstKey();
+        storeNetworkProfile(key, m_networkProfiles.value(key).toMap());
+    }
+    if (m_networkProfiles.size() != savedProfiles)
+        m_networkSaveTimer.start();
     m_lanApprovedModules = root.value(QStringLiteral("lanApproved")).toVariant().toStringList();
     std::vector<ProviderAccount> accounts;
     for (const QJsonValue& row : root.value(QStringLiteral("accounts")).toArray()) {
@@ -972,65 +1119,17 @@ QVariantMap ProviderRegistry::playbackNetworkProfile(const QString& accountId, c
     const QString key = origin.isEmpty() ? m_networkEndpoints.value(accountId).toString() : endpointKey(origin);
     const QVariantMap saved = m_networkProfiles.value(key).toMap();
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    QVariantList samples;
+    const NetworkPoints points = networkPoints(saved, now);
     double best = 0;
-    QHash<int, QVariantMap> estimates;
-    // Qt's generated-byte test is a prior, never a replacement for actual
-    // media delivery measured by curl at the same concurrency.
-    for (const QString& field : { QStringLiteral("probe-samples"), QStringLiteral("concurrency-samples") }) {
-        for (const QVariant& value : saved.value(field).toList()) {
-            const QVariantMap sample = value.toMap();
-            const int requests = sample.value(QStringLiteral("requests")).toInt();
-            const double capacity = sample.value(QStringLiteral("capacity-bytes-per-second")).toDouble();
-            if (requests >= 1 && requests <= 4 && networkRate(capacity)
-                && freshNetworkSample(sample.value(QStringLiteral("updated-at-ms")).toLongLong(), now))
-                estimates.insert(requests, sample);
-        }
-    }
-    for (int requests : { 1, 2, 3, 4 }) {
-        if (estimates.contains(requests)) {
-            const auto sample = estimates.value(requests);
-            samples.append(sample);
-            best = std::max(best, sample.value(QStringLiteral("capacity-bytes-per-second")).toDouble());
-        }
-    }
-    int selected = 1;
-    const bool recentPlayback
-        = !samples.isEmpty() && freshNetworkSample(saved.value(QStringLiteral("playback-at-ms")).toLongLong(), now);
-    const double mediaBitrate = recentPlayback ? saved.value(QStringLiteral("media-bitrate")).toDouble() : 0;
-    if (recentPlayback)
-        selected = saved.value(QStringLiteral("initial-requests"), 1).toInt();
-    if (selected < 1 || selected > 4)
-        selected = 1;
-    if (mediaBitrate > 0) {
-        // Keep substantial headroom without rewarding more sockets for a tiny gain.
-        for (int requests : { 1, 2, 3, 4 }) {
-            const auto enough
-                = std::find_if(samples.cbegin(), samples.cend(), [requests, mediaBitrate](const QVariant& v) {
-                      const auto sample = v.toMap();
-                      return sample.value(QStringLiteral("requests")).toInt() == requests
-                          && sample.value(QStringLiteral("capacity-bytes-per-second")).toDouble() * 8
-                          >= mediaBitrate * 1.75;
-                  });
-            if (enough != samples.cend()) {
-                selected = requests;
-                break;
-            }
-        }
-    }
-    double capacity = 0;
-    double latency = 0;
-    for (const QVariant& value : samples) {
-        const auto sample = value.toMap();
-        if (sample.value(QStringLiteral("requests")).toInt() == selected) {
-            capacity = sample.value(QStringLiteral("capacity-bytes-per-second")).toDouble();
-            latency = sample.value(QStringLiteral("latency-ms")).toDouble();
-        }
-    }
-    return { { QStringLiteral("initial-requests"), selected }, { QStringLiteral("latency-ms"), latency },
-        { QStringLiteral("capacity-bytes-per-second"), capacity },
+    for (const auto& point : points)
+        best = std::max(best, point.value(QStringLiteral("ordered-bytes-per-second")).toDouble());
+    const QVariant selected = saved.value(QStringLiteral("last-selected-requests"));
+    const bool recent
+        = !points.isEmpty() && freshNetworkSample(saved.value(QStringLiteral("updated-at-ms")).toLongLong(), now);
+    return { { QStringLiteral("format"), 2 },
+        { QStringLiteral("last-selected-requests"), recent && networkInteger(selected, 1, 16) ? selected.toInt() : 1 },
         { QStringLiteral("measured-bitrate"), qint64(best * 8 * 0.75) },
-        { QStringLiteral("concurrency-samples"), samples } };
+        { QStringLiteral("transport-samples"), networkSamples(points) } };
 }
 
 void ProviderRegistry::rememberPlaybackOrigin(const QString& accountId, const QUrl& origin)
@@ -1044,6 +1143,24 @@ void ProviderRegistry::rememberPlaybackOrigin(const QString& accountId, const QU
     }
 }
 
+void ProviderRegistry::storeNetworkProfile(const QString& key, QVariantMap profile)
+{
+    m_networkProfiles.insert(key, std::move(profile));
+    while (m_networkProfiles.size() > 64) {
+        auto oldest = m_networkProfiles.begin();
+        if (oldest.key() == key)
+            ++oldest;
+        for (auto it = m_networkProfiles.begin(); it != m_networkProfiles.end(); ++it)
+            if (it.key() != key
+                && it.value().toMap().value(QStringLiteral("updated-at-ms")).toLongLong()
+                    < oldest.value().toMap().value(QStringLiteral("updated-at-ms")).toLongLong())
+                oldest = it;
+        m_networkFeedback.remove(oldest.key());
+        m_networkPointSamples.remove(oldest.key());
+        m_networkProfiles.erase(oldest);
+    }
+}
+
 bool ProviderRegistry::updatePlaybackNetworkProfile(
     const QString& accountId, const QUrl& origin, const QVariantMap& metrics)
 {
@@ -1054,70 +1171,63 @@ bool ProviderRegistry::updatePlaybackNetworkProfile(
     const quint64 count = metrics.value(QStringLiteral("capacity-samples")).toULongLong();
     const int requests = metrics.value(QStringLiteral("selected-requests")).toInt();
     const auto previous = m_networkFeedback.value(key);
-    if (key.isEmpty() || !sourceRunning(accountId) || !accountOriginAllowed(accountId, origin) || observed <= 0
-        || observed > now + 5000 || now - observed > 5 * 60 * 1000 || !stream || !count || stream < previous.first
-        || (stream == previous.first && count <= previous.second) || requests < 1 || requests > 4)
+    if (key.isEmpty() || !sourceRunning(accountId) || !accountOriginAllowed(accountId, origin)
+        || metrics.value(QStringLiteral("primary-origin-match")).metaType().id() != QMetaType::Bool
+        || !metrics.value(QStringLiteral("primary-origin-match")).toBool()
+        || !networkInteger(metrics.value(QStringLiteral("observed-at-ms")), now - 5 * 60 * 1000, now + 5000)
+        || !networkInteger(metrics.value(QStringLiteral("stream-id")), 1, std::numeric_limits<qint64>::max())
+        || !networkInteger(metrics.value(QStringLiteral("capacity-samples")), 1, std::numeric_limits<qint64>::max())
+        || stream < previous.first || (stream == previous.first && count <= previous.second)
+        || !networkInteger(metrics.value(QStringLiteral("selected-requests")), 1, 16))
         return false;
-    // Only curl's unthrottled capacity observations are accepted; lifetime
-    // average/current rates include cache backpressure and must not enter here.
+    // Only the primary origin's unthrottled capacity observations enter here;
+    // lifetime/current rates include cache backpressure and are not priors.
+    const QVariant input = metrics.value(QStringLiteral("transport-samples"));
+    const QVariantList incoming = input.toList();
+    if (input.metaType().id() != QMetaType::QVariantList || incoming.isEmpty() || incoming.size() > 64)
+        return false;
     QVariantMap saved = m_networkProfiles.value(key).toMap();
-    QHash<int, QVariantMap> points;
-    for (const QVariant& value : saved.value(QStringLiteral("concurrency-samples")).toList()) {
-        const auto point = value.toMap();
-        if (freshNetworkSample(point.value(QStringLiteral("updated-at-ms")).toLongLong(), now))
-            points.insert(point.value(QStringLiteral("requests")).toInt(), point);
-    }
-    auto seen = stream == previous.first ? m_networkPointSamples.value(key) : QHash<int, quint64>();
+    NetworkPoints points = networkPoints(saved, now);
+    auto seen = stream == previous.first ? m_networkPointSamples.value(key) : QHash<QString, quint64>();
+    QSet<QString> incomingKeys;
     bool changed = false;
-    const QVariantList incoming = metrics.value(QStringLiteral("concurrency-samples")).toList();
-    if (incoming.isEmpty() || incoming.size() > 4)
-        return false;
     for (const QVariant& value : incoming) {
-        const auto point = value.toMap();
-        const int lanes = point.value(QStringLiteral("requests")).toInt();
-        const double rate = point.value(QStringLiteral("capacity-bytes-per-second")).toDouble();
-        const double latency = point.value(QStringLiteral("latency-ms")).toDouble();
-        const quint64 samples = point.value(QStringLiteral("samples")).toULongLong();
-        if (lanes < 1 || lanes > 4 || !networkRate(rate) || !std::isfinite(latency) || latency < 0 || latency > 60000
-            || !samples)
+        QVariantMap point = networkSample(value, now);
+        if (point.isEmpty() || point.value(QStringLiteral("source")).toInt() != 2
+            || point.value(QStringLiteral("updated-at-ms")).toLongLong() > observed + 5000)
             return false;
-        if (samples <= seen.value(lanes))
+        const QString identity = networkProfileKey(point);
+        if (incomingKeys.contains(identity))
+            return false;
+        incomingKeys.insert(identity);
+        const quint64 samples = point.value(QStringLiteral("samples")).toULongLong();
+        if (samples <= seen.value(identity))
             continue;
-        const double old = points.value(lanes).value(QStringLiteral("capacity-bytes-per-second")).toDouble();
-        points.insert(lanes,
-            { { QStringLiteral("requests"), lanes },
-                { QStringLiteral("capacity-bytes-per-second"), networkRate(old) ? old * 0.5 + rate * 0.5 : rate },
-                { QStringLiteral("latency-ms"), latency }, { QStringLiteral("updated-at-ms"), now } });
-        seen.insert(lanes, samples);
+        const auto old = points.value(identity);
+        if (old.value(QStringLiteral("source")).toInt() == 2) {
+            const double rate = point.value(QStringLiteral("ordered-bytes-per-second")).toDouble();
+            point.insert(QStringLiteral("ordered-bytes-per-second"),
+                old.value(QStringLiteral("ordered-bytes-per-second")).toDouble() * 0.5 + rate * 0.5);
+        }
+        mergeNetworkPoint(points, point);
+        seen.insert(identity, samples);
         changed = true;
     }
     if (!changed)
         return false;
-    QVariantList merged;
-    for (int lanes : { 1, 2, 3, 4 })
-        if (points.contains(lanes))
-            merged.append(points.value(lanes));
-    saved.insert(QStringLiteral("concurrency-samples"), merged);
-    saved.insert(QStringLiteral("initial-requests"), requests);
-    saved.insert(QStringLiteral("playback-at-ms"), now);
-    const double bitrate = metrics.value(QStringLiteral("media-bitrate")).toDouble();
-    if (std::isfinite(bitrate) && bitrate > 0 && bitrate <= 800.0e9)
-        saved.insert(QStringLiteral("media-bitrate"), bitrate);
-    m_networkProfiles.insert(key, saved);
+    boundNetworkPoints(points);
+    for (auto it = seen.begin(); it != seen.end();) {
+        if (!points.contains(it.key()))
+            it = seen.erase(it);
+        else
+            ++it;
+    }
+    saved = { { QStringLiteral("format"), 2 }, { QStringLiteral("last-selected-requests"), requests },
+        { QStringLiteral("updated-at-ms"), now }, { QStringLiteral("transport-samples"), networkSamples(points) } };
+    storeNetworkProfile(key, saved);
     m_networkFeedback.insert(key, { stream, count });
     m_networkPointSamples.insert(key, seen);
     rememberPlaybackOrigin(accountId, origin);
-    // Bound the persistent history even when a provider resolves many mirrors.
-    while (m_networkProfiles.size() > 64) {
-        auto oldest = m_networkProfiles.begin();
-        for (auto it = m_networkProfiles.begin(); it != m_networkProfiles.end(); ++it)
-            if (it.value().toMap().value(QStringLiteral("playback-at-ms")).toLongLong()
-                < oldest.value().toMap().value(QStringLiteral("playback-at-ms")).toLongLong())
-                oldest = it;
-        m_networkFeedback.remove(oldest.key());
-        m_networkPointSamples.remove(oldest.key());
-        m_networkProfiles.erase(oldest);
-    }
     if (!m_networkSaveTimer.isActive())
         m_networkSaveTimer.start();
     return true;
@@ -1127,37 +1237,44 @@ bool ProviderRegistry::recordSpeedTest(const QString& accountId, const QVariantM
 {
     const QUrl origin(result.value(QStringLiteral("origin")).toString());
     const QString key = endpointKey(origin);
-    if (key.isEmpty() || !accountOriginAllowed(accountId, origin))
+    if (key.isEmpty() || !sourceRunning(accountId) || !accountOriginAllowed(accountId, origin))
         return false;
     const QVariantList input = result.value(QStringLiteral("concurrency-samples")).toList();
     if (input.size() != 3)
         return false;
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
     QVariantList samples;
     int expected = 1;
-    const qint64 now = QDateTime::currentMSecsSinceEpoch();
     for (const QVariant& value : input) {
         const auto sample = value.toMap();
         const double rate = sample.value(QStringLiteral("capacity-bytes-per-second")).toDouble();
-        const double latency = sample.value(QStringLiteral("latency-ms")).toDouble();
-        if (sample.value(QStringLiteral("requests")).toInt() != expected || !networkRate(rate)
-            || !std::isfinite(latency) || latency < 0 || latency > 60000)
+        const double ttfb = sample.value(QStringLiteral("ttfb-ms")).toDouble();
+        if (!networkInteger(sample.value(QStringLiteral("requests")), expected, expected)
+            || !networkNumber(sample.value(QStringLiteral("capacity-bytes-per-second"))) || !networkRate(rate)
+            || !networkNumber(sample.value(QStringLiteral("ttfb-ms"))) || ttfb < 0 || ttfb > 60000)
             return false;
-        samples.append(QVariantMap { { QStringLiteral("requests"), expected },
-            { QStringLiteral("capacity-bytes-per-second"), rate }, { QStringLiteral("latency-ms"), latency },
-            { QStringLiteral("updated-at-ms"), now } });
+        samples.append(QVariantMap { { QStringLiteral("requests"), expected }, { QStringLiteral("http-version"), 0 },
+            { QStringLiteral("receive-profile"), 0 }, { QStringLiteral("receive-bytes"), 0 },
+            { QStringLiteral("range-bytes"), 0 }, { QStringLiteral("ordered-bytes-per-second"), rate },
+            { QStringLiteral("ttfb-ms"), ttfb }, { QStringLiteral("updated-at-ms"), now },
+            { QStringLiteral("source"), 1 }, { QStringLiteral("samples"), 1 } });
         expected *= 2;
     }
-    auto saved = m_networkProfiles.value(key).toMap();
-    saved.insert(QStringLiteral("probe-samples"), samples);
-    m_networkProfiles.insert(key, saved);
-    while (m_networkProfiles.size() > 64) {
-        auto victim = m_networkProfiles.begin();
-        if (victim.key() == key)
-            ++victim;
-        m_networkFeedback.remove(victim.key());
-        m_networkPointSamples.remove(victim.key());
-        m_networkProfiles.erase(victim);
-    }
+    QVariantMap saved = m_networkProfiles.value(key).toMap();
+    NetworkPoints points = networkPoints(saved, now);
+    bool playback = false;
+    for (const auto& point : points)
+        playback |= point.value(QStringLiteral("source")).toInt() == 2;
+    for (const auto& sample : samples)
+        mergeNetworkPoint(points, sample.toMap());
+    boundNetworkPoints(points);
+    const QVariant selected = result.value(QStringLiteral("parallelRequests"));
+    const int last = playback             ? saved.value(QStringLiteral("last-selected-requests"), 1).toInt()
+        : networkInteger(selected, 1, 16) ? selected.toInt()
+                                          : 1;
+    saved = { { QStringLiteral("format"), 2 }, { QStringLiteral("last-selected-requests"), last },
+        { QStringLiteral("updated-at-ms"), now }, { QStringLiteral("transport-samples"), networkSamples(points) } };
+    storeNetworkProfile(key, saved);
     if (!m_networkEndpoints.contains(accountId))
         rememberPlaybackOrigin(accountId, origin);
     persist(false);
@@ -1282,14 +1399,24 @@ QCoro::Task<T> ProviderRegistry::guarded(QString sourceId, Call call, QString ca
     try {
         result = co_await call(runtime, runtimeId);
     } catch (const std::exception& error) {
-        // The server no longer accepts this account's credentials: say so
-        // once, and let the accounts page offer to sign in again.
-        if (guard && m_running.value(sourceId).generation == generation && requiresSignIn(error)
-            && !m_expired.contains(sourceId)) {
-            m_expired.insert(sourceId);
-            if (const ProviderAccount *entry = account(sourceId))
-                emit problem(QStringLiteral("Sign in to %1 again").arg(entry->label));
-            emit accountsChanged();
+        // A live runtime is not proof that its server is reachable or still
+        // accepts these credentials. Surface each failure until recovery.
+        if (guard && m_running.value(sourceId).generation == generation) {
+            if (requiresSignIn(error) && !m_expired.contains(sourceId)) {
+                m_expired.insert(sourceId);
+                m_accountErrors.insert(sourceId, activationError(error));
+                if (const ProviderAccount *entry = account(sourceId))
+                    emit problem(QStringLiteral("Sign in to %1 again").arg(entry->label));
+                emit accountsChanged();
+            } else if (connectionFailure(error) && !m_failedAccounts.contains(sourceId)) {
+                m_failedAccounts.insert(sourceId);
+                const QString message = activationError(error);
+                m_accountErrors.insert(sourceId, message);
+                if (const ProviderAccount *entry = account(sourceId))
+                    emit problem(
+                        QStringLiteral("%1: %2").arg(entry->detail.isEmpty() ? entry->label : entry->detail, message));
+                emit accountsChanged();
+            }
         }
         throw;
     }
@@ -1356,6 +1483,11 @@ QCoro::Task<QVariantMap> ProviderRegistry::callSource(
         },
         capability, scope);
     requireCurrent();
+    if (operation == QStringLiteral("libraries") && !m_expired.contains(sourceId)
+        && m_failedAccounts.remove(sourceId)) {
+        m_accountErrors.remove(sourceId);
+        emit accountsChanged();
+    }
     if (preferences)
         result = ProviderExtensionData::preferenceResult(operation, result);
     else if (storage) {
@@ -1671,13 +1803,15 @@ QVariantList ProviderRegistry::accounts() const
             { QStringLiteral("pendingEnabled"),
                 m_preparing.contains(account.id) && m_running.value(m_preparing.value(account.id)).enableOnCommit },
             { QStringLiteral("connectionState"),
-                m_running.value(account.id).provider                                    ? QStringLiteral("active")
-                    : m_preparing.contains(account.id)                                  ? QStringLiteral("starting")
-                    : m_lockedAccounts.contains(account.id)                             ? QStringLiteral("locked")
-                    : m_failedAccounts.contains(account.id) || (owner && owner->failed) ? QStringLiteral("failed")
-                    : awaiting                                                          ? QStringLiteral("choose")
-                    : account.enabled                                                   ? QStringLiteral("starting")
-                                                                                        : QStringLiteral("locked") },
+                m_preparing.contains(account.id) ? QStringLiteral("starting")
+                    : m_expired.contains(account.id) || m_unavailableConfigurations.contains(account.id)
+                        || m_failedAccounts.contains(account.id) || (owner && owner->failed)
+                    ? QStringLiteral("failed")
+                    : m_running.value(account.id).provider  ? QStringLiteral("active")
+                    : m_lockedAccounts.contains(account.id) ? QStringLiteral("locked")
+                    : awaiting                              ? QStringLiteral("choose")
+                    : account.enabled                       ? QStringLiteral("starting")
+                                                            : QStringLiteral("locked") },
             { QStringLiteral("capabilities"), capabilities(account.id) },
             { QStringLiteral("needsSignIn"),
                 m_expired.contains(account.id) || m_unavailableConfigurations.contains(account.id) },
@@ -2105,7 +2239,7 @@ void ProviderRegistry::useAccount(const QString& accountId)
         emit accountSelectionFinished(accountId, false);
         return;
     }
-    if (m_running.value(accountId).provider) {
+    if (m_running.value(accountId).provider && !m_failedAccounts.contains(accountId)) {
         ProviderAccount selected = *chosen;
         selected.enabled = true;
         selected.lastUsed = QDateTime::currentMSecsSinceEpoch();

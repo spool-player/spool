@@ -141,8 +141,13 @@ void AppController::handleRemoteCommand(const QString& accountId, const QVariant
     if (name == QStringLiteral("play")) {
         playRemoteItems(accountId, command);
     } else if (name == QStringLiteral("pause") || name == QStringLiteral("unpause")) {
-        if (m_player->paused() == (name == QStringLiteral("unpause")))
-            groupOrLocalTogglePause();
+        const bool wantPaused = name == QStringLiteral("pause");
+        if (inGroup()) {
+            if (m_player->paused() != wantPaused)
+                m_group->requestTogglePause();
+        } else {
+            m_player->setPaused(wantPaused);
+        }
     } else if (name == QStringLiteral("playPause")) {
         groupOrLocalTogglePause();
     } else if (name == QStringLiteral("stop")) {

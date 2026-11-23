@@ -133,6 +133,7 @@ export function createSource(config, sourceHost) {
         announce: function(args) { sourceHost.emit('changed', {itemId: args.itemId}); return {}; },
         configuration: function() { return {configuration: config}; },
         expired: function() { throw new Error('http_401'); },
+        unreachable: function() { throw new Error('network_error'); },
         bump: function() { return {calls: ++calls, label: config.label}; },
         candidates: function(args) {
             const rows = [];

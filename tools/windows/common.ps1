@@ -60,6 +60,23 @@ function Get-Msys2Root {
     return $root
 }
 
+# OpenSSL's VC targets require a native Windows Perl. MSYS Perl can see a
+# Windows Configure path yet resolve FindBin against the build directory.
+function Get-NativeWindowsPerl {
+    $candidates = @()
+    if ($env:SPOOL_WINDOWS_PERL) { $candidates += $env:SPOOL_WINDOWS_PERL }
+    $candidates += Join-Path $env:SystemDrive 'Strawberry\perl\bin\perl.exe'
+    $candidates += @(Get-Command perl.exe -All -ErrorAction SilentlyContinue | ForEach-Object { $_.Source })
+    foreach ($candidate in ($candidates | Select-Object -Unique)) {
+        if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }
+        $flavor = & $candidate -e 'print $^O' 2>$null
+        if ($LASTEXITCODE -eq 0 -and (($flavor -join '').Trim() -eq 'MSWin32')) {
+            return [IO.Path]::GetFullPath($candidate)
+        }
+    }
+    return $null
+}
+
 function Expand-WindowsSourceArchive {
     param(
         [Parameter(Mandatory)] [string] $Archive,
@@ -140,7 +157,11 @@ function Get-MpvSourceRevision {
         'tools/windows/build-mpv.ps1', 'tools/windows/common.ps1',
         'tools/windows/build-ffmpeg.ps1', 'tools/windows/build-ffmpeg.sh',
         'tools/windows/check-ffmpeg.py', 'tools/windows/build-shader-tools.ps1',
-        'tools/windows/extract-archive.py',
+        'tools/windows/extract-archive.py', 'tools/windows/build-streaming-dependencies.ps1',
+        'tools/manifests/streaming-third-party.json', 'tools/cmake/StreamingDependencies.cmake',
+        'tools/cmake/QuicBatchingProbe/CMakeLists.txt',
+        'tools/prepare-streaming-sources.sh', 'tools/streaming-fingerprint.py',
+        'tools/patches/curl-apple-mobile-sectrust.patch', 'tools/lib/manifest-sources.sh',
         'tools/manifests/mpv-native.json', 'tools/manifests/ffmpeg-capabilities.json',
         'tools/manifests/toolchain.json', 'tools/ffmpeg-capabilities.py'
     )) {

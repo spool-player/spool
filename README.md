@@ -63,6 +63,11 @@ Search uses all enabled, authorized watching profiles regardless of the Home
 provider filter, never the combined permissions of an adult and child profile
 saved on the same server.
 
+Home shows an initial loading state before its first content is available, then
+**Loading more…** while additional accounts or shelves are pending. A late server's
+libraries join the existing Home inventory. Connection failures remain visible
+with a **Profiles & servers** action; other successful sources stay usable.
+
 ### Settings and navigation
 
 Settings opens a category index with common controls and a direct **Zoom**
@@ -72,11 +77,41 @@ Back restores the query, selection and scroll position. **Ctrl+F** searches
 Settings when that page owns input; text composition and modal editors keep
 their existing ownership.
 
+Advanced **Streaming** settings include **Optimized streaming** (on by default).
+Turning it off uses stock mpv networking (`curl-enabled=no`). While it is on,
+**Maximum concurrent requests** sets the network-request limit from 1–16
+(default 4 on every platform), not the number of decoding threads or sockets.
+Requests adapt up to that limit unless **Use fixed request count** is enabled
+(off by default). Forced counts still require server support for
+parallel range requests. All three settings apply to the next playback,
+persist on this device, and sync only with device-setting opt-in.
+
+The maximum is a ceiling, not a target. Automatic selection prefers the fewest
+requests within 15% of the best measured capacity, or enough for 1.75× playback
+demand. Actual playback measurements override probe estimates at the same
+concurrency; slower extra requests are not retained just because demand is high.
+
+**Log streaming performance** is an independent, device-local opt-in in advanced
+Streaming settings. It logs once per second while playing, including with stock
+networking: demuxer input rate, curl wire/capacity rates, buffer duration, process
+and curl-worker CPU, and producer/consumer waits. CPU percentages use one core
+as 100%; idle/full-cache time is not link capacity. Logs omit URLs and credentials.
+
 Mouse scrolling and keyboard navigation can coexist. If the selected card is
 offscreen, the first direction selects the top-left usable visible card without
 scrolling back. That complete held gesture is consumed until physical release;
 the next press navigates normally. **Move** is explicit in the library menu:
 moving keeps the library selected and the viewport stable until **Done**.
+Library and Home shelf selections follow their identities through background
+inventory reordering. Late shelves retain the selected card and its screen
+position rather than resetting the existing rows. On webOS,
+directional holds require the remote's repeat events; a lost release cannot
+start synthetic scrolling.
+Changing the input target or losing focus retires the previous directional hold.
+
+Background library refreshes retain the current catalogue and posters while
+waiting for replacement rows. Explicit filter or library changes still replace
+the listing.
 
 Home's provider chooser switches between **All providers** and one provider
 without changing enabled accounts, watching profiles or global search. The
@@ -193,6 +228,12 @@ bitrate, pixel dimensions, aspect-normalized quality height, resolution label,
 and playback method. For example, a 3840×1608 edition is a 2160-class source
 despite its cropped pixel height; the CLI never reconstructs quality choices
 from the negotiated output or invents a source ladder.
+
+For webOS, opt in to the loopback control server on launch and use the desktop
+CLI's `--host root@TV` SSH transport; no separate TV executable or LAN listener
+is needed. `speed-test` starts the normal idle probe, `speed-test status` exposes
+its numeric lane curve, and `status` includes actual playback metrics.
+See [remote spoolet setup and security](docs/debug/lifecycle-diagnostics.md#remote-spoolet-on-webos).
 
 Preview inspection uses real window input, without seeking the video. For this
 latency-sensitive sequence, invoke the installed `spoolet` binary directly:

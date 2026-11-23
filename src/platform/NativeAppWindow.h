@@ -101,6 +101,7 @@ public:
     Q_INVOKABLE void exitToLauncher();
 #ifdef Q_OS_MACOS
     Q_INVOKABLE void setTitlebarVisible(bool visible);
+    void configureMacOSTitlebar();
 #endif
     void clearOverlay();
     QQuickImageProvider *createOverlayImageProvider();

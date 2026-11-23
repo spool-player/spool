@@ -107,12 +107,32 @@ void JellyfinFixture::setEpisodeDetailsHeld(bool held)
         ++episodeDetailResponses;
     }
 }
+void JellyfinFixture::setLibraryBrowseHeld(bool held)
+{
+    libraryBrowseHeld = held;
+    if (!held) {
+        for (const auto& [socket, snapshot] : std::exchange(pendingBrowse, decltype(pendingBrowse) {})) {
+            if (socket) {
+                socket->setProperty("heldBrowse", false);
+                respond(socket, 200, snapshot);
+            }
+        }
+    }
+}
+bool JellyfinFixture::sendLibraryChanged()
+{
+    return sendEvent({ { "MessageType", "LibraryChanged" }, { "Data", QJsonObject {} } });
+}
 bool JellyfinFixture::sendRemotePlay(qint64 positionTicks)
 {
     const QJsonObject message { { "MessageType", "Play" },
         { "Data",
             QJsonObject { { "ItemIds", QJsonArray { episodeId } }, { "StartIndex", 0 },
                 { "StartPositionTicks", positionTicks }, { "PlayCommand", "PlayNow" } } } };
+    return sendEvent(message);
+}
+bool JellyfinFixture::sendEvent(const QJsonObject& message)
+{
     const QString encoded = QString::fromUtf8(QJsonDocument(message).toJson(QJsonDocument::Compact));
     bool sent = false;
     for (const auto& socket : std::as_const(eventSockets)) {
@@ -332,7 +352,21 @@ void JellyfinFixture::handle(QTcpSocket *socket, const QByteArray& header, const
             items.append(movie());
         if (!playedOnly && (ids.isEmpty() || ids.contains(episodeId)))
             items.append(episode());
-        json(QJsonObject { { "Items", items }, { "TotalRecordCount", items.size() } });
+        const auto total = items.size();
+        const int offset = std::max(0, query.queryItemValue("StartIndex").toInt());
+        bool limitPresent = false;
+        const int requested = query.queryItemValue("Limit").toInt(&limitPresent);
+        const auto limit = limitPresent ? std::max(0, requested) : total;
+        QJsonArray page;
+        for (qsizetype index = offset; index < total && page.size() < limit; ++index)
+            page.append(items.at(index));
+        const QJsonObject result { { "Items", page }, { "TotalRecordCount", total }, { "StartIndex", offset } };
+        if (libraryBrowse && libraryBrowseHeld) {
+            socket->setProperty("heldBrowse", true);
+            pendingBrowse.append({ socket, QJsonDocument(result).toJson(QJsonDocument::Compact) });
+        } else {
+            json(result);
+        }
     } else if (method == "GET"
         && (path == "/Users/" + userId + "/Items/" + movieId || path == "/Users/" + userId + "/Items/" + episodeId)) {
         ++detailRequests;

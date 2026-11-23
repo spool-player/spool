@@ -52,7 +52,7 @@ public:
     QVariantList latestLibraryRows() const;
     bool loading() const
     {
-        return m_refreshInFlight;
+        return m_refreshInFlight || m_librariesLoading;
     }
 
     QStringList hiddenProviderIds() const
@@ -76,6 +76,7 @@ public:
     bool applyCachedPayload(const QJsonObject& payload);
     void loadCachedPayload();
     void refresh(const std::vector<LibraryItem>& libraries);
+    void setLibrariesLoading(bool loading);
     void recordLibraryUse(const LibraryItem& library);
     void upsertResumeItem(MovieItem item, qint64 positionTicks);
     void updateResumeTicks(const QString& itemId, qint64 positionTicks);
@@ -137,6 +138,7 @@ private:
     QSet<QString> m_locallyPlayed;
     QHash<QString, MovieItem> m_optimisticNextUp;
     bool m_refreshInFlight = false;
+    bool m_librariesLoading = false;
     bool m_loaded = false;
     bool m_networkResultsPublished = false;
     QStringList m_recentLibraryIds;

@@ -104,6 +104,8 @@ TestCase {
         keyRouter.lastReleaseAt = 0
         keyRouter.heldReleaseKey = 0
         keyRouter.stopSustaining()
+        keyRouter.sustainedHoldProbeDelay = 700
+        keyRouter.sustainedHoldInterval = 50
     }
 
     function test_siriRemoteBackHandlesBothPhasesWithoutOpeningContextMenu() {
@@ -201,6 +203,41 @@ TestCase {
         compare(lastRoutePhase, "release")
         compare(lastRouteRepeat, false)
         compare(keyRouter.pressedDirectionKey, 0)
+    }
+
+    function test_webOSMissingReleaseDoesNotInventDirectionalRepeats() {
+        keyRouter.webOsScanCodes = true
+        keyRouter.sustainedHoldProbeDelay = 20
+        keyRouter.sustainedHoldInterval = 10
+        const event = {
+            key: Qt.Key_Right,
+            text: "",
+            modifiers: Qt.NoModifier,
+            isAutoRepeat: false
+        }
+        verify(keyRouter.dispatch(event, "press"))
+        compare(routeCalls, 1)
+        wait(80)
+        compare(routeCalls, 1, "webOS already supplies repeats; a missing release is not a hold")
+        verify(keyRouter.dispatch(event, "release"))
+    }
+
+    function test_directionDoesNotResumeAfterTargetChanges() {
+        keyRouter.sustainedHoldProbeDelay = 20
+        keyRouter.sustainedHoldInterval = 10
+        const event = {
+            key: Qt.Key_Right,
+            text: "",
+            modifiers: Qt.NoModifier,
+            isAutoRepeat: false
+        }
+        verify(keyRouter.dispatch(event, "press"))
+        compare(routeCalls, 1)
+        keyRouter.activeTarget = null
+        keyRouter.activeTarget = target
+        wait(80)
+        compare(routeCalls, 1, "changing input owners retires the previous directional gesture")
+        verify(keyRouter.dispatch(event, "release"))
     }
 
     function test_backFallsThroughToTarget() {

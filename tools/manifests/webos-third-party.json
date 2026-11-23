@@ -1,11 +1,6 @@
 {
   "schemaVersion": 1,
   "sources": {
-    "curl": {
-      "version": "8.21.0",
-      "url": "https://curl.se/download/curl-8.21.0.tar.xz",
-      "sha256": "aa1b66a70eace83dc624508745646c08ae561de512ab403adffb93ac87fc72e6"
-    },
     "qcoro": {
       "version": "0.13.0",
       "url": "https://codeload.github.com/danvratil/qcoro/tar.gz/refs/tags/v0.13.0",
@@ -32,9 +27,9 @@
       "sha256": "f720b449bdf8354afd193ca90795ea7b2f9fec05c85ca9709c8ea69d4290157d"
     },
     "libplacebo": {
-      "revision": "a7a18af88ff0a17c04840dcb3246047bb6b46df3",
-      "url": "https://codeload.github.com/haasn/libplacebo/tar.gz/a7a18af88ff0a17c04840dcb3246047bb6b46df3",
-      "sha256": "ba0c8c011c19cb74bcee26646d2d6070447151da89a9abdd01c9034e768de8b2",
+      "revision": "275f7dea27924cdd34ab2e6c20e448b6bc4fab65",
+      "url": "https://codeload.github.com/haasn/libplacebo/tar.gz/275f7dea27924cdd34ab2e6c20e448b6bc4fab65",
+      "sha256": "adbca47395410ada01414bc527e0103c716b9b758be857464c40e5ff0ec695be",
       "vendoredSources": {
         "3rdparty/fast_float": {
           "revision": "97b54ca9e75f5303507699d27c6b4f4efe4641a1",

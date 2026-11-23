@@ -45,6 +45,28 @@ TestCase {
         signalName: "sectionsChanged"
     }
 
+    SignalSpy {
+        id: activatedSpy
+        signalName: "activated"
+    }
+
+    function latestSection(libraryId, itemId, position) {
+        return {
+            "key": "latestLibrary:" + libraryId,
+            "model": [
+                {
+                    "id": itemId,
+                    "title": itemId
+                },
+                {
+                    "id": itemId + "-second",
+                    "title": itemId + "-second"
+                }
+            ],
+            "contextSource": "latestLibrary:" + position
+        }
+    }
+
     function test_loadingPreservesRowsAndHorizontalSelection() {
         const stack = createTemporaryObject(stackComponent, testCase)
         verify(stack)
@@ -87,5 +109,43 @@ TestCase {
             return stack.rowAt(0) !== null
         })
         compare(stack.rowAt(0).rowVisible, true)
+    }
+
+    function test_latestRowInsertedAheadKeepsSelectedRowActivatable() {
+        const stack = createTemporaryObject(stackComponent, testCase, {
+                                                "height": 700,
+                                                "sections": [latestSection("aaaa:movies", "movies0", 0), latestSection(
+                                                        "bbbb:series", "series0", 1)]
+                                            })
+        verify(stack)
+        tryVerify(() => stack.rowAt(1) !== null)
+        verify(stack.focusSection(1))
+        stack.currentRow().currentIndex = 1
+        waitForRendering(stack)
+        activatedSpy.target = stack
+        activatedSpy.clear()
+        compare(stack.currentItem().id, "series0-second")
+        const screenY = stack.currentRow().mapToItem(stack, 0, 0).y
+
+        stack.sections = [latestSection("cccc:movies", "new0", 0), latestSection("aaaa:movies", "movies0", 1), latestSection("bbbb:series",
+                                                                                                                             "series0",
+                                                                                                                             2)]
+        waitForRendering(stack)
+        tryVerify(function () {
+            return stack.count === 3 && stack.currentRow() !== null
+        })
+
+        verify(stack.activeFocus, "the stack keeps keyboard focus through the rebuild")
+        compare(stack.currentSection, 2, "the anchor must follow the key, not the index the row used to have")
+        compare(stack.currentItem().id, "series0-second", "late shelves must not change the selected card")
+        verify(Math.abs(stack.currentRow().mapToItem(stack, 0, 0).y - screenY) < 1,
+               "late shelves must not move the focused card on screen")
+
+        stack.activate()
+        tryCompare(activatedSpy, "count", 1)
+        compare(activatedSpy.signalArguments[0][0].key, "latestLibrary:bbbb:series")
+        compare(activatedSpy.signalArguments[0][1], 1)
+        compare(activatedSpy.signalArguments[0][2].id, "series0-second")
+        activatedSpy.target = null
     }
 }

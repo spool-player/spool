@@ -48,6 +48,7 @@ cmake_build_app "$APP_ROOT" "$APP_BUILD" \
   -DSPOOL_PROVIDER_OVERRIDES="${SPOOL_PROVIDER_OVERRIDES:-}" \
   -DSPOOL_MACOS_ICON="$MACOS_ICON" \
   -DSPOOL_MACOS_CREDENTIAL_SERVICE="$SPOOL_MACOS_CREDENTIAL_SERVICE" \
+  -DSPOOL_TEST_RENDER_BACKEND="${SPOOL_TEST_RENDER_BACKEND:-all}" \
   -DCMAKE_PREFIX_PATH="$MPV_PREFIX${CMAKE_PREFIX_PATH:+;$CMAKE_PREFIX_PATH}" \
   -DCMAKE_INSTALL_PREFIX="$APP_INSTALL"
 
@@ -98,7 +99,7 @@ if [[ "$DEPLOY_APP" == "1" ]]; then
     "$APP_BUILD/build.ninja" \
     "$BUILD_ROOT/qt-tools-shadow" \
     "$(command -v macdeployqt)")"
-  "$macdeployqt_shadow" "$APP_BUNDLE" -qmldir="$APP_ROOT/qml" -no-strip \
+  "$macdeployqt_shadow" "$APP_BUNDLE" -qmldir="$APP_ROOT/qml" -no-strip -no-codesign \
     -executable="$frameworks/libvulkan.1.dylib" \
     -executable="$frameworks/libMoltenVK.dylib"
 
@@ -242,6 +243,16 @@ if [[ "$DEPLOY_APP" == "1" ]]; then
     chmod u+w "$binary"
     "$strip_bin" -S -x "$binary"
   done < <(find "$APP_BUNDLE" -type f | sort)
+  # Sign after install_name_tool and strip have finished rewriting Mach-O files.
+  while IFS= read -r binary; do
+    file -b "$binary" | grep -q 'Mach-O' || continue
+    codesign --force --sign - "$binary"
+  done < <(find "$APP_BUNDLE" -type f | sort)
+  while IFS= read -r bundle; do
+    codesign --force --sign - "$bundle"
+  done < <(find "$APP_BUNDLE" -depth -type d \
+    \( -name '*.framework' -o -name '*.app' -o -name '*.xpc' \))
+  codesign --verify --strict --deep "$APP_BUNDLE"
   python3 "$APP_ROOT/tools/package-audit.py" macho "$APP_BUNDLE" \
     --root Contents/Frameworks/libvulkan.1.dylib \
     --root Contents/Frameworks/libMoltenVK.dylib

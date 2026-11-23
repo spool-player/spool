@@ -17,6 +17,7 @@
 #include <functional>
 #include <iostream>
 #include <stdexcept>
+#include <utility>
 
 namespace {
 void require(bool condition, const char *message)
@@ -71,8 +72,63 @@ SPOOL_TEST_MAIN("script-runtime")
         QCoro::waitFor(std::move(removed));
         QCoro::waitFor(std::move(replacement));
         QCoro::waitFor(runtime.call("reused", "inspect"));
+        // Drain queued main-thread events already posted by the worker thread
+        // before inspect completed; QCoro::waitFor returns as soon as its
+        // future finishes without flushing other queued meta-calls.
+        QCoreApplication::processEvents();
         require(events == QList<QVariantMap> { QVariantMap { { "capabilities", newOffer } } },
             "queued capability events from a removed generation cannot change a replacement account");
+    }
+    {
+        // Resolve's media facts are admitted at the script boundary: whole
+        // numbers or unsigned decimal strings, normalized, never coerced.
+        ScriptRuntime runtime(SpoolTests::fixturePath("tests/providers/fixtures/resolve-metadata.mjs"), QVariantMap {});
+        QCoro::waitFor(runtime.addSource("media", {}, {}));
+        const auto resolve = [&runtime](const QVariantMap& result) {
+            return runtime.call("media", "resolve", { { "result", result } });
+        };
+        const QVariantMap admitted = QCoro::waitFor(resolve({ { "url", "http://127.0.0.1/a.mkv" },
+            { "source",
+                QVariantMap { { "bitrate", 80000000 }, { "width", 3840 }, { "height", 2160 },
+                    { "sizeBytes", "68719476736" }, { "runtimeTicks", 72000000000.0 } } },
+            { "delivery", QVariantMap { { "bitrate", 0 }, { "sizeBytes", 5000000000.0 } } } }));
+        const QVariantMap source = admitted.value("source").toMap();
+        const QVariantMap delivery = admitted.value("delivery").toMap();
+        require(source.value("sizeBytes").typeId() == QMetaType::LongLong
+                && source.value("sizeBytes").toLongLong() == 68719476736LL
+                && source.value("runtimeTicks").toLongLong() == 72000000000LL
+                && source.value("bitrate").toLongLong() == 80000000 && delivery.value("bitrate").toLongLong() == 0
+                && delivery.value("sizeBytes").toLongLong() == 5000000000LL,
+            "resolve normalizes sizes, durations and bitrates losslessly beyond 32 bits");
+        for (const QVariant& bad : QVariantList { true, 1.5, 0, -5, "-5", "12a", "", "99999999999999999999",
+                 QVariant::fromValue(nullptr), QVariantList { 1 } }) {
+            rejects(resolve({ { "url", "u" }, { "source", QVariantMap { { "sizeBytes", bad } } } }),
+                "a size must be a positive whole number or unsigned decimal string");
+            rejects(resolve({ { "url", "u" }, { "delivery", QVariantMap { { "runtimeTicks", bad } } } }),
+                "a delivered duration must be a positive whole number or unsigned decimal string");
+        }
+        rejects(resolve({ { "url", "u" }, { "delivery", QVariantMap { { "bitrate", 2e12 } } } }),
+            "a delivered bitrate above 1 Tbit/s is rejected");
+        rejects(resolve({ { "url", "u" }, { "source", QVariantMap { { "width", 1.5 } } } }),
+            "dimensions stay whole numbers");
+        rejects(resolve({ { "url", "u" }, { "delivery", "fast" } }), "delivery must be an object");
+        rejects(resolve({ { "url", "u" }, { "source", QVariantList {} } }), "source must be an object");
+        const QVariantMap picked
+            = QCoro::waitFor(resolve({ { "pick", QVariantMap { { "quality", "4k" } } }, { "source", "not yet" } }));
+        require(picked.contains("pick"), "a picker answer is admitted until its follow-up resolve");
+        // Providers build JS objects with undefined optional facts. Admit these
+        // as omissions without losing known facts or accepting explicit null.
+        const QVariantMap literal = QCoro::waitFor(runtime.call("media", "resolve", { { "literal", true } }));
+        const QVariantMap literalSource = literal.value("source").toMap();
+        require(literalSource.value("bitrate").typeId() == QMetaType::LongLong
+                && literalSource.value("bitrate").toLongLong() == 1500000
+                && literalSource.value("width").toInt() == 3840 && literalSource.value("height").toInt() == 2160,
+            "known media facts survive undefined siblings");
+        require(!literalSource.contains("sizeBytes") && !literalSource.contains("runtimeTicks"),
+            "explicit undefined media facts are admitted as omissions, not invalid_result");
+        require(!literal.contains("delivery"), "an undefined sibling is admitted as an omission");
+        rejects(runtime.call("media", "resolve", { { "nullish", true } }),
+            "null is not undefined: an explicit null size stays rejected");
     }
     QTcpServer server;
     require(server.listen(QHostAddress::LocalHost), "fixture server listens");
@@ -129,7 +185,7 @@ SPOOL_TEST_MAIN("script-runtime")
                 if (target.path().startsWith(QStringLiteral("/speed"))) {
                     const QUrlQuery query(target);
                     const int bytes = query.queryItemValue(QStringLiteral("bytes")).toInt();
-                    require(bytes > 0 && bytes <= 4 * 1024 * 1024, "benchmark requests bounded samples");
+                    require(bytes > 0 && bytes <= 32 * 1024 * 1024, "benchmark requests bounded samples");
                     speedSizes.append(bytes);
                     const QString nonce = query.queryItemValue(QStringLiteral("nonce"));
                     const auto requireNonce = [&](bool condition, const char *message) {
@@ -151,7 +207,13 @@ SPOOL_TEST_MAIN("script-runtime")
                         require(false, failure);
                     };
                     requireNonce(!nonce.isEmpty(), "benchmark cache-busting nonce is empty");
-                    requireNonce(!speedNonces.contains(nonce), "benchmark cache-busting nonce is duplicated");
+                    // Qt may resend an idempotent GET whose reply this fixture cut
+                    // short or closed abruptly without Content-Length; that is the
+                    // same request again, not a reused cache-busting nonce.
+                    const bool mayAutoRetry = target.path() == QStringLiteral("/speed-truncated")
+                        || target.path() == QStringLiteral("/speed-oversized");
+                    requireNonce(
+                        mayAutoRetry || !speedNonces.contains(nonce), "benchmark cache-busting nonce is duplicated");
                     speedNonces.insert(nonce);
                     require(!request.contains("Cookie:"), "benchmark does not load shared cookies");
                     require(request.contains("Accept-Encoding: identity"), "benchmark requests uncompressed bytes");
@@ -191,12 +253,17 @@ SPOOL_TEST_MAIN("script-runtime")
                         socket->disconnectFromHost();
                         return;
                     }
-                    // First-byte warmup exceeds 20 ms; larger samples take longer,
-                    // so simultaneous lanes have a real wall-clock benefit.
-                    QTimer::singleShot(40 + bytes / (32 * 1024), socket, [socket, bytes] {
-                        socket->write("HTTP/1.1 200 OK\r\nContent-Length: " + QByteArray::number(bytes)
+                    // Generated endpoints may return a pooled size-class buffer
+                    // instead of trimming the rented allocation to the request.
+                    int responseBytes = 1;
+                    while (responseBytes < bytes)
+                        responseBytes *= 2;
+                    // Warmup is quick enough to exercise adaptive larger batches;
+                    // measured larger samples still have a real parallel benefit.
+                    QTimer::singleShot(20 + bytes / (32 * 1024), socket, [socket, responseBytes] {
+                        socket->write("HTTP/1.1 200 OK\r\nContent-Length: " + QByteArray::number(responseBytes)
                             + "\r\nSet-Cookie: speed=private\r\nConnection: close\r\n\r\n");
-                        socket->write(QByteArray(bytes, 'x'));
+                        socket->write(QByteArray(responseBytes, 'x'));
                         socket->disconnectFromHost();
                     });
                     return;
@@ -333,22 +400,40 @@ SPOOL_TEST_MAIN("script-runtime")
     speedResponsiveness.stop();
     waitForSpeedAbort();
     require(measurement.value("bitrate").toLongLong() > 0, "successful benchmark returns a usable streaming ceiling");
-    require(measurement.value("parallelRequests").toInt() == 1,
-        "without playback demand a benchmark does not blindly select maximum throughput");
+    const int selectedRequests = measurement.value("parallelRequests").toInt();
+    double bestCapacity = 0;
+    double selectedCapacity = 0;
     const QVariantList curve = measurement.value("concurrency-samples").toList();
     require(curve.size() == 3, "native result preserves every concurrency operating point");
     for (int index = 0; index < 3; ++index) {
         const auto sample = curve[index].toMap();
         const double seconds = sample.value("elapsed-seconds").toDouble();
         const double rate = sample.value("capacity-bytes-per-second").toDouble();
-        const double latencyMs = sample.value("latency-ms").toDouble();
-        require(sample.value("requests").toInt() == (1 << index)
-                && sample.value("received-bytes").toLongLong() == 4194304 && seconds > 0 && latencyMs >= 35
-                && latencyMs <= seconds * 1000 && std::abs(rate * seconds - 4194304.0) < 1,
-            "per-concurrency raw capacity divides actual payload by full measured wall time including TTFB");
+        const double latencyMs = sample.value("ttfb-ms").toDouble();
+        require(sample.value("requests").toInt() == (1 << index) && sample.value("received-bytes").toLongLong() > 0
+                && sample.value("received-bytes").toLongLong() <= 64 * 1024 * 1024 && seconds > 0 && latencyMs >= 35
+                && latencyMs <= seconds * 1000
+                && std::abs(rate * seconds - sample.value("received-bytes").toDouble()) < 1,
+            "per-concurrency raw capacity accounts actual bounded payload and full wall time including TTFB");
+        require(seconds >= 0.4 || sample.value("received-bytes").toLongLong() == 64 * 1024 * 1024,
+            "fast transfers accumulate a useful measurement duration rather than one noisy tiny sample");
+        bestCapacity = std::max(bestCapacity, rate);
+        if (sample.value("requests").toInt() == selectedRequests)
+            selectedCapacity = rate;
     }
-    require(speedSizes == QList<int> { 524288, 4194304, 2097152, 2097152, 1048576, 1048576, 1048576, 1048576 },
-        "warmup and completed 1/2/4 lane rounds use the intended byte budgets");
+    require(selectedCapacity >= bestCapacity * 0.85,
+        "without demand startup uses measured capacity, not an unconditional single lane");
+    for (const QVariant& value : curve) {
+        const auto sample = value.toMap();
+        require(sample.value("requests").toInt() >= selectedRequests
+                || sample.value("capacity-bytes-per-second").toDouble() < bestCapacity * 0.85,
+            "additional lanes must improve capacity beyond the measurement noise band");
+    }
+    qint64 probeBytes = 0;
+    for (int bytes : std::as_const(speedSizes))
+        probeBytes += bytes;
+    require(speedSizes.front() == 512 * 1024 && probeBytes <= 512 * 1024 + 3 * 64 * 1024 * 1024,
+        "warmup and adaptive complete-curve measurements have a bounded total byte budget");
     require(speedMaximum == 4 && speedGuiTurns >= 5, "lane requests overlap without blocking GUI events");
     require(received.back().contains("Authorization: a-token"), "benchmark passes source authentication headers");
     const auto overlapping = QCoro::waitFor(runtime->call("a", "overlappingSpeedTests"));

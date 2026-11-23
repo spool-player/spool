@@ -63,10 +63,6 @@ public:
     {
         return {};
     }
-    int playbackParallelRequests() const override
-    {
-        return 1;
-    }
     bool signedIn() const override
     {
         return true;
@@ -513,6 +509,9 @@ PlaybackSession LocalProvider::playbackSession(const QString& itemId) const
     session.container = entry->item.mediaSources.front().container;
     session.startTimeTicks = entry->item.resumeTicks;
     session.runtimeTicks = entry->item.runtimeTicks;
+    // A local file is delivered as itself.
+    session.sourceSizeBytes = session.deliverySizeBytes = std::max<qint64>(0, entry->item.mediaSources.front().size);
+    session.sourceRuntimeTicks = session.deliveryRuntimeTicks = std::max<qint64>(0, entry->item.runtimeTicks);
     return session;
 }
 

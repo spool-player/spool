@@ -39,10 +39,23 @@ public:
     struct NetworkProfile {
         int ringBytes;
         int rangeBytes;
-        int parallelRequests;
+        // libcurl receive buffer per transfer; each active request holds one.
+        int readBytes;
     };
 
-    static NetworkProfile networkProfile(Platform platform, int parallelRequests = 1);
+    struct StreamingOptions {
+        bool enabled = true;
+        int maxRequests = 4;
+        int fixedRequests = 0;
+        bool explore = true;
+        bool allowExtraMemory = true;
+        qint64 maxExtraBytes = 0;
+        int receiveMode = 1;
+        qint64 receiveBytes = 0;
+        int httpMode = 0;
+    };
+
+    static NetworkProfile networkProfile(Platform platform);
     static bool applyRequestHeaders(mpv_handle *handle, QByteArray headers);
     static QByteArray renderQualityName(RenderQuality quality);
     static RenderQuality renderQualityFromName(const QString& name);
@@ -61,11 +74,11 @@ public:
 
     static std::vector<MpvOption> preInitializeOptions(const MpvConfigPolicy& policy);
     static std::vector<MpvOption> applicationOptions(Platform platform, bool needsVideoSurface,
-        const QString& audioOutputMode, const QByteArray& logPath,
+        const QString& audioOutputMode, const QByteArray& logPath, const StreamingOptions& streaming,
         const QByteArray& demuxerMaxBytes = QByteArrayLiteral("64M"),
-        const QByteArray& demuxerMaxBackBytes = QByteArrayLiteral("32M"), int parallelRequests = 1,
-        bool embeddedVideo = false, const QByteArray& shaderCachePath = {},
-        const QByteArray& certificateBundlePath = {}, RenderQuality quality = RenderQuality::Balanced);
+        const QByteArray& demuxerMaxBackBytes = QByteArrayLiteral("32M"), bool embeddedVideo = false,
+        const QByteArray& shaderCachePath = {}, const QByteArray& certificateBundlePath = {},
+        RenderQuality quality = RenderQuality::Balanced);
     static std::vector<MpvOption> subtitleOptions(
         const SubtitlePreferences& preferences, bool subtitlesEnabled, bool hdrPlayback = false);
 };

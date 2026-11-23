@@ -20,7 +20,7 @@ jobs:
   native:
     name: iOS (${{ matrix.sdk }} ${{ matrix.arch }})
     runs-on: macos-15-intel
-    timeout-minutes: 120
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
@@ -70,16 +70,30 @@ jobs:
           SPOOL_APPLE_APP_STORE: 'OFF'
           BUILD_JOBS: '4'
         run: bash tools/build-ios.sh
-      - name: Smoke native startup on simulator
+      - uses: ./.github/actions/install-nix
+        if: matrix.sdk == 'iphonesimulator'
+        with:
+          nix_conf: |
+            experimental-features = nix-command flakes
+      - uses: cachix/cachix-action@3ba601ff5bbb07c7220846facfa2cd81eeee15a1
+        if: matrix.sdk == 'iphonesimulator'
+        with:
+          name: spool
+          skipPush: true
+      - name: Select supported Intel macOS native package channel
         if: matrix.sdk == 'iphonesimulator'
         shell: bash
         run: |
-          device="$(xcrun simctl list devices available --json | python3 -c 'import json,sys; print(next(d["udid"] for ds in json.load(sys.stdin)["devices"].values() for d in ds if d["name"].startswith("iPhone")))')"
-          xcrun simctl boot "$device"
-          xcrun simctl bootstatus "$device" -b
-          bundle="build/apple/iphonesimulator-x86_64/app/Release-iphonesimulator/Spool.app"
-          xcrun simctl install "$device" "$bundle"
-          xcrun simctl launch --console "$device" com.sachk.spool --launch-test
+          url="$(python3 -c 'import json; p=json.load(open("flake.lock"))["nodes"]["nixpkgs-x86-darwin"]["locked"]; print("github:"+p["owner"]+"/"+p["repo"]+"/"+p["rev"])')"
+          nix flake lock --override-input nixpkgs "$url"
+      - name: Build native host controller for iOS application journeys
+        if: matrix.sdk == 'iphonesimulator'
+        run: nix develop .#native -c env DEPLOY_APP=0 bash tools/build-macos.sh
+      - name: Run iOS traditional and real GPU GUI e2e tests
+        if: matrix.sdk == 'iphonesimulator'
+        env:
+          SPOOL_TVOS_TEST_BUILD_DIR: build/apple/iphonesimulator-x86_64/app
+        run: bash tools/apple/smoke-ios.sh build/apple/iphonesimulator-x86_64/install/Spool.app
       - name: Package audited unsigned device IPA
         if: matrix.sdk == 'iphoneos'
         shell: bash
@@ -105,6 +119,18 @@ jobs:
           name: internal-ios-simulator-x86_64
           path: ${{ runner.temp }}/ios-simulator-x86_64.tar.gz
           if-no-files-found: error
+          retention-days: 7
+      - name: Keep simulator test diagnostics internal
+        if: always() && matrix.sdk == 'iphonesimulator'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: internal-ios-simulator-x86_64-tests
+          path: |
+            build/ios/smoke/safe-export
+            build/ios/smoke/launch-result.json
+            build/ios/smoke/simulator.png
+            build/ios/smoke/simulator-boot-*.log
+          if-no-files-found: warn
           retention-days: 7
       - name: Document unsigned artifact boundary
         if: matrix.sdk == 'iphoneos'

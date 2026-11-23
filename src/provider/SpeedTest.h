@@ -4,6 +4,7 @@
 #include <QNetworkRequest>
 #include <QObject>
 #include <QString>
+#include <QTimer>
 #include <QVariantMap>
 
 #include <array>
@@ -35,7 +36,8 @@ private:
     bool drain(int lane);
     bool checkResponse(int lane);
     void finished(int lane);
-    void finish(QString error = {}, qint64 bitrate = 0, int lanes = 1);
+    void completeRound();
+    void finish(QString error = {}, qint64 bitrate = 0);
     void abort();
 
     ScriptAccess *m_access;
@@ -47,15 +49,19 @@ private:
     std::array<double, 3> m_rates {};
     std::array<double, 3> m_latencies {};
     std::array<double, 3> m_durations {};
+    std::array<qint64, 3> m_received {};
     std::array<char, 64 * 1024> m_buffer;
     QElapsedTimer m_elapsed;
+    QElapsedTimer m_pointElapsed;
+    QTimer m_roundDeadline;
     qint64 m_expected = 0;
     int m_count = 0;
     int m_remaining = 0;
     int m_round = -1;
+    int m_transfer = 0;
+    qint64 m_chunkBytes = 4 * 1024 * 1024;
     bool m_done = false;
     bool m_range = false;
-    double m_targetBitrate = 0;
 };
 
 } // namespace Spool

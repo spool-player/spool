@@ -26,6 +26,7 @@ namespace Spool {
 
 namespace {
 
+    constexpr auto kServerOverridesKey = "playback/serverOverrides-v1";
     constexpr auto kPlayerControlTooltipSessionsKey = "player/controlTooltipSessions";
     constexpr int kPlayerControlTooltipSessionLimit = 3;
 
@@ -219,6 +220,138 @@ QVariant SettingsController::value(const QString& key) const
     return {};
 }
 
+namespace {
+    QString serverKey(QString id)
+    {
+        // SourceHub scopes media with the first eight UUID hex digits.
+        return id.remove(QLatin1Char('-')).section(QLatin1Char(':'), 0, 0).left(8).toLower();
+    }
+    QStringList overrideGroup(const QString& key)
+    {
+        if (key == QLatin1String("playback/manualStreamingBitrate")
+            || key == QLatin1String("playback/maxStreamingBitrateMbps"))
+            return { QStringLiteral("playback/manualStreamingBitrate"),
+                QStringLiteral("playback/maxStreamingBitrateMbps") };
+        return { key };
+    }
+}
+
+QVariant SettingsController::effectiveValue(const QString& key, const QString& sourceId) const
+{
+    const auto rows = m_serverOverrides.value(serverKey(sourceId)).toMap();
+    return rows.contains(key) ? rows.value(key) : value(key);
+}
+
+bool SettingsController::hasServerOverride(const QString& key, const QString& sourceId) const
+{
+    return m_serverOverrides.value(serverKey(sourceId)).toMap().contains(key);
+}
+
+void SettingsController::setServerValue(const QString& key, const QVariant& newValue, const QString& sourceId)
+{
+    const auto *spec = findSettingSpec(key);
+    const QString server = serverKey(sourceId);
+    if (server.size() != 8 || !spec || !spec->serverOverridable || !settingAcceptsValue(*spec, newValue))
+        return;
+    auto rows = m_serverOverrides.value(server).toMap();
+    for (const auto& member : overrideGroup(key))
+        rows.insert(member, member == key ? normalizedSettingValue(*spec, newValue) : effectiveValue(member, sourceId));
+    m_serverOverrides.insert(server, rows);
+    persistServerOverrides();
+}
+
+void SettingsController::resetServerValue(const QString& key, const QString& sourceId)
+{
+    const QString server = serverKey(sourceId);
+    auto rows = m_serverOverrides.value(server).toMap();
+    for (const auto& member : overrideGroup(key))
+        rows.remove(member);
+    if (rows.isEmpty())
+        m_serverOverrides.remove(server);
+    else
+        m_serverOverrides.insert(server, rows);
+    persistServerOverrides();
+}
+
+void SettingsController::removeServerOverrides(const QString& sourceId)
+{
+    if (m_serverOverrides.remove(serverKey(sourceId)))
+        persistServerOverrides();
+}
+
+void SettingsController::retainServerOverrides(const QStringList& accountIds)
+{
+    QSet<QString> retained;
+    for (const auto& id : accountIds)
+        retained.insert(serverKey(id));
+    bool changed = false;
+    for (auto it = m_serverOverrides.begin(); it != m_serverOverrides.end();) {
+        if (!retained.contains(it.key())) {
+            it = m_serverOverrides.erase(it);
+            changed = true;
+        } else
+            ++it;
+    }
+    if (changed)
+        persistServerOverrides();
+}
+
+void SettingsController::persistServerOverrides()
+{
+    if (m_database)
+        m_database->saveSetting(QString::fromLatin1(kServerOverridesKey),
+            QString::fromUtf8(QJsonDocument::fromVariant(m_serverOverrides).toJson(QJsonDocument::Compact)));
+    emit serverOverridesChanged();
+}
+
+QString SettingsController::serverPlaybackSummary(const QString& sourceId) const
+{
+    const auto rows = m_serverOverrides.value(serverKey(sourceId)).toMap();
+    if (rows.isEmpty())
+        return QStringLiteral("Using your defaults");
+    QStringList labels;
+    for (const auto& spec : settingSpecs()) {
+        const QString key = keyString(spec);
+        if (!rows.contains(key))
+            continue;
+        const bool manual = effectiveValue(QStringLiteral("playback/manualStreamingBitrate"), sourceId).toBool();
+        if ((key == QLatin1String("playback/maxStreamingBitrateMbps") && !manual)
+            || (key == QLatin1String("playback/manualStreamingBitrate") && manual))
+            continue;
+        const QVariant current = rows.value(key);
+        QString label;
+        if (key == QLatin1String("playback/manualStreamingBitrate"))
+            label = QStringLiteral("Automatic bitrate limit");
+        for (qsizetype i = 0; i < spec.choiceCount; ++i)
+            if (current.toString() == QLatin1String(spec.choices[i].value))
+                label = QString::fromUtf8(spec.choices[i].label);
+        if (label.isEmpty())
+            label = QString::fromUtf8(spec.title) + QStringLiteral(": ")
+                + (spec.type == SettingType::Toggle ? (current.toBool() ? QStringLiteral("On") : QStringLiteral("Off"))
+                                                    : current.toString() + QLatin1String(spec.unit));
+        labels.append(label);
+        if (labels.size() == 2)
+            break;
+    }
+    return labels.isEmpty() ? QStringLiteral("Custom playback settings") : labels.join(QStringLiteral(", "));
+}
+
+void SettingsController::preparePlayback(const QString& sourceId)
+{
+    if (!m_player)
+        return;
+    const auto get = [&](const char *key) { return effectiveValue(QString::fromLatin1(key), sourceId); };
+    m_player->setForwardCacheSizeMiB(get("playback/forwardCacheSizeMiB").toInt());
+    m_player->setThreadedStreaming(get("playback/threadedStreaming").toBool());
+    m_player->setMaxStreamingThreads(get("playback/maxStreamingThreads").toInt());
+    m_player->setForceStreamingThreads(get("playback/forceStreamingThreads").toBool());
+    m_player->setStreamingExplore(get("playback/streamingExplore").toBool());
+    m_player->setStreamingMemoryLoan(get("playback/streamingMemoryLoan").toBool());
+    m_player->setMaxExtraStreamingMemoryMiB(get("playback/maxExtraStreamingMemoryMiB").toInt());
+    m_player->setStreamingHttpVersion(get("playback/streamingHttpVersion").toString());
+    m_player->setStreamingReceiveWindowMode(get("playback/streamingReceiveWindowMode").toString());
+}
+
 QString SettingsController::audioDelayTargetLabel() const
 {
     return platformAudioRouteDisplayName(m_currentAudioOutput);
@@ -237,6 +370,7 @@ QStringList SettingsController::localSettingKeys()
             keys.append(keyString(spec));
     }
     keys.append(QString::fromLatin1(kPlayerControlTooltipSessionsKey));
+    keys.append(QString::fromLatin1(kServerOverridesKey));
     return keys;
 }
 
@@ -275,6 +409,23 @@ QString SettingsController::stepDownRenderQuality()
 
 void SettingsController::applyLocalValues(const QVariantMap& storedValues)
 {
+    m_serverOverrides.clear();
+    const auto storedOverrides
+        = QJsonDocument::fromJson(storedValues.value(QString::fromLatin1(kServerOverridesKey)).toByteArray())
+              .object()
+              .toVariantMap();
+    for (auto server = storedOverrides.cbegin(); server != storedOverrides.cend(); ++server) {
+        QVariantMap accepted;
+        const auto rows = server.value().toMap();
+        for (auto row = rows.cbegin(); row != rows.cend(); ++row) {
+            const auto *spec = findSettingSpec(row.key());
+            if (spec && spec->serverOverridable && settingAcceptsValue(*spec, row.value()))
+                accepted.insert(row.key(), normalizedSettingValue(*spec, row.value()));
+        }
+        if (!accepted.isEmpty())
+            m_serverOverrides.insert(server.key(), accepted);
+    }
+    emit serverOverridesChanged();
 
     for (const SettingSpec& spec : settingSpecs()) {
         if (!spec.persisted)
@@ -833,6 +984,42 @@ void SettingsController::applySchemaValue(const SettingSpec& spec, const QVarian
         if (apply && m_player)
             m_player->setForwardCacheSizeMiB(m_forwardCacheSizeMiB);
         break;
+    case SettingTarget::ThreadedStreaming:
+        if (m_player && (apply || !m_localSettingsLoaded))
+            m_player->setThreadedStreaming(value.toBool());
+        break;
+    case SettingTarget::MaxStreamingThreads:
+        if (m_player && (apply || !m_localSettingsLoaded))
+            m_player->setMaxStreamingThreads(value.toInt());
+        break;
+    case SettingTarget::ForceStreamingThreads:
+        if (m_player && (apply || !m_localSettingsLoaded))
+            m_player->setForceStreamingThreads(value.toBool());
+        break;
+    case SettingTarget::StreamingExplore:
+        if (m_player)
+            m_player->setStreamingExplore(value.toBool());
+        break;
+    case SettingTarget::StreamingMemoryLoan:
+        if (m_player)
+            m_player->setStreamingMemoryLoan(value.toBool());
+        break;
+    case SettingTarget::MaxExtraStreamingMemory:
+        if (m_player)
+            m_player->setMaxExtraStreamingMemoryMiB(value.toInt());
+        break;
+    case SettingTarget::StreamingHttpVersion:
+        if (m_player)
+            m_player->setStreamingHttpVersion(value.toString());
+        break;
+    case SettingTarget::StreamingReceiveWindowMode:
+        if (m_player)
+            m_player->setStreamingReceiveWindowMode(value.toString());
+        break;
+    case SettingTarget::LogStreamingPerformance:
+        if (m_player && (apply || !m_localSettingsLoaded))
+            m_player->setLogStreamingPerformance(value.toBool());
+        break;
     case SettingTarget::PlayerVolumeSlider:
         break;
     case SettingTarget::AudioDelay:
@@ -844,6 +1031,10 @@ void SettingsController::applySchemaValue(const SettingSpec& spec, const QVarian
         m_audioOutputMode = value.toString();
         if (apply && m_player)
             m_player->setAudioOutputMode(m_audioOutputMode);
+        break;
+    case SettingTarget::AudioPassthrough:
+        if (m_player && (apply || !m_localSettingsLoaded))
+            m_player->setAudioPassthrough(value.toString());
         break;
     case SettingTarget::VideoOutputMode:
         m_videoOutputMode = value.toString();

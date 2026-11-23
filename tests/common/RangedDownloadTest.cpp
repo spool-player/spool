@@ -150,7 +150,11 @@ SPOOL_TEST_MAIN("ranged-download")
         const Outcome outcome = fetch(server, path, 3, body.size());
         require(outcome.error.isEmpty(), "a server without ranges failed the download");
         require(outcome.file == body, "a server without ranges produced the wrong bytes");
-        require(server.ranges.last().isEmpty(), "the fallback still asked for a range");
+        // Concurrent initial lanes can deliver their already-written Range
+        // request to the loopback server after restartWhole() opens the plain
+        // fallback socket; assert the fallback ran once without a Range header.
+        require(
+            server.ranges.count(QByteArray()) == 1, "the fallback did not fetch the file whole once without a range");
     }
     // A file that is not the size it was promised to be is refused.
     {

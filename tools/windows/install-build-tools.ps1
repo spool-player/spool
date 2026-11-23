@@ -18,6 +18,7 @@ param(
 $chocolateyPackages = @(
     @{ Name = 'meson'; Version = '1.9.1'; Provides = 'meson' },
     @{ Name = 'nasm'; Provides = 'nasm' },
+    @{ Name = 'strawberryperl'; Provides = 'perl' },
     @{ Name = 'nsis'; Provides = 'makensis' },
     # The launch screen carries the version, so it is rendered at configure
     # time rather than kept in the tree, and ImageMagick draws it.
@@ -30,11 +31,12 @@ $toolDirectories = @(
     (Join-Path $env:ProgramFiles 'LLVM\bin'),
     (Join-Path $env:ProgramFiles 'Meson'),
     (Join-Path $env:ProgramFiles 'NASM'),
+    (Join-Path $env:SystemDrive 'Strawberry\perl\bin'),
     (Join-Path ${env:ProgramFiles(x86)} 'NSIS')
 )
 
-$requiredTools = @('cmake', 'ninja', 'clang', 'lld-link', 'meson', 'nasm', 'makensis', 'magick')
-$msys2Packages = @('make', 'diffutils', 'pkgconf')
+$requiredTools = @('cmake', 'ninja', 'clang', 'lld-link', 'meson', 'nasm', 'makensis', 'magick', 'perl')
+$msys2Packages = @('make', 'diffutils', 'pkgconf', 'patch', 'tar', 'curl')
 
 function Add-ToolDirectoriesToPath {
     foreach ($directory in $toolDirectories) {
@@ -56,7 +58,10 @@ if (-not $VerifyOnly) {
         # their own builds of some of these. Chocolatey is a no-op when the
         # pinned version is the installed one.
         $pinned = $package.ContainsKey('Version')
-        if (-not $pinned -and (Get-Command "$($package.Provides).exe" -ErrorAction SilentlyContinue)) {
+        $available = if ($package.Provides -eq 'perl') {
+            [bool](Get-NativeWindowsPerl)
+        } else { [bool](Get-Command "$($package.Provides).exe" -ErrorAction SilentlyContinue) }
+        if (-not $pinned -and $available) {
             Write-Host "$($package.Name) is already installed"
             continue
         }
@@ -78,7 +83,12 @@ if (-not $VerifyOnly) {
 $missing = @()
 foreach ($tool in $requiredTools) {
     $command = Get-Command $tool -ErrorAction SilentlyContinue
-    if ($command) {
+    if ($tool -eq 'perl') {
+        $nativePerl = Get-NativeWindowsPerl
+        if ($nativePerl) {
+            Write-Host "native Perl -> $nativePerl"
+        } else { $missing += 'native Windows Perl (Strawberry Perl)' }
+    } elseif ($command) {
         Write-Host "$tool -> $($command.Source)"
     } else {
         $missing += $tool

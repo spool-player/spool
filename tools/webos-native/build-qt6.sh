@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build a private Qt 6.11 tree for native webOS development.
+# Build a private Qt tree for native webOS development.
 #
 # Design goals:
 #   - never accidentally link against nixpkgs' Qt while building Qt from source;
@@ -17,7 +17,7 @@ source "$ROOT/tools/lib/build-common.sh"
 source "$ROOT/tools/lib/manifest-sources.sh"
 # shellcheck source=tools/webos-native/nixos-sdk-compat.sh
 source "$ROOT/tools/webos-native/nixos-sdk-compat.sh"
-QT_MANIFEST="${QT_MANIFEST:-$ROOT/tools/manifests/qt-webos-6.11.json}"
+QT_MANIFEST="${QT_MANIFEST:-$ROOT/tools/manifests/qt-webos.json}"
 SDK_ROOT="${WEBOS_SDK_ROOT:-$ROOT/build/webos-sdk/arm-webos-linux-gnueabi_sdk-buildroot}"
 SYSROOT="$SDK_ROOT/arm-webos-linux-gnueabi/sysroot"
 QT_VERSION="${QT_VERSION:-$(manifest_qt_field "$QT_MANIFEST" qtVersion)}"
@@ -271,11 +271,12 @@ apply_local_patches() {
   apply_patch_if_needed "$QTBASE_SRC" "$PATCH_DIR/qtbase-$QT_SERIES-webos-qelfparser.patch"
   apply_patch_if_needed "$QTBASE_SRC" "$PATCH_DIR/qtbase-$QT_SERIES-webos-wayland-no-opengl-forward-decl.patch"
   apply_patch_if_needed "$QTBASE_SRC" "$PATCH_DIR/qtbase-$QT_SERIES-webos-qplatformwindow-private-moc.patch"
+  apply_patch_if_needed "$QTBASE_SRC" "$PATCH_DIR/qtbase-$QT_SERIES-webos-mt-tool-palm.patch"
   apply_patch_if_needed "$QTDECLARATIVE_SRC" \
     "$PATCH_DIR/qtdeclarative-$QT_SERIES-qmlimportscanner-exclude-subtrees.patch"
   apply_patch_if_needed "$QTWAYLAND_SRC" "$PATCH_DIR/qtwayland-$QT_SERIES-webos-wayland-version.patch"
 
-  # In Qt 6.11 the client-side wayland platform plugin code is in qtbase, not
+  # Since Qt 6.11 the client-side wayland platform plugin code is in qtbase, not
   # qtwayland. This keeps the webOS magic-remote cursor opt-out built in.
   apply_patch_if_needed "$QTBASE_SRC" "$PATCH_DIR/qtbase-$QT_SERIES-webos-no-cursor-set.patch"
 }
@@ -530,8 +531,8 @@ configure_target_qtbase() {
   sdk_glesv2_lib="$(sdk_sysroot_library GLESv2)"
   sdk_egl_lib="$(sdk_sysroot_library EGL)"
   sdk_xkb_lib="$(sdk_sysroot_library xkbcommon)"
-  sdk_ssl_lib="$(sdk_sysroot_library ssl)"
-  sdk_crypto_lib="$(sdk_sysroot_library crypto)"
+  sdk_ssl_lib="$SYSROOT/usr/local/webos-native/lib/libssl.so"
+  sdk_crypto_lib="$SYSROOT/usr/local/webos-native/lib/libcrypto.so"
   sdk_wayland_client_lib="$(sdk_sysroot_library wayland-client)"
   sdk_wayland_server_lib="$(sdk_sysroot_library wayland-server)"
   sdk_wayland_cursor_lib="$(sdk_sysroot_library wayland-cursor)"
@@ -618,8 +619,8 @@ configure_target_qtbase() {
     -DINPUT_openssl=linked \
     -DFEATURE_ssl=ON \
     -DOPENSSL_USE_STATIC_LIBS=OFF \
-    -DOPENSSL_ROOT_DIR="$SYSROOT/usr" \
-    -DOPENSSL_INCLUDE_DIR="$SYSROOT/usr/include" \
+    -DOPENSSL_ROOT_DIR="$SYSROOT/usr/local/webos-native" \
+    -DOPENSSL_INCLUDE_DIR="$SYSROOT/usr/local/webos-native/include" \
     -DOPENSSL_SSL_LIBRARY="$sdk_ssl_lib" \
     -DOPENSSL_CRYPTO_LIBRARY="$sdk_crypto_lib" \
     -DWaylandScanner_EXECUTABLE="$target_wayland_scanner"
@@ -628,6 +629,7 @@ configure_target_qtbase() {
 target_qtbase_up_to_date() {
   [[ "${QT_BUILD_FORCE:-0}" != "1" ]] || return 1
   qt_prefix_matches_version "$TARGET_STAGING" || return 1
+  [[ -f "$TARGET_STAGING/.spool-private-tls-v1" ]] || return 1
   [[ -f "$TARGET_STAGING/.jellyfin-openssl-shared" ]] || return 1
   [[ -f "$TARGET_STAGING/.spool-no-testlib-v1" ]] || return 1
   if [[ "$QT_STATIC" == "1" ]]; then
@@ -662,6 +664,7 @@ build_target_qtbase() {
   cmake_build "$TARGET_BUILD_ROOT/qtbase" --parallel "$JOBS"
   cmake_install "$TARGET_BUILD_ROOT/qtbase"
   printf 'shared\n' >"$TARGET_STAGING/.jellyfin-openssl-shared"
+  printf '1\n' >"$TARGET_STAGING/.spool-private-tls-v1"
   prune_completed_build_dir "$TARGET_BUILD_ROOT/qtbase"
   printf '1\n' >"$TARGET_STAGING/.spool-no-testlib-v1"
 }

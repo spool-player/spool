@@ -40,3 +40,11 @@ webos_luna() {
   # though it exits 0, so give it one; luna-response.py skips tty chatter.
   webos_ssh -tt "$host" "$bin -n 1 $(webos_quote "$uri") $(webos_quote "$payload")" </dev/null
 }
+# Use the same process/environment-derived path discovery as desktop spoolet.
+# Script input is not echoed; callers must filter metadata before displaying it.
+webos_discover() {
+  local host="$1" mode="$2"
+  [[ "$mode" == diagnostics ]] || webos_error 'unsupported device discovery mode'
+  webos_ssh "$host" "sh -s -- $mode '' '' $(webos_quote "${APP_ID:-com.sachk.spool}")" \
+    < "$ROOT/src/automation/RemoteDiscovery.sh"
+}

@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=tools/lib/manifest-sources.sh
 source "$ROOT/tools/lib/manifest-sources.sh"
-QT_MANIFEST="${QT_MANIFEST:-$ROOT/tools/manifests/qt-webos-6.11.json}"
+QT_MANIFEST="${QT_MANIFEST:-$ROOT/tools/manifests/qt-webos.json}"
 SDK_PARENT="${WEBOS_SDK_PARENT:-$ROOT/build/webos-sdk}"
 
 manifest_toolchain_field() {

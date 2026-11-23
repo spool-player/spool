@@ -276,10 +276,6 @@ public:
     {
         return active() ? active()->mediaOrigin() : QUrl();
     }
-    int playbackParallelRequests() const override
-    {
-        return active() ? active()->playbackParallelRequests() : 4;
-    }
     QVariantMap playbackNetworkProfile() const override
     {
         return active() ? active()->playbackNetworkProfile() : QVariantMap();
@@ -541,7 +537,6 @@ void SourceHub::addSource(Provider *provider)
     const auto profile = m_registry->playbackNetworkProfile(accountId);
     auto& restored = m_entries[prefixOf(accountId)];
     restored.measuredBitrate = profile.value(QStringLiteral("measured-bitrate")).toLongLong();
-    restored.parallelRequests = profile.value(QStringLiteral("initial-requests"), 1).toInt();
     if (restored.measuredBitrate > 0)
         restored.speedState = Entry::SpeedState::Complete;
     connect(provider, &Provider::capabilitiesChanged, this, [this, accountId, provider] {
@@ -552,7 +547,6 @@ void SourceHub::addSource(Provider *provider)
             if (entry != m_entries.end()) {
                 entry->speedState = Entry::SpeedState::Pending;
                 entry->measuredBitrate = 0;
-                entry->parallelRequests = 1;
             }
             pushPlaybackContext();
         }
@@ -1118,6 +1112,18 @@ void SourceHub::setPlaybackPreferences(
     emit streamingQualityChanged();
 }
 
+void SourceHub::setPlaybackPreferenceResolver(std::function<QVariantMap(const QString&)> resolver)
+{
+    m_playbackPreferenceResolver = std::move(resolver);
+    pushPlaybackContext();
+}
+
+void SourceHub::refreshPlaybackPreferences()
+{
+    pushPlaybackContext();
+    emit streamingQualityChanged();
+}
+
 void SourceHub::setOverride(qint64 bitrate, int height)
 {
     m_bitrate = bitrate;
@@ -1192,17 +1198,21 @@ void SourceHub::setVideoPreviewsEnabled(bool enabled)
 void SourceHub::pushPlaybackContext()
 {
     // The viewer's pick in the player wins over the standing preference.
-    QVariantMap context = m_preferences;
-    context.insert(QStringLiteral("maxBitrate"), m_bitrate);
-    context.insert(QStringLiteral("maxHeight"), m_height);
-    context.insert(QStringLiteral("videoCodecs"), m_videoCodecs);
-    context.insert(QStringLiteral("restrictVideoCodecs"), m_restrictVideoCodecs);
-    context.insert(QStringLiteral("videoPreviews"), m_videoPreviewsEnabled);
+    QVariantMap base = m_preferences;
+    base.insert(QStringLiteral("maxBitrate"), m_bitrate);
+    base.insert(QStringLiteral("maxHeight"), m_height);
+    base.insert(QStringLiteral("videoCodecs"), m_videoCodecs);
+    base.insert(QStringLiteral("restrictVideoCodecs"), m_restrictVideoCodecs);
+    base.insert(QStringLiteral("videoPreviews"), m_videoPreviewsEnabled);
     for (const Entry& entry : std::as_const(m_entries)) {
         if (auto *portable = qobject_cast<PortableProvider *>(entry.provider.data())) {
+            QVariantMap context = base;
+            const auto preferences
+                = m_playbackPreferenceResolver ? m_playbackPreferenceResolver(entry.accountId) : m_preferences;
+            for (auto it = preferences.cbegin(); it != preferences.cend(); ++it)
+                context.insert(it.key(), it.value());
             const auto learned = m_registry->playbackNetworkProfile(entry.accountId);
             context.insert(QStringLiteral("measuredBitrate"), learned.value(QStringLiteral("measured-bitrate")));
-            context.insert(QStringLiteral("parallelRequests"), learned.value(QStringLiteral("initial-requests"), 1));
             portable->setPlaybackContext(context);
             portable->setPlaybackQueueContext(
                 m_queueSnapshots.value(entry.accountId), m_queueIndexes.value(entry.accountId, -1));
@@ -1272,7 +1282,6 @@ void SourceHub::startNextSpeedTest()
                 entry->speedState = valid ? Entry::SpeedState::Complete : Entry::SpeedState::Failed;
                 if (valid) {
                     entry->measuredBitrate = profile.value(QStringLiteral("measured-bitrate")).toLongLong();
-                    entry->parallelRequests = profile.value(QStringLiteral("initial-requests"), 1).toInt();
                     pushPlaybackContext();
                 }
             }
@@ -1291,9 +1300,7 @@ QString SourceHub::speedDescription(const Entry& entry) const
 {
     QString detail;
     if (entry.measuredBitrate > 0)
-        detail = QStringLiteral("Measured limit: %1 · %2 connection(s)")
-                     .arg(formatBitrate(entry.measuredBitrate))
-                     .arg(entry.parallelRequests);
+        detail = QStringLiteral("Measured limit: %1").arg(formatBitrate(entry.measuredBitrate));
     if (entry.speedState == Entry::SpeedState::Running)
         return detail.isEmpty() ? QStringLiteral("Measuring connection speed…")
                                 : detail + QStringLiteral(" · Measuring…");
@@ -1318,11 +1325,55 @@ QString SourceHub::speedTestDescription() const
     return descriptions.join(QLatin1Char('\n'));
 }
 
+QVariantMap SourceHub::speedTestStatus() const
+{
+    QVariantList accounts;
+    for (Provider *provider : sources()) {
+        if (!provider->capabilities().testFlag(Provider::SpeedTest))
+            continue;
+        const auto entry = m_entries.constFind(prefixOf(provider->id()));
+        if (entry == m_entries.cend())
+            continue;
+        const QVariantMap profile = m_registry->playbackNetworkProfile(provider->id());
+        QString moduleId;
+        for (const ProviderAccount& account : m_registry->accountList()) {
+            if (account.id == provider->id()) {
+                moduleId = account.module;
+                break;
+            }
+        }
+        QVariantList curve;
+        for (const QVariant& value : profile.value(QStringLiteral("transport-samples")).toList()) {
+            const QVariantMap sample = value.toMap();
+            curve.append(QVariantMap { { QStringLiteral("requests"), sample.value(QStringLiteral("requests")).toInt() },
+                { QStringLiteral("httpVersion"), sample.value(QStringLiteral("http-version")).toInt() },
+                { QStringLiteral("receiveProfile"), sample.value(QStringLiteral("receive-profile")).toInt() },
+                { QStringLiteral("receiveBytes"), sample.value(QStringLiteral("receive-bytes")).toLongLong() },
+                { QStringLiteral("rangeBytes"), sample.value(QStringLiteral("range-bytes")).toLongLong() },
+                { QStringLiteral("source"), sample.value(QStringLiteral("source")).toInt() },
+                { QStringLiteral("mbps"),
+                    sample.value(QStringLiteral("ordered-bytes-per-second")).toDouble() * 8.0 / 1'000'000.0 } });
+        }
+        accounts.append(QVariantMap { { QStringLiteral("index"), int(accounts.size()) },
+            { QStringLiteral("measuredMbps"),
+                profile.value(QStringLiteral("measured-bitrate")).toDouble() / 1'000'000.0 },
+            { QStringLiteral("accountId"), provider->id() }, { QStringLiteral("moduleId"), moduleId },
+            { QStringLiteral("selectedRequests"), profile.value(QStringLiteral("last-selected-requests"), 1).toInt() },
+            { QStringLiteral("laneMbps"), curve },
+            { QStringLiteral("running"), entry->speedState == Entry::SpeedState::Running },
+            { QStringLiteral("pending"), entry->speedState == Entry::SpeedState::Pending },
+            { QStringLiteral("failed"), entry->speedState == Entry::SpeedState::Failed } });
+    }
+    return { { QStringLiteral("pausedForPlayback"), m_playbackActive }, { QStringLiteral("accounts"), accounts } };
+}
+
 QString SourceHub::autoDescription() const
 {
     const auto entry = m_entries.constFind(prefixOf(m_playbackAccount));
     QStringList details;
-    const qint64 preferred = m_preferences.value(QStringLiteral("preferredMaxBitrate")).toLongLong();
+    const auto preferences
+        = m_playbackPreferenceResolver ? m_playbackPreferenceResolver(m_playbackAccount) : m_preferences;
+    const qint64 preferred = preferences.value(QStringLiteral("preferredMaxBitrate")).toLongLong();
     if (preferred > 0)
         details.append(QStringLiteral("Settings limit: %1").arg(formatBitrate(preferred)));
     if (entry != m_entries.cend() && entry->provider && entry->provider->capabilities().testFlag(Provider::SpeedTest))

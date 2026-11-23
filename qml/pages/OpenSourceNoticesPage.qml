@@ -53,6 +53,11 @@ FocusScope {
             "source": "github.com/quietvoid/dovi_tool"
         },
         {
+            "name": "dav1d",
+            "license": "BSD-2-Clause",
+            "source": "code.videolan.org/videolan/dav1d"
+        },
+        {
             "name": "Atkinson Hyperlegible",
             "license": "SIL Open Font License 1.1",
             "source": "brailleinstitute.org/freefont"

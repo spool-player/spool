@@ -10,12 +10,83 @@
 #include <QPromise>
 #include <QThread>
 
+#include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <optional>
 #include <stdexcept>
 
 namespace Spool {
 namespace {
+
+    // A positive whole count of bytes or ticks: a safe-integer number (the
+    // script boundary already bounds numbers to 2^53) or an unsigned decimal
+    // string that fits qint64. Providers omit what they do not know.
+    std::optional<qint64> positiveCount(const QVariant& value)
+    {
+        if (value.typeId() == QMetaType::Double) {
+            const double number = value.toDouble();
+            if (number >= 1 && number == std::floor(number))
+                return static_cast<qint64>(number);
+            return std::nullopt;
+        }
+        if (value.typeId() != QMetaType::QString)
+            return std::nullopt;
+        const QString text = value.toString();
+        if (text.isEmpty() || text.size() > 19
+            || std::any_of(text.cbegin(), text.cend(), [](QChar c) { return c < u'0' || c > u'9'; }))
+            return std::nullopt;
+        bool valid = false;
+        const qint64 number = text.toLongLong(&valid);
+        return valid && number >= 1 ? std::optional<qint64>(number) : std::nullopt;
+    }
+
+    // Bitrates and dimensions keep their meaning: a whole number, 0 unknown.
+    std::optional<qint64> wholeNumber(const QVariant& value, double maximum)
+    {
+        if (value.typeId() != QMetaType::Double)
+            return std::nullopt;
+        const double number = value.toDouble();
+        if (!(number >= 0 && number <= maximum) || number != std::floor(number))
+            return std::nullopt;
+        return static_cast<qint64>(number);
+    }
+
+    // Admit resolve's media facts before anything reads them leniently. A
+    // picker answer carries no media yet; its follow-up resolve is checked.
+    void admitResolvedMedia(QVariantMap& result)
+    {
+        if (result.contains(QStringLiteral("pick")))
+            return;
+        struct Field {
+            const char *name;
+            double maximum; // < 0: positive count
+        };
+        const auto admit = [&result](const char *key, std::initializer_list<Field> fields) {
+            const QString name = QLatin1String(key);
+            if (!result.contains(name))
+                return;
+            const QVariant raw = result.value(name);
+            if (raw.typeId() != QMetaType::QVariantMap)
+                throw std::runtime_error("invalid_result");
+            QVariantMap map = raw.toMap();
+            for (const Field& field : fields) {
+                const QString fieldName = QLatin1String(field.name);
+                if (!map.contains(fieldName))
+                    continue;
+                const auto value = field.maximum < 0 ? positiveCount(map.value(fieldName))
+                                                     : wholeNumber(map.value(fieldName), field.maximum);
+                if (!value)
+                    throw std::runtime_error("invalid_result");
+                map.insert(fieldName, *value);
+            }
+            result.insert(name, map);
+        };
+        admit("source",
+            { { "bitrate", 1e12 }, { "width", 2147483647.0 }, { "height", 2147483647.0 }, { "sizeBytes", -1 },
+                { "runtimeTicks", -1 } });
+        admit("delivery", { { "bitrate", 1e12 }, { "sizeBytes", -1 }, { "runtimeTicks", -1 } });
+    }
     template <typename T> void fail(const std::shared_ptr<QPromise<T>>& promise, const char *code)
     {
         promise->setException(std::make_exception_ptr(std::runtime_error(code)));
@@ -643,16 +714,20 @@ void ScriptRuntime::cancelLanDiscovery(QString sourceId)
 QCoro::Task<QVariantMap> ScriptRuntime::call(QString sourceId, QString method, QVariantMap arguments, QString scope)
 {
     const bool data = method == QStringLiteral("dataRead");
+    const bool resolve = method == QStringLiteral("resolve");
     const bool strict = data || method == QStringLiteral("dataInfo") || method == QStringLiteral("dataWrite")
         || method == QStringLiteral("dataDelete") || method == QStringLiteral("preferencesRead")
         || method == QStringLiteral("preferencesWrite");
     return d->submit<QVariantMap>(std::move(sourceId), std::move(method), std::move(arguments), std::move(scope),
-        [data, strict](const QJSValue& value) {
+        [data, strict, resolve](const QJSValue& value) {
             if (strict
                 && (!value.isObject() || value.isArray() || value.isNull() || value.isDate() || value.isRegExp()
                     || value.isError()))
                 throw std::runtime_error("invalid_extension_result");
-            return ownScriptValue(value, 50000, 4 * 1024 * 1024, data).toMap();
+            QVariantMap result = ownScriptValue(value, 50000, 4 * 1024 * 1024, data).toMap();
+            if (resolve)
+                admitResolvedMedia(result);
+            return result;
         });
 }
 

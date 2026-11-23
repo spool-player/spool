@@ -193,6 +193,7 @@
       "gpl": false,
       "configureFlags": [
         "--enable-jni",
+        "--enable-libdav1d",
         "--enable-mediacodec",
         "--enable-network",
         "--enable-openssl"
@@ -201,6 +202,7 @@
         "av1_mediacodec",
         "h264_mediacodec",
         "hevc_mediacodec",
+        "libdav1d",
         "mpeg2_mediacodec",
         "mpeg4_mediacodec",
         "vp8_mediacodec",
