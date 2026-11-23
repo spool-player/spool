@@ -167,6 +167,7 @@ namespace {
     }
     constexpr uint64_t kCacheSpeedReply = 0x6375726c73706565ULL;
     constexpr uint64_t kPauseSetReply = 0x7073000000000000ULL;
+    constexpr uint64_t kPauseReadReply = 0x7072000000000000ULL;
     constexpr uint64_t kFullscreenSetReply = 0x6673000000000000ULL;
     constexpr uint64_t kFullscreenObservation = 0x666f000000000000ULL;
     constexpr uint64_t kFullscreenReplyMask = 0xffff000000000000ULL;
@@ -2097,6 +2098,19 @@ void PlayerController::setPaused(bool paused)
         qWarning() << "player: could not queue pause property update:" << mpv_error_string(error);
 }
 
+void PlayerController::applyMpvPauseState(bool paused)
+{
+    // The idle core can report its initial pause while setup waits for the
+    // surface. The file-loaded event reads the actual state of the new file.
+    if (!m_fileLoaded || m_paused == paused)
+        return;
+    qInfo() << "player: pause state changed" << paused;
+    m_paused = paused;
+    if (!m_paused)
+        requestMpvPositionRefresh("unpause");
+    notifyPlaybackStateChanged();
+}
+
 void PlayerController::prepareForBackground()
 {
     if (!platformUsesBackgroundPlaybackPolicy())
@@ -3221,8 +3235,15 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_
         break;
     case MPV_EVENT_SET_PROPERTY_REPLY: {
         if (event->reply_userdata == kPauseSetReply) {
-            if (event->error < 0)
+            if (event->error < 0) {
                 qWarning() << "player: pause property update failed:" << mpv_error_string(event->error);
+            } else {
+                // Reconcile the command with an actual core read. mpv can
+                // coalesce pause notifications around the load boundary.
+                const int error = mpv_get_property_async(handle, kPauseReadReply, "pause", MPV_FORMAT_FLAG);
+                if (error < 0)
+                    qWarning() << "player: could not read acknowledged pause state:" << mpv_error_string(error);
+            }
             break;
         }
         if ((event->reply_userdata & kFullscreenReplyMask) == kTransportConfigureReply) {
@@ -3282,6 +3303,14 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_
         break;
     }
     case MPV_EVENT_GET_PROPERTY_REPLY: {
+        if (event->reply_userdata == kPauseReadReply) {
+            const auto *property = static_cast<mpv_event_property *>(event->data);
+            if (event->error >= 0 && property && property->data && property->format == MPV_FORMAT_FLAG) {
+                const bool paused = *static_cast<int *>(property->data);
+                postMpvEvent(generation, [this, paused] { applyMpvPauseState(paused); });
+            }
+            break;
+        }
         if (event->reply_userdata == kCacheSpeedReply) {
             const auto *property = static_cast<mpv_event_property *>(event->data);
             const qint64 bytesPerSecond
@@ -3367,21 +3396,7 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_
         }
         if (strcmp(property->name, "pause") == 0 && property->format == MPV_FORMAT_FLAG) {
             const bool paused = *static_cast<int *>(property->data);
-            postMpvEvent(generation, [this, paused]() {
-                // Until a file has loaded, mpv's pause is only ever what was
-                // set or is about to be: an adopted idle core reports its own
-                // initial state as it is observed, and that report lands
-                // while setup waits for the surface. Taking it would overwrite
-                // the requested start (or a pause pressed during setup).
-                if (!m_fileLoaded)
-                    return;
-                if (m_paused != paused)
-                    qInfo() << "player: pause state changed" << paused;
-                m_paused = paused;
-                if (!m_paused)
-                    requestMpvPositionRefresh("unpause");
-                notifyPlaybackStateChanged();
-            });
+            postMpvEvent(generation, [this, paused] { applyMpvPauseState(paused); });
         } else if (strcmp(property->name, "paused-for-cache") == 0 && property->format == MPV_FORMAT_FLAG) {
             const bool buffering = *static_cast<int *>(property->data);
             postMpvEvent(generation, [this, buffering]() {

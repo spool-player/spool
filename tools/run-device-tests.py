@@ -1228,6 +1228,21 @@ def export_attempt(private, destination, result):
     journeys = [*private.glob("app-journey-*"), *(private / "journey-images").glob("app-journey-*")]
     for journey in journeys:
         if journey.is_dir() and not journey.is_symlink():
+            # The native controller records this before propagating a signal
+            # observed from the separately owned product process.
+            crash = journey / "mobile-crash-evidence.json"
+            if (result.get("status") == "crashed" and crash.is_file() and not crash.is_symlink()
+                    and crash.stat().st_size <= 1024):
+                try:
+                    evidence = json.loads(crash.read_text())
+                except (OSError, ValueError):
+                    evidence = None
+                if (isinstance(evidence, dict) and type(evidence.get("signal")) is int
+                        and evidence["signal"] == result.get("signal")
+                        and type(evidence.get("pid")) is int and evidence["pid"] > 0
+                        and evidence.get("platform") in ("android", "tvos", "ios")):
+                    write_journal(destination / "mobile-crash-evidence.json",
+                                  {key: evidence[key] for key in ("platform", "pid", "signal")})
             images.extend(journey / name for name in
                           ("frame.png", "library-text.png", "mobile-default-startup.png", "download-failure.png"))
     for image in images:
@@ -1269,7 +1284,7 @@ def export_attempt(private, destination, result):
                         print("app-journey: " + reason, flush=True)
     (destination / "attempt.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
     allowed = {"native-result.json", "controller-result.json", "attempt.log", "frame.png", "library-text.png",
-               "mobile-default-startup.png", NATIVE_DIAGNOSTIC_NAME}
+               "mobile-default-startup.png", "mobile-crash-evidence.json", NATIVE_DIAGNOSTIC_NAME}
     files = [path for path in destination.rglob("*") if path.is_file()]
     if any(path.is_symlink() or (path.name not in allowed and not path.name.endswith("-failure.png"))
            for path in files):

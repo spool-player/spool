@@ -215,6 +215,7 @@ bool JellyfinFixture::upgradeWebSocket(QTcpSocket *socket)
     }
     ++authenticatedRequests;
     if (!newRequestsAvailable) {
+        ++offlineSocketRequests;
         respond(socket, 503, "{}");
         return true;
     }
@@ -300,6 +301,8 @@ void JellyfinFixture::handle(QTcpSocket *socket, const QByteArray& header, const
         && (path == "/Videos/" + movieId + "/stream" || path == "/Videos/" + episodeId + "/stream"))
         ++mediaRequests;
     if (!newRequestsAvailable) {
+        if (path.startsWith("/Sessions/Playing"))
+            ++offlineProgressRequests;
         json(QJsonObject {}, 503);
         return;
     }

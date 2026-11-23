@@ -107,6 +107,10 @@ public:
     QString statusText() const;
     QString errorText() const;
     bool buffering() const;
+    bool playbackReady() const
+    {
+        return m_seekDispatchReady;
+    }
     int bufferingPercent() const;
     bool seeking() const;
     bool debugOsdVisible() const;
@@ -371,6 +375,7 @@ private:
     void synchronizeWindowFullscreen(mpv_handle *handle);
     void scheduleMpvTeardown();
     void handleMpvEvent(mpv_event *event, quint64 generation, mpv_handle *handle);
+    void applyMpvPauseState(bool paused);
     template <typename Callback> void postMpvEvent(quint64 generation, Callback callback)
     {
         QMetaObject::invokeMethod(this, [this, generation, callback = std::move(callback)]() mutable {

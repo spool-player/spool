@@ -1265,6 +1265,33 @@ public:
             command({ "key", "right" });
         command({ "key", "ok" });
     }
+    void pauseForObservation(const char *message)
+    {
+        await([&] { return state()["playback"].toObject()["ready"].toBool(); },
+            "playback did not complete its first renderer restart before pause");
+        command({ "pause" });
+        QJsonObject playback;
+        try {
+            await(
+                [&] {
+                    playback = state()["playback"].toObject();
+                    return playback["paused"].toBool();
+                },
+                message);
+        } catch (const std::exception& error) {
+            throw std::runtime_error(
+                QStringLiteral("%1 (active=%2, loaded=%3, ready=%4, paused=%5, failed=%6, position=%7, duration=%8)")
+                    .arg(QString::fromUtf8(error.what()))
+                    .arg(playback["active"].toBool())
+                    .arg(playback["loaded"].toBool())
+                    .arg(playback["ready"].toBool())
+                    .arg(playback["paused"].toBool())
+                    .arg(playback["failed"].toBool())
+                    .arg(playback["position"].toDouble(), 0, 'f', 2)
+                    .arg(playback["duration"].toDouble(), 0, 'f', 2)
+                    .toStdString());
+        }
+    }
     void await(const std::function<bool()>& predicate, const char *message, int timeout = 30000)
     {
         QElapsedTimer clock;
@@ -1758,27 +1785,7 @@ SPOOL_TEST_MAIN("app-journey")
                     && playback["duration"].toDouble() > 29;
             },
             "saved download did not enter real embedded playback");
-        journey.command({ "pause" });
-        QJsonObject lastPauseState;
-        try {
-            journey.await(
-                [&] {
-                    lastPauseState = journey.state()["playback"].toObject();
-                    return lastPauseState["paused"].toBool();
-                },
-                "asynchronous pause did not settle before exact paused-frame seeking");
-        } catch (const std::exception&) {
-            throw std::runtime_error(
-                QStringLiteral("asynchronous pause did not settle before exact paused-frame seeking "
-                               "(active=%1, loaded=%2, paused=%3, failed=%4, position=%5, duration=%6)")
-                    .arg(lastPauseState["active"].toBool())
-                    .arg(lastPauseState["loaded"].toBool())
-                    .arg(lastPauseState["paused"].toBool())
-                    .arg(lastPauseState["failed"].toBool())
-                    .arg(lastPauseState["position"].toDouble(), 0, 'f', 2)
-                    .arg(lastPauseState["duration"].toDouble(), 0, 'f', 2)
-                    .toStdString());
-        }
+        journey.pauseForObservation("asynchronous pause did not settle before exact paused-frame seeking");
         journey.command({ "seek", "2" });
         journey.await(
             [&] {
@@ -1811,12 +1818,20 @@ SPOOL_TEST_MAIN("app-journey")
         journey.command({ "stop" });
         journey.await(
             [&] { return !journey.state()["playback"].toObject()["active"].toBool(); }, "player did not stop");
-        require(fixture.authenticatedRequests == authenticatedBeforeOffline,
-            "saved-media playback contacted an unavailable authenticated provider endpoint");
         require(fixture.playbackNegotiations == negotiationsBeforeOffline,
             "saved-media playback renegotiated against the unavailable provider");
         require(fixture.mediaRequests == remoteRequests,
             "saved-media playback unexpectedly fetched the unavailable server");
+        const int offlineRequests = fixture.authenticatedRequests - authenticatedBeforeOffline;
+        if (offlineRequests != 0) {
+            throw std::runtime_error(
+                QStringLiteral("saved-media playback contacted an unavailable authenticated provider endpoint "
+                               "(total=%1, eventReconnect=%2, progress=%3)")
+                    .arg(offlineRequests)
+                    .arg(fixture.offlineSocketRequests)
+                    .arg(fixture.offlineProgressRequests)
+                    .toStdString());
+        }
 
         fixture.setNewRequestsAvailable(true);
         // Keep server UserData at zero even after accepted stop reports. The
@@ -1852,9 +1867,7 @@ SPOOL_TEST_MAIN("app-journey")
                     });
             },
             "real provider playback start for the online item was not reported");
-        journey.command({ "pause" });
-        journey.await([&] { return journey.state()["playback"].toObject()["paused"].toBool(); },
-            "episode did not pause before the controlled stop position");
+        journey.pauseForObservation("episode did not pause before the controlled stop position");
         journey.command({ "seek", "14" });
         journey.await(
             [&] {
@@ -1904,9 +1917,7 @@ SPOOL_TEST_MAIN("app-journey")
                         && journey.state()["playback"].toObject()["loaded"].toBool();
                 },
                 "Resume did not hydrate the selected episode queue and load real media");
-            journey.command({ "pause" });
-            journey.await([&] { return journey.state()["playback"].toObject()["paused"].toBool(); },
-                "resumed episode did not pause before observing its saved position");
+            journey.pauseForObservation("resumed episode did not pause before observing its saved position");
             journey.await(
                 [&] {
                     return std::any_of(fixture.reports.cbegin() + reportsBeforeResume, fixture.reports.cend(),
@@ -1984,9 +1995,7 @@ SPOOL_TEST_MAIN("app-journey")
         require(fixture.sendRemotePlay(55000000), "real remote event socket was not connected");
         journey.await([&] { return journey.state()["playback"].toObject()["loaded"].toBool(); },
             "real inbound remote Play did not load the selected episode");
-        journey.command({ "pause" });
-        journey.await([&] { return journey.state()["playback"].toObject()["paused"].toBool(); },
-            "inbound remote episode did not pause before observing its requested position");
+        journey.pauseForObservation("inbound remote episode did not pause before observing its requested position");
         journey.await(
             [&] {
                 return std::any_of(fixture.reports.cbegin() + reportsBeforeRemote, fixture.reports.cend(),
@@ -2044,9 +2053,7 @@ SPOOL_TEST_MAIN("app-journey")
         journey.click("Start from beginning", true);
         journey.await([&] { return journey.state()["playback"].toObject()["loaded"].toBool(); },
             "explicit episode restart did not load");
-        journey.command({ "pause" });
-        journey.await([&] { return journey.state()["playback"].toObject()["paused"].toBool(); },
-            "explicit episode restart did not pause before observing the beginning");
+        journey.pauseForObservation("explicit episode restart did not pause before observing the beginning");
         journey.await(
             [&] {
                 return std::any_of(fixture.reports.cbegin() + reportsBeforeRestart, fixture.reports.cend(),
@@ -2080,7 +2087,16 @@ SPOOL_TEST_MAIN("app-journey")
         fixturePhase = QStringLiteral("repeat-current-eof");
         journey.openPlaybackSettings();
         journey.click("Repeat", false, false, TextSurface::PlayerOptions);
-        journey.click("Repeat current item", false, false, TextSurface::PlayerOptions);
+        if (qEnvironmentVariable("SPOOL_E2E_ANDROID_TV") == "1") {
+            journey.label("Repeat current item", false, TextSurface::PlayerOptions);
+            // The visible Repeat menu opens with Off selected. Use the TV's
+            // directional input to choose Current item.
+            journey.command({ "key", "down" });
+            journey.command({ "key", "down" });
+            journey.command({ "key", "ok" });
+        } else {
+            journey.click("Repeat current item", false, false, TextSurface::PlayerOptions);
+        }
         const qsizetype reportsBeforeRepeat = fixture.reports.size();
         const int negotiationsBeforeRepeat = fixture.playbackNegotiations;
         journey.command({ "seek", "88" });
@@ -2099,7 +2115,7 @@ SPOOL_TEST_MAIN("app-journey")
                         });
             },
             "Repeat current item did not renegotiate and report an actual restart from zero");
-        journey.command({ "pause" });
+        journey.pauseForObservation("repeated item did not pause after its first renderer restart");
         journey.await(
             [&] {
                 const auto playback = journey.state()["playback"].toObject();
@@ -2112,16 +2128,16 @@ SPOOL_TEST_MAIN("app-journey")
         // merely clearing the repeat setting would make this a false positive.
         fixturePhase = QStringLiteral("sleep-after-current-eof");
         journey.openPlaybackSettings();
-        journey.label("Current item");
-        journey.click("Sleep timer");
-        journey.click("15 minutes");
+        journey.label("Current item", false, TextSurface::PlayerOptions);
+        journey.click("Sleep timer", false, false, TextSurface::PlayerOptions);
+        journey.click("15 minutes", false, false, TextSurface::PlayerOptions);
         journey.openPlaybackSettings();
-        journey.label("remaining");
-        journey.click("Sleep timer");
-        journey.click("After current item");
+        journey.label("remaining", false, TextSurface::PlayerOptions);
+        journey.click("Sleep timer", false, false, TextSurface::PlayerOptions);
+        journey.click("After current item", false, false, TextSurface::PlayerOptions);
         journey.openPlaybackSettings();
-        journey.label("After current item");
-        journey.label("Current item");
+        journey.label("After current item", false, TextSurface::PlayerOptions);
+        journey.label("Current item", false, TextSurface::PlayerOptions);
         journey.command({ "key", "back" });
         journey.command({ "seek", "88" });
         journey.await([&] { return journey.state()["playback"].toObject()["position"].toDouble() > 87.5; },
