@@ -12,6 +12,7 @@
 #include <QMutex>
 #include <QObject>
 #include <QPointer>
+#include <QUrl>
 #include <QWaitCondition>
 
 #include <mpv/client.h>
@@ -138,12 +139,15 @@ bool platformUsesEmbeddedVideo(const PlaybackSession& session, bool directReques
         if (stream.type.compare(QLatin1String("video"), Qt::CaseInsensitive) != 0)
             continue;
         const QString mime = mediaCodecMime(stream.codec);
-        if (mime.isEmpty() || hasHardwareDecoder(mime))
+        if (!mime.isEmpty() && hasHardwareDecoder(mime))
             return false;
-        qInfo() << "playback surface: no hardware decoder for" << stream.codec << "- rendering through the GPU path";
+        qInfo() << "playback surface: no supported hardware decoder; rendering through the GPU path";
         return true;
     }
-    return false;
+    // Local and downloaded files can lack stream metadata. The rendered path
+    // still tries MediaCodec copy-back and can fall back to a software decoder.
+    const QUrl source(session.url);
+    return source.isLocalFile() || source.scheme() == QLatin1String("content");
 }
 
 QString platformPlaybackBackendName(bool embeddedVideo)

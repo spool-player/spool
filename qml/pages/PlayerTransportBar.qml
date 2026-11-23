@@ -18,6 +18,7 @@ RowLayout {
 
     component ActionTarget: Rectangle {
         required property string action
+        objectName: action === "debug" ? "playerSettingsButton" : ""
         readonly property int globalIndex: root.overlay.actions.indexOf(action)
         readonly property bool focused: root.overlay.isControlsActive() && root.overlay.focusZone === "actions"
                                         && root.overlay.actionIndex === globalIndex

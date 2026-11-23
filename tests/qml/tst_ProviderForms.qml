@@ -262,9 +262,11 @@ TestCase {
         const password = accessibleItem(view, "Password")
         verify(username)
         verify(password)
+        tryVerify(() => username.activeFocus || username.parent.activeFocus)
         username.text = "member"
         password.text = "incorrect"
         password.forceActiveFocus()
+        tryVerify(() => password.activeFocus)
         keyClick(Qt.Key_Return)
         tryVerify(() => provider.pendingAuthenticationRejection !== null)
         provider.pendingAuthenticationRejection("invalid_credentials")
