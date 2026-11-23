@@ -75,6 +75,9 @@ jobs:
         with:
           nix_conf: |
             experimental-features = nix-command flakes
+      - name: Install Cachix from the Intel macOS pin
+        if: matrix.sdk == 'iphonesimulator'
+        run: bash tools/install-intel-darwin-cachix.sh
       - uses: cachix/cachix-action@3ba601ff5bbb07c7220846facfa2cd81eeee15a1
         if: matrix.sdk == 'iphonesimulator'
         with:

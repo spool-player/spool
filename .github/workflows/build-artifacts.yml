@@ -599,6 +599,9 @@ jobs:
           purge-prefixes: nix-native-${{ runner.os }}-${{ matrix.arch }}-
           purge-created: P7D
           purge-primary-key: never
+      - name: Install Cachix from the Intel macOS pin
+        if: matrix.arch == 'x86_64'
+        run: bash tools/install-intel-darwin-cachix.sh
       - uses: cachix/cachix-action@3ba601ff5bbb07c7220846facfa2cd81eeee15a1 # v16
         with:
           name: spool
