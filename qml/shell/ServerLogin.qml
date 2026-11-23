@@ -117,12 +117,24 @@ FocusScope {
                                  validAddress = !!result.servers.length
                          }, () => {})
     }
+    property bool autoChosen: false
     function mergeServers(found) {
         const merged = servers.slice()
         for (const entry of found) {
-            const index = merged.findIndex(row => row.id === entry.id)
-            if (index < 0)
+            // Only nonempty IDs establish identity; ID-less entries match by
+            // address, so unrelated servers never collapse into one row.
+            const index = merged.findIndex(row => (entry.id && row.id === entry.id) || (!!entry.address && row.address
+                                                                                        === entry.address))
+            if (index < 0) {
                 merged.push(entry)
+                continue
+            }
+            const row = merged[index]
+            // Address matching must retain a server ID learned by an earlier probe.
+            if ((!entry.id || entry.id === entry.address) && row.id)
+                merged[index] = Object.assign({}, entry, {
+                                                  id: row.id
+                                              })
             else
                 merged[index] = entry
         }
@@ -135,8 +147,17 @@ FocusScope {
         const stamp = discoveryGeneration
         provider.request("discover").then(result => {
             discovering = false
-            if (stamp === discoveryGeneration && !closed)
-                mergeServers(result.servers || [])
+            if (stamp !== discoveryGeneration || closed)
+                return
+            mergeServers(result.servers || [])
+            // One server answering at home is almost always the one; open it
+            // unless the viewer has started typing another. Only once, so
+            // Back from its sign-in stays on the server list.
+            if (!autoChosen && servers.length === 1 && address.text.length === 0 && step === "server" && !busy
+                    && servers[0].address) {
+                autoChosen = true
+                connect(String(servers[0].address))
+            }
         }, () => {
             discovering = false
         })
@@ -350,7 +371,9 @@ FocusScope {
     }
     Component.onCompleted: {
         const context = provider && provider.arguments ? provider.arguments.setupContext : null
-        if (context && context.accountId && setupContextOperation.length > 0) {
+        // Adding another server starts blank; adding a profile or signing in
+        // again starts from the saved one.
+        if (context && context.accountId && context.purpose !== "addServer" && setupContextOperation.length > 0) {
             provider.request(setupContextOperation).then(result => {
                 if (!closed && result.server) {
                     address.text = String(result.server)
@@ -511,7 +534,6 @@ FocusScope {
                         providerName: root.installedModule ? root.installedModule.name : ""
                         providerId: root.provider ? root.provider.moduleId : ""
                         providerIcon: root.installedModule ? root.installedModule.iconUrl : ""
-                        providerVersion: root.installedModule ? root.installedModule.version : ""
                         badgeIcon: modelData.hasPassword ? "lock" : ""
                         onAccepted: {
                             usernameField.text = modelData.name

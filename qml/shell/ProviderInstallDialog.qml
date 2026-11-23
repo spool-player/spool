@@ -9,8 +9,10 @@ OverlayDialog {
     id: root
     required property var transfers
     property bool suspendLocalTransfers: false
-    readonly property var visibleTransfers: suspendLocalTransfers ? transfers.filter(transfer =>
-    !transfer.operationToken) : transfers
+    // Only installs the viewer started from a file wait on this dialog; store
+    // installs show on their tile and updates happen quietly.
+    readonly property var visibleTransfers: suspendLocalTransfers ? [] : transfers.filter(transfer => Boolean(
+                                                                                                          transfer.operationToken))
     visible: visibleTransfers.length > 0
     focus: visible
     preferredWidth: 620

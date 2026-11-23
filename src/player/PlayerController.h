@@ -14,6 +14,7 @@
 #include <QByteArrayList>
 #include <QHash>
 #include <QObject>
+#include <QSslCertificate>
 #include <QStringList>
 #include <QTimer>
 #include <QUrl>
@@ -24,6 +25,8 @@
 #endif
 
 #include <atomic>
+#include <functional>
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -119,6 +122,10 @@ public:
     {
         return m_containerFps;
     }
+    QVariantMap networkMetrics() const
+    {
+        return m_networkMetrics;
+    }
     bool subtitlesEnabled() const;
     QStringList subtitleTracks() const;
     int selectedSubtitleIndex() const;
@@ -195,6 +202,9 @@ public:
     Q_INVOKABLE void stop();
     Q_INVOKABLE void stopWithReason(const QString& reason, bool explicitStop = false);
     void setWatchedThresholdPercent(int percent);
+    // Keeps progress reports truthful about the queue, repeat and shuffle
+    // while the session plays.
+    void setQueueState(const std::vector<PlaybackQueueItem>& queue, const QString& repeatMode, bool shuffled);
     Q_INVOKABLE void setNightModeEnabled(bool enabled);
     Q_INVOKABLE void setToneMappingVisualizationEnabled(bool enabled);
     Q_INVOKABLE void setAudioDelayMs(int delayMs);
@@ -206,7 +216,10 @@ public:
     void setRenderQuality(MpvOptionProfile::RenderQuality quality);
     void setHardwareDecoding(bool enabled)
     {
+        if (m_hardwareDecoding == enabled)
+            return;
         m_hardwareDecoding = enabled;
+        discardPreparedMpvForOptionChange("hardware decoding change");
     }
     void setSoftwareRenderer(const QByteArray& backend)
     {
@@ -252,7 +265,7 @@ signals:
     void trickplayChanged();
     void chaptersChanged();
     // Also emitted between sessions so Stop cancels pending queue negotiation.
-    void stopRequested();
+    void stopRequested(const QString& reason);
     void playbackStopped(const QString& itemId, qint64 positionTicks, bool watched, bool reachedEnd, quint64 reportId);
     void watchedPersistenceRequested(const QString& itemId, quint64 reportId);
     // The stream ended before the item did. Emitted after playbackStopped,
@@ -289,6 +302,8 @@ public:
 private:
     QHash<int, QByteArray> m_mpvKeys;
     void playSession(const PlaybackSession& session, bool startPaused, const QList<QUrl>& localFiles);
+    void finishPlaySession(
+        const PlaybackSession& session, bool startPaused, const QList<QUrl>& localFiles, quint64 generation);
     void refreshLocalPlaylist();
     void beginLocalEntry(qint64 entryId);
     bool loadLocalFiles(const QList<QUrl>& urls);
@@ -296,7 +311,7 @@ private:
     bool m_localEntryStarted = false;
     qint64 m_localEntryId = -1;
     QVariantList m_localPlaylistEntries;
-    void logColorDiagnostics(mpv_handle *handle);
+    static void logColorDiagnostics(mpv_handle *handle);
     bool usesUserMpvConfig() const;
     int uiTrackIndexForStream(const QString& type, int streamIndex, int firstUiIndex) const;
     int streamIndexForUiTrack(const QString& type, int uiIndex, int firstUiIndex) const;
@@ -319,20 +334,25 @@ private:
     void prepareIdleMpv();
     void destroyIdleMpv(const char *reason);
     mpv_handle *takeIdleMpvHandle();
-    bool configureAndInitializeMpv(mpv_handle *handle, bool needsVideoSurface, bool embeddedVideo);
+    struct MpvPreparation;
+    void prepareMpvAsync(bool needsVideoSurface, bool embeddedVideo);
+    static bool configureAndInitializeMpv(mpv_handle *handle, const MpvPreparation& preparation);
     void observeMpvProperties(mpv_handle *handle);
+    void updateNetworkTransport();
+    double networkMediaBitrate() const;
     void synchronizeWindowFullscreen(mpv_handle *handle);
     void scheduleMpvTeardown();
     void handleMpvEvent(mpv_event *event, quint64 generation, mpv_handle *handle);
     template <typename Callback> void postMpvEvent(quint64 generation, Callback callback)
     {
         QMetaObject::invokeMethod(this, [this, generation, callback = std::move(callback)]() mutable {
-            if (generation == m_mpvEventGeneration)
+            if (generation == m_mpvEventGeneration && m_sessionActive)
                 callback();
         });
     }
     void startProgressReporting();
     void stopProgressReporting(bool failed = false, bool reachedEnd = false, bool explicitStop = false);
+    bool sampleSettledPlaybackPosition();
     bool mpvCommand(QByteArrayList command);
     bool beginSeekCommand(double targetSeconds, const QByteArray& flags);
     QByteArrayList buildSeekCommand(double targetSeconds, const QByteArray& flags) const;
@@ -341,7 +361,9 @@ private:
     void flushPendingSeek();
     void updatePlaybackStatusText();
     void notifyPlaybackStateChanged();
-    void setPositionSeconds(double seconds, bool notifySegments = true);
+    void setPositionSeconds(double seconds, bool publishImmediately = false);
+    bool positionAdvancing() const;
+    void updateUiPositionTimer();
     void requestMpvPositionRefresh(const char *reason);
     double clampedPosition(double seconds) const;
     double seekAnchorPosition();
@@ -383,10 +405,26 @@ private:
     MpvLifecycle m_mpvLifecycle;
     quint64 m_mpvTeardownGeneration = 0;
     quint64 m_mpvEventGeneration = 0;
+    quint64 m_playGeneration = 0;
     mpv_handle *m_idleMpvHandle = nullptr;
     bool m_idleMpvPreparationScheduled = false;
     bool m_idleMpvPreparationEnabled = true;
+    bool m_firstFramePresented = false;
+    bool m_idleMpvNeedsVideoSurface = true;
+    bool m_idleMpvEmbeddedVideo = false;
+    std::shared_ptr<MpvPreparation> m_mpvPreparation;
+    std::function<void()> m_mpvPreparationContinuation;
     QTimer m_progressTimer;
+    QTimer m_networkTimer;
+    QVariantMap m_networkMetrics;
+    QUrl m_networkOrigin;
+    QByteArray m_sessionRequestHeaders;
+    QVariantMap m_sessionNetworkProfile;
+    QSslCertificate m_sessionTrustCertificate;
+    bool m_networkQueryPending = false;
+    double m_networkBufferSeconds = 0;
+    double m_networkVideoBitrate = 0;
+    double m_networkAudioBitrate = 0;
     QTimer m_backGuardTimer;
     QTimer m_uiPositionTimer;
     QTimer m_seekWatchdogTimer;
@@ -438,6 +476,8 @@ private:
     std::atomic<int> m_subtitleDelayMs = 0;
     std::atomic<int> m_volume = 100;
     std::atomic_bool m_muted = false;
+    bool m_volumeKnown = false;
+    bool m_muteKnown = false;
     double m_playbackSpeed = 1.0;
     double m_syncPlaybackSpeed = 1.0;
     bool m_syncPlaybackSpeedActive = false;

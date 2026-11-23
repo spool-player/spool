@@ -504,13 +504,12 @@ namespace {
                 const QRhiTexture::NativeTexture native = target->nativeTexture();
                 if (!native.object)
                     return false;
-                mpv_d3d11_texture texture {};
-                texture.texture = reinterpret_cast<void *>(native.object);
-                texture.w = size.width();
-                texture.h = size.height();
+                // mpv takes the size from the texture itself.
+                mpv_d3d11_fbo fbo {};
+                fbo.tex = reinterpret_cast<void *>(native.object);
 
                 mpv_render_param params[] = {
-                    { MPV_RENDER_PARAM_D3D11_TEXTURE, &texture },
+                    { MPV_RENDER_PARAM_D3D11_FBO, &fbo },
                     { MPV_RENDER_PARAM_INVALID, nullptr },
                 };
                 return checkRenderResult(mpv_render_context_render(ctx, params));
@@ -729,8 +728,9 @@ namespace {
             mpv_render_context *newCtx = nullptr;
             int err = MPV_ERROR_UNSUPPORTED;
             for (const char *backend : backends) {
-                // The legacy renderer implements only the OpenGL render API.
-                if (backend == backends[1] && rhi->backend() != QRhi::OpenGLES2)
+                // The legacy renderer implements only the OpenGL and D3D11
+                // render APIs.
+                if (backend == backends[1] && rhi->backend() != QRhi::OpenGLES2 && rhi->backend() != QRhi::D3D11)
                     break;
                 std::vector<mpv_render_param> attempt = params;
                 attempt.push_back({ MPV_RENDER_PARAM_BACKEND, const_cast<char *>(backend) });
@@ -994,7 +994,8 @@ QQuickFramebufferObject::Renderer *MpvVideoItem::createRenderer() const
 MpvVideoItem::HandleSnapshot MpvVideoItem::takePendingHandle()
 {
     QMutexLocker locker(&m_handleMutex);
-    HandleSnapshot snap { m_pendingHandle, m_handleDirty, m_releaseCompleted, m_attachCompleted, m_pendingRenderBackend };
+    HandleSnapshot snap { m_pendingHandle, m_handleDirty, m_releaseCompleted, m_attachCompleted,
+        m_pendingRenderBackend };
     m_handleDirty = false;
     m_releaseCompleted.reset();
     return snap;

@@ -47,13 +47,14 @@ namespace {
         return std::max(1, cpuListSize(QString::fromUtf8(siblings.readAll()).trimmed()));
     }
 
+    // /proc files report a size of zero, so QFile::atEnd() is true before the
+    // first read; read the whole thing instead of looping until the end.
     qint64 totalMemoryBytes()
     {
         QFile file(QStringLiteral("/proc/meminfo"));
         if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
             return 0;
-        while (!file.atEnd()) {
-            const QByteArray line = file.readLine();
+        for (const QByteArray& line : file.readAll().split('\n')) {
             if (line.startsWith("MemTotal:"))
                 return line.simplified().split(' ').value(1).toLongLong() * 1024LL;
         }
@@ -71,7 +72,9 @@ PlatformCpuProbe platformCpuProbe(int logicalCpus)
 
 PlatformMemoryPolicy platformMemoryPolicy()
 {
-    return { totalMemoryBytes(), 1024LL * kMiB, 96LL * kMiB, 160LL * kMiB, 64, 8LL * kMiB, 24LL * kMiB };
+    // The TV keeps most of a 2 GB set for itself (an app sees about 400 MB
+    // free), so one that size still gets the low-memory budget.
+    return { totalMemoryBytes(), 1024LL * kMiB, 96LL * kMiB, 160LL * kMiB, 64, 8LL * kMiB, 24LL * kMiB, 2560LL * kMiB };
 }
 
 QString platformProcessMemoryDiagnostics()

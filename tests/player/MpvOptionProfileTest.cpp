@@ -165,6 +165,7 @@ SPOOL_TEST_MAIN("mpv-option-profile")
     require(valueFor(desktop, "curl-buffer-size") == "4194304", "desktop should use a 4 MiB network ring");
     require(valueFor(desktop, "curl-max-request-size") == "1048576", "desktop should issue 1 MiB ranges");
     require(valueFor(desktop, "curl-parallel-requests") == "1", "desktop should default to one range request");
+    require(valueFor(desktop, "network-timeout") == "15", "a silent connection should be retried after 15 s");
     require(
         valueFor(desktop, "initial-audio-sync").isEmpty(), "desktop should retain mpv's initial audio sync default");
     require(valueFor(desktop, "audio-fallback-to-null") == "yes",

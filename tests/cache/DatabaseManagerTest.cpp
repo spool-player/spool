@@ -149,7 +149,7 @@ SPOOL_TEST_MAIN("database-manager")
             message);
     };
     requireLegacyAccount(database, "legacy sign-in should be readable with its token");
-#ifndef Q_OS_WIN
+#if !defined(Q_OS_WIN) && !defined(SPOOL_APPLE_MOBILE)
     const QFileInfo credentialInfo(QDir(credentialPath).entryInfoList(QDir::Files).front());
     require((credentialInfo.permissions()
                 & (QFileDevice::ReadGroup | QFileDevice::WriteGroup | QFileDevice::ReadOther | QFileDevice::WriteOther))
@@ -290,6 +290,7 @@ SPOOL_TEST_MAIN("database-manager")
     readOnly.shutdown();
     QFile::setPermissions(databasePath, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
     QFile::setPermissions(statePath, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+    CredentialStore::remove(QStringLiteral("profile"));
 
     return 0;
 }

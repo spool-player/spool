@@ -34,6 +34,9 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
+#ifdef Q_OS_LINUX
+#include <sys/prctl.h>
+#endif
 
 namespace SpoolTests {
 namespace {
@@ -57,9 +60,9 @@ int invoke(const char *name, int argc, char **argv)
 QString fixturePath(const char *relativePath)
 {
 #ifdef SPOOL_MOBILE_TEST_BUNDLE
-    static const QDir root(mobileFixtureRoot());
+    const QDir root(mobileFixtureRoot());
 #else
-    static const QDir root(QStringLiteral(TEST_SOURCE_DIR));
+    const QDir root(QStringLiteral(TEST_SOURCE_DIR));
 #endif
     return root.filePath(QString::fromUtf8(relativePath));
 }
@@ -198,6 +201,14 @@ private:
 // They exercise OS exit/crash semantics rather than mocking QProcess results.
 int fixture(const QString& name, int argc, char **argv)
 {
+#ifdef Q_OS_LINUX
+    // The crash selectors crash on purpose. Keep them out of systemd-coredump,
+    // which otherwise files each one as a desktop crash report. The supervisor
+    // still sees the signal, which is all it asserts.
+    if (name == QStringLiteral("fixture-crash") || name == QStringLiteral("fixture-access-violation")
+        || name == QStringLiteral("fixture-forward-crash"))
+        ::prctl(PR_SET_DUMPABLE, 0);
+#endif
     if (name == QStringLiteral("fixture-crash"))
         std::abort();
     if (name == QStringLiteral("fixture-access-violation")) {
@@ -295,10 +306,12 @@ void finishReceipt()
 {
     if (receiptPath.isEmpty())
         return;
+    const QString targetPath = receiptPath;
+    receiptPath.clear();
 #ifdef SPOOL_MOBILE_TEST_BUNDLE
     nativeStage("receipt-handler-entry");
 #endif
-    const bool saved = save(receiptPath, receipt);
+    const bool saved = save(targetPath, receipt);
 #ifdef SPOOL_MOBILE_TEST_BUNDLE
     if (diagnosticLogReady) {
         std::fprintf(stderr, "native stage: receipt-handler-return saved=%d\n", int(saved));
@@ -619,6 +632,11 @@ int main(int argc, char **argv)
 #endif
     std::signal(SIGABRT, abortAsOsCrash);
 #endif
+    // Bundled QML carries reproducible resource timestamps, so the persistent
+    // QML cache cannot tell an edited test or component from the last build's
+    // and a direct run executes stale code. CTest sets this too; setting it
+    // here covers every way the binary is started, selectors included.
+    qputenv("QML_DISABLE_DISK_CACHE", "1");
     if (!initializeDiagnosticLog(argc, argv))
         return 2;
     if (!initializeReceipt(argc, argv))
@@ -643,6 +661,16 @@ int main(int argc, char **argv)
         supervisor |= std::string_view(argv[index]) == "--run-all";
         list |= std::string_view(argv[index]) == "--list";
     }
+#if defined(SPOOL_E2E_BINARY) && defined(Q_OS_LINUX) && !defined(SPOOL_ANDROID)
+    // GUI selectors open real windows and drive input. Never on the person's
+    // desktop: inside tools/test-gpu-session.sh, or explicitly offscreen.
+    if (!list && qEnvironmentVariable("SPOOL_PRIVATE_TEST_SESSION") != QLatin1String("1")
+        && qEnvironmentVariable("QT_QPA_PLATFORM").section(QLatin1Char(':'), 0, 0) != QLatin1String("offscreen")) {
+        std::cerr << "spool-e2e-tests runs only on a private display: use nix run .#tests, ctest, "
+                     "tools/test-gpu-session.sh, or QT_QPA_PLATFORM=offscreen\n";
+        return 2;
+    }
+#endif
     if (supervisor || list) {
         QCoreApplication app(argc, argv);
         if (list) {
@@ -654,6 +682,10 @@ int main(int argc, char **argv)
             receipt.insert(QStringLiteral("selectors"), selectors);
             receipt.insert(QStringLiteral("status"), QStringLiteral("passed"));
             receipt.insert(QStringLiteral("exitCode"), 0);
+            finishReceipt();
+#ifdef SPOOL_MOBILE_TEST_BUNDLE
+            SpoolTests::cleanupMobileFixtures();
+#endif
             return 0;
         }
 #ifdef SPOOL_MOBILE_TEST_BUNDLE
@@ -724,5 +756,9 @@ int main(int argc, char **argv)
         nativeStage("status-assigned");
 #endif
     }
+    finishReceipt();
+#ifdef SPOOL_MOBILE_TEST_BUNDLE
+    SpoolTests::cleanupMobileFixtures();
+#endif
     return result;
 }

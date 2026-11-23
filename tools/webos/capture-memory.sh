@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "$ROOT/tools/webos/device-common.sh"
+
 host="${TV_HOST:-}"
 app_id="com.sachk.spool"
 interval="1"
-duration="0"
+duration="300"
+wait_timeout="600"
 out=""
 plot=1
 wait_for_process=0
@@ -22,7 +26,8 @@ Options:
   --host HOST        required SSH host unless TV_HOST is set
   --app-id ID       app id/process match (default: com.sachk.spool)
   --interval SEC    sample interval (default: 1)
-  --duration SEC    stop after SEC; 0 means until Ctrl-C (default: 0)
+  --duration SEC    bounded capture window, 1..86400 (default: 300)
+  --wait-timeout SEC maximum process-lifetime wait (default: 600)
   --out PATH        output CSV path (default: build/memory/<timestamp>.csv)
   --wait-for-process
                     wait until the app process exists before writing samples
@@ -39,10 +44,14 @@ EOF
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --host|--app-id|--interval|--duration|--out|--wait-timeout) webos_require_value "$@" ;;
+  esac
+  case "$1" in
     --host) host="$2"; shift 2 ;;
     --app-id) app_id="$2"; shift 2 ;;
     --interval) interval="$2"; shift 2 ;;
     --duration) duration="$2"; shift 2 ;;
+    --wait-timeout) wait_timeout="$2"; shift 2 ;;
     --out) out="$2"; shift 2 ;;
     --wait-for-process) wait_for_process=1; shift ;;
     --stop-on-exit) stop_on_exit=1; shift ;;
@@ -54,10 +63,19 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ -n "$host" ]] || { echo "missing required --host HOST (or TV_HOST)" >&2; usage >&2; exit 2; }
+webos_app_id "$app_id"
+webos_uint --interval "$interval" 1 3600
+webos_uint --duration "$duration"
+webos_uint --wait-timeout "$wait_timeout"
+interval=$((10#$interval))
+duration=$((10#$duration))
+wait_timeout=$((10#$wait_timeout))
+webos_transport_init "$host"
+(( ! plot )) || webos_require_command python3
 
 if [[ -z "$out" ]]; then
-  mkdir -p build/memory
-  out="build/memory/tv-memory-$(date +%Y%m%d-%H%M%S).csv"
+  mkdir -p "$ROOT/build/memory"
+  out="$ROOT/build/memory/tv-memory-$(date +%Y%m%d-%H%M%S).csv"
 else
   mkdir -p "$(dirname "$out")"
 fi
@@ -67,8 +85,8 @@ trap 'rm -f "$tmp"' EXIT
 
 echo "Writing $out"
 
-ssh -F /dev/null -o BatchMode=yes "$host" \
-  "APP_ID='$app_id' INTERVAL='$interval' DURATION='$duration' WAIT_FOR_ABSENT='$wait_for_absent' WAIT_FOR_PROCESS='$wait_for_process' STOP_ON_EXIT='$stop_on_exit' sh -s" >"$tmp" <<'REMOTE'
+timeout --signal=TERM --kill-after=5s "$((wait_timeout + duration + 15))s" "${WEBOS_SSH[@]}" -- "$host" \
+  "APP_ID='$app_id' INTERVAL='$interval' DURATION='$duration' WAIT_TIMEOUT='$wait_timeout' WAIT_FOR_ABSENT='$wait_for_absent' WAIT_FOR_PROCESS='$wait_for_process' STOP_ON_EXIT='$stop_on_exit' sh -s" >"$tmp" <<'REMOTE'
 app_id=${APP_ID:-com.sachk.spool}
 interval=${INTERVAL:-1}
 duration=${DURATION:-0}
@@ -76,6 +94,7 @@ wait_for_absent=${WAIT_FOR_ABSENT:-0}
 wait_for_process=${WAIT_FOR_PROCESS:-0}
 stop_on_exit=${STOP_ON_EXIT:-0}
 start=$(date +%s)
+wait_deadline=$((start + WAIT_TIMEOUT))
 observed_pid=
 
 printf '%s\n' 'epoch,pid,vmrss_kb,vmsize_kb,vmdata_kb,vmswap_kb,pss_kb,threads,mem_total_kb,mem_free_kb,mem_available_kb,buffers_kb,cached_kb,swap_total_kb,swap_free_kb'
@@ -110,25 +129,33 @@ meminfo_value() {
 
 if [ "$wait_for_absent" = "1" ]; then
   while [ -n "$(find_pid)" ]; do
-    sleep "$interval"
+    [ "$(date +%s)" -lt "$wait_deadline" ] || { echo 'timed out waiting for current process to exit' >&2; exit 1; }
+    remaining=$((wait_deadline - $(date +%s)))
+    pause=$interval
+    [ "$pause" -le "$remaining" ] || pause=$remaining
+    [ "$pause" -le 0 ] || sleep "$pause"
   done
 fi
 
 while :; do
   now=$(date +%s)
-  if [ "$duration" != "0" ] && [ $((now - start)) -ge "$duration" ]; then
+  if { [ "$wait_for_process" != "1" ] || [ -n "$observed_pid" ]; } && [ $((now - start)) -ge "$duration" ]; then
     break
   fi
 
   pid=$(find_pid)
   if [ -z "$observed_pid" ]; then
     if [ -z "$pid" ] && [ "$wait_for_process" = "1" ]; then
-      sleep "$interval"
+      [ "$now" -lt "$wait_deadline" ] || { echo 'timed out waiting for app process' >&2; exit 1; }
+      remaining=$((wait_deadline - now))
+      pause=$interval
+      [ "$pause" -le "$remaining" ] || pause=$remaining
+      [ "$pause" -le 0 ] || sleep "$pause"
       continue
     fi
     if [ -n "$pid" ]; then
       observed_pid=$pid
-      start=$now
+      [ "$wait_for_process" != "1" ] || start=$now
     fi
   elif [ "$stop_on_exit" = "1" ]; then
     if [ ! -r "/proc/$observed_pid/status" ]; then
@@ -156,7 +183,10 @@ while :; do
     "$(meminfo_value Cached)" "$(meminfo_value SwapTotal)" \
     "$(meminfo_value SwapFree)"
 
-  sleep "$interval"
+  remaining=$((duration - ($(date +%s) - start)))
+  pause=$interval
+  [ "$pause" -le "$remaining" ] || pause=$remaining
+  [ "$pause" -le 0 ] || sleep "$pause"
 done
 REMOTE
 

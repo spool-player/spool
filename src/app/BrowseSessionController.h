@@ -2,13 +2,19 @@
 
 #include "../media/MediaTypes.h"
 #include "../models/MovieGridModel.h"
+#include "BrowseIndex.h"
 
 #include <QHash>
 #include <QObject>
 #include <QSet>
 #include <QString>
+#include <QTimer>
+#include <QVariantList>
 #include <QVariantMap>
 
+#include <deque>
+#include <map>
+#include <set>
 #include <vector>
 
 namespace Spool {
@@ -29,6 +35,16 @@ class BrowseSessionController final : public QObject {
     Q_PROPERTY(QVariantMap query READ query NOTIFY changed)
     Q_PROPERTY(QVariantMap filterOptions READ filterOptions NOTIFY changed)
     Q_PROPERTY(int filterActiveCount READ filterActiveCount NOTIFY changed)
+    // Only the rows near the viewport are held; the rest are placeholders.
+    Q_PROPERTY(bool sparse READ sparse NOTIFY pagingChanged)
+    // Sorted by name, so letters mean something and typing can seek.
+    Q_PROPERTY(bool alphabetical READ alphabetical NOTIFY changed)
+    // [{label, row, exact}] in listing order, for the letter rail.
+    Q_PROPERTY(QVariantList alphabet READ alphabet NOTIFY alphabetChanged)
+    Q_PROPERTY(bool alphabetExact READ alphabetExact NOTIFY alphabetChanged)
+    // Bumps whenever letter positions may have moved; cheap to bind to.
+    Q_PROPERTY(int alphabetRevision READ alphabetRevision NOTIFY alphabetChanged)
+    Q_PROPERTY(bool seeking READ seeking NOTIFY seekingChanged)
 
 public:
     explicit BrowseSessionController(LibraryPrefetchController *prefetch, QObject *parent = nullptr);
@@ -103,6 +119,37 @@ public:
         return m_filterOptions;
     }
     int filterActiveCount() const;
+    bool sparse() const
+    {
+        return m_items.isSparse();
+    }
+    bool alphabetical() const;
+    QVariantList alphabet() const;
+    bool alphabetExact() const
+    {
+        return m_index.exact();
+    }
+    int alphabetRevision() const
+    {
+        return m_alphabetRevision;
+    }
+    bool seeking() const
+    {
+        return !m_seekKey.isEmpty();
+    }
+    int blockSize() const
+    {
+        return m_blockSize;
+    }
+    // The letter a row is under, known or estimated: what a placeholder and
+    // the scrub callout show before the row has loaded.
+    Q_INVOKABLE QString labelAt(int row) const;
+    Q_INVOKABLE int rowForLabel(const QString& label) const;
+    // Moves to the first title starting with `text`, as a file browser does,
+    // loading only the rows it needs to find it. False when this listing
+    // cannot seek by name; the page then searches what is loaded.
+    Q_INVOKABLE bool seekPrefix(const QString& text);
+    Q_INVOKABLE void cancelSeek();
     BrowseDescriptor descriptor() const
     {
         return m_descriptor;
@@ -117,6 +164,15 @@ public:
     void resetPaging(const QString& cacheKey = {});
     void setPage(const PagedMovieItems& page, const QString& cacheKey, bool append);
     void setLoadingMore(bool loading);
+    // A requested block of a sparse listing arrived, or could not be had.
+    void applyBlock(int start, const PagedMovieItems& page, const QString& cacheKey);
+    void blockFailed(int start);
+    void setExactIndex(const std::vector<BrowseIndexEntry>& entries, const QString& cacheKey);
+    // The server's letter counts could not be had; asks again a couple of
+    // times before settling for estimates.
+    void indexFailed(const QString& cacheKey);
+    // Most rows a sparse listing keeps loaded at once.
+    void setLoadedRowBudget(int rows);
     Q_INVOKABLE void prefetchVisibleRange(int firstIndex, int lastIndex);
     Q_INVOKABLE void prefetchPageForIndex(int lastIndex);
     Q_INVOKABLE void prefetchNextPage();
@@ -141,10 +197,28 @@ signals:
     void changed();
     void reloadRequested();
     void moreItemsRequested();
+    // Fetch rows [start, start + blockSize) of the current listing.
+    void blockRequested(int start);
+    // The view left a requested block behind; give up on fetching it.
+    void blockAbandoned(int start);
+    void indexRequested();
+    void alphabetChanged();
+    void seekingChanged();
+    // A seek moved to `row`; `settled` once it is the answer, not a guess.
+    void seekMoved(int row, bool settled);
 
 private:
     void clearBrowseIdentity();
     void requestQuery(QVariantMap query);
+    void beginSparseListing(const PagedMovieItems& page);
+    void resetSparseState();
+    void observeRows(int first, const std::vector<MovieItem>& items);
+    void scheduleBlocks();
+    void pumpBlocks();
+    void evictBlocks();
+    void stepSeek();
+    bool sortDescending() const;
+    void noteAlphabetChanged();
 
     LibraryPrefetchController *m_prefetch = nullptr;
     MovieGridModel m_items;
@@ -167,6 +241,29 @@ private:
     QHash<QString, QVariantMap> m_libraryQueries;
     QVariantMap m_query;
     QVariantMap m_filterOptions;
+
+    // Sparse listings: blocks are aligned runs of m_blockSize rows.
+    int m_blockSize = 100;
+    int m_loadedRowBudget = 3000;
+    int m_viewFirst = 0;
+    int m_viewLast = 0;
+    std::map<int, quint64> m_loadedBlocks; // start row -> last use
+    std::vector<int> m_pendingBlocks;
+    // Given up on, until their cancelled fetch reports back.
+    std::set<int> m_abandonedBlocks;
+    // Failed fetches of blocks still on screen, retried a few times.
+    std::map<int, int> m_blockFailures;
+    int m_indexFailures = 0;
+    std::deque<int> m_wantedBlocks;
+    int m_lastScheduledBlock = 0;
+    quint64 m_useClock = 0;
+    QTimer m_blockTimer;
+    BrowseIndex m_index;
+    // Type-to-seek in progress: the folded prefix and how many guesses so far.
+    QString m_seekKey;
+    int m_seekSteps = 0;
+    int m_seekWaitingFor = -1;
+    int m_alphabetRevision = 0;
 };
 
 } // namespace Spool

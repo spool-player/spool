@@ -76,12 +76,7 @@ extern "C" JNIEXPORT void JNICALL Java_com_sachk_spool_VideoSurfaceBridge_native
 
 bool platformIdleMpvPreparationEnabled()
 {
-    return false;
-}
-
-void runAfterPlatformMpvLoaded(std::function<void()> callback)
-{
-    callback();
+    return qEnvironmentVariable("SPOOL_DISABLE_IDLE_MPV") != QLatin1String("1");
 }
 
 MpvOptionProfile::Platform platformMpvOptionProfile()

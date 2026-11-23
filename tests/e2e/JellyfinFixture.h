@@ -27,11 +27,13 @@ public:
     int rejectedLogins = 0;
     int authenticatedViews = 0;
     int authenticatedBrowse = 0;
+    int playedFilterRequests = 0;
     int authenticatedRequests = 0;
     int playbackNegotiations = 0;
     int mediaRequests = 0;
     qint64 mediaBytes = 0;
     QList<QJsonObject> reports;
+    QStringList playedItems;
     QStringList unexpected;
     int detailRequests = 0;
     int detailResponses = 0;

@@ -5,20 +5,13 @@
 
 namespace Spool {
 
-namespace {
-
-    constexpr qint64 kMiB = 1024LL * 1024LL;
-    constexpr qint64 kLowMemoryThresholdBytes = 1536LL * kMiB;
-
-} // namespace
-
 MemoryBudget MemoryBudget::detect()
 {
     const PlatformMemoryPolicy policy = platformMemoryPolicy();
     MemoryBudget budget;
     budget.memTotalBytes = policy.totalBytes;
     const qint64 effectiveMem = budget.memTotalBytes > 0 ? budget.memTotalBytes : policy.fallbackBytes;
-    const bool lowMemory = effectiveMem < kLowMemoryThresholdBytes;
+    const bool lowMemory = effectiveMem < policy.lowMemoryBytes;
 
     budget.networkDiskCacheBytes = lowMemory ? policy.baseNetworkDiskCacheBytes / 2 : policy.baseNetworkDiskCacheBytes;
     budget.qmlImageDiskCacheBytes

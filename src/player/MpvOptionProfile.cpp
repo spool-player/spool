@@ -509,6 +509,9 @@ std::vector<MpvOption> MpvOptionProfile::applicationOptions(Platform platform, b
         { "curl-buffer-size", QByteArray::number(network.ringBytes) },
         { "curl-max-request-size", QByteArray::number(network.rangeBytes) },
         { "curl-parallel-requests", QByteArray::number(network.parallelRequests) },
+        // A connection that goes quiet without closing is retried after this
+        // long rather than mpv's 60 s, which outlasts any demuxer cache.
+        { "network-timeout", "15" },
         { "force-window", "no" },
     };
     if (!needsVideoSurface) {

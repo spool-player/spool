@@ -21,6 +21,18 @@
     <name>Spool</name>
   </developer>
   <releases>
+    <release version="0.10.1" date="2026-10-23">
+      <description><p>On a television, a text field's keyboard now opens when OK is released, so it no longer closes again at once and submits an empty entry. Plex no longer asks for the PIN of the account the device signed in with, which Plex itself does not require, and empty PINs are never sent. Updates download over two connections and install as soon as they are verified, without a second press. A saved account that fails to open now says so in the log.</p></description>
+    </release>
+    <release version="0.10.0" date="2026-10-22">
+      <description><p>The library scroll bar is now its letter index: the thumb names where you are, every letter has room to aim at, a tap jumps to a letter and a drag scrubs, and from the remote Up and Down step through letters. Jumping through a very large library no longer waits behind rows it has passed, and rows that fail to load are fetched again. Plex connects at whichever address answers fastest, prefers a server's own address over its plex.direct and relay ones, shows addresses readably, and can remember a Plex Home PIN for startup. Home loses its providers button, which stays in Settings. Night mode works on webOS, playback recovers from a stalled Starfish pipeline and from a connection that goes quiet, and old compiled QML caches are cleaned up.</p></description>
+    </release>
+    <release version="0.9.2" date="2026-10-22">
+      <description><p>Browse very large libraries smoothly: only the rows on screen are loaded, an alphabet index jumps to any letter, and typing finds a title the way a file browser does. Artwork downloads adapt to each server's capacity. Adding an account is one step, with no provider versions or update prompts, Plex servers can be added from an existing sign-in, and a new sign-in opens straight into its library. The iPhone build installs through SideStore or AltStore. Fixes held navigation stalling while rows load, speed tests losing their measurements, and prepared playback ignoring a paused start.</p></description>
+    </release>
+    <release version="0.9.1" date="2026-10-17">
+      <description><p>Improve retained-page navigation, remote focus recovery, provider lifecycle safety, and playback controls. Add repeatable isolated performance profiling and extend real-application end-to-end journeys. Clean up webOS packaging and require explicit launch for device verification. Bundle updated providers using the source-only socket host contract.</p></description>
+    </release>
     <release version="0.9.0" date="2026-10-07">
       <description><p>Add a Stremio add-on provider with its own stream and torrent-file chooser using an external streaming server. Download original or server-converted media for offline playback, with platform-appropriate destination selection. Simplify settings sync to a recommended preset with one status and recovery screen. Add a global seek-preview switch and filtered provider logging. Remove synchronous mpv render waits from desktop fullscreen transitions. Bundle compatible Jellyfin, Emby, Plex, Stremio and Open Movies providers, with explicit Apple App Store inclusion policy. Retain automatic episode continuation, full-resolution GPU-scaled seek previews, Home watching-profile selection and native spoolet controls.</p></description>
     </release>

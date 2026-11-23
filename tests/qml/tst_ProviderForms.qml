@@ -22,6 +22,7 @@ TestCase {
                                      title: "Protected account"
                                  })
         property var rows: []
+        property var discovered: []
         property var completions: []
         property var pendingAuthentication: null
         property var pendingAuthenticationRejection: null
@@ -30,7 +31,7 @@ TestCase {
         function request(operation, args) {
             if (operation === "discover")
                 return Promise.resolve({
-                                           servers: []
+                                           servers: discovered
                                        })
             if (operation === "serverCandidates")
                 return Promise.resolve({
@@ -245,6 +246,23 @@ TestCase {
         wait(10)
         compare(provider.completions.length, 0)
         compare(view.step, "server")
+    }
+    function test_singleDiscoveredServerOpensOnceByItself() {
+        provider.discovered = [
+                    {
+                        id: "living-room",
+                        name: "Living room",
+                        address: "https://fixture.invalid"
+                    }
+                ]
+        const view = form(login)
+        tryCompare(view, "step", "account")
+        // Back is a way out of that guess, not into it again.
+        verify(view.back())
+        compare(view.step, "server")
+        wait(50)
+        compare(view.step, "server")
+        provider.discovered = []
     }
     function test_cancelledCodeCannotCompleteAccount() {
         const view = form(login)

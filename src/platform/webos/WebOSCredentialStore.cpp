@@ -1,4 +1,5 @@
 #include "../CredentialStore.h"
+#include "../common/CredentialStoreFileBackend.h"
 
 #include <QCryptographicHash>
 #include <QDir>
@@ -33,15 +34,7 @@ QString load(const QString& profileId)
 
 bool save(const QString& profileId, const QString& accessToken)
 {
-    const QString root = credentialRoot();
-    if (!QDir().mkpath(root))
-        return false;
-    QFile::setPermissions(root, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
-    QFile file(credentialPath(profileId));
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
-        return false;
-    file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
-    return file.write(accessToken.toUtf8()) >= 0;
+    return FileBackend::saveToPath(credentialPath(profileId), accessToken);
 }
 
 void remove(const QString& profileId)

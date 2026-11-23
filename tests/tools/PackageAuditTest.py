@@ -69,14 +69,15 @@ def macho_fixture(*, cpu: int = 0x0100000C, platform: int = 3, kind: int = 2,
 
 
 def ipa_fixture(path: Path, *, version: str = "0.9.0", binary: bytes | None = None,
-                metadata: dict | None = None, extras: tuple = ()) -> bytes:
+                metadata: dict | None = None, extras: tuple = (), platform: str = "tvOS") -> bytes:
     info = {
         "CFBundleExecutable": "Spool", "CFBundlePackageType": "APPL",
         "CFBundleShortVersionString": version, "CFBundleVersion": version,
-        "CFBundleSupportedPlatforms": ["AppleTVOS"], "UIDeviceFamily": [3],
+        "CFBundleSupportedPlatforms": ["AppleTVOS" if platform == "tvOS" else "iPhoneOS"],
+        "UIDeviceFamily": [3] if platform == "tvOS" else [1, 2],
     }
     info.update(metadata or {})
-    binary = macho_fixture() if binary is None else binary
+    binary = macho_fixture(platform=3 if platform == "tvOS" else 2) if binary is None else binary
     with zipfile.ZipFile(path, "w") as archive:
         for name, data, mode in (
             ("Payload/Spool.app/Info.plist", plistlib.dumps(info, fmt=plistlib.FMT_BINARY), 0o100644),
@@ -91,40 +92,44 @@ def ipa_fixture(path: Path, *, version: str = "0.9.0", binary: bytes | None = No
     return binary
 
 
-def tvos_contract(script: Path) -> None:
+def apple_mobile_contract(script: Path, platform: str) -> None:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
-        ipa = root / "Spool-0.9.0-tvOS-arm64.ipa"
+        command = "tvos-ipa" if platform == "tvOS" else "ios-ipa"
+        device_platform = 3 if platform == "tvOS" else 2
+        supported_platform = "AppleTVOS" if platform == "tvOS" else "iPhoneOS"
+        ipa = root / f"Spool-0.9.0-{platform}-arm64.ipa"
         extracted = root / "extracted"
-        binary = ipa_fixture(ipa, extras=(
+        binary = ipa_fixture(ipa, platform=platform, extras=(
             ("Payload/Spool.app/resources/alias", b"data", stat.S_IFLNK | 0o777),
         ))
-        result = run(script, "tvos-ipa", str(ipa), "--version", "0.9.0", "--extract", str(extracted))
+        result = run(script, command, str(ipa), "--version", "0.9.0", "--extract", str(extracted))
         assert "signing/provisioning and runtime not verified" in result.stdout
         app = extracted / "Payload/Spool.app"
         assert (app / "Spool").read_bytes() == binary
         assert (app / "Spool").stat().st_mode & 0o111
         assert (app / "resources/alias").is_symlink()
         assert (app / "resources/alias").read_bytes() == b"bundled-resource"
-        nonempty = run(script, "tvos-ipa", str(ipa), "--version", "0.9.0",
+        nonempty = run(script, command, str(ipa), "--version", "0.9.0",
                        "--extract", str(extracted), expected=1)
         assert "destination must be empty" in nonempty.stderr
 
         cases = (
             ({"version": "0.8.0"}, "embedded bundle version"),
             ({"metadata": {"CFBundleVersion": "99"}}, "embedded bundle version"),
-            ({"metadata": {"CFBundleSupportedPlatforms": ["AppleTVSimulator"]}}, "AppleTVOS"),
-            ({"metadata": {"UIDeviceFamily": [1, 2]}}, "device family"),
+            ({"metadata": {"CFBundleSupportedPlatforms": ["iPhoneSimulator"]}}, supported_platform),
+            ({"metadata": {"UIDeviceFamily": [1, 2] if platform == "tvOS" else [3]}}, "device family"),
             ({"metadata": {"CFBundleExecutable": "../Spool"}}, "Spool application executable"),
             ({"binary": b"not Mach-O"}, "not Mach-O"),
             ({"binary": macho_fixture(cpu=0x01000007)}, "architecture"),
-            ({"binary": macho_fixture(platform=8)}, "device tvOS"),
-            ({"binary": macho_fixture(platform=2)}, "device tvOS"),
-            ({"binary": macho_fixture(kind=6)}, "not an executable"),
-            ({"binary": macho_fixture()[:-1]}, "load command bounds"),
-            ({"binary": macho_fixture(dependency="@rpath/missing.dylib",
+            ({"binary": macho_fixture(platform=8 if platform == "tvOS" else 7)}, f"device {platform}"),
+            ({"binary": macho_fixture(platform=2 if platform == "tvOS" else 3)}, f"device {platform}"),
+            ({"binary": macho_fixture(platform=device_platform, kind=6)}, "not an executable"),
+            ({"binary": macho_fixture(platform=device_platform)[:-1]}, "load command bounds"),
+            ({"binary": macho_fixture(platform=device_platform, dependency="@rpath/missing.dylib",
                                       rpath="@executable_path/Frameworks")}, "unresolved Mach-O dependency"),
-            ({"binary": macho_fixture(dependency="/nix/store/build/lib.dylib")}, "forbidden Mach-O dependency"),
+            ({"binary": macho_fixture(platform=device_platform, dependency="/nix/store/build/lib.dylib")},
+             "forbidden Mach-O dependency"),
             ({"extras": (("../escape", b"bad", 0o100644),)}, "unsafe or unexpected IPA member"),
             ({"extras": (("Payload/Spool.app/../../escape", b"bad", 0o100644),)}, "unsafe or unexpected"),
             ({"extras": (("/Payload/Spool.app/escape", b"bad", 0o100644),)}, "unsafe or unexpected"),
@@ -142,23 +147,37 @@ def tvos_contract(script: Path) -> None:
             ({"extras": (("Payload/Spool.app/resources/link", b"data", stat.S_IFLNK | 0o777),
                          ("Payload/Spool.app/resources/link/file", b"bad", 0o100644))},
              "non-directory IPA ancestor"),
-            ({"extras": (("Payload/Spool.app/orphan.dylib", macho_fixture(kind=6), 0o100755),)},
+            ({"extras": (("Payload/Spool.app/orphan.dylib",
+                         macho_fixture(platform=device_platform, kind=6), 0o100755),)},
              "unreferenced packaged Mach-O"),
         )
         for options, reason in cases:
-            ipa_fixture(ipa, **options)
-            rejected = run(script, "tvos-ipa", str(ipa), "--version", "0.9.0", expected=1)
+            ipa_fixture(ipa, platform=platform, **options)
+            rejected = run(script, command, str(ipa), "--version", "0.9.0", expected=1)
             assert reason in rejected.stderr, (options, rejected.stderr)
         dependency = "@rpath/helper.dylib"
-        ipa_fixture(ipa, binary=macho_fixture(dependency=dependency, rpath="@executable_path/Frameworks"),
-                    extras=(("Payload/Spool.app/Frameworks/helper.dylib", macho_fixture(kind=6), 0o100755),))
-        run(script, "tvos-ipa", str(ipa), "--version", "0.9.0")
-        ipa_fixture(ipa, binary=macho_fixture(dependency="/System/Library/Frameworks/UIKit.framework/UIKit"))
-        run(script, "tvos-ipa", str(ipa), "--version", "0.9.0")
-        wrong = root / "Spool-0.9.0-tvOS-simulator-arm64.ipa"
+        ipa_fixture(ipa, platform=platform,
+                    binary=macho_fixture(platform=device_platform, dependency=dependency,
+                                         rpath="@executable_path/Frameworks"),
+                    extras=(("Payload/Spool.app/Frameworks/helper.dylib",
+                             macho_fixture(platform=device_platform, kind=6), 0o100755),))
+        run(script, command, str(ipa), "--version", "0.9.0")
+        # A device application must not hide a simulator dependency in Frameworks.
+        ipa_fixture(ipa, platform=platform,
+                    binary=macho_fixture(platform=device_platform, dependency=dependency,
+                                         rpath="@executable_path/Frameworks"),
+                    extras=(("Payload/Spool.app/Frameworks/helper.dylib",
+                             macho_fixture(platform=8 if platform == "tvOS" else 7, kind=6), 0o100755),))
+        assert f"device {platform}" in run(
+            script, command, str(ipa), "--version", "0.9.0", expected=1
+        ).stderr
+        ipa_fixture(ipa, platform=platform, binary=macho_fixture(
+            platform=device_platform, dependency="/System/Library/Frameworks/UIKit.framework/UIKit"))
+        run(script, command, str(ipa), "--version", "0.9.0")
+        wrong = root / f"Spool-0.9.0-{platform}-simulator-arm64.ipa"
         ipa.rename(wrong)
-        rejected = run(script, "tvos-ipa", str(wrong), "--version", "0.9.0", expected=1)
-        assert "named Spool-0.9.0-tvOS-arm64.ipa" in rejected.stderr
+        rejected = run(script, command, str(wrong), "--version", "0.9.0", expected=1)
+        assert f"named Spool-0.9.0-{platform}-arm64.ipa" in rejected.stderr
 
 
 def website_contract(script: Path) -> None:
@@ -193,6 +212,26 @@ def website_contract(script: Path) -> None:
         assert tvos["size"] == len(b"package-protocol-fixture")
         assert tvos["url"].endswith("/v0.9.0/Spool-0.9.0-tvOS-arm64.ipa")
         publisher_contract(script.with_name("publish-website-metadata.py"), output.read_bytes())
+        ios_file = assets / "Spool-0.9.0-iOS-arm64.ipa"
+        ios_file.write_bytes(b"ios-device-package-fixture")
+        run(script, *args)
+        ios_manifest = json.loads(output.read_text())
+        ios_platforms = {item["id"]: item for item in ios_manifest["release"]["platforms"]}
+        assert list(ios_platforms) == ["webos", "android", "windows", "macos", "linux", "tvos", "ios"]
+        ios = ios_platforms["ios"]["downloads"][0]
+        assert ios["name"] == ios_file.name
+        assert ios["architecture"] == "arm64" and ios["format"] == "ipa"
+        assert ios["signing"] == "unsigned"
+        assert ios["sha256"] == hashlib.sha256(b"ios-device-package-fixture").hexdigest()
+        assert ios["size"] == len(b"ios-device-package-fixture")
+        assert ios["url"].endswith("/v0.9.0/Spool-0.9.0-iOS-arm64.ipa")
+        publisher_contract(script.with_name("publish-website-metadata.py"), output.read_bytes())
+        ios_file.write_bytes(b"")
+        assert "empty" in run(script, *args, expected=1).stderr
+        ios_file.unlink()
+        ios_file.symlink_to(assets / names[0])
+        assert "regular final package" in run(script, *args, expected=1).stderr
+        ios_file.unlink()
         for name in names:
             package = assets / name
             package.unlink()
@@ -200,6 +239,7 @@ def website_contract(script: Path) -> None:
             assert "expected exactly one" in rejected.stderr, rejected.stderr
             package.write_bytes(b"package-protocol-fixture")
         for name in ("Spool-0.9.0-tvOS-simulator-arm64.ipa", "Spool-0.8.0-tvOS-arm64.ipa",
+                     "Spool-0.9.0-iOS-simulator-arm64.ipa", "Spool-0.8.0-iOS-arm64.ipa",
                      "new-platform.ipa", "new-platform.apk"):
             extra = assets / name
             extra.write_bytes(b"extra")
@@ -225,16 +265,27 @@ def workflow_artifact_contract(script: Path) -> None:
         shutil.copyfile(script, checker)
         release = workflows / "release.yml"
         release.write_text("pattern: spool-*\n")
-        for names, expected, reason in (
-            (("spool-linux", "spool-tvos-device-arm64", "internal-tvos-simulator-arm64"), 0, "checked"),
-            (("spool-linux",), 1, "exactly one spool-tvos-device-arm64"),
-            (("spool-tvos-device-arm64", "spool-tvos-simulator-arm64"), 1, "must be internal-*"),
-            (("spool-tvos-device-arm64", "spool-tvos-device-arm64"), 1, "exactly one"),
-            (("spool-tvos-device-arm64", "loose-build"), 1, "neither spool-*"),
+        ios_workflow = workflows / "ios-review.yml"
+        for names, ios_names, expected, reason in (
+            (("spool-linux", "spool-tvos-device-arm64", "internal-tvos-simulator-arm64"),
+             ("spool-ios-device-arm64", "internal-ios-simulator-x86_64"), 0, "checked"),
+            (("spool-linux",), ("spool-ios-device-arm64",), 1, "exactly one spool-tvos-device-arm64"),
+            (("spool-tvos-device-arm64", "spool-tvos-simulator-arm64"),
+             ("spool-ios-device-arm64",), 1, "must be internal-*"),
+            (("spool-tvos-device-arm64", "spool-tvos-device-arm64"),
+             ("spool-ios-device-arm64",), 1, "exactly one"),
+            (("spool-tvos-device-arm64", "loose-build"),
+             ("spool-ios-device-arm64",), 1, "neither spool-*"),
+            (("spool-tvos-device-arm64",), (), 1, "exactly one spool-ios-device-arm64"),
+            (("spool-tvos-device-arm64",), ("spool-ios-device-arm64", "spool-ios-device-arm64"),
+             1, "exactly one spool-ios-device-arm64"),
+            (("spool-tvos-device-arm64",), ("spool-ios-device-arm64", "spool-ios-simulator-x86_64"),
+             1, "must be internal-*"),
         ):
-            (workflows / "build-artifacts.yml").write_text("".join(
-                f"- uses: actions/upload-artifact@v4\n  with:\n    name: {name}\n" for name in names
-            ))
+            for workflow, uploads in ((workflows / "build-artifacts.yml", names), (ios_workflow, ios_names)):
+                workflow.write_text("".join(
+                    f"- uses: actions/upload-artifact@v4\n  with:\n    name: {name}\n" for name in uploads
+                ))
             result = subprocess.run(["bash", str(checker)], text=True, capture_output=True)
             assert result.returncode == expected and reason in result.stdout + result.stderr, result
         release.write_text("pattern: *\n")
@@ -349,7 +400,8 @@ def main() -> int:
         (root / "lib/libpackage-audit-dep.so").unlink()
         missing = run(script, "elf", str(root), "--root", "app", "--allow-system", "libc.so.6", expected=1)
         assert "missing ELF dependency" in missing.stderr
-    tvos_contract(script)
+    for platform in ("tvOS", "iOS"):
+        apple_mobile_contract(script, platform)
     website_contract(script.with_name("generate-website-manifest.py"))
     workflow_artifact_contract(script.with_name("check-release-artifacts.sh"))
     return 0

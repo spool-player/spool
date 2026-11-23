@@ -27,9 +27,9 @@ FocusScope {
 
     function routeKey(key, phase, repeat) {
         if (InputKeys.isBack(key, false, false)) {
-            if (phase === "release")
+            if (phase === "press" && !repeat)
                 dismissed()
-            return true
+            return phase === "press"
         }
         if (!InputKeys.isDirection(key))
             return InputKeys.isAccept(key)
@@ -64,6 +64,7 @@ FocusScope {
         color: "#99000000"
 
         TapHandler {
+            gesturePolicy: TapHandler.ReleaseWithinBounds
             onTapped: root.dismissed()
         }
     }
@@ -74,6 +75,8 @@ FocusScope {
         height: content.implicitHeight + Metrics.scaled(48)
         elevated: true
         baseColor: Theme.floatingPanel
+
+        PopupShield {}
 
         ColumnLayout {
             id: content

@@ -52,6 +52,7 @@ enum class SettingTarget {
     ArtworkFormat,
     ArtworkWebpQuality,
     ArtworkJpegQuality,
+    ArtworkDownloads,
     AudioTrackMode,
     RememberSeriesAudioTrack,
     SubtitleLanguage,

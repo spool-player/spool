@@ -59,7 +59,8 @@ FocusScope {
             }
             SecondaryText {
                 Layout.fillWidth: true
-                text: page.installedModule ? "Installed provider version " + page.installedModule.version : ""
+                visible: text.length > 0
+                text: page.installedModule ? String(page.installedModule.summary || "") : ""
                 elide: Text.ElideRight
             }
         }

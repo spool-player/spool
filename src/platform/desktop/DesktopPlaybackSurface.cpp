@@ -14,11 +14,7 @@ namespace {
 
 bool platformIdleMpvPreparationEnabled()
 {
-    return false;
-}
-void runAfterPlatformMpvLoaded(std::function<void()> callback)
-{
-    callback();
+    return qEnvironmentVariable("SPOOL_DISABLE_IDLE_MPV") != QLatin1String("1");
 }
 MpvOptionProfile::Platform platformMpvOptionProfile()
 {

@@ -111,6 +111,14 @@ namespace {
             rank = std::min(rank, matchRank(folded(item.seriesName), query) + 2);
         return std::min(rank, 4);
     }
+
+    // An account Home may draw from: switched on, signed in and not leaving.
+    bool homeEligible(const QVariantMap& account)
+    {
+        return account.value(QStringLiteral("enabled")).toBool() && !account.value(QStringLiteral("locked")).toBool()
+            && !account.value(QStringLiteral("needsSignIn")).toBool()
+            && !account.value(QStringLiteral("removing")).toBool();
+    }
 } // namespace
 
 struct SourceHub::SearchRun {
@@ -270,11 +278,24 @@ public:
     }
     int playbackParallelRequests() const override
     {
-        return active() ? active()->playbackParallelRequests() : 2;
+        return active() ? active()->playbackParallelRequests() : 4;
+    }
+    QVariantMap playbackNetworkProfile() const override
+    {
+        return active() ? active()->playbackNetworkProfile() : QVariantMap();
+    }
+    void updatePlaybackNetworkProfile(const QUrl& origin, const QVariantMap& metrics) override
+    {
+        if (PlaybackSource *playback = active())
+            playback->updatePlaybackNetworkProfile(origin, metrics);
     }
     bool signedIn() const override
     {
         return m_hub->signedIn();
+    }
+    PlaybackSource *reportingContext(const QString& itemId) override
+    {
+        return sourceFor(itemId);
     }
 
     QCoro::Task<PlaybackSession> resolvePlayback(MovieItem item, bool forceTranscode) override
@@ -298,6 +319,7 @@ public:
         item.seriesId = rawId(item.seriesId);
         item.seasonId = rawId(item.seasonId);
         item.albumId = rawId(item.albumId);
+        m_hub->pushPlaybackContext();
         PlaybackSession session = co_await playback->resolvePlayback(std::move(item), forceTranscode);
         session.itemId = m_hub->scoped(account, session.itemId);
         auto& entry = m_hub->m_entries[prefixOf(account)];
@@ -516,6 +538,12 @@ void SourceHub::addSource(Provider *provider)
     const QString accountId = provider->id();
     const bool browse = accountEnabled(accountId);
     m_entries.insert(prefixOf(accountId), { accountId, provider, browse });
+    const auto profile = m_registry->playbackNetworkProfile(accountId);
+    auto& restored = m_entries[prefixOf(accountId)];
+    restored.measuredBitrate = profile.value(QStringLiteral("measured-bitrate")).toLongLong();
+    restored.parallelRequests = profile.value(QStringLiteral("initial-requests"), 1).toInt();
+    if (restored.measuredBitrate > 0)
+        restored.speedState = Entry::SpeedState::Complete;
     connect(provider, &Provider::capabilitiesChanged, this, [this, accountId, provider] {
         if (!provider->capabilities().testFlag(Provider::SpeedTest)) {
             if (m_speedTestAccount == accountId)
@@ -524,7 +552,7 @@ void SourceHub::addSource(Provider *provider)
             if (entry != m_entries.end()) {
                 entry->speedState = Entry::SpeedState::Pending;
                 entry->measuredBitrate = 0;
-                entry->parallelRequests = 2;
+                entry->parallelRequests = 1;
             }
             pushPlaybackContext();
         }
@@ -700,47 +728,57 @@ std::vector<Provider *> SourceHub::sources() const
 
 QVariantList SourceHub::homeProviderChoices() const
 {
-    QVariantList choices { QVariantMap {
-        { QStringLiteral("id"), QString() }, { QStringLiteral("name"), QStringLiteral("All providers") } } };
+    QHash<QString, int> profiles;
+    for (const QVariant& value : m_registry->accounts()) {
+        const QVariantMap account = value.toMap();
+        if (homeEligible(account))
+            ++profiles[account.value(QStringLiteral("moduleId")).toString()];
+    }
+    QVariantList choices;
     for (const QVariant& value : m_registry->modules()) {
         const QVariantMap module = value.toMap();
-        choices.push_back(QVariantMap { { QStringLiteral("id"), module.value(QStringLiteral("id")) },
+        const QString id = module.value(QStringLiteral("id")).toString();
+        const ProviderModule *installed = m_registry->module(id);
+        choices.push_back(QVariantMap { { QStringLiteral("id"), id },
             { QStringLiteral("name"), module.value(QStringLiteral("name")) },
             { QStringLiteral("version"), module.value(QStringLiteral("version")) },
-            { QStringLiteral("iconUrl"), module.value(QStringLiteral("iconUrl")) } });
+            { QStringLiteral("iconUrl"), module.value(QStringLiteral("iconUrl")) },
+            { QStringLiteral("profiles"), installed && !installed->failed ? profiles.value(id) : 0 } });
     }
     return choices;
 }
 
-QVariantMap SourceHub::homeProviderStatus(const QString& preferredModuleId) const
+QVariantMap SourceHub::homeProviderStatus(const QStringList& hiddenModuleIds) const
 {
-    QString effective = preferredModuleId;
+    QStringList effective = hiddenModuleIds;
     QString message;
-    if (!preferredModuleId.isEmpty()) {
-        const ProviderModule *module = m_registry->module(preferredModuleId);
-        bool eligible = false;
+    if (!hiddenModuleIds.isEmpty()) {
+        bool shownEligible = false;
+        bool hiddenEligible = false;
         bool disconnected = false;
         for (const QVariant& value : m_registry->accounts()) {
             const QVariantMap account = value.toMap();
-            if (account.value(QStringLiteral("moduleId")).toString() != preferredModuleId
-                || !account.value(QStringLiteral("enabled")).toBool()
-                || account.value(QStringLiteral("locked")).toBool()
-                || account.value(QStringLiteral("needsSignIn")).toBool()
-                || account.value(QStringLiteral("removing")).toBool())
+            const QString moduleId = account.value(QStringLiteral("moduleId")).toString();
+            const ProviderModule *module = m_registry->module(moduleId);
+            if (!module || module->failed || !homeEligible(account))
                 continue;
-            eligible = true;
+            if (hiddenModuleIds.contains(moduleId)) {
+                hiddenEligible = true;
+                continue;
+            }
+            shownEligible = true;
             disconnected = disconnected || !account.value(QStringLiteral("running")).toBool();
         }
-        if (!module || module->failed || !eligible) {
+        if (!shownEligible && hiddenEligible) {
             effective.clear();
-            message = QStringLiteral("Your selected Home provider is unavailable or has no authorized active profile. "
-                                     "Showing All providers. Choose a provider or reconnect in Sources.");
-        } else if (homeSources({ preferredModuleId }).empty() && disconnected) {
-            message = QStringLiteral("Your selected Home provider is temporarily disconnected. "
-                                     "Your preference is retained; reconnect in Sources or choose All providers.");
+            message = QStringLiteral("None of the providers turned on for Home has a signed-in profile, so Home is "
+                                     "showing all providers. Turn one on or reconnect in Profiles & servers.");
+        } else if (shownEligible && disconnected && homeSources({ hiddenModuleIds }).empty()) {
+            message = QStringLiteral("The providers turned on for Home are temporarily disconnected. "
+                                     "Reconnect in Profiles & servers or turn on another provider.");
         }
     }
-    return { { QStringLiteral("moduleId"), effective }, { QStringLiteral("message"), message } };
+    return { { QStringLiteral("hiddenModuleIds"), effective }, { QStringLiteral("message"), message } };
 }
 
 void SourceHub::updateHomeAccounts()
@@ -751,9 +789,7 @@ void SourceHub::updateHomeAccounts()
         const QVariantMap account = value.toMap();
         const QString id = account.value(QStringLiteral("id")).toString();
         m_homeAccountModules.insert(id, account.value(QStringLiteral("moduleId")).toString());
-        if (!account.value(QStringLiteral("enabled")).toBool() || account.value(QStringLiteral("locked")).toBool()
-            || account.value(QStringLiteral("needsSignIn")).toBool()
-            || account.value(QStringLiteral("removing")).toBool())
+        if (!homeEligible(account))
             m_homeUnavailableAccounts.insert(id);
     }
 }
@@ -764,7 +800,7 @@ std::vector<Provider *> SourceHub::homeSources(const HomeQuery& query) const
     std::erase_if(selected, [&](Provider *provider) {
         const QString account = provider->id();
         return m_homeUnavailableAccounts.contains(account)
-            || (!query.moduleId.isEmpty() && m_homeAccountModules.value(account) != query.moduleId);
+            || query.hiddenModuleIds.contains(m_homeAccountModules.value(account));
     });
     return selected;
 }
@@ -776,7 +812,7 @@ bool SourceHub::containsHomeItem(const HomeQuery& query, const QString& scopedId
     const auto entry = m_entries.constFind(scopedId.left(kPrefix));
     return entry != m_entries.cend() && entry->provider && entry->browse
         && !m_homeUnavailableAccounts.contains(entry->accountId)
-        && (query.moduleId.isEmpty() || m_homeAccountModules.value(entry->accountId) == query.moduleId);
+        && !query.hiddenModuleIds.contains(m_homeAccountModules.value(entry->accountId));
 }
 
 QString SourceHub::homeScopeKey(const HomeQuery& query) const
@@ -958,6 +994,13 @@ void SourceHub::runItemAction(const QString& actionId, const QString& itemId, co
                          QVariantMap args) -> QCoro::Task<void> {
         QPointer<SourceHub> guard(self);
         QPointer<Provider> sourceGuard(self->source(account));
+        const auto permitted = [](const QVariantList& actions, const QString& requested) {
+            return std::any_of(actions.begin(), actions.end(), [&](const QVariant& value) {
+                const auto action = value.toMap();
+                return action.value(QStringLiteral("id")).toString() == requested
+                    && action.value(QStringLiteral("enabled"), true).toBool();
+            });
+        };
         const auto actions
             = co_await self->fetchItemActions(scopedItemId, args.value(QStringLiteral("itemType")).toString(),
                 scopedContainerId, args.value(QStringLiteral("entryId")).toString(), QStringLiteral("item-action"));
@@ -966,12 +1009,7 @@ void SourceHub::runItemAction(const QString& actionId, const QString& itemId, co
         if (!sourceGuard || sourceGuard != self->source(account) || !self->accountEnabled(account))
             throw std::runtime_error("source_unavailable");
         const auto requested = args.value(QStringLiteral("action")).toString();
-        const bool permitted = std::any_of(actions.begin(), actions.end(), [&](const QVariant& value) {
-            const auto action = value.toMap();
-            return action.value(QStringLiteral("id")).toString() == requested
-                && action.value(QStringLiteral("enabled"), true).toBool();
-        });
-        if (!permitted)
+        if (!permitted(actions, requested))
             throw std::runtime_error("action_unavailable");
         QVariantMap result = co_await self->call(account, QStringLiteral("runItemAction"), args);
         if (guard && result.contains(QStringLiteral("pick"))) {
@@ -982,6 +1020,17 @@ void SourceHub::runItemAction(const QString& actionId, const QString& itemId, co
             if (!sourceGuard || sourceGuard != self->source(account) || !self->accountEnabled(account))
                 throw std::runtime_error("source_unavailable");
             args.insert(choice);
+            // Permission may have been revoked while the picker was open; the
+            // second execution repeats the same scoped policy check.
+            const auto refreshed
+                = co_await self->fetchItemActions(scopedItemId, args.value(QStringLiteral("itemType")).toString(),
+                    scopedContainerId, args.value(QStringLiteral("entryId")).toString(), QStringLiteral("item-action"));
+            if (!guard)
+                co_return;
+            if (!sourceGuard || sourceGuard != self->source(account) || !self->accountEnabled(account))
+                throw std::runtime_error("source_unavailable");
+            if (!permitted(refreshed, requested))
+                throw std::runtime_error("action_unavailable");
             result = co_await self->call(account, QStringLiteral("runItemAction"), args);
         }
         if (!guard)
@@ -1151,8 +1200,9 @@ void SourceHub::pushPlaybackContext()
     context.insert(QStringLiteral("videoPreviews"), m_videoPreviewsEnabled);
     for (const Entry& entry : std::as_const(m_entries)) {
         if (auto *portable = qobject_cast<PortableProvider *>(entry.provider.data())) {
-            context.insert(QStringLiteral("measuredBitrate"), entry.measuredBitrate);
-            context.insert(QStringLiteral("parallelRequests"), entry.parallelRequests);
+            const auto learned = m_registry->playbackNetworkProfile(entry.accountId);
+            context.insert(QStringLiteral("measuredBitrate"), learned.value(QStringLiteral("measured-bitrate")));
+            context.insert(QStringLiteral("parallelRequests"), learned.value(QStringLiteral("initial-requests"), 1));
             portable->setPlaybackContext(context);
             portable->setPlaybackQueueContext(
                 m_queueSnapshots.value(entry.accountId), m_queueIndexes.value(entry.accountId, -1));
@@ -1178,10 +1228,9 @@ void SourceHub::setPlaybackActive(bool active)
     if (m_playbackActive == active)
         return;
     m_playbackActive = active;
-    // A started bounded probe is allowed to finish; cancelling it here made
-    // every quick Play leave Auto permanently without a measurement.
+    // A probe competes with playback and cannot be learned as clean capacity.
     if (active)
-        m_speedTestTimer.stop();
+        cancelSpeedTest();
     else if (m_speedTestAccount.isEmpty())
         m_speedTestTimer.start(5000);
     emit streamingQualityChanged();
@@ -1199,7 +1248,7 @@ void SourceHub::refreshSpeedTests()
 
 void SourceHub::startNextSpeedTest()
 {
-    if ((m_playbackActive && !m_explicitSpeedTest) || !m_speedTestAccount.isEmpty())
+    if (m_playbackActive || !m_speedTestAccount.isEmpty())
         return;
     for (Provider *provider : sources()) {
         if (!provider->capabilities().testFlag(Provider::SpeedTest))
@@ -1218,14 +1267,12 @@ void SourceHub::startNextSpeedTest()
             m_speedTestAccount.clear();
             auto entry = m_entries.find(prefixOf(account));
             if (entry != m_entries.end()) {
-                const qint64 bitrate = result.value(QStringLiteral("bitrate")).toLongLong();
-                const int lanes = result.value(QStringLiteral("parallelRequests")).toInt();
-                const bool valid
-                    = bitrate >= 1'000'000 && bitrate <= 1'000'000'000 && (lanes == 1 || lanes == 2 || lanes == 4);
+                const bool valid = m_registry->recordSpeedTest(account, result);
+                const auto profile = m_registry->playbackNetworkProfile(account);
                 entry->speedState = valid ? Entry::SpeedState::Complete : Entry::SpeedState::Failed;
                 if (valid) {
-                    entry->measuredBitrate = bitrate;
-                    entry->parallelRequests = lanes;
+                    entry->measuredBitrate = profile.value(QStringLiteral("measured-bitrate")).toLongLong();
+                    entry->parallelRequests = profile.value(QStringLiteral("initial-requests"), 1).toInt();
                     pushPlaybackContext();
                 }
             }
@@ -1362,6 +1409,32 @@ QCoro::Task<PagedMovieItems> SourceHub::fetchBrowsePage(
     co_return page;
 }
 
+void SourceHub::cancelBrowseJump(const BrowseDescriptor& descriptor, int startIndex)
+{
+    QString account = accountOf(descriptor.id.isEmpty() ? descriptor.seriesId : descriptor.id);
+    if (account.isEmpty())
+        account = m_lastDetailsAccount;
+    if (Provider *provider = source(account)) {
+        BrowseDescriptor raw = descriptor;
+        raw.id = rawId(raw.id);
+        raw.seriesId = rawId(raw.seriesId);
+        provider->catalog()->cancelBrowseJump(raw, startIndex);
+    }
+}
+
+QCoro::Task<std::vector<BrowseIndexEntry>> SourceHub::fetchBrowseIndex(
+    BrowseDescriptor descriptor, QVariantMap queryOptions)
+{
+    QString account = accountOf(descriptor.id);
+    if (account.isEmpty())
+        account = m_lastDetailsAccount;
+    Provider *provider = source(account);
+    if (!provider)
+        co_return {};
+    descriptor.id = rawId(descriptor.id);
+    co_return co_await provider->catalog()->fetchBrowseIndex(std::move(descriptor), std::move(queryOptions));
+}
+
 QCoro::Task<MovieItem> SourceHub::fetchItemDetails(QString itemId)
 {
     const QString account = accountOf(itemId);
@@ -1418,6 +1491,15 @@ QCoro::Task<std::vector<MovieItem>> SourceHub::fetchSimilarItems(QString itemId,
     if (!provider)
         co_return {};
     co_return scopedItems(co_await provider->catalog()->fetchSimilarItems(rawId(itemId), limit), account);
+}
+
+QCoro::Task<std::vector<MovieItem>> SourceHub::fetchRelatedMedia(QString itemId, QString kind)
+{
+    const QString account = accountOf(itemId);
+    Provider *provider = source(account);
+    if (!provider)
+        co_return {};
+    co_return scopedItems(co_await provider->catalog()->fetchRelatedMedia(rawId(itemId), kind), account);
 }
 
 QCoro::Task<PersonCredits> SourceHub::fetchItemsByPerson(QString personId, int maximumItems)

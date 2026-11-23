@@ -238,7 +238,7 @@ void PlatformApplicationServices::start()
             static bool started = false;
             if (!started) {
                 started = true;
-                WebOSMpvRuntime::preloadAsync();
+                QTimer::singleShot(3000, QCoreApplication::instance(), [] { WebOSMpvRuntime::preloadAsync(); });
             }
         },
         Qt::QueuedConnection);

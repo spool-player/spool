@@ -17,6 +17,16 @@ GridView {
     property int holdReleaseTimeout: 220
     property int holdInitialReleaseTimeout: 800
     property bool holdRepeatSeen: false
+    // Wall-clock time the release watchdog was last armed, and how long a
+    // hold has been carried through stalls without hearing the key again.
+    property double holdWatchdogArmedAt: 0
+    property double holdStallGraceMs: 0
+    readonly property int holdStallGraceLimit: 1500
+    // Items per second a held key is moving at right now. Past a screenful
+    // or two a second nothing on the way can be seen, so a view can skip the
+    // artwork and loading for what it is only passing through.
+    property real holdRate: 0
+    readonly property bool racing: heldKey !== 0 && holdRate >= 120
     property int holdDelay: 500
     property int holdCruiseDuration: 700
     property int holdRampDuration: 1700
@@ -75,6 +85,8 @@ GridView {
         heldKey = 0
         holdRepeatSeen = false
         holdAccumulator = 0
+        holdStallGraceMs = 0
+        holdRate = 0
     }
 
     function nowMs() {
@@ -88,7 +100,29 @@ GridView {
         holdRepeatSeen = false
         holdAccumulator = 0
         holdTimer.start()
+        armReleaseWatchdog()
+    }
+
+    function armReleaseWatchdog() {
+        holdWatchdogArmedAt = Date.now()
         holdReleaseWatchdog.restart()
+    }
+
+    // Silence from the key ends a hold -- unless the silence was this app's
+    // own. A view busy building rows (a large library being raced through
+    // while its pages arrive) can block the event loop past the watchdog's
+    // deadline with the next repeat already queued behind it; the watchdog
+    // then fires late, first, and reads a stall as a release. A late firing
+    // gets the key another interval to speak, up to a bound so a release the
+    // platform never sends still ends the hold.
+    function releaseWatchdogExpired() {
+        const lateMs = Date.now() - holdWatchdogArmedAt - holdReleaseWatchdog.interval
+        if (heldKey && lateMs > 40 && holdStallGraceMs < holdStallGraceLimit) {
+            holdStallGraceMs += lateMs + holdReleaseWatchdog.interval
+            armReleaseWatchdog()
+            return
+        }
+        stopAccelerating()
     }
 
     function confirmHold() {
@@ -97,7 +131,8 @@ GridView {
             lastHoldTickAt = nowMs()
             holdStarted(heldKey)
         }
-        holdReleaseWatchdog.restart()
+        holdStallGraceMs = 0
+        armReleaseWatchdog()
     }
 
     function heldDelta() {
@@ -130,6 +165,7 @@ GridView {
         const frameMs = Math.min(50, Math.max(0, now - lastHoldTickAt))
         lastHoldTickAt = now
         const rate = accelerationRate(heldMs)
+        holdRate = rate
         if (rate <= 0)
             return
         holdAccumulator += rate * frameMs / 1000
@@ -230,6 +266,6 @@ GridView {
         id: holdReleaseWatchdog
         interval: root.holdRepeatSeen ? root.holdReleaseTimeout : root.holdInitialReleaseTimeout
         repeat: false
-        onTriggered: root.stopAccelerating()
+        onTriggered: root.releaseWatchdogExpired()
     }
 }

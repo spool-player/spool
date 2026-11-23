@@ -314,13 +314,23 @@ void JellyfinFixture::handle(QTcpSocket *socket, const QByteArray& header, const
                                    { "CollectionType", "movies" } } } },
             { "TotalRecordCount", 1 } });
     } else if (method == "GET" && (path == "/Items" || path == "/Users/" + userId + "/Items")) {
-        if (query.queryItemValue("ParentId") == "journey-library")
+        const bool libraryBrowse = query.queryItemValue("ParentId") == "journey-library";
+        if (libraryBrowse)
             ++authenticatedBrowse;
+        bool playedOnly = false;
+        for (const auto& parameter : query.queryItems()) {
+            if (parameter.first.compare("filters", Qt::CaseInsensitive) == 0)
+                playedOnly = parameter.second.split(',').contains("IsPlayed");
+        }
+        if (libraryBrowse && playedOnly)
+            ++playedFilterRequests;
         const QStringList ids = query.queryItemValue("Ids").split(',', Qt::SkipEmptyParts);
         QJsonArray items;
-        if (ids.isEmpty() || ids.contains(movieId))
+        // Both immutable catalogue items are unplayed. Filtering is a server
+        // response contract; selection, empty-state and focus remain app logic.
+        if (!playedOnly && (ids.isEmpty() || ids.contains(movieId)))
             items.append(movie());
-        if (ids.isEmpty() || ids.contains(episodeId))
+        if (!playedOnly && (ids.isEmpty() || ids.contains(episodeId)))
             items.append(episode());
         json(QJsonObject { { "Items", items }, { "TotalRecordCount", items.size() } });
     } else if (method == "GET"
@@ -347,13 +357,17 @@ void JellyfinFixture::handle(QTcpSocket *socket, const QByteArray& header, const
                                QJsonArray { QJsonObject { { "Id", "journey-season" }, { "Name", "Season 1" },
                                    { "Type", "Season" }, { "SeriesId", "journey-series" }, { "IndexNumber", 1 } } } },
             { "TotalRecordCount", 1 } });
+    } else if (method == "GET" && path == "/Items/" + movieId + "/Similar") {
+        json(QJsonObject { { "Items", QJsonArray { episode() } }, { "TotalRecordCount", 1 } });
     } else if (method == "GET" && path == "/Users/" + userId + "/Items/Latest") {
         json(QJsonArray { movie(), episode() });
     } else if (method == "GET"
         && (path == "/Users/" + userId + "/Items/Resume" || path == "/Shows/NextUp"
             || path == "/MediaSegments/" + movieId || path == "/MediaSegments/" + episodeId
-            || path == "/Videos/journey-source/AdditionalParts" || path == "/Items/" + movieId + "/Similar"
-            || path == "/Items/" + episodeId + "/Similar")) {
+            || path == "/Videos/journey-source/AdditionalParts" || path == "/Items/" + episodeId + "/Similar"
+            || path == "/Items/" + movieId + "/LocalTrailers" || path == "/Items/" + movieId + "/SpecialFeatures"
+            || path == "/Items/" + episodeId + "/LocalTrailers"
+            || path == "/Items/" + episodeId + "/SpecialFeatures")) {
         json(QJsonObject { { "Items", QJsonArray {} }, { "TotalRecordCount", 0 } });
     } else if (method == "GET" && path == "/Items/Filters") {
         json(QJsonObject { { "Genres", QJsonArray {} }, { "Years", QJsonArray {} } });
@@ -423,6 +437,13 @@ void JellyfinFixture::handle(QTcpSocket *socket, const QByteArray& header, const
             unexpected.append("unsupported display preference method");
             json(QJsonObject {}, 405);
         }
+    } else if (method == "POST"
+        && (path == "/Users/" + userId + "/PlayedItems/" + movieId
+            || path == "/Users/" + userId + "/PlayedItems/" + episodeId)) {
+        playedItems.append(path.section('/', -1));
+        // Accept the real mutation but keep detail snapshots stale, as on a
+        // lagging server. The product owns progress/watched reconciliation.
+        json(QJsonObject {});
     } else if (method == "POST"
         && (path == "/Sessions/Playing" || path == "/Sessions/Playing/Progress"
             || path == "/Sessions/Playing/Stopped")) {

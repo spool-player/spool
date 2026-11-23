@@ -1,5 +1,24 @@
 .pragma library
 
+// Prefer a prefix anywhere in traversal order to an earlier substring match,
+// but fetch/case-fold each native model item at most once per keystroke.
+function typeAheadIndex(count, currentIndex, query, includeCurrent, titleAt) {
+    if (count <= 0 || query.length <= 0)
+        return -1
+    const start = Math.max(0, currentIndex)
+    const firstOffset = includeCurrent ? 0 : 1
+    let partialMatch = -1
+    for (let offset = firstOffset; offset < firstOffset + count; ++offset) {
+        const index = (start + offset) % count
+        const match = titleAt(index).indexOf(query)
+        if (match === 0)
+            return index
+        if (match > 0 && partialMatch < 0)
+            partialMatch = index
+    }
+    return partialMatch
+}
+
 function value(item, key) {
     if (!item)
         return undefined

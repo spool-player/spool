@@ -18,9 +18,52 @@ Generated files:
 
 webOS helpers:
 
-- `tools/webos/diagnose.sh root@tv.local`
-- `tools/webos/collect-diagnostics-bundle.sh root@tv.local`
-- `tools/webos/kill-stale.sh root@tv.local`
+- `tools/webos/diagnose.sh root@tv.local` prints allowlisted instance metadata,
+  never raw logs, process command lines, or diagnostic paths.
+- `tools/webos/collect-diagnostics-bundle.sh root@tv.local` streams a read-only
+  archive to the desktop. It contains `ps.txt` and a nested `logs.tar.gz`; no
+  temporary directories or archives are created on the TV. Treat logs as private.
+- `tools/webos/kill-stale.sh root@tv.local` explicitly terminates processes whose
+  executable belongs to this app bundle, rechecking before forced termination.
+
+These commands require an explicit target, validate `APP_ID`, and use
+noninteractive SSH with connection/keepalive limits and a per-command
+`WEBOS_COMMAND_TIMEOUT` (30 seconds by default). They never restart services,
+change app data ownership, or patch installed files. Do not run device helpers
+unless device diagnosis/deployment was explicitly requested.
+
+### Package and verification modes
+
+`./build-ipk.sh` and `./build-ipk.sh all` both run the complete pipeline:
+verified source fetch, host Qt, target Qt, dependencies, fresh app configure,
+staging/audits, then packaging. Phase entry points exist for CI orchestration;
+do not use them as shortcuts when deploying. Help and invalid arguments never
+enter Nix, restore a toolchain, download sources, or touch a device.
+
+`tools/webos/verify-device.sh --host root@tv.local` installs the newest matching
+IPK by modification time and verifies exact app registration. Its default is
+install-only; `--no-launch` makes that intent explicit. `--no-install` reads
+registration without requiring a package. Only `--launch` launches the app,
+collects logs, and captures a screenshot; `--skip-screenshot` omits that capture.
+LS2 service errors, missing registration and failed capture fail the command.
+Installation subscriptions are bounded by `--install-timeout` (120 seconds).
+Screenshot files created in `/tmp` are removed after retrieval.
+
+### Device render benchmark
+
+Build `tools/webos/package-heaptrack-profile.sh --benchmark-only` and explicitly
+install its IPK from `build/webos-profile` before running
+`tools/webos/bench-device.sh --host root@tv.local`. The ordinary heaptrack
+profiling IPK also supports benchmarks. Instrumentation is added to a separate
+local staging copy, never the canonical release stage or installed application.
+
+The benchmark explicitly closes and launches only Spool, supplies data through
+a temporary `/tmp` configuration read by the packaged shim, retrieves and
+validates the report, then removes its temporary files and closes Spool. It
+never rewrites `bin/spool`, changes app data ownership, wakes the panel, or
+switches TV inputs. The panel must already be active; a sleeping panel or
+incomplete/invalid report fails the measurement. `--wait` bounds report polling
+(240 seconds by default), and each transport command is independently bounded.
 
 Simulation knobs:
 
@@ -73,3 +116,8 @@ nix develop .#native -c bash tools/test-gpu-session.sh \
 A headless compositor exercises actual Wayland configuration, swapchain resize,
 and embedded video rendering, but not the user's compositor animations, physical
 display presentation, or HDR output. Those require a separate hardware check.
+
+For repeatable whole-app route timing instead of fullscreen-specific timings,
+see [native route profiling](memory-profiling.md#repeatable-native-route-timings).
+That driver reuses the private display, isolates app state for every repeat and
+retains validated JSON plus aggregate summaries without raw application logs.

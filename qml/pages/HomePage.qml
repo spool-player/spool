@@ -12,19 +12,16 @@ FocusScope {
 
     property var shell
     property var uiTransitionToken: 0
+    readonly property bool directionRelease: rows.directionRelease
     // An all-hidden library row has management controls instead of cards.
     readonly property bool contentReady: rows.firstRowReady || !Providers.hasAccounts || (homeLibraries.length === 0 &&
                                                                                           !Home.loading)
-    property bool providerChooserOpen: false
     property int libraryRevision: 0
-    readonly property var providerChoices: Home.providerChoices
-    readonly property var selectedProvider: providerChoices.find(choice => String(choice.id) === Home.providerId) || {
-                                                name: "All providers"
-                                            }
     readonly property var homeLibraries: {
         // Read the signals' properties so scoped identity/visibility changes
         // rebuild the array without mutating the global Libraries model.
-        const providerId = Home.providerId
+        const hiddenProviders = Home.hiddenProviderIds
+        const filterActive = Home.providerFilterActive
         const revision = libraryRevision
         const accounts = Providers.accounts
         const hidden = Libraries.hiddenLibraries
@@ -37,7 +34,8 @@ FocusScope {
         return result
     }
     readonly property var homeHiddenLibraries: {
-        const providerId = Home.providerId
+        const hiddenProviders = Home.hiddenProviderIds
+        const filterActive = Home.providerFilterActive
         const accounts = Providers.accounts
         return Libraries.hiddenLibraries.filter(library => Home.includesItem(String(library.libraryId || "")))
     }
@@ -55,48 +53,6 @@ FocusScope {
         const destination = homeLibraries[to]
         return source && destination ? Libraries.moveLibrary(libraryIndex(source.libraryId), libraryIndex(
                                                                  destination.libraryId)) : false
-    }
-
-    function closeProviderChooser() {
-        providerChooserOpen = false
-        InputKeys.focus(providerButton)
-    }
-
-    function chooseProvider(index) {
-        const choice = providerChoices[index]
-        if (!choice)
-            return
-        closeProviderChooser()
-        Home.selectProvider(String(choice.id || ""))
-    }
-
-    function openProviderChooser() {
-        providerChooserOpen = true
-        providerGrid.currentIndex = Math.max(0, providerChoices.findIndex(choice => String(choice.id)
-                                                                                    === Home.providerId))
-        Qt.callLater(() => InputKeys.focus(providerGrid))
-    }
-
-    function recoverProviderFocus() {
-        const candidate = InputKeys.topLeftVisibleCandidate(providerGrid, providerGrid)
-        // Ask the same viewport helper about the selected delegate as well;
-        // do not give this chooser a separate visibility rule.
-        const selected = InputKeys.topLeftVisibleCandidate({
-                                                               count: providerGrid.currentItem ? 1 : 0,
-                                                               width: providerGrid.width,
-                                                               height: providerGrid.height,
-                                                               itemAtIndex: index => providerGrid.currentItem,
-                                                               mapToItem: (clip, x, y, width, height)
-                                                                          => providerGrid.mapToItem(clip, x, y, width,
-                                                                                                    height)
-                                                           }, providerGrid)
-        const usable = providerGrid.activeFocus && selected && (selected.fullyVisible || selected.visibleFraction
-                                                                >= InputKeys.focusRecoveryVisibleThreshold)
-        if (usable)
-            return false
-        if (candidate)
-            InputKeys.focusIndexWithoutScrolling(providerGrid, candidate.index)
-        return true
     }
 
     focus: true
@@ -142,14 +98,14 @@ FocusScope {
                           "title": "Continue Watching",
                           "model": Home.resumeItems,
                           "kind": "landscape",
-                          "reserveWhenEmpty": Home.loading
+                          "reserveWhileLoading": true
                       }, {
                           "key": "nextUpItems",
                           "title": "Next Up",
                           "model": Home.nextUpItems,
                           "kind": "landscape",
-                          "reserveWhenEmpty": Home.loading && (Home.latestLibraryRows || []).some(row => row.collectionType
-                                                                                                         === "tvshows")
+                          "reserveWhileLoading": (Home.latestLibraryRows || []).some(row => row.collectionType
+                                                                                            === "tvshows")
                       })
         const latest = Home.latestLibraryRows || []
         for (let index = 0; index < latest.length; ++index) {
@@ -161,7 +117,7 @@ FocusScope {
                               "model": row && row.model ? row.model : null,
                               "kind": row && row.kind ? row.kind : "poster",
                               "enabled": !Libraries.isHidden(String(row && row.libraryId || "")),
-                              "reserveWhenEmpty": Home.loading,
+                              "reserveWhileLoading": true,
                               "headerBadge": multiple && row ? root.sourceBadge(row.libraryId, false) : null,
                               "useSeriesPoster": true,
                               "preferEpisodeTitle": true,
@@ -198,34 +154,22 @@ FocusScope {
                             }, App, shell, section ? section.model : null, index)
     }
 
+    // With nothing on Home, or when Home providers are filtered, the only
+    // control above the rows is "Show all".
+    function edgeUp() {
+        if (allProvidersButton.visible)
+            InputKeys.focus(allProvidersButton)
+        else if (root.shell)
+            root.shell.focusNavBar()
+    }
+
     function routeKey(key, phase, repeat) {
-        if (providerChooserOpen) {
-            if (InputKeys.isBack(key, false, false))
-                return false
-            if (chooserCancelButton.activeFocus) {
-                if (phase === "press" && key === Qt.Key_Up)
-                    InputKeys.focus(providerGrid)
-                return InputKeys.isDirection(key) || InputKeys.isAccept(key)
-            }
-            if (phase === "press" && (InputKeys.isDirection(key) || InputKeys.isAccept(key)) && recoverProviderFocus())
-                return true
-            if (phase === "press" && !repeat && key === Qt.Key_Down && providerGrid.currentIndex
-                    + providerGrid.columnCount() >= providerGrid.count) {
-                InputKeys.focus(chooserCancelButton)
-                return true
-            }
-            return providerGrid.routeKey(key, phase, repeat) || InputKeys.isAccept(key)
-        }
-        if (providerButton.activeFocus || allProvidersButton.activeFocus) {
+        if (allProvidersButton.activeFocus) {
             if (phase === "press" && key === Qt.Key_Down)
                 return rows.focusPreferred("libraries")
             if (phase === "press" && key === Qt.Key_Up) {
                 if (root.shell)
                     root.shell.focusNavBar()
-                return true
-            }
-            if (phase === "press" && (key === Qt.Key_Left || key === Qt.Key_Right) && allProvidersButton.visible) {
-                InputKeys.focus(providerButton.activeFocus ? allProvidersButton : providerButton)
                 return true
             }
             return InputKeys.isDirection(key) || InputKeys.isAccept(key)
@@ -235,50 +179,30 @@ FocusScope {
                                                                                       && Home.nextUpItems.count === 0
                                                                                       && Home.latestLibraryRows.length
                                                                                       === 0))) {
-            InputKeys.focus(providerButton)
+            edgeUp()
             return true
         }
         return rows.routeKey(key, phase, repeat)
     }
 
     function activate() {
-        if (providerChooserOpen) {
-            if (chooserCancelButton.activeFocus) {
-                closeProviderChooser()
-                return
-            }
-            if (!recoverProviderFocus())
-                providerGrid.activate()
-            return
-        }
-        if (providerButton.activeFocus) {
-            openProviderChooser()
-            return
-        }
         if (allProvidersButton.activeFocus) {
-            Home.selectProvider("")
+            Home.showAllProviders()
             return
         }
         if (!rows.activeFocus) {
-            InputKeys.focus(providerButton)
+            edgeUp()
             return
         }
         rows.activate()
     }
 
-    function back() {
-        if (!providerChooserOpen)
-            return false
-        closeProviderChooser()
-        return true
-    }
-
     function longPress() {
-        return !providerChooserOpen && rows.activeFocus && rows.longPress()
+        return rows.activeFocus && rows.longPress()
     }
 
     function currentMediaItem() {
-        return !providerChooserOpen && rows.activeFocus ? rows.currentItem() : ({})
+        return rows.activeFocus ? rows.currentItem() : ({})
     }
     Connections {
         target: Libraries
@@ -318,19 +242,10 @@ FocusScope {
                 Layout.fillWidth: true
             }
             ActionButton {
-                id: providerButton
-                objectName: "homeProviderChooserButton"
-                text: String(root.selectedProvider.name) + (root.selectedProvider.version ? " · "
-                                                                                            + root.selectedProvider.version :
-                                                                                            "") + " ▾"
-                Accessible.description: "Choose providers for Home only. Search and playback remain unchanged."
-                onClicked: root.openProviderChooser()
-            }
-            ActionButton {
                 id: allProvidersButton
                 visible: Home.providerScopeMessage.length > 0
-                text: "All providers"
-                onClicked: Home.selectProvider("")
+                text: "Show all"
+                onClicked: Home.showAllProviders()
             }
         }
         SecondaryText {
@@ -356,84 +271,14 @@ FocusScope {
         anchors.topMargin: Metrics.scaled(8)
         shell: root.shell
         sections: root.buildSections()
+        loading: Home.loading
         contextReturnRoute: "home"
         measureFirstRow: true
         focus: true
 
-        onEdgeUp: InputKeys.focus(providerButton)
+        onEdgeUp: root.edgeUp()
         onActivated: (section, index, item) => root.activateAt(section, index, item)
         onFirstRowReadyChanged: if (firstRowReady)
                                     InputLatency.mark(root.uiTransitionToken, "first_delegate")
-    }
-
-    FocusScope {
-        id: providerChooser
-        anchors.fill: parent
-        visible: root.providerChooserOpen
-        z: 200
-        MouseArea {
-            anchors.fill: parent
-            onClicked: root.closeProviderChooser()
-        }
-        Surface {
-            anchors.centerIn: parent
-            width: Math.min(parent.width - Metrics.pageMarginPx * 2, Metrics.scaled(760))
-            height: Math.min(parent.height - Metrics.pageMarginPx * 2, Metrics.scaled(560))
-            MouseArea {
-                anchors.fill: parent
-            }
-            ColumnLayout {
-                anchors.fill: parent
-                anchors.margins: Metrics.scaled(20)
-                spacing: Metrics.scaled(12)
-                AppText {
-                    text: "Providers on Home"
-                    font.pixelSize: Metrics.titleSizePx
-                }
-                SecondaryText {
-                    text: "Only Home is filtered. Search, profiles and playback are unchanged."
-                    Layout.fillWidth: true
-                    wrapMode: Text.WordWrap
-                }
-                NavGrid {
-                    id: providerGrid
-                    objectName: "homeProviderChooserGrid"
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    clip: true
-                    shell: root.shell
-                    model: root.providerChoices
-                    cellWidth: Metrics.scaled(172)
-                    cellHeight: Metrics.scaled(204)
-                    onAccepted: index => root.chooseProvider(index)
-                    delegate: ProfileTile {
-                        required property int index
-                        required property var modelData
-                        tileSize: Metrics.scaled(152)
-                        username: String(modelData.name)
-                        detail: String(modelData.id) === Home.providerId ? "Selected for Home" : ""
-                        providerName: String(modelData.name)
-                        providerId: String(modelData.id || "")
-                        providerIcon: modelData.iconUrl || ""
-                        providerVersion: String(modelData.version || "")
-                        focused: providerGrid.activeFocus && providerGrid.currentIndex === index
-                        Accessible.description: String(modelData.name) + (modelData.version
-                                                                          ? ", installed provider version "
-                                                                            + modelData.version : "")
-                        onAccepted: {
-                            providerGrid.currentIndex = index
-                            InputKeys.focus(providerGrid)
-                            root.chooseProvider(index)
-                        }
-                    }
-                }
-                ActionButton {
-                    id: chooserCancelButton
-                    text: "Cancel"
-                    Layout.alignment: Qt.AlignRight
-                    onClicked: root.closeProviderChooser()
-                }
-            }
-        }
     }
 }
