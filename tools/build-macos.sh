@@ -245,14 +245,21 @@ if [[ "$DEPLOY_APP" == "1" ]]; then
   done < <(find "$APP_BUNDLE" -type f | sort)
   # Sign after install_name_tool and strip have finished rewriting Mach-O files.
   while IFS= read -r binary; do
-    file -b "$binary" | grep -q 'Mach-O' || continue
-    codesign --force --sign - "$binary"
+    # Signing Spool's executable also signs its enclosing app. Do that last.
+    [[ "$binary" == "$APP_BUNDLE/Contents/MacOS/Spool" ]] && continue
+    description="$(/usr/bin/file -b "$binary")"
+    [[ "$binary" == *.dylib || "$description" == *Mach-O* ]] || continue
+    /usr/bin/codesign --force --sign - --timestamp=none "$binary"
   done < <(find "$APP_BUNDLE" -type f | sort)
+  cocoa_plugin="$APP_BUNDLE/Contents/PlugIns/platforms/libqcocoa.dylib"
+  /usr/bin/codesign --verify --strict --verbose=2 "$cocoa_plugin"
   while IFS= read -r bundle; do
-    codesign --force --sign - "$bundle"
+    [[ "$bundle" == "$APP_BUNDLE" ]] && continue
+    /usr/bin/codesign --force --sign - --timestamp=none "$bundle"
   done < <(find "$APP_BUNDLE" -depth -type d \
     \( -name '*.framework' -o -name '*.app' -o -name '*.xpc' \))
-  codesign --verify --strict --deep "$APP_BUNDLE"
+  /usr/bin/codesign --force --sign - --timestamp=none "$APP_BUNDLE"
+  /usr/bin/codesign --verify --strict --deep --verbose=2 "$APP_BUNDLE"
   python3 "$APP_ROOT/tools/package-audit.py" macho "$APP_BUNDLE" \
     --root Contents/Frameworks/libvulkan.1.dylib \
     --root Contents/Frameworks/libMoltenVK.dylib

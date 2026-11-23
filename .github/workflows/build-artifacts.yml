@@ -679,14 +679,14 @@ jobs:
           done
           exit 1
 
-      - name: Build macOS app
+      # Hosted macOS runners can hang submitting MoltenVK work to the
+      # paravirtualized Metal GPU. Exercise the GUI with macOS OpenGL and
+      # verify the packaged Vulkan loader separately below.
+      - name: Compile macOS app and tests
+        id: macos-build
         env:
+          DEPLOY_APP: '0'
           SPOOL_MACOS_CREDENTIAL_SERVICE: ${{ inputs.enable_macos_signing && 'com.sachk.spool' || '' }}
-          # Hosted macOS runners expose Apple's paravirtualized Metal GPU, where
-          # MoltenVK vkQueueSubmit hangs (kIOGPUCommandBufferCallbackErrorHang).
-          # Keep the shipped Spool.app unchanged (Vulkan default + bundled
-          # MoltenVK, verified by the runtime load step below) and run the
-          # hosted e2e suite on real macOS OpenGL, matching the Windows CI gate.
           SPOOL_TEST_RENDER_BACKEND: opengl
         run: nix develop .#native --no-write-lock-file -c bash tools/build-macos.sh
 
@@ -698,6 +698,13 @@ jobs:
 
       - name: Lint compiled QML
         run: nix develop .#native --no-write-lock-file -c cmake --build build/macos/app --target spool_qmllint_strict
+
+      - name: Deploy and verify macOS bundle
+        if: ${{ !cancelled() && steps.macos-build.outcome == 'success' }}
+        env:
+          SPOOL_MACOS_CREDENTIAL_SERVICE: ${{ inputs.enable_macos_signing && 'com.sachk.spool' || '' }}
+          SPOOL_TEST_RENDER_BACKEND: opengl
+        run: nix develop .#native --no-write-lock-file -c bash tools/build-macos.sh
 
       - name: Load bundled Vulkan runtime
         run: |
