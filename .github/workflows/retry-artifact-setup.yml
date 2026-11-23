@@ -47,7 +47,7 @@ jobs:
 
           while read -r job_id; do
             log="$RUNNER_TEMP/first-attempt-$job_id.log"
-            gh api "repos/$GH_REPO/actions/jobs/$job_id/logs" >"$log"
+            gh api --allow-escape-sequences "repos/$GH_REPO/actions/jobs/$job_id/logs" >"$log"
             grep -Eq '^.*[0-9]Z Pinned libplacebo fetch exhausted retries after a transient connection failure\.$' "$log" || exit 0
           done < <(jq -r '.[].jobs[] | select(.conclusion == "failure") | .id' <<<"$jobs")
 
