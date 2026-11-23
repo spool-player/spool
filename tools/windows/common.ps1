@@ -278,6 +278,33 @@ function Initialize-WindowsMpvBuildEnvironment {
     $env:WINDRES = 'llvm-rc'
 }
 
+function Get-MpvMirrorVersion {
+    param([Parameter(Mandatory)] [string] $Source)
+
+    # Peeled upstream v0.42.0 tag.
+    $releaseVersion = '0.42.0'
+    $releaseCommit = 'b0841e8c4d156b8403dc1876c4cbd9011eb583f3'
+    $version = (Get-Content -LiteralPath (Join-Path $Source 'MPV_VERSION') -Raw).Trim()
+    if ($version -ne "$releaseVersion-UNKNOWN") {
+        return $version
+    }
+    # Only use an upstream release as the version base when it is in the
+    # source history. A shallow or divergent checkout keeps its source version.
+    & git -C $Source merge-base --is-ancestor $releaseCommit HEAD 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        return $version
+    }
+    & git -C $Source diff --quiet HEAD --
+    if ($LASTEXITCODE -ne 0) {
+        return $version
+    }
+    $revision = & git -C $Source rev-parse --short=12 HEAD
+    if ($LASTEXITCODE -ne 0 -or $revision -notmatch '^[0-9a-f]{12,40}$') {
+        throw 'Cannot read the revision for the libmpv version resource.'
+    }
+    return "$releaseVersion+spool.$revision"
+}
+
 function Get-MpvFeatureArguments {
     param(
         [Parameter(Mandatory)] [string] $Platform,

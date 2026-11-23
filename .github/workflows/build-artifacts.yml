@@ -1493,6 +1493,8 @@ jobs:
         with:
           persist-credentials: false
           submodules: recursive
+          # The Windows libmpv source mirror needs the upstream release ancestry.
+          fetch-depth: 0
 
       - name: Install upstream FFmpeg build environment
         id: msys2
