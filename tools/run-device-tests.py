@@ -1242,6 +1242,8 @@ def export_attempt(private, destination, result):
                         and type(evidence.get("pid")) is int and evidence["pid"] > 0
                         and evidence.get("platform") in ("android", "tvos", "ios")):
                     exported = {key: evidence[key] for key in ("platform", "pid", "signal")}
+                    if evidence["platform"] == "android" and evidence.get("abortKind") == "destroyed-mutex":
+                        exported["abortKind"] = "destroyed-mutex"
                     frames = evidence.get("frames", [])
                     if evidence["platform"] == "android" and isinstance(frames, list):
                         exported["frames"] = [
@@ -1249,7 +1251,7 @@ def export_attempt(private, destination, result):
                             for frame in frames[:12]
                             if isinstance(frame, dict) and isinstance(frame.get("module"), str)
                             and re.fullmatch(r"lib(?:spool_x86_64|Qt6(?:Core|Gui|Quick|Qml|OpenGL)"
-                                             r"|c|EGL|GLESv2|art|android_runtime)\.so", frame["module"])
+                                             r"|mpv|c|EGL|GLESv2|art|android_runtime)\.so", frame["module"])
                             and isinstance(frame.get("offset"), str)
                             and re.fullmatch(r"[0-9a-f]{1,16}", frame["offset"])]
                     write_journal(destination / "mobile-crash-evidence.json", exported)

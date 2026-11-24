@@ -200,7 +200,7 @@ public:
             if (signal > 0) {
                 QJsonObject evidence { { "platform", kind }, { "pid", processPid }, { "signal", signal } };
                 if (kind == "android")
-                    evidence.insert("frames", androidCrashFrames());
+                    addAndroidCrashDetails(evidence);
                 QSaveFile file(QFileInfo(hostDescriptor).dir().filePath("mobile-crash-evidence.json"));
                 const QByteArray bytes = QJsonDocument(evidence).toJson(QJsonDocument::Compact);
                 const bool saved = file.open(QIODevice::WriteOnly)
@@ -278,7 +278,7 @@ private:
         }
         return 0;
     }
-    QJsonArray androidCrashFrames()
+    void addAndroidCrashDetails(QJsonObject& evidence)
     {
         QJsonArray frames;
         try {
@@ -290,9 +290,9 @@ private:
                 QStringLiteral("^\\s*([0-9]+(?:\\.[0-9]+)?)\\s+([0-9]+)\\s+[0-9]+\\s+[A-Z]\\s+DEBUG\\s*:\\s*(.*)$"));
             const QRegularExpression product(
                 QStringLiteral("^pid: %1, .* >>> %2 <<<$").arg(processPid).arg(QRegularExpression::escape(bundle)));
-            const QRegularExpression frame(
-                QStringLiteral("^#[0-9]+\\s+pc\\s+([0-9a-f]{1,16})\\s+(?:[^\\s]*/)?(lib(?:spool_x86_64|"
-                               "Qt6(?:Core|Gui|Quick|Qml|OpenGL)|c|EGL|GLESv2|art|android_runtime)\\.so)(?:\\s|$)"));
+            const QRegularExpression frame(QStringLiteral(
+                "^#[0-9]+\\s+pc\\s+([0-9a-f]{1,16})\\s+(?:[^\\s]*/)?(lib(?:spool_x86_64|"
+                "Qt6(?:Core|Gui|Quick|Qml|OpenGL)|mpv|c|EGL|GLESv2|art|android_runtime)\\.so)(?:\\s|$)"));
             qint64 reporter = 0;
             for (const QString& line : logs.split('\n')) {
                 const auto record = lineFormat.match(line.trimmed());
@@ -305,6 +305,9 @@ private:
                 }
                 if (reporter == 0 || record.captured(2).toLongLong() != reporter)
                     continue;
+                if (message.startsWith(
+                        QLatin1String("Abort message: 'FORTIFY: pthread_mutex_lock called on a destroyed mutex")))
+                    evidence.insert("abortKind", "destroyed-mutex");
                 const auto match = frame.match(message);
                 if (match.hasMatch())
                     frames.append(QJsonObject { { "module", match.captured(2) }, { "offset", match.captured(1) } });
@@ -314,7 +317,7 @@ private:
         } catch (const std::runtime_error&) {
             // The already confirmed signal remains usable without a stack.
         }
-        return frames;
+        evidence.insert("frames", frames);
     }
     int crashSignal()
     {
@@ -1392,14 +1395,17 @@ public:
     }
     void pauseForObservation(const char *message)
     {
-        await([&] { return state()["playback"].toObject()["ready"].toBool(); },
+        await([&] { return state(true)["playback"].toObject()["ready"].toBool(); },
             "playback did not complete its first renderer restart before pause");
         command({ "pause" });
         QJsonObject playback;
         try {
             await(
                 [&] {
-                    playback = state()["playback"].toObject();
+                    const auto observed = state(true)["playback"].toObject();
+                    if (observed.isEmpty())
+                        return false;
+                    playback = observed;
                     return playback["paused"].toBool();
                 },
                 message);

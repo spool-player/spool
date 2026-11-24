@@ -1,7 +1,6 @@
 #include "common/RangedDownload.h"
 
 #include "TestMain.h"
-#include "TestRequire.h"
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
@@ -13,12 +12,19 @@
 #include <QTcpSocket>
 #include <QTemporaryDir>
 
+#include <iostream>
 #include <optional>
+#include <stdexcept>
 
 using Spool::RangedDownload;
-using SpoolTests::require;
 
 namespace {
+
+void require(bool condition, const char *message)
+{
+    if (!condition)
+        throw std::runtime_error(message);
+}
 
 // HTTP/1.1, one response per connection. Honours "bytes=a-b" and "bytes=a-"
 // unless told to ignore ranges, and records what it was asked for.
@@ -31,6 +37,8 @@ public:
             while (QTcpSocket *socket = nextPendingConnection()) {
                 connect(socket, &QTcpSocket::readyRead, socket, [this, socket] { respond(socket); });
                 connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
+                if (socket->bytesAvailable() > 0)
+                    respond(socket);
             }
         });
         require(listen(QHostAddress::LocalHost), "server could not listen");
@@ -110,6 +118,8 @@ Outcome fetch(FileServer& server, const QString& path, int lanes, qint64 expecte
     while (!result && timer.elapsed() < 10000)
         QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
     require(result.has_value(), "download never finished");
+    if (!result->isEmpty())
+        return { *result, {} };
     QFile file(path);
     require(file.open(QIODevice::ReadOnly), "downloaded file could not be read");
     return { *result, file.readAll() };
@@ -118,7 +128,7 @@ Outcome fetch(FileServer& server, const QString& path, int lanes, qint64 expecte
 } // namespace
 
 SPOOL_TEST_MAIN("ranged-download")
-{
+try {
     QCoreApplication app(argc, argv);
     QTemporaryDir directory;
     require(directory.isValid(), "temporary directory");
@@ -163,4 +173,7 @@ SPOOL_TEST_MAIN("ranged-download")
         require(!outcome.error.isEmpty(), "a file of the wrong size was accepted");
     }
     return 0;
+} catch (const std::runtime_error& error) {
+    std::cerr << "ranged-download: " << error.what() << '\n';
+    return 1;
 }
