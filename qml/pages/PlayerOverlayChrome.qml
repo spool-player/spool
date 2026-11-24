@@ -461,6 +461,8 @@ Item {
         Surface {
             id: menuPanel
             objectName: "playerOptionMenu"
+            readonly property int automationRepeatFocusIndex: root.overlay.menuKind === "repeat"
+                                                              ? menuList.currentIndex : -1
             width: Math.min(parent.width - root.dp(32), root.dp(menuDialog.dropdown ? 340 : 660))
             height: Math.min(parent.height - root.dp(64), menuBody.implicitHeight + menuBody.anchors.margins * 2)
             // Centre on the button rather than hanging off the screen edge,

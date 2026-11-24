@@ -83,6 +83,17 @@ QByteArray run(const QString& executable, const QStringList& arguments, const QP
         "journey subprocess failed (output deliberately withheld)");
     return process.readAllStandardOutput();
 }
+QByteArray runOcr(const QString& executable, const QStringList& arguments, QProcessEnvironment environment)
+{
+    // A constrained simulator host can spend more time scheduling OpenMP
+    // workers than reading the frame. Each OCR call owns a single worker.
+    environment.insert("OMP_THREAD_LIMIT", "1");
+    try {
+        return run(executable, arguments, environment);
+    } catch (const std::runtime_error& error) {
+        throw std::runtime_error(std::string("frame OCR: ") + error.what());
+    }
+}
 QString executable(const char *variable, const QString& fallback)
 {
     const QString requested = qEnvironmentVariable(variable);
@@ -209,6 +220,12 @@ public:
     QString screenshotPath() const
     {
         return remoteScreenshot;
+    }
+    void androidTvRemoteKey(const QString& key)
+    {
+        require(kind == "android" && qEnvironmentVariable("SPOOL_E2E_ANDROID_TV") == "1",
+            "Android TV remote input requires the isolated TV emulator");
+        runTool({ "shell", "input", "keyevent", key });
     }
     void deleteScreenshot()
     {
@@ -376,7 +393,7 @@ private:
             }
             const QImage image(screenshot);
             require(!image.isNull(), "actual mobile normal-startup screenshot was not an image");
-            const QByteArray text = run(ocr, { screenshot, "stdout", "-l", "eng", "--psm", "11" }, environment);
+            const QByteArray text = runOcr(ocr, { screenshot, "stdout", "-l", "eng", "--psm", "11" }, environment);
             if (QString::fromUtf8(text).contains("Welcome to Spool", Qt::CaseInsensitive)) {
                 rendered = true;
                 break;
@@ -1067,7 +1084,7 @@ public:
         if (adaptiveContrast || neutralAdaptive)
             arguments << "-c" << "thresholding_method=2";
         arguments << "tsv";
-        const QByteArray tsv = run(ocr, arguments, environment);
+        const QByteArray tsv = runOcr(ocr, arguments, environment);
         QList<Words> lines;
         QString previous;
         for (const QByteArray& row : tsv.split('\n')) {
@@ -1307,6 +1324,31 @@ public:
         for (int step = 0; step < 12; ++step)
             command({ "key", "right" });
         command({ "key", "ok" });
+    }
+    void selectAndroidTvRepeatCurrent()
+    {
+        require(device != nullptr, "Android TV remote input requires an owned device");
+        const auto waitForFocus = [this](int expected, const char *message) {
+            await(
+                [&] {
+                    const auto menu = state()["visual"].toObject()["playerOptions"].toObject();
+                    return menu["repeatFocusIndex"].toInt(-1) == expected;
+                },
+                message);
+        };
+        waitForFocus(0, "Android TV Repeat menu did not focus Off");
+        device->androidTvRemoteKey("KEYCODE_DPAD_DOWN");
+        waitForFocus(1, "Android TV remote did not focus Repeat queue");
+        device->androidTvRemoteKey("KEYCODE_DPAD_DOWN");
+        waitForFocus(2, "Android TV remote did not focus Repeat current item");
+        device->androidTvRemoteKey("KEYCODE_DPAD_CENTER");
+        await([&] { return !state()["visual"].toObject().contains("playerOptions"); },
+            "Android TV remote did not accept the focused repeat option");
+        openPlaybackSettings();
+        label("Current item", false, TextSurface::PlayerRepeatDetail);
+        device->androidTvRemoteKey("KEYCODE_BACK");
+        await([&] { return !state()["visual"].toObject().contains("playerOptions"); },
+            "Android TV remote did not dismiss playback settings");
     }
     void pauseForObservation(const char *message)
     {
@@ -2136,11 +2178,7 @@ SPOOL_TEST_MAIN("app-journey")
         journey.click("Repeat", false, false, TextSurface::PlayerOptions);
         if (qEnvironmentVariable("SPOOL_E2E_ANDROID_TV") == "1") {
             journey.label("Repeat current item", false, TextSurface::PlayerOptions);
-            // The visible Repeat menu opens with Off selected. Use the TV's
-            // directional input to choose Current item.
-            journey.command({ "key", "down" });
-            journey.command({ "key", "down" });
-            journey.command({ "key", "ok" });
+            journey.selectAndroidTvRepeatCurrent();
         } else {
             journey.click("Repeat current item", false, false, TextSurface::PlayerOptions);
         }
@@ -2150,18 +2188,34 @@ SPOOL_TEST_MAIN("app-journey")
         journey.await([&] { return journey.state()["playback"].toObject()["position"].toDouble() > 87.5; },
             "repeat journey did not reach the end of the paused item");
         journey.command({ "resume" });
-        journey.await(
-            [&] {
-                return fixture.playbackNegotiations > negotiationsBeforeRepeat
-                    && journey.state()["playback"].toObject()["loaded"].toBool()
-                    && std::any_of(fixture.reports.cbegin() + reportsBeforeRepeat, fixture.reports.cend(),
-                        [](const QJsonObject& report) {
+        QJsonObject repeatPlayback;
+        bool repeatStartedAtZero = false;
+        try {
+            journey.await(
+                [&] {
+                    repeatPlayback = journey.state()["playback"].toObject();
+                    repeatStartedAtZero = std::any_of(fixture.reports.cbegin() + reportsBeforeRepeat,
+                        fixture.reports.cend(), [](const QJsonObject& report) {
                             return report["endpoint"] == "/Sessions/Playing" && report["ItemId"] == "journey-episode"
                                 && report["RepeatMode"] == "RepeatOne"
                                 && report["PositionTicks"].toVariant().toLongLong() == 0;
                         });
-            },
-            "Repeat current item did not renegotiate and report an actual restart from zero");
+                    return fixture.playbackNegotiations > negotiationsBeforeRepeat && repeatPlayback["loaded"].toBool()
+                        && repeatStartedAtZero;
+                },
+                "Repeat current item did not renegotiate and report an actual restart from zero");
+        } catch (const std::exception& error) {
+            throw std::runtime_error(
+                QStringLiteral("%1 (negotiations=%2, reportedRestart=%3, active=%4, loaded=%5, paused=%6, position=%7)")
+                    .arg(QString::fromUtf8(error.what()))
+                    .arg(fixture.playbackNegotiations - negotiationsBeforeRepeat)
+                    .arg(repeatStartedAtZero)
+                    .arg(repeatPlayback["active"].toBool())
+                    .arg(repeatPlayback["loaded"].toBool())
+                    .arg(repeatPlayback["paused"].toBool())
+                    .arg(repeatPlayback["position"].toDouble(), 0, 'f', 2)
+                    .toStdString());
+        }
         journey.pauseForObservation("repeated item did not pause after its first renderer restart");
         journey.await(
             [&] {

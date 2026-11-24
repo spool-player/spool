@@ -149,6 +149,8 @@ public:
                 }
                 if (texture)
                     state.insert(QStringLiteral("ready"), item->property("ready").toBool());
+                if (playerOptions)
+                    state.insert(QStringLiteral("repeatFocusIndex"), item->property("automationRepeatFocusIndex"));
                 if (libraryRow) {
                     state.insert(QStringLiteral("moveMode"), item->property("moveMode").toBool());
                     state.insert(QStringLiteral("currentIndex"), item->property("currentIndex").toInt());
