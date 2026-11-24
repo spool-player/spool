@@ -9,6 +9,7 @@ Item {
     Component.onDestruction: InputLatency.noteDelegate("menu_row", -1)
 
     property string label: ""
+    property string detailObjectName: ""
     property string detail: ""
     property string iconName: ""
     property bool checked: false
@@ -101,6 +102,7 @@ Item {
                 elide: Text.ElideRight
             }
             SecondaryText {
+                objectName: root.detailObjectName
                 Layout.fillWidth: true
                 visible: root.detail.length > 0
                 text: root.detail

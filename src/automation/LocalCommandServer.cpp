@@ -365,6 +365,7 @@ QJsonObject LocalCommandServer::state() const
             QJsonObject { { QStringLiteral("active"), player->sessionActive() },
                 { QStringLiteral("loaded"), player->fileLoaded() }, { QStringLiteral("paused"), player->paused() },
                 { QStringLiteral("ready"), player->playbackReady() }, { QStringLiteral("title"), player->title() },
+                { QStringLiteral("pauseCommand"), player->pauseCommandState() },
                 { QStringLiteral("position"), player->positionSeconds() },
                 { QStringLiteral("duration"), player->durationSeconds() },
                 { QStringLiteral("failed"), !player->errorText().isEmpty() },

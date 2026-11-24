@@ -170,8 +170,8 @@ namespace {
     constexpr uint64_t kPauseReadReply = 0x7072000000000000ULL;
     constexpr uint64_t kFullscreenSetReply = 0x6673000000000000ULL;
     constexpr uint64_t kFullscreenObservation = 0x666f000000000000ULL;
-    constexpr uint64_t kFullscreenReplyMask = 0xffff000000000000ULL;
-    constexpr uint64_t kFullscreenSerialMask = ~kFullscreenReplyMask;
+    constexpr uint64_t kMpvReplyKindMask = 0xffff000000000000ULL;
+    constexpr uint64_t kMpvReplySerialMask = ~kMpvReplyKindMask;
     constexpr auto kNightModeFilter
         = "lavfi=[pan=stereo|FL<0.5*FL+1.0*FC+0.25*BL|FR<0.5*FR+1.0*FC+0.25*BR,"
           "dialoguenhance=original=0.25:enhance=2.0,"
@@ -972,7 +972,7 @@ void PlayerController::synchronizeWindowFullscreen(mpv_handle *handle)
     // A synchronous property write here can wait on that same render thread
     // until the VO's timeout, even though the native fullscreen request is fast.
     mpv_unobserve_property(handle, kFullscreenObservation | m_fullscreenSyncSerial);
-    m_fullscreenSyncSerial = (m_fullscreenSyncSerial + 1) & kFullscreenSerialMask;
+    m_fullscreenSyncSerial = (m_fullscreenSyncSerial + 1) & kMpvReplySerialMask;
     int fullscreen = m_window->fullScreen();
     const int error = mpv_set_property_async(
         handle, kFullscreenSetReply | m_fullscreenSyncSerial, "fullscreen", MPV_FORMAT_FLAG, &fullscreen);
@@ -1853,7 +1853,7 @@ void PlayerController::configureTransportForLoad(QByteArrayList loadCommand)
     if (!handle)
         return;
     const quint64 serial = ++m_transportReplySerial;
-    Q_ASSERT((serial & kFullscreenReplyMask) == 0);
+    Q_ASSERT((serial & kMpvReplyKindMask) == 0);
     const qint64 epoch = m_sessionThreadedStreaming ? ++m_transportEpoch : 0;
     m_pendingTransportLoads.insert(serial, { m_mpvEventGeneration, m_playGeneration, epoch, std::move(loadCommand) });
     if (!m_sessionThreadedStreaming) {
@@ -2078,6 +2078,8 @@ void PlayerController::togglePause()
         setPaused(!m_paused);
         return;
     }
+    m_pauseCommandSerial = (m_pauseCommandSerial + 1) & kMpvReplySerialMask;
+    m_pauseCommandState.clear();
     mpvCommand({ QByteArrayLiteral("no-osd"), QByteArrayLiteral("cycle"), QByteArrayLiteral("pause") });
 }
 
@@ -2091,9 +2093,20 @@ void PlayerController::setPaused(bool paused)
         }
         return;
     }
-    int pauseFlag = paused;
-    const int error
-        = mpv_set_property_async(m_mpvLifecycle.handle(), kPauseSetReply, "pause", MPV_FORMAT_FLAG, &pauseFlag);
+    m_pauseCommandSerial = (m_pauseCommandSerial + 1) & kMpvReplySerialMask;
+    m_pauseCommandTarget = paused;
+    m_pauseCommandRetried = false;
+    sendMpvPauseRequest();
+}
+
+void PlayerController::sendMpvPauseRequest()
+{
+    int pauseFlag = m_pauseCommandTarget;
+    const int error = mpv_set_property_async(
+        m_mpvLifecycle.handle(), kPauseSetReply | m_pauseCommandSerial, "pause", MPV_FORMAT_FLAG, &pauseFlag);
+    m_pauseCommandState = error < 0 ? QStringLiteral("queue-error")
+        : m_pauseCommandRetried     ? QStringLiteral("requeued")
+                                    : QStringLiteral("queued");
     if (error < 0)
         qWarning() << "player: could not queue pause property update:" << mpv_error_string(error);
 }
@@ -3036,6 +3049,7 @@ void PlayerController::resetPlaybackUiState()
         emit hdrPlaybackChanged();
     }
     m_paused = false;
+    m_pauseCommandState.clear();
     m_buffering = false;
     m_bufferingPercent = 0;
     m_seeking = false;
@@ -3234,20 +3248,25 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_
         });
         break;
     case MPV_EVENT_SET_PROPERTY_REPLY: {
-        if (event->reply_userdata == kPauseSetReply) {
-            if (event->error < 0) {
-                qWarning() << "player: pause property update failed:" << mpv_error_string(event->error);
-            } else {
-                // Reconcile the command with an actual core read. mpv can
-                // coalesce pause notifications around the load boundary.
-                const int error = mpv_get_property_async(handle, kPauseReadReply, "pause", MPV_FORMAT_FLAG);
-                if (error < 0)
-                    qWarning() << "player: could not read acknowledged pause state:" << mpv_error_string(error);
-            }
+        if ((event->reply_userdata & kMpvReplyKindMask) == kPauseSetReply) {
+            const auto serial = event->reply_userdata & kMpvReplySerialMask;
+            const int error = event->error;
+            postMpvEvent(generation, [this, serial, error] {
+                if (serial != m_pauseCommandSerial)
+                    return;
+                if (error < 0) {
+                    m_pauseCommandState = QStringLiteral("set-error");
+                    qWarning() << "player: pause property update failed:" << mpv_error_string(error);
+                    return;
+                }
+                const int readError = mpv_get_property_async(
+                    m_mpvLifecycle.handle(), kPauseReadReply | serial, "pause", MPV_FORMAT_FLAG);
+                m_pauseCommandState = readError < 0 ? QStringLiteral("read-queue-error") : QStringLiteral("reading");
+            });
             break;
         }
-        if ((event->reply_userdata & kFullscreenReplyMask) == kTransportConfigureReply) {
-            const quint64 serial = event->reply_userdata & kFullscreenSerialMask;
+        if ((event->reply_userdata & kMpvReplyKindMask) == kTransportConfigureReply) {
+            const quint64 serial = event->reply_userdata & kMpvReplySerialMask;
             const int error = event->error;
             postMpvEvent(generation, [this, serial, error] {
                 const auto pending = m_pendingTransportLoads.constFind(serial);
@@ -3264,9 +3283,9 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_
             });
             break;
         }
-        if ((event->reply_userdata & kFullscreenReplyMask) != kFullscreenSetReply)
+        if ((event->reply_userdata & kMpvReplyKindMask) != kFullscreenSetReply)
             break;
-        const uint64_t serial = event->reply_userdata & kFullscreenSerialMask;
+        const uint64_t serial = event->reply_userdata & kMpvReplySerialMask;
         const int error = event->error;
         postMpvEvent(generation, [this, serial, error] {
             if (serial != m_fullscreenSyncSerial)
@@ -3285,9 +3304,9 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_
         break;
     }
     case MPV_EVENT_COMMAND_REPLY: {
-        if ((event->reply_userdata & kFullscreenReplyMask) != kTransportLoadReply)
+        if ((event->reply_userdata & kMpvReplyKindMask) != kTransportLoadReply)
             break;
-        const quint64 serial = event->reply_userdata & kFullscreenSerialMask;
+        const quint64 serial = event->reply_userdata & kMpvReplySerialMask;
         const int error = event->error;
         postMpvEvent(generation, [this, serial, error] {
             const auto pending = m_pendingTransportLoads.find(serial);
@@ -3303,12 +3322,32 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_
         break;
     }
     case MPV_EVENT_GET_PROPERTY_REPLY: {
-        if (event->reply_userdata == kPauseReadReply) {
+        if ((event->reply_userdata & kMpvReplyKindMask) == kPauseReadReply) {
+            const auto serial = event->reply_userdata & kMpvReplySerialMask;
             const auto *property = static_cast<mpv_event_property *>(event->data);
-            if (event->error >= 0 && property && property->data && property->format == MPV_FORMAT_FLAG) {
-                const bool paused = *static_cast<int *>(property->data);
-                postMpvEvent(generation, [this, paused] { applyMpvPauseState(paused); });
-            }
+            const bool valid = event->error >= 0 && property && property->data && property->format == MPV_FORMAT_FLAG;
+            const bool paused = valid && *static_cast<int *>(property->data);
+            postMpvEvent(generation, [this, generation, serial, valid, paused] {
+                if (serial != m_pauseCommandSerial)
+                    return;
+                if (!valid) {
+                    m_pauseCommandState = QStringLiteral("read-error");
+                    return;
+                }
+                applyMpvPauseState(paused);
+                if (!m_sessionActive || generation != m_mpvEventGeneration || serial != m_pauseCommandSerial)
+                    return;
+                if (paused == m_pauseCommandTarget) {
+                    m_pauseCommandState = paused ? QStringLiteral("paused") : QStringLiteral("playing");
+                } else if (!m_pauseCommandRetried && m_fileLoaded) {
+                    // The core acknowledged the latest request but its actual
+                    // option still differs. Apply that same intent once.
+                    m_pauseCommandRetried = true;
+                    sendMpvPauseRequest();
+                } else {
+                    m_pauseCommandState = QStringLiteral("mismatch");
+                }
+            });
             break;
         }
         if (event->reply_userdata == kCacheSpeedReply) {
@@ -3477,7 +3516,7 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_
             });
         } else if (strcmp(property->name, "fullscreen") == 0 && property->format == MPV_FORMAT_FLAG) {
             const bool fullscreen = *static_cast<int *>(property->data);
-            const uint64_t serial = event->reply_userdata & kFullscreenSerialMask;
+            const uint64_t serial = event->reply_userdata & kMpvReplySerialMask;
             postMpvEvent(generation, [this, fullscreen, serial]() {
                 if (serial == m_fullscreenSyncSerial && m_window && m_window->fullScreen() != fullscreen)
                     m_window->toggleFullScreen();

@@ -540,6 +540,10 @@ Item {
                         width: Math.max(0, menuList.width - (menuScrollBar.visible ? menuScrollBar.width : 0))
                         label: root.overlay.menuLabel(modelData)
                         detail: root.overlay.menuDetail(index)
+                        detailObjectName: root.overlay.debugAction(index) === "repeat" ? "playerRepeatDetail" :
+                                                                                         root.overlay.debugAction(
+                                                                                             index) === "sleep"
+                                                                                         ? "playerSleepDetail" : ""
                         compact: menuDialog.dropdown || root.overlay.touchscreenControls
                         checked: root.overlay.menuItemSelected(index)
                         highlighted: menuList.currentIndex === index

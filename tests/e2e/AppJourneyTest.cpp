@@ -14,6 +14,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLibraryInfo>
+#include <QPainter>
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QRect>
@@ -468,7 +469,7 @@ private:
     QDateTime launchTime;
     qint64 deviceLaunchEpoch = 0;
 };
-enum class TextSurface { Window, LibraryRow, RelatedCard, PlayerOptions };
+enum class TextSurface { Window, LibraryRow, RelatedCard, PlayerOptions, PlayerRepeatDetail, PlayerSleepDetail };
 enum class TextPreprocess { Original, Neutral, Inverse, SmoothInverse, NeutralAdaptive, Positive, Adaptive };
 struct Words {
     QString text;
@@ -653,7 +654,7 @@ public:
         QJsonObject result;
         await(
             [&] {
-                const auto window = state()["window"].toObject();
+                const auto window = state(true)["window"].toObject();
                 if (!window["exposed"].toBool() || window["width"].toInt() <= 0 || window["height"].toInt() <= 0)
                     return false;
                 for (const QString& previous : { screenshotPath, libraryTextPath() })
@@ -710,7 +711,10 @@ public:
         const bool adaptiveContrast = preprocess == TextPreprocess::Adaptive;
         const bool needsPreprocess
             = neutralText || highContrast || smoothInverse || neutralAdaptive || positiveContrast || adaptiveContrast;
-        int scale = mode == 6 || smoothInverse || neutralAdaptive || positiveContrast || adaptiveContrast ? 2 : 1;
+        const int linePadding = mode == 7 && smoothInverse ? 16 : 0;
+        int scale = mode == 7                                                                       ? 4
+            : mode == 6 || smoothInverse || neutralAdaptive || positiveContrast || adaptiveContrast ? 2
+                                                                                                    : 1;
         QImage image;
         if (scale > 1 || needsPreprocess) {
             image = QImage(imagePath);
@@ -826,14 +830,30 @@ public:
                 const int w = source.width();
                 const int h = source.height();
                 image = QImage(w, h, QImage::Format_Grayscale8);
+                int minimumLuma = 255;
+                int maximumLuma = 0;
                 for (int y = 0; y < h; ++y) {
                     const auto *sourcePixels = reinterpret_cast<const QRgb *>(source.constScanLine(y));
                     auto *pixels = image.scanLine(y);
                     for (int x = 0; x < w; ++x) {
                         const QRgb pixel = sourcePixels[x];
                         const int luma = (77 * qRed(pixel) + 150 * qGreen(pixel) + 29 * qBlue(pixel) + 128) >> 8;
-                        const int scaled = (180 - luma) * 255 / (180 - 40);
-                        pixels[x] = uint8_t(std::clamp(scaled, 0, 255));
+                        if (linePadding) {
+                            minimumLuma = std::min(minimumLuma, luma);
+                            maximumLuma = std::max(maximumLuma, luma);
+                            pixels[x] = uint8_t(luma);
+                        } else {
+                            const int scaled = (180 - luma) * 255 / (180 - 40);
+                            pixels[x] = uint8_t(std::clamp(scaled, 0, 255));
+                        }
+                    }
+                }
+                if (linePadding) {
+                    const int range = std::max(1, maximumLuma - minimumLuma);
+                    for (int y = 0; y < h; ++y) {
+                        auto *pixels = image.scanLine(y);
+                        for (int x = 0; x < w; ++x)
+                            pixels[x] = uint8_t((maximumLuma - pixels[x]) * 255 / range);
                     }
                 }
             } else if (neutralAdaptive) {
@@ -1022,13 +1042,22 @@ public:
                 return upscaled;
             };
             QSaveFile file(inputPath);
-            const QImage output = (smoothInverse || neutralAdaptive || positiveContrast)
+            QImage output = (smoothInverse || neutralAdaptive || positiveContrast)
                 ? (scale == 4          ? catmullUpscale4x(image)
                           : scale == 2 ? catmullUpscale2x(image)
                                        : image)
                 : (scale == 1 ? image
                               : image.scaled(image.width() * scale, image.height() * scale, Qt::IgnoreAspectRatio,
                                     Qt::SmoothTransformation));
+            if (linePadding) {
+                QImage padded(
+                    output.width() + 2 * linePadding, output.height() + 2 * linePadding, QImage::Format_RGB32);
+                padded.fill(Qt::white);
+                QPainter painter(&padded);
+                painter.drawImage(linePadding, linePadding, output);
+                painter.end();
+                output = std::move(padded);
+            }
             require(file.open(QIODevice::WriteOnly)
                     && file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)
                     && output.save(&file, "PNG") && file.commit(),
@@ -1046,8 +1075,9 @@ public:
             if (fields.size() < 12 || fields[0] != "5" || fields[11].trimmed().isEmpty())
                 continue;
             const QString key = QString::fromLatin1(fields[1] + ':' + fields[2] + ':' + fields[3] + ':' + fields[4]);
-            const QRect bounds = QRectF(fields[6].toDouble() / scale + origin.x(),
-                fields[7].toDouble() / scale + origin.y(), fields[8].toDouble() / scale, fields[9].toDouble() / scale)
+            const QRect bounds = QRectF((fields[6].toDouble() - linePadding) / scale + origin.x(),
+                (fields[7].toDouble() - linePadding) / scale + origin.y(), fields[8].toDouble() / scale,
+                fields[9].toDouble() / scale)
                                      .toAlignedRect();
             if (key != previous) {
                 lines.append(Words {});
@@ -1067,6 +1097,7 @@ public:
         QRect found;
         QRect previous;
         QString lastObserved;
+        const bool singleLine = surface == TextSurface::PlayerRepeatDetail || surface == TextSurface::PlayerSleepDetail;
         const std::string failure = "expected user-visible label was not rendered: " + text.toStdString();
         const auto summarize = [](const QList<Words>& lines) {
             QString summary;
@@ -1137,6 +1168,8 @@ public:
                     if (surface != TextSurface::Window) {
                         const QString key = surface == TextSurface::LibraryRow ? QStringLiteral("libraryRow")
                             : surface == TextSurface::RelatedCard              ? QStringLiteral("relatedCard")
+                            : surface == TextSurface::PlayerRepeatDetail       ? QStringLiteral("playerRepeatDetail")
+                            : surface == TextSurface::PlayerSleepDetail        ? QStringLiteral("playerSleepDetail")
                                                                                : QStringLiteral("playerOptions");
                         const auto row = capturedState["visual"].toObject()[key].toObject();
                         const double ratio = capturedState["window"].toObject()["devicePixelRatio"].toDouble(1);
@@ -1149,6 +1182,8 @@ public:
                                 command({ "key", "down" });
                             return false;
                         }
+                        if (singleLine)
+                            region = region.adjusted(-3, 0, 4, 0).intersected(frame.rect());
                         imagePath = surface == TextSurface::LibraryRow
                             ? libraryTextPath()
                             : screenshotPath + QStringLiteral(".caption.png");
@@ -1157,6 +1192,14 @@ public:
                                 && file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)
                                 && frame.copy(region).save(&file, "PNG") && file.commit(),
                             "actual rendered region could not be read for caption navigation");
+                    }
+                    if (singleLine) {
+                        const auto lines = words(imagePath, 7, region.topLeft(), TextPreprocess::SmoothInverse);
+                        lastObserved = summarize(lines);
+                        found = locate(lines);
+                        if (found.isEmpty())
+                            found = locate(words(imagePath, 7, region.topLeft()));
+                        return !found.isEmpty();
                     }
                     const QList<Words> primaryLines
                         = words(imagePath, surface == TextSurface::Window ? 11 : 6, region.topLeft());
@@ -1279,8 +1322,8 @@ public:
                 },
                 message);
         } catch (const std::exception& error) {
-            throw std::runtime_error(
-                QStringLiteral("%1 (active=%2, loaded=%3, ready=%4, paused=%5, failed=%6, position=%7, duration=%8)")
+            throw std::runtime_error(QStringLiteral(
+                "%1 (active=%2, loaded=%3, ready=%4, paused=%5, failed=%6, position=%7, duration=%8, pause=%9)")
                     .arg(QString::fromUtf8(error.what()))
                     .arg(playback["active"].toBool())
                     .arg(playback["loaded"].toBool())
@@ -1289,6 +1332,7 @@ public:
                     .arg(playback["failed"].toBool())
                     .arg(playback["position"].toDouble(), 0, 'f', 2)
                     .arg(playback["duration"].toDouble(), 0, 'f', 2)
+                    .arg(playback["pauseCommand"].toString())
                     .toStdString());
         }
     }
@@ -1484,6 +1528,9 @@ SPOOL_TEST_MAIN("app-journey")
                     "--device requires android, tvos or ios");
             }
         }
+#ifdef SPOOL_DEVICE_JOURNEY_ONLY
+        require(!deviceKind.isEmpty(), "device journey controller requires an isolated device");
+#endif
         if (deviceKind.isEmpty()) {
             require(qEnvironmentVariable("SPOOL_E2E_ISOLATED_DISPLAY") == "1",
                 "app-journey refuses a user desktop: driver must supply an isolated GPU display");
@@ -2128,16 +2175,16 @@ SPOOL_TEST_MAIN("app-journey")
         // merely clearing the repeat setting would make this a false positive.
         fixturePhase = QStringLiteral("sleep-after-current-eof");
         journey.openPlaybackSettings();
-        journey.label("Current item", false, TextSurface::PlayerOptions);
+        journey.label("Current item", false, TextSurface::PlayerRepeatDetail);
         journey.click("Sleep timer", false, false, TextSurface::PlayerOptions);
         journey.click("15 minutes", false, false, TextSurface::PlayerOptions);
         journey.openPlaybackSettings();
-        journey.label("remaining", false, TextSurface::PlayerOptions);
+        journey.label("remaining", false, TextSurface::PlayerSleepDetail);
         journey.click("Sleep timer", false, false, TextSurface::PlayerOptions);
         journey.click("After current item", false, false, TextSurface::PlayerOptions);
         journey.openPlaybackSettings();
-        journey.label("After current item", false, TextSurface::PlayerOptions);
-        journey.label("Current item", false, TextSurface::PlayerOptions);
+        journey.label("After current item", false, TextSurface::PlayerSleepDetail);
+        journey.label("Current item", false, TextSurface::PlayerRepeatDetail);
         journey.command({ "key", "back" });
         journey.command({ "seek", "88" });
         journey.await([&] { return journey.state()["playback"].toObject()["position"].toDouble() > 87.5; },

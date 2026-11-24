@@ -111,6 +111,10 @@ public:
     {
         return m_seekDispatchReady;
     }
+    QString pauseCommandState() const
+    {
+        return m_pauseCommandState;
+    }
     int bufferingPercent() const;
     bool seeking() const;
     bool debugOsdVisible() const;
@@ -375,6 +379,7 @@ private:
     void synchronizeWindowFullscreen(mpv_handle *handle);
     void scheduleMpvTeardown();
     void handleMpvEvent(mpv_event *event, quint64 generation, mpv_handle *handle);
+    void sendMpvPauseRequest();
     void applyMpvPauseState(bool paused);
     template <typename Callback> void postMpvEvent(quint64 generation, Callback callback)
     {
@@ -490,6 +495,10 @@ private:
     int m_watchedThresholdPercent = 90;
     bool m_seekDispatchReady = false;
     bool m_paused = false;
+    quint64 m_pauseCommandSerial = 0;
+    bool m_pauseCommandTarget = false;
+    bool m_pauseCommandRetried = false;
+    QString m_pauseCommandState;
     bool m_buffering = false;
     int m_bufferingPercent = 0;
     bool m_seeking = false;
