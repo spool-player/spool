@@ -106,8 +106,8 @@ Item {
                 Layout.fillWidth: true
                 visible: root.detail.length > 0
                 text: root.detail
-                color: Theme.textMuted
-                font.pixelSize: root.compact ? Metrics.metaSizePx - 1 : Metrics.metaSizePx + Metrics.scaled(1)
+                color: root.actionable ? Theme.textSecondary : Theme.textMuted
+                font.pixelSize: root.compact ? Metrics.metaSizePx + 1 : Metrics.metaSizePx + Metrics.scaled(1)
                 maximumLineCount: 1
                 elide: Text.ElideRight
             }
