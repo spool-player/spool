@@ -700,10 +700,26 @@ public:
             "actual app accepted IME input without an editable focus");
         require(state()["initialized"].toBool(), "genuine control capability stopped working after denial");
     }
-    void text(const QString& value)
+    void text(const QString& value, bool activateTvField = false)
     {
-        require(command({ "text", "--stdin" }, value.toUtf8())["accepted"].toBool(),
-            "focused editable field did not accept production IME input");
+        const auto input = value.toUtf8();
+        await(
+            [&] {
+                QJsonObject response;
+                try {
+                    require(command({ "text", "--stdin" }, input, true, {}, &response)["accepted"].toBool(),
+                        "focused editable field did not accept production IME input");
+                } catch (const std::exception&) {
+                    if (!activateTvField || response["error"].toObject()["code"] != "no_text_focus")
+                        throw;
+                    // The TV focus ring can belong to the row while its editor is inactive.
+                    // The rejection precedes dispatch, so pressing Select and retrying cannot duplicate text.
+                    command({ "key", "ok" });
+                    return false;
+                }
+                return true;
+            },
+            "could not enter text in the intended form field", 5000);
     }
     QJsonObject state(bool observeAfterTimeout = false)
     {
@@ -1695,18 +1711,12 @@ SPOOL_TEST_MAIN("app-journey")
             = deviceKind == "tvos" || (deviceKind == "android" && qEnvironmentVariable("SPOOL_E2E_ANDROID_TV") == "1");
         journey.click("Jellyfin", true);
         journey.label("Choose a server");
-        if (television)
-            journey.command({ "key", "ok" });
-        journey.text(fixture.origin());
+        journey.text(fixture.origin(), television);
         journey.command({ "key", "ok" });
         journey.label("Username");
-        if (television)
-            journey.command({ "key", "ok" });
-        journey.text("journey");
+        journey.text("journey", television);
         journey.command({ "key", "ok" });
-        if (television)
-            journey.command({ "key", "ok" });
-        journey.text("incorrect-password");
+        journey.text("incorrect-password", television);
         journey.command({ "key", "ok" });
         try {
             journey.await(
@@ -1724,7 +1734,7 @@ SPOOL_TEST_MAIN("app-journey")
                     .toStdString());
         }
         journey.label("Wrong username or password");
-        journey.text("journey-password");
+        journey.text("journey-password", television);
         journey.command({ "key", "ok" });
         journey.await([&] { return fixture.successfulLogins == 1 && fixture.authenticatedViews > 0; },
             "login did not activate an authenticated provider library");
