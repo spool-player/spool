@@ -8,7 +8,7 @@ MPV_SRC="${MPV_SRC:-$ROOT/mpv}"
 
 PHASE="${1:-all}"
 ABI="${ANDROID_ABI:-x86_64}"
-API="${ANDROID_API:-28}"
+API="${ANDROID_API:-$(toolchain_field "$ROOT" android.minimumSdk)}"
 MANIFEST="${ANDROID_THIRD_PARTY_MANIFEST:-$ROOT/tools/manifests/android-third-party.json}"
 JOBS="$(recommended_parallel_jobs "${ANDROID_DEPS_MEMORY_PER_JOB_MIB:-1024}" "${ANDROID_DEPS_MEMORY_RESERVE_MIB:-2048}")"
 
@@ -72,11 +72,16 @@ unset PKG_CONFIG_SYSROOT_DIR
 fetch_sources() {
   mkdir -p "$SOURCE_ROOT" "$BUILD_ROOT"
   local source
-  for source in freetype lua qcoro fribidi harfbuzz libass libplacebo dav1d; do
+  for source in freetype lua fribidi harfbuzz libass libplacebo dav1d; do
     prepare_manifest_source "$ROOT" "$MANIFEST" "$source" "$SOURCE_ROOT/$source"
   done
   bash "$ROOT/tools/prepare-streaming-sources.sh" --root "$ROOT" --output "$SOURCE_ROOT"
-  prepare_toolchain_ffmpeg "$ROOT" "$SOURCE_ROOT/ffmpeg"
+  if [[ -n "${ANDROID_THIRD_PARTY_MANIFEST:-}" && "$MANIFEST" != "$ROOT/tools/manifests/android-third-party.json" ]]; then
+    prepare_manifest_source "$ROOT" "$MANIFEST" qcoro "$SOURCE_ROOT/qcoro"
+  else
+    prepare_toolchain_source "$ROOT" qcoro "$SOURCE_ROOT/qcoro"
+  fi
+  prepare_toolchain_source "$ROOT" ffmpeg "$SOURCE_ROOT/ffmpeg"
   local path url sha archive
   while IFS=$'\t' read -r path url sha; do
     [[ -n "$path" ]] || continue

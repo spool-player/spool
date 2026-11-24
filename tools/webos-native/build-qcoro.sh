@@ -20,7 +20,7 @@ source "$ROOT/tools/webos-native/nixos-sdk-compat.sh"
 MANIFEST="${WEBOS_THIRD_PARTY_MANIFEST:-$ROOT/tools/manifests/webos-third-party.json}"
 QT_MANIFEST="${QT_MANIFEST:-$ROOT/tools/manifests/qt-webos.json}"
 QT_STATIC="${QT_STATIC:-1}"
-QT_VERSION="${QT_VERSION:-$(manifest_qt_field "$QT_MANIFEST" qtVersion)}"
+QT_VERSION="${QT_VERSION:-$(qt_source_version "$ROOT" "$QT_MANIFEST")}"
 QT_BUILD_TAG="${QT_VERSION%.*}"
 QT_BUILD_TAG="${QT_BUILD_TAG//./}"
 

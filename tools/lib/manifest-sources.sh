@@ -29,7 +29,7 @@ print(value)
 ' "$manifest" "$source_name" "$field"
 }
 
-manifest_qt_field() {
+manifest_qt_override() {
   local manifest="$1"
   local field="$2"
   "$MANIFEST_PYTHON" -c '
@@ -39,27 +39,51 @@ sys.stdout.reconfigure(newline="\n")
 
 with open(sys.argv[1], encoding="utf-8") as handle:
     data = json.load(handle)
-print(data[sys.argv[2]])
+print(data.get(sys.argv[2], ""))
 ' "$manifest" "$field"
 }
 
-manifest_qt_module_sha256() {
-  local manifest="$1"
-  local module="$2"
-  "$MANIFEST_PYTHON" -c '
+qt_source_version() {
+  local override
+  override="$(manifest_qt_override "$2" qtVersion)" || return
+  if [[ -n "$override" ]]; then
+    printf '%s\n' "$override"
+  else
+    toolchain_field "$1" qt.version
+  fi
+}
+
+qt_source_base_url() {
+  local override mirror
+  local version="$3"
+  override="$(manifest_qt_override "$2" baseUrl)" || return
+  if [[ -n "$override" ]]; then
+    printf '%s\n' "$override"
+  else
+    mirror="$(toolchain_field "$1" qt.sourceMirror)" || return
+    printf '%s/%s/%s/submodules\n' "$mirror" "${version%.*}" "$version"
+  fi
+}
+
+qt_source_sha256() {
+  local root="$1" manifest="$2" module="$3" override
+  override="$("$MANIFEST_PYTHON" -c '
 import json
 import sys
 sys.stdout.reconfigure(newline="\n")
 
 with open(sys.argv[1], encoding="utf-8") as handle:
     data = json.load(handle)
-for module in data["modules"]:
-    if module["name"] == sys.argv[2]:
+for module in data.get("modules", []):
+    if isinstance(module, dict) and module["name"] == sys.argv[2]:
         print(module["sha256"])
         break
-else:
-    raise SystemExit(f"module not found in manifest: {sys.argv[2]}")
-' "$manifest" "$module"
+' "$manifest" "$module")" || return
+  if [[ -n "$override" ]]; then
+    printf '%s\n' "$override"
+  else
+    toolchain_field "$root" "qt.sources.$module"
+  fi
 }
 
 manifest_tool_field() {
@@ -210,16 +234,19 @@ print(value)
 ' "$root" "$path"
 }
 
-# FFmpeg is pinned centrally rather than repeated per platform, so the cross
-# builds fetch it straight from the toolchain manifest.
-prepare_toolchain_ffmpeg() {
-  local root="$1"
-  local destination="$2"
-  local url sha archive
+prepare_toolchain_source() {
+  local root="$1" name="$2" destination="$3"
+  local url sha archive revision
 
-  url="$(toolchain_field "$root" ffmpeg.url)"
-  sha="$(toolchain_field "$root" ffmpeg.sha256)"
-  archive="$root/build/downloads/ffmpeg-$sha.archive"
+  case "$name" in
+    qcoro)
+      revision="$(toolchain_field "$root" qcoro.revision)" || return
+      url="https://codeload.github.com/danvratil/qcoro/tar.gz/$revision"
+      ;;
+    *) url="$(toolchain_field "$root" "$name.url")" || return ;;
+  esac
+  sha="$(toolchain_field "$root" "$name.sha256")" || return
+  archive="$root/build/downloads/$name-$sha.archive"
 
   download_verified "$url" "$sha" "$archive"
   extract_verified_source "$archive" "$sha" "$destination"

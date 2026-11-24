@@ -1,20 +1,11 @@
 {
   "schemaVersion": 1,
-  "qtVersion": "6.12.0",
-  "series": "6.12",
-  "baseUrl": "https://ftp.fau.de/qtproject/archive/qt/6.12/6.12.0/submodules",
   "modules": [
-    {"name": "qtbase", "sha256": "a951bd163c7b80fc6b8c88d7668fb56abf91c152373e13c10666763238131307"},
-    {"name": "qtshadertools", "sha256": "c7d84f436e1aaef39fdcadebf2bd71bdf24dc69497e13f2e0198873cbbfea2ab"},
-    {"name": "qtdeclarative", "sha256": "311f3a2603e1973bb59baef9dfa740a376de713157d4782ee043681e889c9260"},
-    {"name": "qtsvg", "sha256": "e4ab39534ec97987b1b9b60ef7f4d3253d5912a69f8c713a01753174a4029331"},
-    {"name": "qtimageformats", "sha256": "0943132b5db8de6b6a7f1d162682173e8763c7ed94e80fd39113292845f67762"},
-    {"name": "qtwebsockets", "sha256": "21690a365cd5fbfa8dea051473e98968df9f4eca0121fed7481d1215b7455a31"}
-  ],
-  "android": {
-    "compileSdk": "36",
-    "buildTools": "36.0.0",
-    "ndkVersion": "27.2.12479018",
-    "minimumSdk": "28"
-  }
+    "qtbase",
+    "qtshadertools",
+    "qtdeclarative",
+    "qtsvg",
+    "qtimageformats",
+    "qtwebsockets"
+  ]
 }

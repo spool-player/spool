@@ -20,9 +20,9 @@ source "$ROOT/tools/webos-native/nixos-sdk-compat.sh"
 QT_MANIFEST="${QT_MANIFEST:-$ROOT/tools/manifests/qt-webos.json}"
 SDK_ROOT="${WEBOS_SDK_ROOT:-$ROOT/build/webos-sdk/arm-webos-linux-gnueabi_sdk-buildroot}"
 SYSROOT="$SDK_ROOT/arm-webos-linux-gnueabi/sysroot"
-QT_VERSION="${QT_VERSION:-$(manifest_qt_field "$QT_MANIFEST" qtVersion)}"
+QT_VERSION="${QT_VERSION:-$(qt_source_version "$ROOT" "$QT_MANIFEST")}"
 QT_SERIES="${QT_VERSION%.*}"
-QT_BASE_URL="${QT_BASE_URL:-$(manifest_qt_field "$QT_MANIFEST" baseUrl)}"
+QT_BASE_URL="${QT_BASE_URL:-$(qt_source_base_url "$ROOT" "$QT_MANIFEST" "$QT_VERSION")}"
 QT_STATIC="${QT_STATIC:-0}"
 PHASE="${1:-all}"
 QT_BUILD_CLEAN_POISONED="${QT_BUILD_CLEAN_POISONED:-1}"
@@ -215,7 +215,7 @@ download_submodule() {
   local module="$1"
   local tarball="$2"
   local expected
-  expected="$(manifest_qt_module_sha256 "$QT_MANIFEST" "$module")"
+  expected="$(qt_source_sha256 "$ROOT" "$QT_MANIFEST" "$module")"
 
   log "Downloading $module $QT_VERSION"
   download_verified \
@@ -237,7 +237,7 @@ extract_if_needed() {
   local src_dir="$2"
   local module expected
   module="$(basename "$tarball" "-everywhere-src-$QT_VERSION.tar.xz")"
-  expected="$(manifest_qt_module_sha256 "$QT_MANIFEST" "$module")"
+  expected="$(qt_source_sha256 "$ROOT" "$QT_MANIFEST" "$module")"
   # Patches may change without a Qt version bump. Start from pristine source
   # rather than applying a renamed/revised patch on top of its old contents.
   local patch_hash patch_marker

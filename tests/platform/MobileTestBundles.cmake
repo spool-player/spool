@@ -111,12 +111,14 @@ function(spool_add_mobile_test_bundles)
             configure_file(tests/platform/android/AndroidManifest.xml.in
                 "${package_dir}/AndroidManifest.xml" @ONLY)
             get_target_property(extra_libs spool QT_ANDROID_EXTRA_LIBS)
+            get_target_property(minimum_sdk spool QT_ANDROID_MIN_SDK_VERSION)
+            get_target_property(target_sdk spool QT_ANDROID_TARGET_SDK_VERSION)
             set_target_properties(${target} PROPERTIES
                 QT_ANDROID_PACKAGE_SOURCE_DIR "${package_dir}"
                 QT_ANDROID_PACKAGE_NAME "${SPOOL_MOBILE_TEST_IDENTIFIER}"
                 QT_ANDROID_APP_NAME "${SPOOL_MOBILE_TEST_NAME}"
-                QT_ANDROID_MIN_SDK_VERSION 28
-                QT_ANDROID_TARGET_SDK_VERSION 36
+                QT_ANDROID_MIN_SDK_VERSION "${minimum_sdk}"
+                QT_ANDROID_TARGET_SDK_VERSION "${target_sdk}"
                 QT_ANDROID_VERSION_NAME "${PROJECT_VERSION}"
                 QT_ANDROID_VERSION_CODE 1
                 QT_ANDROID_LEGACY_PACKAGING TRUE

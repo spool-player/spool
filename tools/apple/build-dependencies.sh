@@ -40,11 +40,12 @@ export CFLAGS="-target $TRIPLE -isysroot $SDKROOT -fPIC"
 export CXXFLAGS="$CFLAGS"
 export LDFLAGS="-target $TRIPLE -isysroot $SDKROOT -L$PREFIX/lib"
 export CC CXX AR RANLIB SDKROOT
-for name in freetype qcoro fribidi harfbuzz libass libplacebo; do
+for name in freetype fribidi harfbuzz libass libplacebo; do
   prepare_manifest_source "$ROOT" "$MANIFEST" "$name" "$SOURCE_ROOT/$name"
 done
 bash "$ROOT/tools/prepare-streaming-sources.sh" --root "$ROOT" --output "$SOURCE_ROOT"
-prepare_toolchain_ffmpeg "$ROOT" "$SOURCE_ROOT/ffmpeg"
+prepare_toolchain_source "$ROOT" qcoro "$SOURCE_ROOT/qcoro"
+prepare_toolchain_source "$ROOT" ffmpeg "$SOURCE_ROOT/ffmpeg"
 while IFS=$'\t' read -r path url sha; do
   archive="$ROOT/build/downloads/apple-libplacebo-${path//\//-}-$sha.archive"
   download_verified "$url" "$sha" "$archive"

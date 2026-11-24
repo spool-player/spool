@@ -146,9 +146,8 @@ jobs:
     if: ${{ needs.build-policy.outputs.build == 'true' }}
     outputs:
       qt_version: ${{ steps.versions.outputs.qt_version }}
-      qt_series: ${{ steps.versions.outputs.qt_series }}
+      qt_build_tag: ${{ steps.versions.outputs.qt_build_tag }}
       qt_windows_kit: ${{ steps.versions.outputs.qt_windows_kit }}
-      ffmpeg_version: ${{ steps.versions.outputs.ffmpeg_version }}
       qcoro_revision: ${{ steps.versions.outputs.qcoro_revision }}
       qcoro_windows_prefix: ${{ steps.versions.outputs.qcoro_windows_prefix }}
     steps:
@@ -157,9 +156,7 @@ jobs:
           persist-credentials: false
       - name: Read the pinned Qt and FFmpeg versions
         id: versions
-        run: |
-          bash tools/toolchain-versions.sh --check
-          bash tools/toolchain-versions.sh >> "$GITHUB_OUTPUT"
+        run: bash tools/toolchain-versions.sh >> "$GITHUB_OUTPUT"
 
   lint:
     name: Lint scripts
@@ -794,14 +791,27 @@ jobs:
           APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
         run: tools/notarize-macos.sh dist/*.dmg
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
-        with:
+      - name: Upload audited macOS package
+        id: macos-upload
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with: &macos-dmg-upload
           name: spool-macos-dmg-${{ matrix.arch }}
           path: |
             dist/*.dmg
             dist/*.dmg.app.tar.gz
           if-no-files-found: error
           retention-days: ${{ inputs.release && 1 || 7 }}
+          overwrite: true
+
+      # A transient artifact service failure should retry this upload in place.
+      - name: Wait before retrying macOS package upload
+        if: steps.macos-upload.outcome == 'failure'
+        run: sleep 20
+      - name: Retry audited macOS package upload
+        if: steps.macos-upload.outcome == 'failure'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with: *macos-dmg-upload
 
       - name: Save macOS build cache
         if: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release && steps.macos-build-cache.outputs.cache-hit != 'true' }}
@@ -974,7 +984,7 @@ jobs:
   webos-ipk:
     name: webOS IPK
     runs-on: ubuntu-24.04
-    needs: lint
+    needs: [toolchain, lint]
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_webos }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
@@ -1000,11 +1010,11 @@ jobs:
       - uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
         id: webos-cache
         with:
-          path: |
+          path: &webos-cache-paths |
             build/webos-sdk
-            build/qt6-612-host-install
-            build/qt6-612-target-static-install
-            build/qt6-612-target-install
+            build/qt6-${{ needs.toolchain.outputs.qt_build_tag }}-host-install
+            build/qt6-${{ needs.toolchain.outputs.qt_build_tag }}-target-static-install
+            build/qt6-${{ needs.toolchain.outputs.qt_build_tag }}-target-install
             build/webos-thirdparty-build
             build/webos-qcoro
             build/third_party
@@ -1040,16 +1050,7 @@ jobs:
         if: ${{ env.SPOOL_CACHE_WRITE == 'true' && steps.webos-cache.outputs.cache-hit != 'true' && !inputs.release }}
         uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
         with:
-          path: |
-            build/webos-sdk
-            build/qt6-612-host-install
-            build/qt6-612-target-static-install
-            build/qt6-612-target-install
-            build/webos-thirdparty-build
-            build/webos-qcoro
-            build/third_party
-            .ccache
-            mpv/build/webos-libmpv
+          path: *webos-cache-paths
           key: ${{ steps.webos-cache.outputs.cache-primary-key }}
 
       - name: Build IPK
@@ -1219,7 +1220,7 @@ jobs:
       - uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
         id: android-cache
         with:
-          path: |
+          path: &android-cache-paths |
             build/android/qt
             build/android/deps
             build/android/qcoro
@@ -1280,26 +1281,13 @@ jobs:
 
       - name: Verify Android release signing identity
         if: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release }}
-        env:
-          EXPECTED_CERT_SHA256: 0c9deff0513eed6d43521df31ad6d2d8e928c029b146d902f4bcc25a883c1fb8
-        run: |
-          set -euo pipefail
-          nix develop .#android -c bash -c "
-            for apk in dist/android/*.apk; do
-              output=\"\$(\"\$ANDROID_HOME/build-tools/36.0.0/apksigner\" verify --verbose --print-certs \"\$apk\")\"
-              printf '%s\n' \"\$output\"
-              grep -Fq \"Signer #1 certificate SHA-256 digest: \$EXPECTED_CERT_SHA256\" <<<\"\$output\"
-            done
-          "
+        run: nix develop .#android -c bash tools/android/verify-release-signature.sh dist/android/spool-${{ matrix.abi }}.apk
 
       - name: Save Android toolchain cache
         if: ${{ env.SPOOL_CACHE_WRITE == 'true' && steps.android-cache.outputs.cache-hit != 'true' && !inputs.release }}
         uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
         with:
-          path: |
-            build/android/qt
-            build/android/deps
-            build/android/qcoro
+          path: *android-cache-paths
           key: ${{ steps.android-cache.outputs.cache-primary-key }}
 
 
@@ -1452,15 +1440,7 @@ jobs:
 
       - name: Verify Android release signing identity
         if: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release }}
-        env:
-          EXPECTED_CERT_SHA256: 0c9deff0513eed6d43521df31ad6d2d8e928c029b146d902f4bcc25a883c1fb8
-        run: |
-          set -euo pipefail
-          nix develop .#android-packaging -c bash -c "
-            output=\"\$(\"\$ANDROID_HOME/build-tools/36.0.0/apksigner\" verify --verbose --print-certs dist/android/spool-universal.apk)\"
-            printf '%s\n' \"\$output\"
-            grep -Fq \"Signer #1 certificate SHA-256 digest: \$EXPECTED_CERT_SHA256\" <<<\"\$output\"
-          "
+        run: nix develop .#android-packaging -c bash tools/android/verify-release-signature.sh dist/android/spool-universal.apk
 
       # Nothing else gates Android artefact size, and this is the one file
       # whose whole point is that a stranger is willing to download it.
@@ -1521,10 +1501,10 @@ jobs:
         id: qt-cache
         uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
         with:
-          path: |
+          path: &windows-qt-cache-paths |
             C:\Qt\${{ needs.toolchain.outputs.qt_version }}\${{ needs.toolchain.outputs.qt_windows_kit }}
             C:\Qt\${{ needs.toolchain.outputs.qcoro_windows_prefix }}
-          key: windows-qt-${{ needs.toolchain.outputs.qt_version }}-qcoro-${{ needs.toolchain.outputs.qcoro_revision }}-${{ hashFiles('tools/manifests/qt-windows.json') }}
+          key: &windows-qt-cache-key windows-qt-${{ needs.toolchain.outputs.qt_version }}-qcoro-${{ needs.toolchain.outputs.qcoro_revision }}-${{ hashFiles('tools/manifests/toolchain.json', 'tools/manifests/qt-windows.json', 'tools/windows/install-qt.ps1') }}
 
       - name: Install Qt from pinned official archives
         if: steps.qt-cache.outputs.cache-hit != 'true'
@@ -1540,10 +1520,8 @@ jobs:
         if: ${{ env.SPOOL_CACHE_WRITE == 'true' && steps.qt-cache.outputs.cache-hit != 'true' && !inputs.release }}
         uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
         with:
-          path: |
-            C:\Qt\${{ needs.toolchain.outputs.qt_version }}\${{ needs.toolchain.outputs.qt_windows_kit }}
-            C:\Qt\${{ needs.toolchain.outputs.qcoro_windows_prefix }}
-          key: windows-qt-${{ needs.toolchain.outputs.qt_version }}-qcoro-${{ needs.toolchain.outputs.qcoro_revision }}-${{ hashFiles('tools/manifests/qt-windows.json') }}
+          path: *windows-qt-cache-paths
+          key: *windows-qt-cache-key
 
       - name: Read mpv revision
         id: mpv-revision

@@ -92,6 +92,29 @@ def ipa_fixture(path: Path, *, version: str = "0.9.0", binary: bytes | None = No
     return binary
 
 
+def apple_packager_contract(script: Path, platform: str) -> None:
+    tools = script.resolve().parent
+    version = (tools.parent / "VERSION").read_text(encoding="utf-8").strip()
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        archive = root / "fixture.ipa"
+        ipa_fixture(archive, platform=platform, version=version)
+        with zipfile.ZipFile(archive) as fixture:
+            fixture.extractall(root)
+        bundle = root / "Payload/Spool.app"
+        (bundle / "Spool").chmod(0o755)
+        output = root / "dist"
+        package = ["bash", str(tools / f"package-{platform.lower()}.sh"), str(bundle), str(output)]
+        mismatched = subprocess.run([*package, "99.99.99"], capture_output=True, text=True)
+        assert mismatched.returncode != 0 and "does not match VERSION" in mismatched.stderr
+        assert not output.exists()
+        result = subprocess.run(package, capture_output=True, text=True, check=True)
+        ipa = output / f"Spool-{version}-{platform}-arm64.ipa"
+        assert result.stdout.strip().splitlines()[-1] == str(ipa)
+        assert list(output.iterdir()) == [ipa]
+        run(script, f"{platform.lower()}-ipa", str(ipa), "--version", version)
+
+
 def apple_mobile_contract(script: Path, platform: str) -> None:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -402,6 +425,7 @@ def main() -> int:
         assert "missing ELF dependency" in missing.stderr
     for platform in ("tvOS", "iOS"):
         apple_mobile_contract(script, platform)
+        apple_packager_contract(script, platform)
     website_contract(script.with_name("generate-website-manifest.py"))
     workflow_artifact_contract(script.with_name("check-release-artifacts.sh"))
     return 0

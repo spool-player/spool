@@ -6,6 +6,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$ROOT/tools/lib/manifest-sources.sh"
 ABI="${ANDROID_ABI:-x86_64}"
 QT_VERSION="${QT_VERSION:-$(toolchain_field "$ROOT" qt.version)}"
+ANDROID_API="${ANDROID_API:-$(toolchain_field "$ROOT" android.minimumSdk)}"
 DEPS_PREFIX="${ANDROID_DEPS_PREFIX:-$ROOT/build/android/deps/$ABI}"
 JOBS="${ANDROID_BUILD_JOBS:-$(nproc)}"
 # Emulator CI opts in to actual native test APKs; release packaging stays app-only.
@@ -120,7 +121,7 @@ build_app() {
     -DQT_ANDROID_DEPLOYMENT_TYPE="$deployment" \
     -DSPOOL_WEBOS=OFF \
     -DANDROID_ABI="$ABI" \
-    -DANDROID_PLATFORM=android-28 \
+    -DANDROID_PLATFORM="android-$ANDROID_API" \
     -DANDROID_DEPS_PREFIX="$DEPS_PREFIX" \
     -DQT_ANDROID_SIGN_APK=ON
   # androiddeployqt scans SOURCE_DIR recursively and does not forward

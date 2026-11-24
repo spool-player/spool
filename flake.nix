@@ -29,13 +29,11 @@
     let
       systems = [ "x86_64-linux" "aarch64-darwin" "x86_64-darwin" ];
 
-      androidToolchain =
-        builtins.fromJSON (builtins.readFile ./tools/manifests/qt-android.json);
       androidSdkArgs = {
-        platformVersions = [ androidToolchain.android.compileSdk ];
-        buildToolsVersions = [ androidToolchain.android.buildTools ];
+        platformVersions = [ toolchain.android.compileSdk ];
+        buildToolsVersions = [ toolchain.android.buildTools ];
         includeNDK = true;
-        ndkVersions = [ androidToolchain.android.ndkVersion ];
+        ndkVersions = [ toolchain.android.ndkVersion ];
       };
       androidEnvironment = pkgs:
         let
@@ -44,7 +42,7 @@
           composition = pkgs.androidenv.composeAndroidPackages androidSdkArgs;
           emulator = pkgs.androidenv.emulateApp {
             name = "spool-android-emulator";
-            platformVersion = "36";
+            platformVersion = toolchain.android.compileSdk;
             abiVersion = "x86_64";
             systemImageType = "google_apis";
             configOptions = {
@@ -61,7 +59,7 @@
             deviceName = "spool-android-tv";
             # The pinned SDK metadata contains this actual Android TV image,
             # including its x86_64 ABI; do not merely toggle the app's TV flag.
-            platformVersion = "36";
+            platformVersion = toolchain.android.compileSdk;
             abiVersion = "x86_64";
             systemImageType = "android-tv";
             configOptions = {
@@ -222,7 +220,7 @@
           srcs = builtins.mapAttrs (name: sha256: {
             version = toolchain.qt.version;
             src = final.fetchurl {
-              url = "${toolchain.qt.baseUrl}/${name}-everywhere-src-${toolchain.qt.version}.tar.xz";
+              url = "${toolchain.qt.sourceArchive}/${prev.lib.versions.majorMinor toolchain.qt.version}/${toolchain.qt.version}/submodules/${name}-everywhere-src-${toolchain.qt.version}.tar.xz";
               inherit sha256;
             };
           }) toolchain.qt.sources;
@@ -859,7 +857,7 @@
           ] ++ lib.optionals stdenv.hostPlatform.isLinux [ util-linux ];
           ANDROID_HOME = "${android.sdk}/libexec/android-sdk";
           ANDROID_SDK_ROOT = "${android.sdk}/libexec/android-sdk";
-          ANDROID_NDK_ROOT = "${android.sdk}/libexec/android-sdk/ndk/${androidToolchain.android.ndkVersion}";
+          ANDROID_NDK_ROOT = "${android.sdk}/libexec/android-sdk/ndk/${toolchain.android.ndkVersion}";
           JAVA_HOME = pkgs.jdk17_headless.home;
           SPOOL_ANDROID_QT_HOST = "${androidQtHost}";
           shellHook = gitHooksShellHook;

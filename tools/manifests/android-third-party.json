@@ -16,11 +16,6 @@
       "url": "https://www.lua.org/ftp/lua-5.2.4.tar.gz",
       "sha256": "b9e2e4aad6789b3b63a056d442f7b39f0ecfca3ae0f1fc0ae4e9614401b69f4b"
     },
-    "qcoro": {
-      "revision": "d1b52b5db2ff9560185c39a4ed9f944dc610c235",
-      "url": "https://codeload.github.com/danvratil/qcoro/tar.gz/d1b52b5db2ff9560185c39a4ed9f944dc610c235",
-      "sha256": "90ca6d468a8a4e8b0f420eca63698dfea53f02c18d67ad40e534f4950c51759a"
-    },
     "fribidi": {
       "revision": "069a7e3d31e6aa74f2068a8e0804106ce7906639",
       "url": "https://codeload.github.com/fribidi/fribidi/tar.gz/069a7e3d31e6aa74f2068a8e0804106ce7906639",

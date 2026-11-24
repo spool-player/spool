@@ -7,9 +7,9 @@
   ],
   "qt": {
     "version": "6.12.0",
-    "series": "6.12",
     "windowsKit": "msvc2022_64",
-    "baseUrl": "https://download.qt.io/official_releases/qt/6.12/6.12.0/submodules",
+    "sourceArchive": "https://download.qt.io/official_releases/qt",
+    "sourceMirror": "https://ftp.fau.de/qtproject/archive/qt",
     "sources": {
       "qt3d": "d16f7489945c6c9e971cedd4362202a2681f3c10393461e1f5e74425f7fef59a",
       "qt5compat": "78cf1c283795312a7fa31c73eb7f7f556b48374adc484f10ad5a3c0bcb59264e",
@@ -54,6 +54,12 @@
       "qtwebview": "bee0642225614d7fc9486a2ca6db7d2c82a28c311404d1503185a360792c504e"
     }
   },
+  "android": {
+    "compileSdk": "36",
+    "buildTools": "36.0.0",
+    "ndkVersion": "27.2.12479018",
+    "minimumSdk": "28"
+  },
   "qcoro": {
     "comment": [
       "QCoro is built from source on Windows, by tools/windows/install-qcoro.ps1,",
@@ -63,6 +69,7 @@
     ],
     "version": "0.13",
     "revision": "d1b52b5db2ff9560185c39a4ed9f944dc610c235",
+    "sha256": "90ca6d468a8a4e8b0f420eca63698dfea53f02c18d67ad40e534f4950c51759a",
     "windowsPrefix": "qcoro-0.13-msvc2022"
   },
   "ffmpeg": {

@@ -8,7 +8,10 @@ param(
 $root = Get-RepositoryRoot
 $manifestPath = Join-Path $root 'tools\manifests\qt-windows.json'
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-$qtRoot = Join-Path ([IO.Path]::GetFullPath($OutputDirectory)) "$($manifest.version)\$($manifest.architecture)"
+$qt = (Get-ToolchainManifest).qt
+$versionId = $qt.version.Replace('.', '')
+$repository = "https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_$versionId/qt6_${versionId}_$($qt.windowsKit)"
+$qtRoot = Join-Path ([IO.Path]::GetFullPath($OutputDirectory)) "$($qt.version)\$($qt.windowsKit)"
 $downloads = if ($DownloadDirectory) { [IO.Path]::GetFullPath($DownloadDirectory) } elseif ($env:RUNNER_TEMP) {
     Join-Path $env:RUNNER_TEMP 'spool-qt-downloads'
 } else {
@@ -25,7 +28,7 @@ function Test-QtInstallation {
 }
 
 if ((Test-QtInstallation) -and -not $Force) {
-    Write-Host "Qt $($manifest.version) is already installed at $qtRoot"
+    Write-Host "Qt $($qt.version) is already installed at $qtRoot"
     return
 }
 
@@ -42,7 +45,7 @@ New-Item -ItemType Directory -Force $qtRoot, $downloads | Out-Null
 $sevenZip = (Get-Command 7z.exe -ErrorAction Stop).Source
 
 foreach ($archive in $manifest.archives) {
-    $archiveName = "$($manifest.packageVersion)$($archive.file)"
+    $archiveName = "$($qt.version)-$($manifest.packageBuild)$($archive.file)"
     $archivePath = Join-Path $downloads $archiveName
     $expectedHash = $archive.sha1.ToLowerInvariant()
     $validDownload = (Test-Path -LiteralPath $archivePath) -and
@@ -51,7 +54,10 @@ foreach ($archive in $manifest.archives) {
     if (-not $validDownload) {
         $partialPath = "$archivePath.part"
         Remove-Item -LiteralPath $partialPath -Force -ErrorAction SilentlyContinue
-        $url = "$($manifest.repository)/$($archive.package)/$archiveName"
+        $packageParts = @('qt.qt6', $versionId)
+        if ($archive.PSObject.Properties['addon']) { $packageParts += "addons.$($archive.addon)" }
+        $packageParts += "win64_$($qt.windowsKit)"
+        $url = "$repository/$($packageParts -join '.')/$archiveName"
         Write-Host "Downloading $($archive.file)"
         & curl.exe -L --fail --retry 4 --retry-all-errors --connect-timeout 15 --max-time 900 `
             --output $partialPath $url
@@ -74,4 +80,4 @@ $qtConf = "[Paths]`r`nPrefix=..`r`n"
 if (-not (Test-QtInstallation)) {
     throw "The extracted Qt installation is incomplete: $qtRoot"
 }
-Write-Host "Installed Qt $($manifest.version) at $qtRoot"
+Write-Host "Installed Qt $($qt.version) at $qtRoot"
