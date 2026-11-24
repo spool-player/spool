@@ -154,7 +154,9 @@ class TestSimulatorCrashReport(unittest.TestCase):
         frame = {"module": "libspool_x86_64.so", "offset": "a42", "symbol": "private value"}
         evidence = {
             "platform": "android", "pid": 1234, "signal": 6,
+            "abortKind": "destroyed-mutex",
             "frames": [frame, {"module": "/private/libc.so", "offset": "10"},
+                       {"module": "libmpv.so", "offset": "21"},
                        {"module": "libc.so", "offset": "private value"}],
         }
         (journey / "mobile-crash-evidence.json").write_text(json.dumps(evidence))
@@ -162,7 +164,9 @@ class TestSimulatorCrashReport(unittest.TestCase):
         self.adapter["export_attempt"](private, destination, {"status": "crashed", "signal": 6})
         exported = json.loads((destination / "mobile-crash-evidence.json").read_text())
         self.assertEqual(exported, {"platform": "android", "pid": 1234, "signal": 6,
-                                    "frames": [{"module": "libspool_x86_64.so", "offset": "a42"}]})
+                                    "abortKind": "destroyed-mutex",
+                                    "frames": [{"module": "libspool_x86_64.so", "offset": "a42"},
+                                               {"module": "libmpv.so", "offset": "21"}]})
 
 
 if __name__ == "__main__":
