@@ -164,6 +164,10 @@ TestCase {
         selectSetting("theme/reducedMotion")
         settingsPage.activateRow(settingsPage.currentRow(), settingsPage.currentIndex)
         cycle()
+        // Local persistence can queue another sync while the first cycle is
+        // finishing. Wait for the writes this test made to reach the provider.
+        tryVerify(() => Integration.stats("first").native.audioMode === "Smart" && state("audio/trackMode").status
+                        === "synced" && state("theme/reducedMotion").status === "synced", 10000)
         compare(Integration.stats("first").native.audioMode, "Smart")
         compare(state("theme/reducedMotion").status, "synced", JSON.stringify(state("theme/reducedMotion")))
         compare(record("first", "theme/reducedMotion"), true)

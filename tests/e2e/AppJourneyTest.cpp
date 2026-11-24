@@ -1978,8 +1978,11 @@ SPOOL_TEST_MAIN("app-journey")
         journey.command({ "key", "ok" });
         journey.await(
             [&] {
+                // A single read-only observation can miss its client deadline
+                // while the new renderer surface starts. Keep the enclosing
+                // deadline and require real provider negotiation and playback.
                 return fixture.playbackNegotiations > negotiationsBeforeOnline
-                    && journey.state()["playback"].toObject()["loaded"].toBool();
+                    && journey.state(true)["playback"].toObject()["loaded"].toBool();
             },
             "online UI play did not negotiate and load real provider media");
         journey.await(
