@@ -163,7 +163,7 @@ build_qtbase() {
       -DOPENSSL_ROOT_DIR="$ANDROID_DEPS_PREFIX" \
       -DCMAKE_PREFIX_PATH="$ANDROID_DEPS_PREFIX"
   )
-  cmake --build "$BUILD_ROOT/qtbase" --parallel "$JOBS"
+  bash "$ROOT/tools/android/retry-gradle-download.sh" cmake --build "$BUILD_ROOT/qtbase" --parallel "$JOBS"
   cmake --install "$BUILD_ROOT/qtbase"
   printf '1\n' >"$PREFIX/.spool-android-qt-$ABI-api-$ANDROID_API-tv-keyboard-v1-density-v1-recreation-v1"
 }
@@ -243,7 +243,7 @@ build_module() {
     -DQT_BUILD_EXAMPLES=OFF \
     -DCMAKE_PREFIX_PATH="$ANDROID_DEPS_PREFIX" \
     "${extra_args[@]}"
-  cmake --build "$build_dir" --parallel "$JOBS"
+  bash "$ROOT/tools/android/retry-gradle-download.sh" cmake --build "$build_dir" --parallel "$JOBS"
   cmake --install "$build_dir"
 }
 
