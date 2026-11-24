@@ -217,7 +217,9 @@ jobs:
         run: bash tools/check-release-artifacts.sh
 
       - name: Check the toolchain pin is the only Qt and FFmpeg version
-        run: bash tools/toolchain-versions.sh --check
+        run: |
+          bash tools/toolchain-versions.sh --check
+          python3 tests/tools/AppleQtSourceTest.py
 
       - name: Validate FFmpeg capability manifest
         run: |

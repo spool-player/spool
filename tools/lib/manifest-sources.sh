@@ -54,14 +54,12 @@ qt_source_version() {
 }
 
 qt_source_base_url() {
-  local override mirror
-  local version="$3"
+  local override
   override="$(manifest_qt_override "$2" baseUrl)" || return
   if [[ -n "$override" ]]; then
     printf '%s\n' "$override"
   else
-    mirror="$(toolchain_field "$1" qt.sourceMirror)" || return
-    printf '%s/%s/%s/submodules\n' "$mirror" "${version%.*}" "$version"
+    toolchain_qt_base_url "$1" sourceMirror "$3"
   fi
 }
 
@@ -232,6 +230,12 @@ for key in sys.argv[2].split("."):
     value = value[key]
 print(value)
 ' "$root" "$path"
+}
+
+toolchain_qt_base_url() {
+  local source_root version="$3"
+  source_root="$(toolchain_field "$1" "qt.$2")" || return
+  printf '%s/%s/%s/submodules\n' "$source_root" "${version%.*}" "$version"
 }
 
 prepare_toolchain_source() {
