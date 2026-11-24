@@ -147,6 +147,23 @@ class TestSimulatorCrashReport(unittest.TestCase):
         self.assertEqual(exported["lastExceptionFrames"], [{"imageIndex": 0, "imageOffset": 43}])
         self.assertNotIn(private, json.dumps(exported))
 
+    def test_android_product_crash_export_keeps_only_allowed_modules_and_offsets(self):
+        private = self.report.parent / "private"
+        journey = private / "app-journey-test"
+        journey.mkdir(parents=True)
+        frame = {"module": "libspool_x86_64.so", "offset": "a42", "symbol": "private value"}
+        evidence = {
+            "platform": "android", "pid": 1234, "signal": 6,
+            "frames": [frame, {"module": "/private/libc.so", "offset": "10"},
+                       {"module": "libc.so", "offset": "private value"}],
+        }
+        (journey / "mobile-crash-evidence.json").write_text(json.dumps(evidence))
+        destination = self.report.parent / "public"
+        self.adapter["export_attempt"](private, destination, {"status": "crashed", "signal": 6})
+        exported = json.loads((destination / "mobile-crash-evidence.json").read_text())
+        self.assertEqual(exported, {"platform": "android", "pid": 1234, "signal": 6,
+                                    "frames": [{"module": "libspool_x86_64.so", "offset": "a42"}]})
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -198,7 +198,9 @@ public:
         do {
             const int signal = crashSignal();
             if (signal > 0) {
-                const QJsonObject evidence { { "platform", kind }, { "pid", processPid }, { "signal", signal } };
+                QJsonObject evidence { { "platform", kind }, { "pid", processPid }, { "signal", signal } };
+                if (kind == "android")
+                    evidence.insert("frames", androidCrashFrames());
                 QSaveFile file(QFileInfo(hostDescriptor).dir().filePath("mobile-crash-evidence.json"));
                 const QByteArray bytes = QJsonDocument(evidence).toJson(QJsonDocument::Compact);
                 const bool saved = file.open(QIODevice::WriteOnly)
@@ -275,6 +277,44 @@ private:
             }
         }
         return 0;
+    }
+    QJsonArray androidCrashFrames()
+    {
+        QJsonArray frames;
+        try {
+            // Android emits the backtrace from crash_dump, whose logging PID
+            // differs from the product PID recorded in the tombstone header.
+            const QString logs = QString::fromUtf8(
+                runTool({ "logcat", "-d", "-b", "crash", "-t", "600", "-v", "epoch", "DEBUG:I", "*:S" }));
+            const QRegularExpression lineFormat(
+                QStringLiteral("^\\s*([0-9]+(?:\\.[0-9]+)?)\\s+([0-9]+)\\s+[0-9]+\\s+[A-Z]\\s+DEBUG\\s*:\\s*(.*)$"));
+            const QRegularExpression product(
+                QStringLiteral("^pid: %1, .* >>> %2 <<<$").arg(processPid).arg(QRegularExpression::escape(bundle)));
+            const QRegularExpression frame(
+                QStringLiteral("^#[0-9]+\\s+pc\\s+([0-9a-f]{1,16})\\s+(?:[^\\s]*/)?(lib(?:spool_x86_64|"
+                               "Qt6(?:Core|Gui|Quick|Qml|OpenGL)|c|EGL|GLESv2|art|android_runtime)\\.so)(?:\\s|$)"));
+            qint64 reporter = 0;
+            for (const QString& line : logs.split('\n')) {
+                const auto record = lineFormat.match(line.trimmed());
+                if (!record.hasMatch() || record.captured(1).toDouble() < deviceLaunchEpoch)
+                    continue;
+                const auto message = record.captured(3);
+                if (message.startsWith(QLatin1String("pid: "))) {
+                    reporter = product.match(message).hasMatch() ? record.captured(2).toLongLong() : 0;
+                    continue;
+                }
+                if (reporter == 0 || record.captured(2).toLongLong() != reporter)
+                    continue;
+                const auto match = frame.match(message);
+                if (match.hasMatch())
+                    frames.append(QJsonObject { { "module", match.captured(2) }, { "offset", match.captured(1) } });
+                if (frames.size() == 12)
+                    break;
+            }
+        } catch (const std::runtime_error&) {
+            // The already confirmed signal remains usable without a stack.
+        }
+        return frames;
     }
     int crashSignal()
     {
