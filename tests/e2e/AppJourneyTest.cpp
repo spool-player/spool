@@ -101,6 +101,59 @@ QString executable(const char *variable, const QString& fallback)
     require(!result.isEmpty() && QFileInfo(result).isExecutable(), "required built app or runtime tool is unavailable");
     return result;
 }
+QString sampleBlockedProcess(qint64 pid, const QString& directory, const QProcessEnvironment& environment)
+{
+#if defined(Q_OS_MACOS)
+    const QString path = directory + "/blocked-process.sample";
+    QFile file(path);
+    if (pid <= 0 || !file.open(QIODevice::WriteOnly)
+        || !file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner))
+        return QStringLiteral("unavailable");
+    file.close();
+    try {
+        run("/usr/bin/sample", { QString::number(pid), "1", "10", "-file", path }, environment, {}, 10000);
+    } catch (const std::exception&) {
+        QFile::remove(path);
+        return QStringLiteral("unavailable");
+    }
+    QStringList symbols;
+    if (file.open(QIODevice::ReadOnly)) {
+        // A sample includes process paths and other metadata. Export only
+        // known stack symbols, never its header, addresses or arbitrary text.
+        const QStringList lines = QString::fromUtf8(file.readAll()).split('\n');
+        for (const QString& line : lines) {
+            const QStringList words = line.simplified().split(' ');
+            for (const QString& word : words) {
+                const QString symbol = word.section('(', 0, 0);
+                if (!symbol.startsWith("mpv_") && !symbol.startsWith("mp_") && !symbol.startsWith("vo_")
+                    && !symbol.startsWith("Spool::") && !symbol.startsWith("QQuick") && !symbol.startsWith("QSG")
+                    && !symbol.startsWith("QEvent") && !symbol.startsWith("QCoreApplication::")
+                    && !symbol.startsWith("__psynch_") && !symbol.startsWith("pthread_")
+                    && !symbol.startsWith("_pthread_") && !symbol.startsWith("mach_msg"))
+                    continue;
+                if (symbol.size() > 160 || !std::all_of(symbol.cbegin(), symbol.cend(), [](QChar c) {
+                        return c.isLetterOrNumber() || c == '_' || c == ':' || c == '~';
+                    }))
+                    continue;
+                if (!symbols.contains(symbol))
+                    symbols.append(symbol);
+                if (symbols.size() >= 48)
+                    break;
+            }
+            if (symbols.size() >= 48)
+                break;
+        }
+    }
+    file.close();
+    QFile::remove(path);
+    return symbols.isEmpty() ? QStringLiteral("unavailable") : symbols.join(',');
+#else
+    Q_UNUSED(pid);
+    Q_UNUSED(directory);
+    Q_UNUSED(environment);
+    return QStringLiteral("unavailable");
+#endif
+}
 class DeviceSession final {
 public:
     DeviceSession(QString kind, const QString& directory, QProcessEnvironment environment)
@@ -218,6 +271,10 @@ public:
     QString descriptorPath() const
     {
         return hostDescriptor;
+    }
+    QString blockedProcessSample() const
+    {
+        return sampleBlockedProcess(processPid, QFileInfo(hostDescriptor).absolutePath(), environment);
     }
     QString screenshotPath() const
     {
@@ -436,11 +493,16 @@ private:
             }
             const QImage image(screenshot);
             require(!image.isNull(), "actual mobile normal-startup screenshot was not an image");
-            const QByteArray text = runOcr(ocr, { screenshot, "stdout", "-l", "eng", "--psm", "11" }, environment);
-            if (QString::fromUtf8(text).contains("Welcome to Spool", Qt::CaseInsensitive)) {
-                rendered = true;
-                break;
+            for (const QString& segmentation : { QStringLiteral("11"), QStringLiteral("6") }) {
+                const QByteArray text
+                    = runOcr(ocr, { screenshot, "stdout", "-l", "eng", "--psm", segmentation }, environment);
+                if (QString::fromUtf8(text).simplified().contains("Welcome to Spool", Qt::CaseInsensitive)) {
+                    rendered = true;
+                    break;
+                }
             }
+            if (rendered)
+                break;
             turn(200);
         }
         require(rendered && productRunning(), "actual mobile normal launch did not render its product UI");
@@ -1415,19 +1477,32 @@ public:
             "playback did not complete its first renderer restart before pause");
         command({ "pause" });
         QJsonObject playback;
+        int observations = 0;
+        int timeouts = 0;
+        QElapsedTimer lastObservation;
+        lastObservation.start();
         try {
             await(
                 [&] {
                     const auto observed = state(true)["playback"].toObject();
-                    if (observed.isEmpty())
+                    if (observed.isEmpty()) {
+                        ++timeouts;
                         return false;
+                    }
+                    ++observations;
+                    lastObservation.restart();
                     playback = observed;
                     return playback["paused"].toBool();
                 },
                 message);
         } catch (const std::exception& error) {
+            const QString sample = timeouts > 0 ? (device ? device->blockedProcessSample()
+                                                          : sampleBlockedProcess(app.processId(),
+                                                                QFileInfo(screenshotPath).absolutePath(), environment))
+                                                : QStringLiteral("not-needed");
             throw std::runtime_error(QStringLiteral(
-                "%1 (active=%2, loaded=%3, ready=%4, paused=%5, failed=%6, position=%7, duration=%8, pause=%9)")
+                "%1 (active=%2, loaded=%3, ready=%4, paused=%5, failed=%6, position=%7, duration=%8, pause=%9, "
+                "observations=%10, timeouts=%11, last_observation_ms=%12, stack_symbols=%13)")
                     .arg(QString::fromUtf8(error.what()))
                     .arg(playback["active"].toBool())
                     .arg(playback["loaded"].toBool())
@@ -1437,6 +1512,10 @@ public:
                     .arg(playback["position"].toDouble(), 0, 'f', 2)
                     .arg(playback["duration"].toDouble(), 0, 'f', 2)
                     .arg(playback["pauseCommand"].toString())
+                    .arg(observations)
+                    .arg(timeouts)
+                    .arg(lastObservation.elapsed())
+                    .arg(sample)
                     .toStdString());
         }
     }
@@ -2218,7 +2297,9 @@ SPOOL_TEST_MAIN("app-journey")
                 [&] {
                     restartPosition = journey.state()["playback"].toObject()["position"].toDouble();
                     restartRed = frameHasBands(journey.capture(true), 0);
-                    return restartPosition < 11.5 && restartRed;
+                    // The fixture stays red until 12s. Allow the same 0.2s
+                    // timestamp/frame tolerance used at the remote-play boundary.
+                    return restartPosition < 12.2 && restartRed;
                 },
                 "explicit episode restart did not decode the beginning");
         } catch (const std::exception&) {
