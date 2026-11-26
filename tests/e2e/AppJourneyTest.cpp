@@ -198,7 +198,9 @@ public:
         do {
             const int signal = crashSignal();
             if (signal > 0) {
-                const QJsonObject evidence { { "platform", kind }, { "pid", processPid }, { "signal", signal } };
+                QJsonObject evidence { { "platform", kind }, { "pid", processPid }, { "signal", signal } };
+                if (kind == "android")
+                    addAndroidCrashDetails(evidence);
                 QSaveFile file(QFileInfo(hostDescriptor).dir().filePath("mobile-crash-evidence.json"));
                 const QByteArray bytes = QJsonDocument(evidence).toJson(QJsonDocument::Compact);
                 const bool saved = file.open(QIODevice::WriteOnly)
@@ -275,6 +277,47 @@ private:
             }
         }
         return 0;
+    }
+    void addAndroidCrashDetails(QJsonObject& evidence)
+    {
+        QJsonArray frames;
+        try {
+            // Android emits the backtrace from crash_dump, whose logging PID
+            // differs from the product PID recorded in the tombstone header.
+            const QString logs = QString::fromUtf8(
+                runTool({ "logcat", "-d", "-b", "crash", "-t", "600", "-v", "epoch", "DEBUG:I", "*:S" }));
+            const QRegularExpression lineFormat(
+                QStringLiteral("^\\s*([0-9]+(?:\\.[0-9]+)?)\\s+([0-9]+)\\s+[0-9]+\\s+[A-Z]\\s+DEBUG\\s*:\\s*(.*)$"));
+            const QRegularExpression product(
+                QStringLiteral("^pid: %1, .* >>> %2 <<<$").arg(processPid).arg(QRegularExpression::escape(bundle)));
+            const QRegularExpression frame(QStringLiteral(
+                "^#[0-9]+\\s+pc\\s+([0-9a-f]{1,16})\\s+(?:[^\\s]*/)?(lib(?:spool_x86_64|"
+                "Qt6(?:Core|Gui|Quick|Qml|OpenGL)|mpv|c|EGL|GLESv2|art|android_runtime)\\.so)(?:\\s|$)"));
+            qint64 reporter = 0;
+            for (const QString& line : logs.split('\n')) {
+                const auto record = lineFormat.match(line.trimmed());
+                if (!record.hasMatch() || record.captured(1).toDouble() < deviceLaunchEpoch)
+                    continue;
+                const auto message = record.captured(3);
+                if (message.startsWith(QLatin1String("pid: "))) {
+                    reporter = product.match(message).hasMatch() ? record.captured(2).toLongLong() : 0;
+                    continue;
+                }
+                if (reporter == 0 || record.captured(2).toLongLong() != reporter)
+                    continue;
+                if (message.startsWith(
+                        QLatin1String("Abort message: 'FORTIFY: pthread_mutex_lock called on a destroyed mutex")))
+                    evidence.insert("abortKind", "destroyed-mutex");
+                const auto match = frame.match(message);
+                if (match.hasMatch())
+                    frames.append(QJsonObject { { "module", match.captured(2) }, { "offset", match.captured(1) } });
+                if (frames.size() == 12)
+                    break;
+            }
+        } catch (const std::runtime_error&) {
+            // The already confirmed signal remains usable without a stack.
+        }
+        evidence.insert("frames", frames);
     }
     int crashSignal()
     {
@@ -657,10 +700,26 @@ public:
             "actual app accepted IME input without an editable focus");
         require(state()["initialized"].toBool(), "genuine control capability stopped working after denial");
     }
-    void text(const QString& value)
+    void text(const QString& value, bool activateTvField = false)
     {
-        require(command({ "text", "--stdin" }, value.toUtf8())["accepted"].toBool(),
-            "focused editable field did not accept production IME input");
+        const auto input = value.toUtf8();
+        await(
+            [&] {
+                QJsonObject response;
+                try {
+                    require(command({ "text", "--stdin" }, input, true, {}, &response)["accepted"].toBool(),
+                        "focused editable field did not accept production IME input");
+                } catch (const std::exception&) {
+                    if (!activateTvField || response["error"].toObject()["code"] != "no_text_focus")
+                        throw;
+                    // The TV focus ring can belong to the row while its editor is inactive.
+                    // The rejection precedes dispatch, so pressing Select and retrying cannot duplicate text.
+                    command({ "key", "ok" });
+                    return false;
+                }
+                return true;
+            },
+            "could not enter text in the intended form field", 5000);
     }
     QJsonObject state(bool observeAfterTimeout = false)
     {
@@ -1352,14 +1411,17 @@ public:
     }
     void pauseForObservation(const char *message)
     {
-        await([&] { return state()["playback"].toObject()["ready"].toBool(); },
+        await([&] { return state(true)["playback"].toObject()["ready"].toBool(); },
             "playback did not complete its first renderer restart before pause");
         command({ "pause" });
         QJsonObject playback;
         try {
             await(
                 [&] {
-                    playback = state()["playback"].toObject();
+                    const auto observed = state(true)["playback"].toObject();
+                    if (observed.isEmpty())
+                        return false;
+                    playback = observed;
                     return playback["paused"].toBool();
                 },
                 message);
@@ -1649,18 +1711,12 @@ SPOOL_TEST_MAIN("app-journey")
             = deviceKind == "tvos" || (deviceKind == "android" && qEnvironmentVariable("SPOOL_E2E_ANDROID_TV") == "1");
         journey.click("Jellyfin", true);
         journey.label("Choose a server");
-        if (television)
-            journey.command({ "key", "ok" });
-        journey.text(fixture.origin());
+        journey.text(fixture.origin(), television);
         journey.command({ "key", "ok" });
         journey.label("Username");
-        if (television)
-            journey.command({ "key", "ok" });
-        journey.text("journey");
+        journey.text("journey", television);
         journey.command({ "key", "ok" });
-        if (television)
-            journey.command({ "key", "ok" });
-        journey.text("incorrect-password");
+        journey.text("incorrect-password", television);
         journey.command({ "key", "ok" });
         try {
             journey.await(
@@ -1678,7 +1734,7 @@ SPOOL_TEST_MAIN("app-journey")
                     .toStdString());
         }
         journey.label("Wrong username or password");
-        journey.text("journey-password");
+        journey.text("journey-password", television);
         journey.command({ "key", "ok" });
         journey.await([&] { return fixture.successfulLogins == 1 && fixture.authenticatedViews > 0; },
             "login did not activate an authenticated provider library");
@@ -1938,8 +1994,11 @@ SPOOL_TEST_MAIN("app-journey")
         journey.command({ "key", "ok" });
         journey.await(
             [&] {
+                // A single read-only observation can miss its client deadline
+                // while the new renderer surface starts. Keep the enclosing
+                // deadline and require real provider negotiation and playback.
                 return fixture.playbackNegotiations > negotiationsBeforeOnline
-                    && journey.state()["playback"].toObject()["loaded"].toBool();
+                    && journey.state(true)["playback"].toObject()["loaded"].toBool();
             },
             "online UI play did not negotiate and load real provider media");
         journey.await(

@@ -168,6 +168,8 @@ namespace {
     constexpr uint64_t kCacheSpeedReply = 0x6375726c73706565ULL;
     constexpr uint64_t kPauseSetReply = 0x7073000000000000ULL;
     constexpr uint64_t kPauseReadReply = 0x7072000000000000ULL;
+    constexpr uint64_t kInitialPauseReply = 0x7069000000000000ULL;
+    constexpr uint64_t kColorDiagnosticReply = 0x636f000000000000ULL;
     constexpr uint64_t kFullscreenSetReply = 0x6673000000000000ULL;
     constexpr uint64_t kFullscreenObservation = 0x666f000000000000ULL;
     constexpr uint64_t kMpvReplyKindMask = 0xffff000000000000ULL;
@@ -888,40 +890,41 @@ bool PlayerController::usesUserMpvConfig() const
         && m_mpvConfigPolicy.mode != MpvConfigPolicy::Mode::Disabled;
 }
 
+static const char *const kColorDiagnosticProperties[] = {
+    "current-vo",
+    "current-gpu-context",
+    "current-render-api",
+    "current-render-backend",
+    "video-dec-params/pixelformat",
+    "video-params/colormatrix",
+    "video-params/primaries",
+    "video-params/gamma",
+    "video-params/colorlevels",
+    "video-params/sig-peak",
+    "video-params/max-cll",
+    "video-params/max-fall",
+    "video-target-params/pixelformat",
+    "video-target-params/colormatrix",
+    "video-target-params/primaries",
+    "video-target-params/gamma",
+    "video-target-params/colorlevels",
+    "video-target-params/min-luma",
+    "video-target-params/max-luma",
+    "video-target-params/max-cll",
+    "target-trc",
+    "target-prim",
+    "target-peak",
+    "target-contrast",
+    "hdr-reference-white",
+    "tone-mapping",
+};
+
 void PlayerController::logColorDiagnostics(mpv_handle *handle)
 {
     if (!handle)
         return;
-    const char *props[] = {
-        "current-vo",
-        "current-gpu-context",
-        "current-render-api",
-        "current-render-backend",
-        "video-dec-params/pixelformat",
-        "video-params/colormatrix",
-        "video-params/primaries",
-        "video-params/gamma",
-        "video-params/colorlevels",
-        "video-params/sig-peak",
-        "video-params/max-cll",
-        "video-params/max-fall",
-        "video-target-params/pixelformat",
-        "video-target-params/colormatrix",
-        "video-target-params/primaries",
-        "video-target-params/gamma",
-        "video-target-params/colorlevels",
-        "video-target-params/min-luma",
-        "video-target-params/max-luma",
-        "video-target-params/max-cll",
-        "target-trc",
-        "target-prim",
-        "target-peak",
-        "target-contrast",
-        "hdr-reference-white",
-        "tone-mapping",
-    };
     QStringList details;
-    for (const char *prop : props) {
+    for (const char *prop : kColorDiagnosticProperties) {
         char *val = mpv_get_property_string(handle, prop);
         if (val) {
             details.push_back(QStringLiteral("%1=%2").arg(QString::fromLatin1(prop), QString::fromUtf8(val)));
@@ -3184,18 +3187,14 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_
         break;
     }
     case MPV_EVENT_FILE_LOADED: {
-        // Runtime snapshots may wait for the VO. Query on this core's event
-        // thread, whose captured handle lives until the event loop is joined,
-        // so GUI synchronization remains available to the renderer.
-        logColorDiagnostics(handle);
-        int mpvPaused = 0;
-        const bool hasMpvPaused = mpv_get_property(handle, "pause", MPV_FORMAT_FLAG, &mpvPaused) >= 0;
-        postMpvEvent(generation, [this, generation, hasMpvPaused, mpvPaused]() {
+        postMpvEvent(generation, [this, generation]() {
             m_mpvLifecycle.completeFileLoad();
             qInfo() << "player: file loaded";
             m_fileLoaded = true;
-            if (hasMpvPaused)
-                m_paused = mpvPaused != 0;
+            // A runtime property read can wait for the VO. Keep both the GUI
+            // and the mpv event consumer free to service the renderer.
+            mpv_get_property_async(
+                m_mpvLifecycle.handle(), kInitialPauseReply | m_pauseCommandSerial, "pause", MPV_FORMAT_FLAG);
             // Only video can strain the renderer, and only once per playback:
             // a step down rebuilds the core, which lands back here.
             if (!m_renderStrainReported && m_mediaKind == QStringLiteral("video"))
@@ -3221,10 +3220,11 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_
     case MPV_EVENT_PLAYBACK_RESTART:
         postMpvEvent(generation, [this]() {
             qInfo() << "player: playback restart";
-            // The first restart has the final output parameters. Ordinary
-            // seek completions do not need another synchronous property sweep.
+            // The first restart has the final output parameters. Collect them
+            // without holding up GUI synchronization or draining mpv events.
             if (!m_seekDispatchReady)
-                logColorDiagnostics(m_mpvLifecycle.handle());
+                for (const char *property : kColorDiagnosticProperties)
+                    mpv_get_property_async(m_mpvLifecycle.handle(), kColorDiagnosticReply, property, MPV_FORMAT_STRING);
             const bool hadPendingSeek = m_pendingSeek;
             m_seekDispatchReady = true;
             if (hadPendingSeek) {
@@ -3322,6 +3322,27 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_
         break;
     }
     case MPV_EVENT_GET_PROPERTY_REPLY: {
+        if (event->reply_userdata == kColorDiagnosticReply) {
+            const auto *property = static_cast<mpv_event_property *>(event->data);
+            if (event->error >= 0 && property && property->data && property->format == MPV_FORMAT_STRING) {
+                const auto *value = *static_cast<char *const *>(property->data);
+                if (value)
+                    qInfo().noquote() << "player: color diagnostics ->" << property->name << '=' << value;
+            }
+            break;
+        }
+        if ((event->reply_userdata & kMpvReplyKindMask) == kInitialPauseReply) {
+            const auto *property = static_cast<mpv_event_property *>(event->data);
+            if (event->error >= 0 && property && property->data && property->format == MPV_FORMAT_FLAG) {
+                const bool paused = *static_cast<int *>(property->data);
+                const auto serial = event->reply_userdata & kMpvReplySerialMask;
+                postMpvEvent(generation, [this, serial, paused] {
+                    if (serial == m_pauseCommandSerial)
+                        applyMpvPauseState(paused);
+                });
+            }
+            break;
+        }
         if ((event->reply_userdata & kMpvReplyKindMask) == kPauseReadReply) {
             const auto serial = event->reply_userdata & kMpvReplySerialMask;
             const auto *property = static_cast<mpv_event_property *>(event->data);

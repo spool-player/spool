@@ -1232,7 +1232,7 @@ def export_attempt(private, destination, result):
             # observed from the separately owned product process.
             crash = journey / "mobile-crash-evidence.json"
             if (result.get("status") == "crashed" and crash.is_file() and not crash.is_symlink()
-                    and crash.stat().st_size <= 1024):
+                    and crash.stat().st_size <= 4096):
                 try:
                     evidence = json.loads(crash.read_text())
                 except (OSError, ValueError):
@@ -1241,8 +1241,20 @@ def export_attempt(private, destination, result):
                         and evidence["signal"] == result.get("signal")
                         and type(evidence.get("pid")) is int and evidence["pid"] > 0
                         and evidence.get("platform") in ("android", "tvos", "ios")):
-                    write_journal(destination / "mobile-crash-evidence.json",
-                                  {key: evidence[key] for key in ("platform", "pid", "signal")})
+                    exported = {key: evidence[key] for key in ("platform", "pid", "signal")}
+                    if evidence["platform"] == "android" and evidence.get("abortKind") == "destroyed-mutex":
+                        exported["abortKind"] = "destroyed-mutex"
+                    frames = evidence.get("frames", [])
+                    if evidence["platform"] == "android" and isinstance(frames, list):
+                        exported["frames"] = [
+                            {"module": frame["module"], "offset": frame["offset"]}
+                            for frame in frames[:12]
+                            if isinstance(frame, dict) and isinstance(frame.get("module"), str)
+                            and re.fullmatch(r"lib(?:spool_x86_64|Qt6(?:Core|Gui|Quick|Qml|OpenGL)"
+                                             r"|mpv|c|EGL|GLESv2|art|android_runtime)\.so", frame["module"])
+                            and isinstance(frame.get("offset"), str)
+                            and re.fullmatch(r"[0-9a-f]{1,16}", frame["offset"])]
+                    write_journal(destination / "mobile-crash-evidence.json", exported)
             images.extend(journey / name for name in
                           ("frame.png", "library-text.png", "mobile-default-startup.png", "download-failure.png"))
     for image in images:

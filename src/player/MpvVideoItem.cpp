@@ -980,16 +980,20 @@ bool MpvVideoItem::waitForRenderContext(int timeoutMs)
 
 bool MpvVideoItem::releaseMpvHandle(int timeoutMs)
 {
-    const auto completed = std::make_shared<std::atomic_bool>(false);
+    std::shared_ptr<std::atomic_bool> completed;
     QEventLoop releaseLoop;
     {
         QMutexLocker locker(&m_handleMutex);
-        const bool needsRenderHandoff = m_renderCtxAtomic.load() || m_pendingHandle;
-        m_pendingHandle = nullptr;
-        m_handleDirty = true;
-        if (!needsRenderHandoff)
-            return true;
-        m_releaseCompleted = completed;
+        // A nested teardown can arrive while the render thread is freeing
+        // the context. The null context pointer alone cannot acknowledge it.
+        if (!m_releaseCompleted) {
+            if (!m_renderCtxAtomic.load() && !m_pendingHandle)
+                return true;
+            m_releaseCompleted = std::make_shared<std::atomic_bool>(false);
+            m_pendingHandle = nullptr;
+            m_handleDirty = true;
+        }
+        completed = m_releaseCompleted;
     }
 
     QTimer timeout;
@@ -1001,7 +1005,8 @@ bool MpvVideoItem::releaseMpvHandle(int timeoutMs)
     });
     timeout.start(timeoutMs);
     update();
-    releaseLoop.exec(QEventLoop::ExcludeUserInputEvents);
+    if (!completed->load())
+        releaseLoop.exec(QEventLoop::ExcludeUserInputEvents);
     return completed->load();
 }
 
@@ -1023,7 +1028,6 @@ MpvVideoItem::HandleSnapshot MpvVideoItem::takePendingHandle()
     HandleSnapshot snap { m_pendingHandle, m_handleDirty, m_releaseCompleted, m_attachCompleted,
         m_pendingRenderBackend };
     m_handleDirty = false;
-    m_releaseCompleted.reset();
     return snap;
 }
 

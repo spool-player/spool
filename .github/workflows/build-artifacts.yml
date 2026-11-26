@@ -1335,13 +1335,14 @@ jobs:
         run: nix develop .#native -c bash tools/build-linux-release.sh
 
       - name: Run Android phone traditional and real GPU GUI e2e tests
+        id: android-phone-tests
         if: matrix.abi == 'x86_64'
         env:
           SPOOL_ANDROID_FORM_FACTOR: phone
         run: nix develop .#android -c bash tools/android/emulator-launch-test.sh
 
       - name: Run Android TV traditional and real GPU GUI e2e tests
-        if: matrix.abi == 'x86_64'
+        if: ${{ !cancelled() && matrix.abi == 'x86_64' && (steps.android-phone-tests.outcome == 'success' || steps.android-phone-tests.outcome == 'failure') }}
         env:
           SPOOL_ANDROID_FORM_FACTOR: tv
         run: nix develop .#android -c bash tools/android/emulator-launch-test.sh

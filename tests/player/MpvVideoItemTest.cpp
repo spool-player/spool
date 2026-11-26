@@ -519,15 +519,23 @@ SPOOL_TEST_MAIN("mpv-video-item")
             if (frame.save(capturePath))
                 std::fprintf(stderr, "native failure frame: %s\n", qPrintable(capturePath));
         }
+        bool nestedRelease = false;
+        QTimer nestedReleaseTimer;
+        nestedReleaseTimer.setSingleShot(true);
+        QObject::connect(
+            &nestedReleaseTimer, &QTimer::timeout, &window, [&] { nestedRelease = videoItem.releaseMpvHandle(); });
+        nestedReleaseTimer.start(0);
         const bool released = videoItem.releaseMpvHandle();
-        mpv_terminate_destroy(handle);
-        if (!rendered || !upright || !released || !neutralOsd
+        QCoreApplication::processEvents();
+        if (released && nestedRelease)
+            mpv_terminate_destroy(handle);
+        if (!rendered || !upright || !released || !nestedRelease || !neutralOsd
 #if SPOOL_MPV_ITEM_RHI
             || !sdrTarget
 #endif
         ) {
-            std::fprintf(stderr, "video result: rendered=%d upright=%d released=%d neutralOSD=%d\n", rendered, upright,
-                released, neutralOsd);
+            std::fprintf(stderr, "video result: rendered=%d upright=%d released=%d nestedRelease=%d neutralOSD=%d\n",
+                rendered, upright, released, nestedRelease, neutralOsd);
             const QImage failedFrame = captureItem();
             const QColor upper = failedFrame.pixelColor(failedFrame.width() / 2, failedFrame.height() / 4);
             const QColor lower = failedFrame.pixelColor(failedFrame.width() / 2, 3 * failedFrame.height() / 4);
