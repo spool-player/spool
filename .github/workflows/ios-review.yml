@@ -75,6 +75,9 @@ jobs:
         with:
           nix_conf: |
             experimental-features = nix-command flakes
+      - name: Install Cachix from the Intel macOS pin
+        if: matrix.sdk == 'iphonesimulator'
+        run: bash tools/install-intel-darwin-cachix.sh
       - uses: cachix/cachix-action@3ba601ff5bbb07c7220846facfa2cd81eeee15a1
         if: matrix.sdk == 'iphonesimulator'
         with:
@@ -129,6 +132,7 @@ jobs:
             build/ios/smoke/safe-export
             build/ios/smoke/launch-result.json
             build/ios/smoke/simulator.png
+            build/ios/smoke/simulator-boot-*.log
           if-no-files-found: warn
           retention-days: 7
       - name: Document unsigned artifact boundary

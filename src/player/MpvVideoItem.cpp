@@ -298,6 +298,14 @@ namespace {
             // default OpenGL state before every render pass.
             QQuickOpenGLUtils::resetOpenGLState();
             fbo->bind();
+#ifdef Q_OS_ANDROID
+            // The emulator's GLES translator can leave error flags after Qt
+            // restores state. libplacebo checks the shared context's error
+            // queue at frame start and would discard that frame.
+            auto *functions = QOpenGLContext::currentContext()->functions();
+            for (int i = 0; i < 8 && functions->glGetError() != GL_NO_ERROR; ++i) {
+            }
+#endif
 
             mpv_opengl_fbo mpfbo {};
             mpfbo.fbo = static_cast<int>(fbo->handle());

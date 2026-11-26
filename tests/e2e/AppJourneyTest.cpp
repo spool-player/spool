@@ -468,7 +468,7 @@ private:
     QDateTime launchTime;
     qint64 deviceLaunchEpoch = 0;
 };
-enum class TextSurface { Window, LibraryRow };
+enum class TextSurface { Window, LibraryRow, RelatedCard, PlayerOptions };
 enum class TextPreprocess { Original, Neutral, Inverse, SmoothInverse, NeutralAdaptive, Positive, Adaptive };
 struct Words {
     QString text;
@@ -539,7 +539,7 @@ public:
             "Spool did not initialize an exposed GPU window", 60000);
     }
     QJsonObject command(const QStringList& args, const QByteArray& input = {}, bool required = true,
-        const QString& descriptorOverride = {}, QJsonObject *envelope = nullptr)
+        const QString& descriptorOverride = {}, QJsonObject *envelope = nullptr, bool observeAfterTimeout = false)
     {
         ensureRunning();
         QProcess process;
@@ -572,6 +572,9 @@ public:
             device->propagateObservedCrash();
         if (envelope)
             *envelope = response;
+        if (observeAfterTimeout && transportCode == "timeout"
+            && response["error"].toObject()["message"] == "Instance did not complete command in time")
+            return {};
         if (required
             && (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0 || !response["ok"].toBool())) {
             const QString code = response["error"].toObject()["code"].toString();
@@ -641,9 +644,9 @@ public:
         require(command({ "text", "--stdin" }, value.toUtf8())["accepted"].toBool(),
             "focused editable field did not accept production IME input");
     }
-    QJsonObject state()
+    QJsonObject state(bool observeAfterTimeout = false)
     {
-        return command({ "state" });
+        return command({ "state" }, {}, true, {}, nullptr, observeAfterTimeout);
     }
     QImage capture(bool video = false)
     {
@@ -1131,24 +1134,32 @@ public:
                     const QImage frame = capture();
                     QString imagePath = screenshotPath;
                     QRect region;
-                    if (surface == TextSurface::LibraryRow) {
-                        const auto row = capturedState["visual"].toObject()["libraryRow"].toObject();
+                    if (surface != TextSurface::Window) {
+                        const QString key = surface == TextSurface::LibraryRow ? QStringLiteral("libraryRow")
+                            : surface == TextSurface::RelatedCard              ? QStringLiteral("relatedCard")
+                                                                               : QStringLiteral("playerOptions");
+                        const auto row = capturedState["visual"].toObject()[key].toObject();
                         const double ratio = capturedState["window"].toObject()["devicePixelRatio"].toDouble(1);
                         region = QRectF(row["x"].toDouble() * ratio, row["y"].toDouble() * ratio,
                             row["width"].toDouble() * ratio, row["height"].toDouble() * ratio)
                                      .toAlignedRect()
                                      .intersected(frame.rect());
-                        if (region.isEmpty())
+                        if (region.isEmpty()) {
+                            if (scroll)
+                                command({ "key", "down" });
                             return false;
-                        imagePath = libraryTextPath();
+                        }
+                        imagePath = surface == TextSurface::LibraryRow
+                            ? libraryTextPath()
+                            : screenshotPath + QStringLiteral(".caption.png");
                         QSaveFile file(imagePath);
                         require(file.open(QIODevice::WriteOnly)
                                 && file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)
                                 && frame.copy(region).save(&file, "PNG") && file.commit(),
-                            "actual rendered library row could not be read for caption navigation");
+                            "actual rendered region could not be read for caption navigation");
                     }
                     const QList<Words> primaryLines
-                        = words(imagePath, surface == TextSurface::LibraryRow ? 6 : 11, region.topLeft());
+                        = words(imagePath, surface == TextSurface::Window ? 11 : 6, region.topLeft());
                     lastObserved = summarize(primaryLines);
                     QRect candidate = locate(primaryLines);
                     // Sparse-page segmentation can omit text touching a focus outline.
@@ -1188,7 +1199,7 @@ public:
                     if (candidate.isEmpty())
                         candidate = locate(words(imagePath, 3, region.topLeft(), TextPreprocess::Adaptive));
                     if (!candidate.isEmpty()) {
-                        if (surface == TextSurface::Window
+                        if (surface != TextSurface::LibraryRow
                             || (!previous.isEmpty() && (candidate.center() - previous.center()).manhattanLength() <= 2
                                 && std::abs(candidate.width() - previous.width()) <= 2
                                 && std::abs(candidate.height() - previous.height()) <= 2)) {
@@ -1211,9 +1222,9 @@ public:
         }
         return found;
     }
-    void click(const QString& text, bool scroll = false, bool right = false)
+    void click(const QString& text, bool scroll = false, bool right = false, TextSurface surface = TextSurface::Window)
     {
-        tap(label(text, scroll), right);
+        tap(label(text, scroll, surface), right);
     }
     void openLibrary(const QString& title)
     {
@@ -1227,9 +1238,25 @@ public:
     }
     void openPlaybackSettings()
     {
-        // Navigate the actual transport, including on TV/mobile where there
-        // is no desktop shortcut. Up saturates at Back; Down reaches the
-        // timeline and then the actions. Right saturates at Playback settings.
+        if (qEnvironmentVariable("SPOOL_E2E_ANDROID_TV") == "1") {
+            // Use the real on-screen gear after revealing the controls.
+            QRect button;
+            await(
+                [&] {
+                    const auto observed = command({ "key", "up" });
+                    const auto bounds = observed["visual"].toObject()["playerSettings"].toObject();
+                    const double ratio = observed["window"].toObject()["devicePixelRatio"].toDouble(1);
+                    button = QRectF(bounds["x"].toDouble() * ratio, bounds["y"].toDouble() * ratio,
+                        bounds["width"].toDouble() * ratio, bounds["height"].toDouble() * ratio)
+                                 .toAlignedRect();
+                    return !button.isEmpty();
+                },
+                "Android TV transport controls did not reveal the Playback settings button");
+            tap(button);
+            return;
+        }
+        // Up saturates at Back, Down reaches the timeline and the actions,
+        // and Right saturates at Playback settings.
         for (int step = 0; step < 3; ++step)
             command({ "key", "up" });
         command({ "key", "down" });
@@ -1619,7 +1646,7 @@ SPOOL_TEST_MAIN("app-journey")
         fixturePhase = QStringLiteral("nested-details-return");
         const int nestedDetailsBefore = fixture.episodeDetailResponses;
         journey.label("More Like This", true);
-        journey.click("Journey Series", true);
+        journey.click("Journey Series", true, false, TextSurface::RelatedCard);
         journey.await([&] { return fixture.episodeDetailResponses > nestedDetailsBefore; },
             "related-item activation did not fetch the selected episode through the real provider");
         journey.label("Journey Episode");
@@ -2003,7 +2030,13 @@ SPOOL_TEST_MAIN("app-journey")
                     .toStdString());
         }
         journey.command({ "stop" });
-        journey.await([&] { return !journey.state()["playback"].toObject()["active"].toBool(); },
+        journey.await(
+            [&] {
+                // A dropped read during handoff is not a stopped player.
+                // Keep polling for an explicit inactive state within await's deadline.
+                const auto playback = journey.state(true)["playback"].toObject();
+                return playback["active"].isBool() && !playback["active"].toBool();
+            },
             "remote episode did not stop before explicit restart");
         journey.label("Start from beginning");
         const qsizetype reportsBeforeRestart = fixture.reports.size();
@@ -2046,8 +2079,8 @@ SPOOL_TEST_MAIN("app-journey")
         // QML -> application queue -> mpv -> production provider reporting.
         fixturePhase = QStringLiteral("repeat-current-eof");
         journey.openPlaybackSettings();
-        journey.click("Repeat");
-        journey.click("Repeat current item");
+        journey.click("Repeat", false, false, TextSurface::PlayerOptions);
+        journey.click("Repeat current item", false, false, TextSurface::PlayerOptions);
         const qsizetype reportsBeforeRepeat = fixture.reports.size();
         const int negotiationsBeforeRepeat = fixture.playbackNegotiations;
         journey.command({ "seek", "88" });

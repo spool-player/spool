@@ -52,6 +52,13 @@ if (-not (Test-Path -LiteralPath $buildSource)) {
         Copy-Item -Destination $buildSource -Recurse -Force
     Write-MpvRevisionStamp -Directory $buildSource -Revision $sourceRevision
 }
+# Meson falls back to MPV_VERSION in the mirror, which has no Git metadata.
+# Keep the proven upstream release base and identify the fork build explicitly.
+$mirrorVersion = Get-MpvMirrorVersion -Source $source
+$mirrorVersionPath = Join-Path $buildSource 'MPV_VERSION'
+if ((Get-Content -LiteralPath $mirrorVersionPath -Raw).Trim() -cne $mirrorVersion) {
+    [IO.File]::WriteAllText($mirrorVersionPath, "$mirrorVersion`n", [Text.UTF8Encoding]::new($false))
+}
 New-Item -ItemType Directory -Force $packageCache | Out-Null
 
 $env:MESON_PACKAGE_CACHE_DIR = $packageCache

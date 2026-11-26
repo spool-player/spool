@@ -1292,6 +1292,18 @@ def write_journal(path, value):
     temporary.replace(path)
 
 
+def apple_selector_setup(phase):
+    for attempt in range(2):
+        try:
+            return TvOS(phase)
+        except subprocess.TimeoutExpired as error:
+            # Initial installed-bundle lookups can stall after a slow boot.
+            # No test selector has started, so a fresh lookup is safe.
+            if attempt or error.cmd[:3] != ["xcrun", "simctl", "get_app_container"]:
+                raise
+            print("Apple selector setup: simctl get_app_container timed out; retrying once", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--platform", choices=("android", "tvos", "ios"), required=True)
@@ -1312,7 +1324,7 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     suffix = f"-cleanup-{args.cleanup_regression}" if args.cleanup_regression else ""
     state_path = output / f"{args.phase}{suffix}-result.json"
-    device = Android(args.phase) if args.platform == "android" else TvOS(args.phase)
+    device = Android(args.phase) if args.platform == "android" else apple_selector_setup(args.phase)
     if args.cleanup_regression:
         names = [f"app-journey-cleanup-{args.cleanup_regression}"]
     else:
@@ -1438,5 +1450,11 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
-        print(f"device test infrastructure failed: {type(error).__name__}", flush=True)
+        stage = ""
+        if isinstance(error, subprocess.TimeoutExpired) and isinstance(error.cmd, list):
+            if error.cmd[:3] in (["xcrun", "simctl", "launch"], ["xcrun", "simctl", "get_app_container"]):
+                stage = f" (simctl {error.cmd[2]})"
+            elif error.cmd[:2] == ["xcrun", "dwarfdump"]:
+                stage = " (selector binary identity)"
+        print(f"device test infrastructure failed: {type(error).__name__}{stage}", flush=True)
         raise SystemExit(1)

@@ -416,7 +416,11 @@ SPOOL_TEST_MAIN("mpv-video-item")
         videoItem.setMpvHandle(handle);
         if (!videoItem.waitForRenderContext()) {
             std::fprintf(stderr, "render context was not ready before media load\n");
-            mpv_terminate_destroy(handle);
+            const QImage frame = captureItem();
+            if (!frame.isNull())
+                frame.save(QDir::tempPath() + QStringLiteral("/mpv-video-item-failure.png"));
+            if (videoItem.releaseMpvHandle())
+                mpv_terminate_destroy(handle);
             return 1;
         }
 
@@ -547,7 +551,8 @@ SPOOL_TEST_MAIN("mpv-video-item")
     return 0;
 }
 
-#if !defined(Q_OS_TVOS) && !defined(Q_OS_ANDROID) && !defined(SPOOL_TEST_OPENGL_ONLY)
+// Apple mobile and Android use the OpenGL framebuffer item.
+#if SPOOL_MPV_ITEM_RHI && !defined(SPOOL_TEST_OPENGL_ONLY)
 namespace {
 
 int vulkanEntry(int argc, char **argv)

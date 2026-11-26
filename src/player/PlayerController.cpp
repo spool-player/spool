@@ -166,6 +166,7 @@ namespace {
         return mpv_set_property_async(handle, replyId, "curl-transport-control", MPV_FORMAT_NODE, &control);
     }
     constexpr uint64_t kCacheSpeedReply = 0x6375726c73706565ULL;
+    constexpr uint64_t kPauseSetReply = 0x7073000000000000ULL;
     constexpr uint64_t kFullscreenSetReply = 0x6673000000000000ULL;
     constexpr uint64_t kFullscreenObservation = 0x666f000000000000ULL;
     constexpr uint64_t kFullscreenReplyMask = 0xffff000000000000ULL;
@@ -2082,15 +2083,18 @@ void PlayerController::togglePause()
 void PlayerController::setPaused(bool paused)
 {
     qInfo() << "player: pause requested" << paused;
-    if (!m_mpvLifecycle.handle() && m_sessionActive) {
-        if (m_paused != paused) {
+    if (!m_mpvLifecycle.handle()) {
+        if (m_sessionActive && m_paused != paused) {
             m_paused = paused;
             notifyPlaybackStateChanged();
         }
         return;
     }
-    mpvCommand({ QByteArrayLiteral("no-osd"), QByteArrayLiteral("set"), QByteArrayLiteral("pause"),
-        paused ? QByteArrayLiteral("yes") : QByteArrayLiteral("no") });
+    int pauseFlag = paused;
+    const int error
+        = mpv_set_property_async(m_mpvLifecycle.handle(), kPauseSetReply, "pause", MPV_FORMAT_FLAG, &pauseFlag);
+    if (error < 0)
+        qWarning() << "player: could not queue pause property update:" << mpv_error_string(error);
 }
 
 void PlayerController::prepareForBackground()
@@ -3216,6 +3220,11 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_
         });
         break;
     case MPV_EVENT_SET_PROPERTY_REPLY: {
+        if (event->reply_userdata == kPauseSetReply) {
+            if (event->error < 0)
+                qWarning() << "player: pause property update failed:" << mpv_error_string(event->error);
+            break;
+        }
         if ((event->reply_userdata & kFullscreenReplyMask) == kTransportConfigureReply) {
             const quint64 serial = event->reply_userdata & kFullscreenSerialMask;
             const int error = event->error;

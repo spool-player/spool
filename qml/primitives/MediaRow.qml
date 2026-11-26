@@ -21,6 +21,7 @@ FocusScope {
     property int cardWidth: Metrics.scaled(156)
     property int cardGap: Metrics.scaled(16)
     property int currentIndex: 0
+    readonly property Item automationCurrentCard: currentCard()
     property bool enabledRow: true
     property bool reserveWhenEmpty: false
     property bool loading: false

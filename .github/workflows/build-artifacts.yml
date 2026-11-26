@@ -194,6 +194,14 @@ jobs:
       - name: Check commit whitespace
         run: git show --check --format= HEAD
 
+      - name: Verify mpv gitlink and Nix lock agree
+        run: |
+          set -euo pipefail
+          gitlink="$(git rev-parse HEAD:mpv)"
+          locked="$(jq -er '.nodes["mpv-src"].locked.rev' flake.lock)"
+          test "$gitlink" = "$locked"
+          test "$(git -C mpv rev-parse HEAD)" = "$gitlink"
+
       - name: Syntax-check shell scripts
         run: |
           mapfile -t scripts < <(git ls-files '*.sh' | sort -u)
@@ -591,6 +599,9 @@ jobs:
           purge-prefixes: nix-native-${{ runner.os }}-${{ matrix.arch }}-
           purge-created: P7D
           purge-primary-key: never
+      - name: Install Cachix from the Intel macOS pin
+        if: matrix.arch == 'x86_64'
+        run: bash tools/install-intel-darwin-cachix.sh
       - uses: cachix/cachix-action@3ba601ff5bbb07c7220846facfa2cd81eeee15a1 # v16
         with:
           name: spool
@@ -671,14 +682,14 @@ jobs:
           done
           exit 1
 
-      - name: Build macOS app
+      # Hosted macOS runners can hang submitting MoltenVK work to the
+      # paravirtualized Metal GPU. Exercise the GUI with macOS OpenGL and
+      # verify the packaged Vulkan loader separately below.
+      - name: Compile macOS app and tests
+        id: macos-build
         env:
+          DEPLOY_APP: '0'
           SPOOL_MACOS_CREDENTIAL_SERVICE: ${{ inputs.enable_macos_signing && 'com.sachk.spool' || '' }}
-          # Hosted macOS runners expose Apple's paravirtualized Metal GPU, where
-          # MoltenVK vkQueueSubmit hangs (kIOGPUCommandBufferCallbackErrorHang).
-          # Keep the shipped Spool.app unchanged (Vulkan default + bundled
-          # MoltenVK, verified by the runtime load step below) and run the
-          # hosted e2e suite on real macOS OpenGL, matching the Windows CI gate.
           SPOOL_TEST_RENDER_BACKEND: opengl
         run: nix develop .#native --no-write-lock-file -c bash tools/build-macos.sh
 
@@ -690,6 +701,13 @@ jobs:
 
       - name: Lint compiled QML
         run: nix develop .#native --no-write-lock-file -c cmake --build build/macos/app --target spool_qmllint_strict
+
+      - name: Deploy and verify macOS bundle
+        if: ${{ !cancelled() && steps.macos-build.outcome == 'success' }}
+        env:
+          SPOOL_MACOS_CREDENTIAL_SERVICE: ${{ inputs.enable_macos_signing && 'com.sachk.spool' || '' }}
+          SPOOL_TEST_RENDER_BACKEND: opengl
+        run: nix develop .#native --no-write-lock-file -c bash tools/build-macos.sh
 
       - name: Load bundled Vulkan runtime
         run: |
@@ -807,6 +825,7 @@ jobs:
             build/macos/app/*-results.json.*.log
             build/macos/app/test-phases.json
             build/macos/app/Testing/Temporary/LastTest.log
+            build/macos/app/test-artifacts/app-journey-*/frame.png
           if-no-files-found: warn
           retention-days: 7
 
@@ -1280,6 +1299,33 @@ jobs:
           key: ${{ steps.android-cache.outputs.cache-primary-key }}
 
 
+      - name: Fetch pinned libplacebo for Android host controller
+        if: matrix.abi == 'x86_64'
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_url="$(jq -er '.nodes["libplacebo-src"].locked
+            | select(.type == "git" and .submodules == true)
+            | "git+\(.url)?rev=\(.rev)&submodules=1"' flake.lock)"
+          expected_hash="$(jq -er '.nodes["libplacebo-src"].locked.narHash' flake.lock)"
+          log="$RUNNER_TEMP/android-libplacebo-fetch.log"
+          for attempt in 1 2 3; do
+            if result="$(nix flake prefetch --json "$source_url" 2>"$log")"; then
+              test "$(jq -er .hash <<<"$result")" = "$expected_hash"
+              exit
+            fi
+            cat "$log" >&2
+            if ! grep -Eiq 'Failed to connect|Could not resolve host|Connection (timed out|reset)|HTTP error (502|503|504)' "$log"; then
+              exit 1
+            fi
+            if (( attempt == 3 )); then
+              echo 'Pinned libplacebo fetch exhausted retries after a transient connection failure.'
+              exit 1
+            fi
+            sleep "$((attempt * 10))"
+          done
+
       - name: Build native host controller for Android application journeys
         if: matrix.abi == 'x86_64'
         run: nix develop .#native -c bash tools/build-linux-release.sh
@@ -1450,6 +1496,8 @@ jobs:
         with:
           persist-credentials: false
           submodules: recursive
+          # The Windows libmpv source mirror needs the upstream release ancestry.
+          fetch-depth: 0
 
       - name: Install upstream FFmpeg build environment
         id: msys2

@@ -30,11 +30,44 @@ result="$ROOT/build/$platform/smoke"
 mkdir -p "$result"
 runtime="$(xcrun simctl list runtimes --json | python3 -c 'import json,sys; r=[x for x in json.load(sys.stdin)["runtimes"] if x["isAvailable"] and x["identifier"].startswith("com.apple.CoreSimulator.SimRuntime."+sys.argv[1])]; print(sorted(r,key=lambda x:tuple(map(int,x["version"].split("."))))[-1]["identifier"])' "$runtime_name")"
 device_type="$(xcrun simctl list devicetypes --json | python3 -c 'import json,sys; print(next(x["identifier"] for x in json.load(sys.stdin)["devicetypes"] if x["name"].startswith(sys.argv[1])))' "$device_name")"
-device="$(xcrun simctl create "Spool-$platform-tests" "$device_type" "$runtime")"
-cleanup() { xcrun simctl shutdown "$device" >/dev/null 2>&1 || true; xcrun simctl delete "$device"; }
+device=
+cleanup() {
+  if [[ -n "$device" ]]; then
+    xcrun simctl shutdown "$device" >/dev/null 2>&1 || true
+    xcrun simctl delete "$device"
+  fi
+}
 trap cleanup EXIT
-xcrun simctl boot "$device"
-xcrun simctl bootstatus "$device" -b
+for attempt in 1 2; do
+  device="$(xcrun simctl create "Spool-$platform-tests" "$device_type" "$runtime")"
+  setup_log="$result/simulator-boot-$attempt.log"
+  if python3 - "$device" >"$setup_log" 2>&1 <<'PYTHON'
+import subprocess
+import sys
+
+device = sys.argv[1]
+try:
+    subprocess.run(["xcrun", "simctl", "boot", device], check=True, timeout=120)
+    subprocess.run(["xcrun", "simctl", "bootstatus", device, "-b"], check=True, timeout=480)
+except subprocess.TimeoutExpired:
+    print("Simulator boot timed out", flush=True)
+    sys.exit(75)
+except subprocess.CalledProcessError:
+    sys.exit(1)
+PYTHON
+  then
+    cat "$setup_log"
+    break
+  else
+    setup_status=$?
+    cat "$setup_log" >&2
+    if [[ "$setup_status" != 75 || "$attempt" == 2 ]]; then
+      exit "$setup_status"
+    fi
+    cleanup
+    device=
+  fi
+done
 export SPOOL_TVOS_DEVICE="$device"
 # Install the real product and both unified native selector bundles. Application
 # and Keychain entitlements stay embedded by the simulator linker; the local

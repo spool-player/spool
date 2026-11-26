@@ -2013,6 +2013,7 @@ FocusScope {
 
                     MediaRow {
                         id: similarRowItem
+                        objectName: "detailSimilarRow"
                         anchors.left: parent.left
                         anchors.right: parent.right
                         anchors.leftMargin: root.contentMargin
