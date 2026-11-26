@@ -404,6 +404,22 @@ SPOOL_TEST_MAIN("mpv-option-profile")
         "split-clock playback should not advertise pipeline audio");
     require(valueFor(webOSAlsa, "alsa-no-hw-pause") == "yes", "webOS ALSA should avoid the broken hardware pause path");
     require(valueFor(webOSAlsa, "alsa-bounded-io") == "yes", "webOS ALSA should use bounded direct-device I/O");
+    require(
+        valueFor(webOSAlsa, "alsa-buffer-time") == "40000", "webOS should keep the existing ALSA buffer by default");
+    const auto webOSAlsaTuned = MpvOptionProfile::applicationOptions(MpvOptionProfile::Platform::WebOS, true,
+        QStringLiteral("alsa"), {}, {}, {}, {}, false, {}, {}, MpvOptionProfile::RenderQuality::Balanced, 120);
+    require(valueFor(webOSAlsaTuned, "alsa-buffer-time") == "120000", "ALSA buffer is specified in microseconds");
+
+    const auto webOSPulse = profileOptions(MpvConfigPolicy {}, MpvOptionProfile::Platform::WebOS,
+        QStringLiteral("pulse"), QByteArrayLiteral("/tmp/mpv.log"));
+    require(valueFor(webOSPulse, "ao") == "pulse,null", "webOS PulseAudio should use its native output");
+    require(valueFor(webOSPulse, "audio-device").isEmpty(), "PulseAudio should follow the system's default sink");
+    require(valueFor(webOSPulse, "alsa-buffer-time").isEmpty(), "PulseAudio should not use ALSA settings");
+    require(valueFor(webOSPulse, "video-sync") == "display-resample", "PulseAudio should follow the display clock");
+    require(valueFor(webOSPulse, "vo-starfish-audio-hint") == "no", "Starfish must not claim PulseAudio playback");
+    const auto webOSDefault = profileOptions(MpvConfigPolicy {}, MpvOptionProfile::Platform::WebOS,
+        QStringLiteral("auto"), QByteArrayLiteral("/tmp/mpv.log"));
+    require(valueFor(webOSDefault, "ao") == "pulse,null", "webOS should prewarm with PulseAudio by default");
 
     PlaybackSession softwareSession;
     softwareSession.playMethod = QStringLiteral("DirectPlay");

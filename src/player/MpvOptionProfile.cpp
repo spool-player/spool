@@ -481,7 +481,7 @@ QByteArray MpvOptionProfile::systemCertificateBundle()
 std::vector<MpvOption> MpvOptionProfile::applicationOptions(Platform platform, bool needsVideoSurface,
     const QString& audioOutputMode, const QByteArray& logPath, const StreamingOptions& streaming,
     const QByteArray& demuxerMaxBytes, const QByteArray& demuxerMaxBackBytes, bool embeddedVideo,
-    const QByteArray& shaderCachePath, const QByteArray& certificateBundlePath, RenderQuality quality)
+    const QByteArray& shaderCachePath, const QByteArray& certificateBundlePath, RenderQuality quality, int alsaBufferMs)
 {
     const bool webOS = platform == Platform::WebOS;
     const bool android = platform == Platform::Android;
@@ -491,8 +491,6 @@ std::vector<MpvOption> MpvOptionProfile::applicationOptions(Platform platform, b
     // had a second option; Android does now.
     const NetworkProfile network = networkProfile(platform);
     const QString normalizedAudioOutput = webOS ? audioOutputMode : normalizedAudioOutputMode(audioOutputMode);
-    const bool starfishAudio = webOS && !embeddedVideo
-        && (audioOutputMode == QStringLiteral("starfish") || audioOutputMode == QStringLiteral("starfish-pcm"));
 
     std::vector<MpvOption> options {
         { "terminal", "no" },
@@ -542,10 +540,14 @@ std::vector<MpvOption> MpvOptionProfile::applicationOptions(Platform platform, b
     }
 
     if (webOS) {
+        const bool starfishRequested
+            = audioOutputMode == QStringLiteral("starfish") || audioOutputMode == QStringLiteral("starfish-pcm");
+        const bool starfishAudio = starfishRequested && !embeddedVideo;
+        const bool pulseAudio = !starfishRequested && audioOutputMode != QStringLiteral("alsa");
         options.push_back({ "initial-audio-sync", embeddedVideo ? "yes" : "no" });
         options.push_back({ "vo", !needsVideoSurface ? "null" : embeddedVideo ? "libmpv" : "starfish" });
         options.push_back({ "vd", embeddedVideo ? "lavc" : "starfish" });
-        options.push_back({ "ao", starfishAudio ? "starfish,null" : "alsa,null" });
+        options.push_back({ "ao", starfishAudio ? "starfish,null" : pulseAudio ? "pulse,null" : "alsa,null" });
         if (!embeddedVideo)
             options.push_back({ "vo-starfish-audio-hint", starfishAudio ? "yes" : "no" });
         else {
@@ -562,19 +564,20 @@ std::vector<MpvOption> MpvOptionProfile::applicationOptions(Platform platform, b
             options.push_back({ "dither-depth", "no" });
             options.push_back({ "deinterlace", "auto" });
         }
-        if (!starfishAudio) {
-            options.push_back({ "audio-device", "alsa/hw:0,7" });
+        if (!starfishAudio)
             options.push_back({ "video-sync", "display-resample" });
-        }
         options.push_back({ "audio-channels", "stereo" });
         options.push_back({ "audio-format", starfishAudio ? "s16" : "s32" });
         options.push_back({ "audio-samplerate", starfishAudio ? "192000" : "48000" });
         if (!starfishAudio) {
             options.push_back({ "audio-buffer", embeddedVideo ? "0.100" : "0.050" });
-            options.push_back({ "alsa-buffer-time", "40000" });
-            options.push_back({ "alsa-periods", "8" });
-            options.push_back({ "alsa-no-hw-pause", "yes" });
-            options.push_back({ "alsa-bounded-io", "yes" });
+            if (!pulseAudio) {
+                options.push_back({ "audio-device", "alsa/hw:0,7" });
+                options.push_back({ "alsa-buffer-time", QByteArray::number(qBound(20, alsaBufferMs, 250) * 1000) });
+                options.push_back({ "alsa-periods", "8" });
+                options.push_back({ "alsa-no-hw-pause", "yes" });
+                options.push_back({ "alsa-bounded-io", "yes" });
+            }
         } else {
             options.push_back({ "ao-starfish-feed-ahead", "0.4" });
         }

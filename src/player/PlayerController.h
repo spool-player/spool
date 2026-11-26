@@ -231,6 +231,7 @@ public:
     Q_INVOKABLE void setFileAudioDelayMs(int delayMs);
     Q_INVOKABLE void setSubtitleDelayMs(int delayMs);
     Q_INVOKABLE void setAudioOutputMode(const QString& mode);
+    void setAlsaBufferMs(int milliseconds);
     void setAudioPassthrough(const QString& mode);
     // Applies to the next thing that plays: the render options are set on a
     // fresh mpv core, and every play request builds one.
@@ -557,6 +558,7 @@ private:
     double m_syncPlaybackSpeed = 1.0;
     bool m_syncPlaybackSpeedActive = false;
     QString m_audioOutputMode = QStringLiteral("auto");
+    int m_alsaBufferMs = 40;
     QByteArray m_automaticDemuxerMaxBytes = QByteArrayLiteral("64M");
     QByteArray m_demuxerMaxBytes = QByteArrayLiteral("64M");
     QByteArray m_demuxerMaxBackBytes = QByteArrayLiteral("32M");

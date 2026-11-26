@@ -5,19 +5,21 @@
 
 namespace Spool {
 namespace {
-    constexpr SettingChoice kChoices[] = { { "alsa", "ALSA" }, { "starfish-pcm", "Starfish" } };
+    constexpr SettingChoice kChoices[]
+        = { { "pulse", "PulseAudio" }, { "alsa", "ALSA" }, { "starfish-pcm", "Starfish" } };
 }
 
 const PlatformAudioOutputPolicy& platformAudioOutputPolicy()
 {
-    static const PlatformAudioOutputPolicy policy { kChoices, 2, "alsa" };
+    static const PlatformAudioOutputPolicy policy { kChoices, 3, "pulse" };
     return policy;
 }
 
 QString normalizedPlatformAudioOutputMode(const QString& mode)
 {
-    return mode == QStringLiteral("starfish") || mode == QStringLiteral("starfish-pcm") ? QStringLiteral("starfish-pcm")
-                                                                                        : QStringLiteral("alsa");
+    if (mode == QStringLiteral("starfish") || mode == QStringLiteral("starfish-pcm"))
+        return QStringLiteral("starfish-pcm");
+    return mode == QStringLiteral("alsa") ? mode : QStringLiteral("pulse");
 }
 
 QStringList platformSystemSubtitleFonts()

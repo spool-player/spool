@@ -87,6 +87,9 @@
 #include <QScreen>
 #include <QStandardPaths>
 #include <QSysInfo>
+#ifdef SPOOL_WEBOS
+#include <QSaveFile>
+#endif
 #include <QThread>
 #include <QThreadPool>
 #include <QTimer>
@@ -327,6 +330,95 @@ void logLine(const char *fmt, ...)
     writeStandardError(line);
 }
 
+#ifdef SPOOL_WEBOS
+void recordWebOSPlaybackDiagnostic(const QByteArray& message)
+{
+    // The developer account shares the jailer group. Only publish fixed
+    // milestones here. The live application log stays private to Spool.
+    static constexpr struct {
+        const char *prefix;
+        const char *event;
+    } playerEvents[] = {
+        { "webOS playback diagnostics ready", "Spool started" },
+        { "player: play requested", "play requested" },
+        { "player: prepareForPlaybackSurface completed", "native surface ready" },
+        { "player: prepareForPlaybackSurface failed", "native surface failed" },
+        { "player: audio-only playback", "audio only" },
+        { "player: file loaded", "file loaded" },
+        { "player: playback restart", "playback restart" },
+        { "player: playback failed", "playback failed" },
+        { "player: end file", "file ended" },
+    };
+    static constexpr struct {
+        const char *prefix;
+        const char *event;
+    } starfishEvents[] = {
+        { "Using Starfish ACB display window path", "Starfish ACB window selected" },
+        { "wl_webos_exported window_id_assigned=", "Starfish window assigned" },
+        { "Starfish StateUpdate: LOADCOMPLETED", "Starfish load completed" },
+        { "Starfish StateUpdate: PLAYING", "Starfish playing" },
+        { "Starfish first displayed frame", "Starfish first displayed frame" },
+        { "Starfish draw_frame:", "Starfish draw frame" },
+        { "vd_starfish starting decode on keyframe", "Starfish decoding keyframe" },
+        { "vd_starfish: Starfish pipeline failed", "Starfish pipeline failed" },
+        { "Starfish reloading pipeline after failed load", "Starfish retrying failed load" },
+    };
+    QByteArray event;
+    for (const auto& entry : playerEvents) {
+        if (message.startsWith(entry.prefix)) {
+            event = entry.event;
+            break;
+        }
+    }
+    if (message.startsWith("mpv/")) {
+        const qsizetype body = message.indexOf("] ");
+        if (body < 0)
+            return;
+        const QByteArray text = message.mid(body + 2);
+        for (const auto& entry : starfishEvents) {
+            if (text.startsWith(entry.prefix)) {
+                event = entry.event;
+                break;
+            }
+        }
+        if (event.isEmpty()) {
+            const QByteArray header = message.first(body);
+            if (header.endsWith(" [error") || header.endsWith(" [fatal")) {
+                if (header.startsWith("mpv/ffmpeg") || header.startsWith("mpv/demux"))
+                    event = "mpv input error";
+                else if (header.startsWith("mpv/vo"))
+                    event = "mpv video output error";
+                else if (header.startsWith("mpv/ao"))
+                    event = "mpv audio output error";
+                else
+                    event = "mpv error";
+            }
+        }
+    }
+    if (event.isEmpty())
+        return;
+
+    static std::mutex mutex;
+    static QByteArray trace;
+    static QList<QByteArray> recordedEvents;
+    const std::lock_guard lock(mutex);
+    if (event == "play requested") {
+        trace.clear();
+        recordedEvents.clear();
+    }
+    if (recordedEvents.contains(event))
+        return;
+    recordedEvents.append(event);
+    trace += QByteArray::number(g_startupTimer.elapsed()) + " ms " + event + '\n';
+
+    QSaveFile file(QStringLiteral("/tmp/com.sachk.spool-playback.log"));
+    if (file.open(QIODevice::WriteOnly)
+        && file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ReadGroup)
+        && file.write(trace) == trace.size())
+        file.commit();
+}
+#endif
+
 void qtMessageHandler(QtMsgType type, const QMessageLogContext& context, const QString& message)
 {
     if (type == QtWarningMsg && !qEnvironmentVariableIsSet("SPOOL_VERBOSE_QT")) {
@@ -357,6 +449,9 @@ void qtMessageHandler(QtMsgType type, const QMessageLogContext& context, const Q
     }
 
     const QByteArray local = Spool::sanitizedLogMessage(message).toLocal8Bit();
+#ifdef SPOOL_WEBOS
+    recordWebOSPlaybackDiagnostic(local);
+#endif
     if (context.category && context.category[0])
         logLine("[qt:%s] %s: %s", level, context.category, local.constData());
     else
@@ -562,6 +657,9 @@ int main(int argc, char **argv)
 
     g_logFile = openAppLogFile(appRootPath);
     logLine("%s starting", kAppId);
+#ifdef SPOOL_WEBOS
+    recordWebOSPlaybackDiagnostic("webOS playback diagnostics ready");
+#endif
     logLine("startup: exec_to_main_ms=%lld static_init_ms=%.2f",
         static_cast<long long>(processStartupTiming.execToMainMs), processStartupTiming.staticInitializationMs);
     if (!g_logPath.isEmpty())

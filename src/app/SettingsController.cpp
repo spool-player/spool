@@ -1032,6 +1032,10 @@ void SettingsController::applySchemaValue(const SettingSpec& spec, const QVarian
         if (apply && m_player)
             m_player->setAudioOutputMode(m_audioOutputMode);
         break;
+    case SettingTarget::AlsaBuffer:
+        if (m_player && (apply || !m_localSettingsLoaded))
+            m_player->setAlsaBufferMs(value.toInt());
+        break;
     case SettingTarget::AudioPassthrough:
         if (m_player && (apply || !m_localSettingsLoaded))
             m_player->setAudioPassthrough(value.toString());
@@ -1348,11 +1352,11 @@ void SettingsController::updateAudioOutputRoute(const QString& output, int displ
     qInfo() << "app: audio output" << normalizedOutput << "display latency" << displayLatencyMs << "ms; output latency"
             << outputLatencyMs << "ms; automatic delay" << automaticDelay << "ms";
 
-    m_audioOutputLoadGeneration.invalidate();
     m_currentAudioOutput = normalizedOutput;
     m_automaticAudioDelayMs = automaticDelay;
     m_displayLatencyMs = displayLatencyMs;
     if (outputChanged) {
+        m_audioOutputLoadGeneration.invalidate();
         m_audioDelayMs = 0;
         m_values.insert(QStringLiteral("settings/audioDelayMs"), m_audioDelayMs);
     }

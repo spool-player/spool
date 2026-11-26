@@ -363,7 +363,10 @@ if [[ "$MPV_DYNAMIC_SECTION" != *"[libcurl.so"* ]]; then
   echo "error: $(basename "$MPV_STAGED_LIBRARY") does not use packaged shared curl" >&2
   exit 1
 fi
-
+if [[ "$MPV_DYNAMIC_SECTION" != *"[libpulse.so.0]"* ]]; then
+  echo "error: $(basename "$MPV_STAGED_LIBRARY") does not use firmware PulseAudio" >&2
+  exit 1
+fi
 
 # Keep every private dependency rooted in the package instead of binding to
 # firmware libraries with the same SONAME.
@@ -414,7 +417,7 @@ for firmware_soname in \
   libatomic.so.1 libz.so.1 libfontconfig.so.1 libfreetype.so.6 \
   libEGL.so.1 libGLESv2.so.2 libwayland-client.so.0 libwayland-cursor.so.0 \
   libwayland-egl.so libwayland-egl.so.1 libwayland-webos-client.so.0 libwayland-webos-client.so.1 \
-  libxkbcommon.so.0 libasound.so.2 libglib-2.0.so.0 libpbnjson_c.so.2 libluna-service2.so.3 \
+  libxkbcommon.so.0 libasound.so.2 libpulse.so.0 libglib-2.0.so.0 libpbnjson_c.so.2 libluna-service2.so.3 \
   libpf-1.0.so.1 libplayerAPIs.so.1 libunwind.so.8 \
   libPmLogLib.so.3 libnyx.so.0 libudev.so.0 libhelpers.so.1 libhelpers.so.2
 do

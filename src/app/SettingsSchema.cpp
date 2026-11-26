@@ -419,6 +419,12 @@ const QVector<SettingSpec>& settingSpecs()
                 audioOutput.defaultValue, audioOutput.choices, audioOutput.choiceCount, SettingTarget::AudioOutput,
                 SettingNormalizer::AudioOutput)
                 .advanced(),
+            sliderSpec("playback/alsaBufferMs", "Playback", "ALSA buffer",
+                "A larger buffer can reduce audio dropouts. Applies the next time something plays", "40", 20, 250, 10,
+                " ms", SettingTarget::AlsaBuffer)
+                .onWebOS()
+                .advanced()
+                .whenSetTo("settings/audioOutputMode", "alsa"),
             selectSpec("playback/audioPassthrough", "Playback", "Audio passthrough",
                 "Sends surround soundtracks to an AV receiver or soundbar undecoded. Leave off unless one is "
                 "connected over HDMI or optical",
@@ -725,15 +731,16 @@ const QVector<SettingSpec>& settingSpecs()
             QStringLiteral("playback/hardwareDecoding"), QStringLiteral("playback/renderQuality"),
             QStringLiteral("playback/autoAdjustQuality"), QStringLiteral("playback/graphicsApi"),
             QStringLiteral("playback/hdrOutput"), QStringLiteral("playback/hdrPeakNits"),
-            QStringLiteral("settings/audioOutputMode"), QStringLiteral("playback/forwardCacheSizeMiB"),
-            QStringLiteral("playback/threadedStreaming"), QStringLiteral("playback/maxStreamingThreads"),
-            QStringLiteral("playback/forceStreamingThreads"), QStringLiteral("subtitles/hdrBrightnessPercent"),
-            QStringLiteral("input/redButton"), QStringLiteral("input/greenButton"),
-            QStringLiteral("input/yellowButton"), QStringLiteral("input/blueButton"),
-            QStringLiteral("updates/automatic"), QStringLiteral("providers/updates"),
-            QStringLiteral("shell/diagnostics"), QStringLiteral("settings/toneMappingVisualization"),
-            QStringLiteral("shell/latencyGuard"), QStringLiteral("shell/latencyOverlay"),
-            QStringLiteral("theme/antialiasedText"), QStringLiteral("theme/renderMode") };
+            QStringLiteral("settings/audioOutputMode"), QStringLiteral("playback/alsaBufferMs"),
+            QStringLiteral("playback/forwardCacheSizeMiB"), QStringLiteral("playback/threadedStreaming"),
+            QStringLiteral("playback/maxStreamingThreads"), QStringLiteral("playback/forceStreamingThreads"),
+            QStringLiteral("subtitles/hdrBrightnessPercent"), QStringLiteral("input/redButton"),
+            QStringLiteral("input/greenButton"), QStringLiteral("input/yellowButton"),
+            QStringLiteral("input/blueButton"), QStringLiteral("updates/automatic"),
+            QStringLiteral("providers/updates"), QStringLiteral("shell/diagnostics"),
+            QStringLiteral("settings/toneMappingVisualization"), QStringLiteral("shell/latencyGuard"),
+            QStringLiteral("shell/latencyOverlay"), QStringLiteral("theme/antialiasedText"),
+            QStringLiteral("theme/renderMode") };
         for (SettingSpec& spec : rows) {
             const QString key = QString::fromLatin1(spec.key);
             const QLatin1String group(spec.group);

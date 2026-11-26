@@ -169,9 +169,12 @@ void audioOutputChoicesMatchPlatform()
 {
     const SettingSpec& audioOutput = requiredSpec(QStringLiteral("settings/audioOutputMode"));
 #ifdef SPOOL_WEBOS
-    const QStringList expectedChoices { QStringLiteral("alsa"), QStringLiteral("starfish-pcm") };
-    const QString expectedDefault = QStringLiteral("alsa");
-    const QString unknownFallback = QStringLiteral("alsa");
+    const QStringList expectedChoices { QStringLiteral("pulse"), QStringLiteral("alsa"),
+        QStringLiteral("starfish-pcm") };
+    const QString expectedDefault = QStringLiteral("pulse");
+    const QString unknownFallback = QStringLiteral("pulse");
+    require(normalizedSettingValue(audioOutput, QStringLiteral("alsa")).toString() == QStringLiteral("alsa"),
+        QStringLiteral("saved ALSA output should be preserved"));
     require(
         normalizedSettingValue(audioOutput, QStringLiteral("starfish")).toString() == QStringLiteral("starfish-pcm"),
         QStringLiteral("legacy Starfish output did not normalize to starfish-pcm"));

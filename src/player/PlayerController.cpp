@@ -53,14 +53,17 @@ namespace Spool {
 
 namespace {
 
-    // Warnings and errors are what a player problem report needs;
-    // SPOOL_MPV_LOG_LEVEL accepts any level mpv understands when more detail is
-    // wanted.
+    // The webOS playback trace uses informational Starfish milestones.
     const char *mpvLogLevel()
     {
+#ifdef SPOOL_WEBOS
+        constexpr auto defaultLevel = "info";
+#else
+        constexpr auto defaultLevel = "warn";
+#endif
         static const QByteArray level = qEnvironmentVariableIsSet("SPOOL_MPV_LOG_LEVEL")
             ? qgetenv("SPOOL_MPV_LOG_LEVEL")
-            : QByteArrayLiteral("warn");
+            : QByteArray(defaultLevel);
         return level.constData();
     }
 
@@ -682,7 +685,7 @@ void PlayerController::prepareMpvAsync(bool needsVideoSurface, bool embeddedVide
     preparation->options = MpvOptionProfile::preInitializeOptions(m_mpvConfigPolicy);
     auto applicationOptions = MpvOptionProfile::applicationOptions(preparation->platform, needsVideoSurface,
         m_audioOutputMode, {}, m_streamingOptions, m_demuxerMaxBytes, m_demuxerMaxBackBytes, embeddedVideo,
-        mpvShaderCachePath(), certificateBundle, m_renderQuality);
+        mpvShaderCachePath(), certificateBundle, m_renderQuality, m_alsaBufferMs);
     applicationOptions.push_back({ "sub-fonts-dir", m_subtitleFontsPath });
     applicationOptions.push_back({ "osd-fonts-dir", m_subtitleFontsPath });
     applicationOptions.push_back({ "osd-font", QByteArrayLiteral("IBM Plex Sans Var") });
@@ -2580,6 +2583,15 @@ void PlayerController::setAudioOutputMode(const QString& mode)
     qInfo() << "player: audio output mode changed" << normalized << "visible=" << m_visible;
     discardPreparedMpvForOptionChange("audio output mode change");
     emit audioOutputModeChanged();
+}
+
+void PlayerController::setAlsaBufferMs(int milliseconds)
+{
+    const int bufferMs = qBound(20, milliseconds, 250);
+    if (m_alsaBufferMs == bufferMs)
+        return;
+    m_alsaBufferMs = bufferMs;
+    discardPreparedMpvForOptionChange("ALSA buffer change");
 }
 
 void PlayerController::setAudioPassthrough(const QString& mode)

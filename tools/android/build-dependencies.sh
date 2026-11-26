@@ -301,8 +301,6 @@ build_mpv() {
   # Include actual source changes and the compiler/recipe, not only the static
   # dependencies. A matching git revision alone cannot bless stale dirty bytes.
   local stamp="$PREFIX/lib/.spool-mpv-dependencies"
-  local source="$MPV_SRC"
-  local backport="$ROOT/tools/android/patches/mpv-libmpv-vo-lifetime.patch"
   local source_pin pin
   source_pin="$(
     cd "$MPV_SRC" || exit
@@ -316,26 +314,13 @@ build_mpv() {
   pin="$(
     printf '%s\n' "$source_pin" "$ABI" "$API" "$ANDROID_NDK_ROOT"
     sha256sum "${BASH_SOURCE[0]}" "$ROOT/tools/manifests/toolchain.json" \
-      "$ROOT/tools/manifests/mpv-native.json" "$ANDROID_NDK_ROOT/source.properties" "$backport" || exit
+      "$ROOT/tools/manifests/mpv-native.json" "$ANDROID_NDK_ROOT/source.properties" || exit
     cat "$PREFIX/lib/pkgconfig/.spool-ffmpeg-source" "$PREFIX/lib/.spool-curl-configuration"
   )"
   [[ -f "$PREFIX/lib/libmpv.so" && -f "$stamp" && "$(<"$stamp")" == "$pin" ]] && return
   local build="$BUILD_ROOT/mpv"
   rm -rf "$build"
-  # Backport the VO lifetime fix to the pinned Android source until Spool can
-  # take the merged mpv revision. Keep the submodule checkout untouched.
-  if [[ "$source" == "$ROOT/mpv" && "${source_pin%%$'\n'*}" == 8eb31c4d7745d650bc3531cb90e140d53f81e571 ]]; then
-    source="$BUILD_ROOT/mpv-source"
-    rm -rf "$source"
-    mkdir -p "$source"
-    git -C "$MPV_SRC" archive HEAD | tar -xf - -C "$source"
-    git -C "$MPV_SRC" diff --binary HEAD -- |
-      GIT_CEILING_DIRECTORIES="$BUILD_ROOT" git -C "$source" apply --allow-empty -
-    git -C "$MPV_SRC" ls-files --others --exclude-standard -z |
-      tar -C "$MPV_SRC" --null -T - -cf - | tar -xf - -C "$source"
-    "$MANIFEST_PATCH" -d "$source" -p1 --forward <"$backport"
-  fi
-  meson setup "$build" "$source" \
+  meson setup "$build" "$MPV_SRC" \
     --cross-file "$CROSS_FILE" --prefix "$PREFIX" --default-library shared \
     -Dcplayer=false -Dlibmpv=true -Dbuild-date=false -Dtests=false \
     -Dlua=lua -Djavascript=disabled -Dmanpage-build=disabled \

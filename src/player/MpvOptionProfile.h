@@ -78,7 +78,7 @@ public:
         const QByteArray& demuxerMaxBytes = QByteArrayLiteral("64M"),
         const QByteArray& demuxerMaxBackBytes = QByteArrayLiteral("32M"), bool embeddedVideo = false,
         const QByteArray& shaderCachePath = {}, const QByteArray& certificateBundlePath = {},
-        RenderQuality quality = RenderQuality::Balanced);
+        RenderQuality quality = RenderQuality::Balanced, int alsaBufferMs = 40);
     static std::vector<MpvOption> subtitleOptions(
         const SubtitlePreferences& preferences, bool subtitlesEnabled, bool hdrPlayback = false);
 };

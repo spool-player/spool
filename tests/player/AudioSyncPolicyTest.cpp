@@ -40,6 +40,12 @@ SPOOL_TEST_MAIN("audio-sync-policy")
         "Bluetooth must use the calibrated end-to-end delay");
     require(AudioSyncPolicy::automaticBaseDelayMs(QStringLiteral("external_arc"), -1, -1) == 97,
         "ARC fallback delay was incorrect");
+    const auto inactiveArc = AudioSyncPolicy::resolveRouteLatencies(QStringLiteral("external_arc"), 0, 0);
+    require(inactiveArc.displayMs == 150 && inactiveArc.outputMs == 53,
+        "Zero-filled ARC readings need the calibrated fallback");
+    const auto headphones = AudioSyncPolicy::resolveRouteLatencies(QStringLiteral("headphone"), 0, 0, 60);
+    require(headphones.displayMs == 150 && headphones.outputMs == 60,
+        "Firmware output latency should be used when available");
 
     return EXIT_SUCCESS;
 }

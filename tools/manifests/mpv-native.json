@@ -137,6 +137,7 @@
     "webos": [
       "gpl=true",
       "alsa=enabled",
+      "pulse=enabled",
       "wayland=enabled",
       "lua=enabled",
       "starfish=enabled"
