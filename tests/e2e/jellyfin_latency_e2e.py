@@ -733,6 +733,19 @@ def run_libmpv_scenario(
 
         demux_max = player.get("demuxer-max-bytes")
         demux_back = player.get("demuxer-max-back-bytes")
+        # Keep only cumulative cost counters from the last live snapshot.
+        # An empty or unsupported counter is distinct from a measured zero.
+        transport_cost = {key: last_metrics[key] for key in (
+            "consumer-delivered-bytes", "copy-in-bytes", "copy-out-bytes", "reorder-copy-bytes",
+            "body-callbacks", "worker-iterations", "coalesced-wakeups",
+        ) if key in last_metrics}
+        delivered_mb = transport_cost.get("consumer-delivered-bytes", 0) / 1_000_000
+        for thread in ("curl", "consumer"):
+            if last_metrics.get(f"{thread}-thread-cpu-available"):
+                cpu_seconds = last_metrics[f"{thread}-thread-cpu-seconds"]
+                transport_cost[f"{thread}-thread-cpu-seconds"] = cpu_seconds
+                if delivered_mb > 0:
+                    transport_cost[f"{thread}-thread-cpu-ms-per-delivered-mb"] = round(cpu_seconds * 1000 / delivered_mb, 3)
         return {
             "completed": phase == "done" and playback_error is None,
             "error": playback_error,
@@ -755,6 +768,7 @@ def run_libmpv_scenario(
             ),
             "ttfb_ms": round(float(last_metrics.get("ttfb-ms", 0.0)), 1),
             "received_bytes": int(last_metrics.get("received-bytes", 0)),
+            "transport_cost": transport_cost,
             "failed_requests": int(last_metrics.get("failed-requests", 0)),
             "demuxer_max_bytes": demux_max,
             "demuxer_max_back_bytes": demux_back,

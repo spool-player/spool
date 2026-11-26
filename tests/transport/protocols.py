@@ -42,7 +42,8 @@ def main():
     transport = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(transport)
     rows = []
-    with tempfile.TemporaryDirectory(prefix='spool-protocols-') as directory:
+    with (tempfile.TemporaryDirectory(prefix='spool-protocols-') as directory,
+          socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as blocked_udp):
         root = Path(directory)
         # Nonperiodic frame counters catch duplicated or misplaced aligned ranges.
         pcm = array.array('I', range((256 if args.performance else 16) * 1024 * 1024 // 4))
@@ -66,6 +67,11 @@ def main():
             tcp = free_port('127.0.0.1')
         while broken_quic in (tls, tcp):
             broken_quic = free_port('127.0.0.1')
+        # Keep the advertised QUIC port bound without replying. An unbound
+        # port can fail immediately with ICMP, unlike a path that drops UDP.
+        if not args.performance:
+            blocked_udp.bind(('127.0.0.1', tcp))
+            blocked_udp.setblocking(False)
         (root / 'nginx.conf').write_text(f'''user root root;
 worker_processes 1;
 pid {root}/nginx.pid;
@@ -168,6 +174,17 @@ http {{
                     rows.append({'mode': mode, 'fixed-requests': count, 'effective-http-version': version,
                                  'seconds': result['seconds'], 'first-progress-seconds': result['first-progress-seconds'],
                                  'pcm-bytes': len(expected), 'bytes-per-second': len(expected) / result['seconds']})
+                    if port == tcp and not args.performance:
+                        packets = 0
+                        while True:
+                            try:
+                                blocked_udp.recv(65535)
+                            except BlockingIOError:
+                                break
+                            packets += 1
+                        if not packets:
+                            raise AssertionError('stale HTTP3 advertisement did not exercise the blocked UDP path')
+                        rows[-1].update({'scenario': 'stale-alt-svc-blocked-udp', 'observed-udp-packets': packets})
                     print(json.dumps(rows[-1]), flush=True)
             if not args.performance:
                 from reset_origin import ResetOrigin
