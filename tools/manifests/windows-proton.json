@@ -59,8 +59,8 @@
     },
     {
       "file": "curl.zip",
-      "url": "https://curl.se/windows/dl-8.22.0_1/curl-8.22.0_1-win64-mingw.zip",
-      "sha256": "7f23b039f6ea4197362d4468e1a0e71428201222e1bef3b680d5ef7b2aefb714",
+      "url": "https://curl.se/windows/dl-8.23.0_9/curl-8.23.0_9-win64-mingw.zip",
+      "sha256": "89cb71930f4242d884e8e349463455932ab1d089b20f4f99318261a3cbff9167",
       "kind": "zip",
       "destination": "curl"
     },

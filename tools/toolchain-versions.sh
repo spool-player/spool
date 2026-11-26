@@ -16,7 +16,7 @@ check_versions() {
   qt_series="$(toolchain_field "$ROOT" qt.series)"
 
   local manifest declared
-  for manifest in qt-webos-6.11 qt-android-6.11; do
+  for manifest in qt-webos qt-android; do
     declared="$(manifest_qt_field "$ROOT/tools/manifests/$manifest.json" qtVersion)"
     [[ "$declared" == "$qt_version" ]] || {
       printf '%s.json pins Qt %s, toolchain.json pins %s\n' "$manifest" "$declared" "$qt_version" >&2
@@ -29,9 +29,9 @@ check_versions() {
     }
   done
 
-  declared="$(manifest_qt_field "$ROOT/tools/manifests/qt-windows-6.11.json" version)"
+  declared="$(manifest_qt_field "$ROOT/tools/manifests/qt-windows.json" version)"
   [[ "$declared" == "$qt_version" ]] || {
-    printf 'qt-windows-6.11.json pins Qt %s, toolchain.json pins %s\n' "$declared" "$qt_version" >&2
+    printf 'qt-windows.json pins Qt %s, toolchain.json pins %s\n' "$declared" "$qt_version" >&2
     status=1
   }
 
