@@ -178,9 +178,10 @@ TestCase {
         view.dialog.activate()
         compare(view.alternatives, 1)
         const confirm = view.dialog.buttons[2]
-        const point = confirm.mapToItem(view, confirm.width - 3, confirm.height / 2)
-        mouseClick(view, point.x, point.y)
-        compare(view.confirmations, 1)
+        verify(waitForRendering(confirm))
+        // Exercise the button outside its label, within the rendered target.
+        mouseClick(confirm, Math.floor(confirm.width) - 8, Math.floor(confirm.height / 2))
+        tryCompare(view, "confirmations", 1)
         compare(view.dismissals, 0)
     }
     function init() {

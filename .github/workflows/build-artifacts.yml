@@ -920,10 +920,14 @@ jobs:
           skipPush: true
       - name: Build native host controller for tvOS application journeys
         if: matrix.sdk == 'appletvsimulator'
-        run: nix develop .#native -c env DEPLOY_APP=0 bash tools/build-macos.sh
+        run: |
+          nix develop .#native -c cmake -S tests/e2e/host -B build/apple/device-journey-host -G Ninja -DCMAKE_BUILD_TYPE=Release
+          nix develop .#native -c cmake --build build/apple/device-journey-host
 
       - name: Run tvOS traditional and real GPU GUI e2e tests
         if: matrix.sdk == 'appletvsimulator'
+        env:
+          SPOOL_DEVICE_HOST_BUILD_DIR: build/apple/device-journey-host
         run: bash tools/apple/smoke-tvos.sh build/tvos/appletvsimulator-arm64/install/Spool.app
 
       - name: Package artifact-audited unsigned device IPA (no device runtime claim)

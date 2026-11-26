@@ -401,15 +401,7 @@ target_sources(spool PRIVATE
     src/automation/LocalControlProtocol.h
 )
 if(NOT ANDROID AND NOT SPOOL_WEBOS AND NOT SPOOL_APPLE_MOBILE)
-    add_executable(spoolet
-        src/automation/SpooletMain.cpp
-        src/automation/LocalControlProtocol.cpp
-        src/automation/LocalControlProtocol.h
-    )
-    target_link_libraries(spoolet PRIVATE Qt6::Core Qt6::Network)
-    target_include_directories(spoolet PRIVATE src)
-    qt_add_resources(spoolet remote_discovery PREFIX "/automation"
-        BASE src/automation FILES src/automation/RemoteDiscovery.sh)
+    include(tools/cmake/Spoolet.cmake)
     if(UNIX AND NOT APPLE)
         set_target_properties(spoolet PROPERTIES INSTALL_RPATH "$ORIGIN/../lib")
     endif()

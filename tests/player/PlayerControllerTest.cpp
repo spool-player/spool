@@ -476,6 +476,10 @@ SPOOL_TEST_MAIN("player-controller")
     const double heldPosition = player.positionSeconds();
     processFor(400);
     require(player.paused() && player.positionSeconds() < heldPosition + 0.2, "intentional pause stays held");
+    player.setPaused(false);
+    player.setPaused(true);
+    waitUntil([&] { return player.paused() && player.pauseCommandState() == QStringLiteral("paused"); },
+        "readback of an older resume cannot replace the latest pause request");
     player.stopWithReason(QStringLiteral("test-manual-stop"), true);
     require(!player.sessionActive() && completions == 1 && manualStops == 1, "manual stop never advances");
 

@@ -29,6 +29,8 @@ public:
     int authenticatedBrowse = 0;
     int playedFilterRequests = 0;
     int authenticatedRequests = 0;
+    int offlineSocketRequests = 0;
+    int offlineProgressRequests = 0;
     int playbackNegotiations = 0;
     int mediaRequests = 0;
     qint64 mediaBytes = 0;

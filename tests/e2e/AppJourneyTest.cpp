@@ -14,6 +14,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLibraryInfo>
+#include <QPainter>
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QRect>
@@ -81,6 +82,17 @@ QByteArray run(const QString& executable, const QStringList& arguments, const QP
     require(process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0,
         "journey subprocess failed (output deliberately withheld)");
     return process.readAllStandardOutput();
+}
+QByteArray runOcr(const QString& executable, const QStringList& arguments, QProcessEnvironment environment)
+{
+    // A constrained simulator host can spend more time scheduling OpenMP
+    // workers than reading the frame. Each OCR call owns a single worker.
+    environment.insert("OMP_THREAD_LIMIT", "1");
+    try {
+        return run(executable, arguments, environment);
+    } catch (const std::runtime_error& error) {
+        throw std::runtime_error(std::string("frame OCR: ") + error.what());
+    }
 }
 QString executable(const char *variable, const QString& fallback)
 {
@@ -208,6 +220,12 @@ public:
     QString screenshotPath() const
     {
         return remoteScreenshot;
+    }
+    void androidTvRemoteKey(const QString& key)
+    {
+        require(kind == "android" && qEnvironmentVariable("SPOOL_E2E_ANDROID_TV") == "1",
+            "Android TV remote input requires the isolated TV emulator");
+        runTool({ "shell", "input", "keyevent", key });
     }
     void deleteScreenshot()
     {
@@ -375,7 +393,7 @@ private:
             }
             const QImage image(screenshot);
             require(!image.isNull(), "actual mobile normal-startup screenshot was not an image");
-            const QByteArray text = run(ocr, { screenshot, "stdout", "-l", "eng", "--psm", "11" }, environment);
+            const QByteArray text = runOcr(ocr, { screenshot, "stdout", "-l", "eng", "--psm", "11" }, environment);
             if (QString::fromUtf8(text).contains("Welcome to Spool", Qt::CaseInsensitive)) {
                 rendered = true;
                 break;
@@ -468,7 +486,7 @@ private:
     QDateTime launchTime;
     qint64 deviceLaunchEpoch = 0;
 };
-enum class TextSurface { Window, LibraryRow, RelatedCard, PlayerOptions };
+enum class TextSurface { Window, LibraryRow, RelatedCard, PlayerOptions, PlayerRepeatDetail, PlayerSleepDetail };
 enum class TextPreprocess { Original, Neutral, Inverse, SmoothInverse, NeutralAdaptive, Positive, Adaptive };
 struct Words {
     QString text;
@@ -653,7 +671,7 @@ public:
         QJsonObject result;
         await(
             [&] {
-                const auto window = state()["window"].toObject();
+                const auto window = state(true)["window"].toObject();
                 if (!window["exposed"].toBool() || window["width"].toInt() <= 0 || window["height"].toInt() <= 0)
                     return false;
                 for (const QString& previous : { screenshotPath, libraryTextPath() })
@@ -710,7 +728,10 @@ public:
         const bool adaptiveContrast = preprocess == TextPreprocess::Adaptive;
         const bool needsPreprocess
             = neutralText || highContrast || smoothInverse || neutralAdaptive || positiveContrast || adaptiveContrast;
-        int scale = mode == 6 || smoothInverse || neutralAdaptive || positiveContrast || adaptiveContrast ? 2 : 1;
+        const int linePadding = mode == 7 && smoothInverse ? 16 : 0;
+        int scale = mode == 7                                                                       ? 4
+            : mode == 6 || smoothInverse || neutralAdaptive || positiveContrast || adaptiveContrast ? 2
+                                                                                                    : 1;
         QImage image;
         if (scale > 1 || needsPreprocess) {
             image = QImage(imagePath);
@@ -826,14 +847,30 @@ public:
                 const int w = source.width();
                 const int h = source.height();
                 image = QImage(w, h, QImage::Format_Grayscale8);
+                int minimumLuma = 255;
+                int maximumLuma = 0;
                 for (int y = 0; y < h; ++y) {
                     const auto *sourcePixels = reinterpret_cast<const QRgb *>(source.constScanLine(y));
                     auto *pixels = image.scanLine(y);
                     for (int x = 0; x < w; ++x) {
                         const QRgb pixel = sourcePixels[x];
                         const int luma = (77 * qRed(pixel) + 150 * qGreen(pixel) + 29 * qBlue(pixel) + 128) >> 8;
-                        const int scaled = (180 - luma) * 255 / (180 - 40);
-                        pixels[x] = uint8_t(std::clamp(scaled, 0, 255));
+                        if (linePadding) {
+                            minimumLuma = std::min(minimumLuma, luma);
+                            maximumLuma = std::max(maximumLuma, luma);
+                            pixels[x] = uint8_t(luma);
+                        } else {
+                            const int scaled = (180 - luma) * 255 / (180 - 40);
+                            pixels[x] = uint8_t(std::clamp(scaled, 0, 255));
+                        }
+                    }
+                }
+                if (linePadding) {
+                    const int range = std::max(1, maximumLuma - minimumLuma);
+                    for (int y = 0; y < h; ++y) {
+                        auto *pixels = image.scanLine(y);
+                        for (int x = 0; x < w; ++x)
+                            pixels[x] = uint8_t((maximumLuma - pixels[x]) * 255 / range);
                     }
                 }
             } else if (neutralAdaptive) {
@@ -1022,13 +1059,22 @@ public:
                 return upscaled;
             };
             QSaveFile file(inputPath);
-            const QImage output = (smoothInverse || neutralAdaptive || positiveContrast)
+            QImage output = (smoothInverse || neutralAdaptive || positiveContrast)
                 ? (scale == 4          ? catmullUpscale4x(image)
                           : scale == 2 ? catmullUpscale2x(image)
                                        : image)
                 : (scale == 1 ? image
                               : image.scaled(image.width() * scale, image.height() * scale, Qt::IgnoreAspectRatio,
                                     Qt::SmoothTransformation));
+            if (linePadding) {
+                QImage padded(
+                    output.width() + 2 * linePadding, output.height() + 2 * linePadding, QImage::Format_RGB32);
+                padded.fill(Qt::white);
+                QPainter painter(&padded);
+                painter.drawImage(linePadding, linePadding, output);
+                painter.end();
+                output = std::move(padded);
+            }
             require(file.open(QIODevice::WriteOnly)
                     && file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)
                     && output.save(&file, "PNG") && file.commit(),
@@ -1038,7 +1084,7 @@ public:
         if (adaptiveContrast || neutralAdaptive)
             arguments << "-c" << "thresholding_method=2";
         arguments << "tsv";
-        const QByteArray tsv = run(ocr, arguments, environment);
+        const QByteArray tsv = runOcr(ocr, arguments, environment);
         QList<Words> lines;
         QString previous;
         for (const QByteArray& row : tsv.split('\n')) {
@@ -1046,8 +1092,9 @@ public:
             if (fields.size() < 12 || fields[0] != "5" || fields[11].trimmed().isEmpty())
                 continue;
             const QString key = QString::fromLatin1(fields[1] + ':' + fields[2] + ':' + fields[3] + ':' + fields[4]);
-            const QRect bounds = QRectF(fields[6].toDouble() / scale + origin.x(),
-                fields[7].toDouble() / scale + origin.y(), fields[8].toDouble() / scale, fields[9].toDouble() / scale)
+            const QRect bounds = QRectF((fields[6].toDouble() - linePadding) / scale + origin.x(),
+                (fields[7].toDouble() - linePadding) / scale + origin.y(), fields[8].toDouble() / scale,
+                fields[9].toDouble() / scale)
                                      .toAlignedRect();
             if (key != previous) {
                 lines.append(Words {});
@@ -1067,6 +1114,7 @@ public:
         QRect found;
         QRect previous;
         QString lastObserved;
+        const bool singleLine = surface == TextSurface::PlayerRepeatDetail || surface == TextSurface::PlayerSleepDetail;
         const std::string failure = "expected user-visible label was not rendered: " + text.toStdString();
         const auto summarize = [](const QList<Words>& lines) {
             QString summary;
@@ -1137,6 +1185,8 @@ public:
                     if (surface != TextSurface::Window) {
                         const QString key = surface == TextSurface::LibraryRow ? QStringLiteral("libraryRow")
                             : surface == TextSurface::RelatedCard              ? QStringLiteral("relatedCard")
+                            : surface == TextSurface::PlayerRepeatDetail       ? QStringLiteral("playerRepeatDetail")
+                            : surface == TextSurface::PlayerSleepDetail        ? QStringLiteral("playerSleepDetail")
                                                                                : QStringLiteral("playerOptions");
                         const auto row = capturedState["visual"].toObject()[key].toObject();
                         const double ratio = capturedState["window"].toObject()["devicePixelRatio"].toDouble(1);
@@ -1149,6 +1199,8 @@ public:
                                 command({ "key", "down" });
                             return false;
                         }
+                        if (singleLine)
+                            region = region.adjusted(-3, 0, 4, 0).intersected(frame.rect());
                         imagePath = surface == TextSurface::LibraryRow
                             ? libraryTextPath()
                             : screenshotPath + QStringLiteral(".caption.png");
@@ -1157,6 +1209,14 @@ public:
                                 && file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)
                                 && frame.copy(region).save(&file, "PNG") && file.commit(),
                             "actual rendered region could not be read for caption navigation");
+                    }
+                    if (singleLine) {
+                        const auto lines = words(imagePath, 7, region.topLeft(), TextPreprocess::SmoothInverse);
+                        lastObserved = summarize(lines);
+                        found = locate(lines);
+                        if (found.isEmpty())
+                            found = locate(words(imagePath, 7, region.topLeft()));
+                        return !found.isEmpty();
                     }
                     const QList<Words> primaryLines
                         = words(imagePath, surface == TextSurface::Window ? 11 : 6, region.topLeft());
@@ -1264,6 +1324,59 @@ public:
         for (int step = 0; step < 12; ++step)
             command({ "key", "right" });
         command({ "key", "ok" });
+    }
+    void selectAndroidTvRepeatCurrent()
+    {
+        require(device != nullptr, "Android TV remote input requires an owned device");
+        const auto waitForFocus = [this](int expected, const char *message) {
+            await(
+                [&] {
+                    const auto menu = state()["visual"].toObject()["playerOptions"].toObject();
+                    return menu["repeatFocusIndex"].toInt(-1) == expected;
+                },
+                message);
+        };
+        waitForFocus(0, "Android TV Repeat menu did not focus Off");
+        device->androidTvRemoteKey("KEYCODE_DPAD_DOWN");
+        waitForFocus(1, "Android TV remote did not focus Repeat queue");
+        device->androidTvRemoteKey("KEYCODE_DPAD_DOWN");
+        waitForFocus(2, "Android TV remote did not focus Repeat current item");
+        device->androidTvRemoteKey("KEYCODE_DPAD_CENTER");
+        await([&] { return !state()["visual"].toObject().contains("playerOptions"); },
+            "Android TV remote did not accept the focused repeat option");
+        openPlaybackSettings();
+        label("Current item", false, TextSurface::PlayerRepeatDetail);
+        device->androidTvRemoteKey("KEYCODE_BACK");
+        await([&] { return !state()["visual"].toObject().contains("playerOptions"); },
+            "Android TV remote did not dismiss playback settings");
+    }
+    void pauseForObservation(const char *message)
+    {
+        await([&] { return state()["playback"].toObject()["ready"].toBool(); },
+            "playback did not complete its first renderer restart before pause");
+        command({ "pause" });
+        QJsonObject playback;
+        try {
+            await(
+                [&] {
+                    playback = state()["playback"].toObject();
+                    return playback["paused"].toBool();
+                },
+                message);
+        } catch (const std::exception& error) {
+            throw std::runtime_error(QStringLiteral(
+                "%1 (active=%2, loaded=%3, ready=%4, paused=%5, failed=%6, position=%7, duration=%8, pause=%9)")
+                    .arg(QString::fromUtf8(error.what()))
+                    .arg(playback["active"].toBool())
+                    .arg(playback["loaded"].toBool())
+                    .arg(playback["ready"].toBool())
+                    .arg(playback["paused"].toBool())
+                    .arg(playback["failed"].toBool())
+                    .arg(playback["position"].toDouble(), 0, 'f', 2)
+                    .arg(playback["duration"].toDouble(), 0, 'f', 2)
+                    .arg(playback["pauseCommand"].toString())
+                    .toStdString());
+        }
     }
     void await(const std::function<bool()>& predicate, const char *message, int timeout = 30000)
     {
@@ -1457,6 +1570,9 @@ SPOOL_TEST_MAIN("app-journey")
                     "--device requires android, tvos or ios");
             }
         }
+#ifdef SPOOL_DEVICE_JOURNEY_ONLY
+        require(!deviceKind.isEmpty(), "device journey controller requires an isolated device");
+#endif
         if (deviceKind.isEmpty()) {
             require(qEnvironmentVariable("SPOOL_E2E_ISOLATED_DISPLAY") == "1",
                 "app-journey refuses a user desktop: driver must supply an isolated GPU display");
@@ -1758,27 +1874,7 @@ SPOOL_TEST_MAIN("app-journey")
                     && playback["duration"].toDouble() > 29;
             },
             "saved download did not enter real embedded playback");
-        journey.command({ "pause" });
-        QJsonObject lastPauseState;
-        try {
-            journey.await(
-                [&] {
-                    lastPauseState = journey.state()["playback"].toObject();
-                    return lastPauseState["paused"].toBool();
-                },
-                "asynchronous pause did not settle before exact paused-frame seeking");
-        } catch (const std::exception&) {
-            throw std::runtime_error(
-                QStringLiteral("asynchronous pause did not settle before exact paused-frame seeking "
-                               "(active=%1, loaded=%2, paused=%3, failed=%4, position=%5, duration=%6)")
-                    .arg(lastPauseState["active"].toBool())
-                    .arg(lastPauseState["loaded"].toBool())
-                    .arg(lastPauseState["paused"].toBool())
-                    .arg(lastPauseState["failed"].toBool())
-                    .arg(lastPauseState["position"].toDouble(), 0, 'f', 2)
-                    .arg(lastPauseState["duration"].toDouble(), 0, 'f', 2)
-                    .toStdString());
-        }
+        journey.pauseForObservation("asynchronous pause did not settle before exact paused-frame seeking");
         journey.command({ "seek", "2" });
         journey.await(
             [&] {
@@ -1811,12 +1907,20 @@ SPOOL_TEST_MAIN("app-journey")
         journey.command({ "stop" });
         journey.await(
             [&] { return !journey.state()["playback"].toObject()["active"].toBool(); }, "player did not stop");
-        require(fixture.authenticatedRequests == authenticatedBeforeOffline,
-            "saved-media playback contacted an unavailable authenticated provider endpoint");
         require(fixture.playbackNegotiations == negotiationsBeforeOffline,
             "saved-media playback renegotiated against the unavailable provider");
         require(fixture.mediaRequests == remoteRequests,
             "saved-media playback unexpectedly fetched the unavailable server");
+        const int offlineRequests = fixture.authenticatedRequests - authenticatedBeforeOffline;
+        if (offlineRequests != 0) {
+            throw std::runtime_error(
+                QStringLiteral("saved-media playback contacted an unavailable authenticated provider endpoint "
+                               "(total=%1, eventReconnect=%2, progress=%3)")
+                    .arg(offlineRequests)
+                    .arg(fixture.offlineSocketRequests)
+                    .arg(fixture.offlineProgressRequests)
+                    .toStdString());
+        }
 
         fixture.setNewRequestsAvailable(true);
         // Keep server UserData at zero even after accepted stop reports. The
@@ -1852,9 +1956,7 @@ SPOOL_TEST_MAIN("app-journey")
                     });
             },
             "real provider playback start for the online item was not reported");
-        journey.command({ "pause" });
-        journey.await([&] { return journey.state()["playback"].toObject()["paused"].toBool(); },
-            "episode did not pause before the controlled stop position");
+        journey.pauseForObservation("episode did not pause before the controlled stop position");
         journey.command({ "seek", "14" });
         journey.await(
             [&] {
@@ -1904,9 +2006,7 @@ SPOOL_TEST_MAIN("app-journey")
                         && journey.state()["playback"].toObject()["loaded"].toBool();
                 },
                 "Resume did not hydrate the selected episode queue and load real media");
-            journey.command({ "pause" });
-            journey.await([&] { return journey.state()["playback"].toObject()["paused"].toBool(); },
-                "resumed episode did not pause before observing its saved position");
+            journey.pauseForObservation("resumed episode did not pause before observing its saved position");
             journey.await(
                 [&] {
                     return std::any_of(fixture.reports.cbegin() + reportsBeforeResume, fixture.reports.cend(),
@@ -1984,9 +2084,7 @@ SPOOL_TEST_MAIN("app-journey")
         require(fixture.sendRemotePlay(55000000), "real remote event socket was not connected");
         journey.await([&] { return journey.state()["playback"].toObject()["loaded"].toBool(); },
             "real inbound remote Play did not load the selected episode");
-        journey.command({ "pause" });
-        journey.await([&] { return journey.state()["playback"].toObject()["paused"].toBool(); },
-            "inbound remote episode did not pause before observing its requested position");
+        journey.pauseForObservation("inbound remote episode did not pause before observing its requested position");
         journey.await(
             [&] {
                 return std::any_of(fixture.reports.cbegin() + reportsBeforeRemote, fixture.reports.cend(),
@@ -2044,9 +2142,7 @@ SPOOL_TEST_MAIN("app-journey")
         journey.click("Start from beginning", true);
         journey.await([&] { return journey.state()["playback"].toObject()["loaded"].toBool(); },
             "explicit episode restart did not load");
-        journey.command({ "pause" });
-        journey.await([&] { return journey.state()["playback"].toObject()["paused"].toBool(); },
-            "explicit episode restart did not pause before observing the beginning");
+        journey.pauseForObservation("explicit episode restart did not pause before observing the beginning");
         journey.await(
             [&] {
                 return std::any_of(fixture.reports.cbegin() + reportsBeforeRestart, fixture.reports.cend(),
@@ -2080,26 +2176,47 @@ SPOOL_TEST_MAIN("app-journey")
         fixturePhase = QStringLiteral("repeat-current-eof");
         journey.openPlaybackSettings();
         journey.click("Repeat", false, false, TextSurface::PlayerOptions);
-        journey.click("Repeat current item", false, false, TextSurface::PlayerOptions);
+        if (qEnvironmentVariable("SPOOL_E2E_ANDROID_TV") == "1") {
+            journey.label("Repeat current item", false, TextSurface::PlayerOptions);
+            journey.selectAndroidTvRepeatCurrent();
+        } else {
+            journey.click("Repeat current item", false, false, TextSurface::PlayerOptions);
+        }
         const qsizetype reportsBeforeRepeat = fixture.reports.size();
         const int negotiationsBeforeRepeat = fixture.playbackNegotiations;
         journey.command({ "seek", "88" });
         journey.await([&] { return journey.state()["playback"].toObject()["position"].toDouble() > 87.5; },
             "repeat journey did not reach the end of the paused item");
         journey.command({ "resume" });
-        journey.await(
-            [&] {
-                return fixture.playbackNegotiations > negotiationsBeforeRepeat
-                    && journey.state()["playback"].toObject()["loaded"].toBool()
-                    && std::any_of(fixture.reports.cbegin() + reportsBeforeRepeat, fixture.reports.cend(),
-                        [](const QJsonObject& report) {
+        QJsonObject repeatPlayback;
+        bool repeatStartedAtZero = false;
+        try {
+            journey.await(
+                [&] {
+                    repeatPlayback = journey.state()["playback"].toObject();
+                    repeatStartedAtZero = std::any_of(fixture.reports.cbegin() + reportsBeforeRepeat,
+                        fixture.reports.cend(), [](const QJsonObject& report) {
                             return report["endpoint"] == "/Sessions/Playing" && report["ItemId"] == "journey-episode"
                                 && report["RepeatMode"] == "RepeatOne"
                                 && report["PositionTicks"].toVariant().toLongLong() == 0;
                         });
-            },
-            "Repeat current item did not renegotiate and report an actual restart from zero");
-        journey.command({ "pause" });
+                    return fixture.playbackNegotiations > negotiationsBeforeRepeat && repeatPlayback["loaded"].toBool()
+                        && repeatStartedAtZero;
+                },
+                "Repeat current item did not renegotiate and report an actual restart from zero");
+        } catch (const std::exception& error) {
+            throw std::runtime_error(
+                QStringLiteral("%1 (negotiations=%2, reportedRestart=%3, active=%4, loaded=%5, paused=%6, position=%7)")
+                    .arg(QString::fromUtf8(error.what()))
+                    .arg(fixture.playbackNegotiations - negotiationsBeforeRepeat)
+                    .arg(repeatStartedAtZero)
+                    .arg(repeatPlayback["active"].toBool())
+                    .arg(repeatPlayback["loaded"].toBool())
+                    .arg(repeatPlayback["paused"].toBool())
+                    .arg(repeatPlayback["position"].toDouble(), 0, 'f', 2)
+                    .toStdString());
+        }
+        journey.pauseForObservation("repeated item did not pause after its first renderer restart");
         journey.await(
             [&] {
                 const auto playback = journey.state()["playback"].toObject();
@@ -2112,16 +2229,16 @@ SPOOL_TEST_MAIN("app-journey")
         // merely clearing the repeat setting would make this a false positive.
         fixturePhase = QStringLiteral("sleep-after-current-eof");
         journey.openPlaybackSettings();
-        journey.label("Current item");
-        journey.click("Sleep timer");
-        journey.click("15 minutes");
+        journey.label("Current item", false, TextSurface::PlayerRepeatDetail);
+        journey.click("Sleep timer", false, false, TextSurface::PlayerOptions);
+        journey.click("15 minutes", false, false, TextSurface::PlayerOptions);
         journey.openPlaybackSettings();
-        journey.label("remaining");
-        journey.click("Sleep timer");
-        journey.click("After current item");
+        journey.label("remaining", false, TextSurface::PlayerSleepDetail);
+        journey.click("Sleep timer", false, false, TextSurface::PlayerOptions);
+        journey.click("After current item", false, false, TextSurface::PlayerOptions);
         journey.openPlaybackSettings();
-        journey.label("After current item");
-        journey.label("Current item");
+        journey.label("After current item", false, TextSurface::PlayerSleepDetail);
+        journey.label("Current item", false, TextSurface::PlayerRepeatDetail);
         journey.command({ "key", "back" });
         journey.command({ "seek", "88" });
         journey.await([&] { return journey.state()["playback"].toObject()["position"].toDouble() > 87.5; },

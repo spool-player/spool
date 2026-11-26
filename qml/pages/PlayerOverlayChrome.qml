@@ -461,6 +461,8 @@ Item {
         Surface {
             id: menuPanel
             objectName: "playerOptionMenu"
+            readonly property int automationRepeatFocusIndex: root.overlay.menuKind === "repeat"
+                                                              ? menuList.currentIndex : -1
             width: Math.min(parent.width - root.dp(32), root.dp(menuDialog.dropdown ? 340 : 660))
             height: Math.min(parent.height - root.dp(64), menuBody.implicitHeight + menuBody.anchors.margins * 2)
             // Centre on the button rather than hanging off the screen edge,
@@ -540,6 +542,10 @@ Item {
                         width: Math.max(0, menuList.width - (menuScrollBar.visible ? menuScrollBar.width : 0))
                         label: root.overlay.menuLabel(modelData)
                         detail: root.overlay.menuDetail(index)
+                        detailObjectName: root.overlay.debugAction(index) === "repeat" ? "playerRepeatDetail" :
+                                                                                         root.overlay.debugAction(
+                                                                                             index) === "sleep"
+                                                                                         ? "playerSleepDetail" : ""
                         compact: menuDialog.dropdown || root.overlay.touchscreenControls
                         checked: root.overlay.menuItemSelected(index)
                         highlighted: menuList.currentIndex === index

@@ -12,6 +12,7 @@
 #include <QTemporaryDir>
 #include <QThread>
 
+#include <algorithm>
 #include <cstdlib>
 #include <functional>
 #include <iostream>
@@ -145,7 +146,16 @@ export function createSource(configuration) {
         require(started == 0, "explicit refresh cannot compete with active playback");
         hub.setPlaybackActive(false);
         hub.refreshSpeedTests();
-        waitUntil([&] { return finished == 3; }, "idle explicit probes complete serially");
+        waitUntil(
+            [&] {
+                const auto accounts = hub.speedTestStatus().value("accounts").toList();
+                return finished == 3 && accounts.size() == 3
+                    && std::none_of(accounts.cbegin(), accounts.cend(), [](const QVariant& value) {
+                           const auto account = value.toMap();
+                           return account.value("pending").toBool() || account.value("running").toBool();
+                       });
+            },
+            "idle explicit probes complete serially and commit their results");
         require(active == 0, "all probes settle");
         hub.setPlaybackActive(true);
         const auto resolve = [&](const QString& account) {

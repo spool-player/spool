@@ -70,10 +70,27 @@ if (-not $VerifyOnly) {
             $arguments += "--version=$($package.Version)"
         }
         Write-Host "Installing $($package.Name)"
-        & choco @arguments
+        if ($package.Name -eq 'nsis') {
+            $nsisLog = & choco @arguments 2>&1
+            $installExitCode = $LASTEXITCODE
+            $nsisLog | Out-Host
+            Add-ToolDirectoriesToPath
+            # The feed can return 504 while Chocolatey exits zero without an
+            # installer. Retry the same request once and keep the first log.
+            $feedTimeout = "Failed to fetch results from V2 feed at 'https://community\.chocolatey\.org/api/v2/Packages\(Id='nsis',Version='[^']+'\)'.*504 \(Gateway Timeout\)"
+            if (-not (Get-Command makensis.exe -ErrorAction SilentlyContinue) -and ($nsisLog -match $feedTimeout)) {
+                Write-Warning 'Chocolatey NSIS feed returned HTTP 504. Retrying once.'
+                Start-Sleep -Seconds 10
+                & choco @arguments
+                $installExitCode = $LASTEXITCODE
+            }
+        } else {
+            & choco @arguments
+            $installExitCode = $LASTEXITCODE
+        }
         # Chocolatey needs an elevated shell to write under ProgramData. Say so
         # rather than leaving the tool check below to report a missing binary.
-        if ($LASTEXITCODE -ne 0) {
+        if ($installExitCode -ne 0) {
             throw "Installing $($package.Name) failed. Chocolatey needs an elevated shell; re-run this script as Administrator."
         }
         Add-ToolDirectoriesToPath

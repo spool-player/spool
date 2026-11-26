@@ -120,12 +120,14 @@ public:
             const bool seekBar = name == QStringLiteral("playerSeekBar");
             const bool playerSettings = name == QStringLiteral("playerSettingsButton");
             const bool playerOptions = name == QStringLiteral("playerOptionMenu");
+            const bool playerDetail
+                = name == QStringLiteral("playerRepeatDetail") || name == QStringLiteral("playerSleepDetail");
             const bool relatedRow = name == QStringLiteral("detailSimilarRow");
             const bool libraryRow = name == QStringLiteral("libraryMediaRow");
             const bool libraryMenu = name == QStringLiteral("libraryContextMenuPanel");
             const bool showHidden = name == QStringLiteral("showHiddenLibrariesButton");
-            if ((preview || texture || seekBar || playerSettings || playerOptions || relatedRow || libraryRow
-                    || libraryMenu || showHidden)
+            if ((preview || texture || seekBar || playerSettings || playerOptions || playerDetail || relatedRow
+                    || libraryRow || libraryMenu || showHidden)
                 && item->isVisible()) {
                 QRectF geometry = item->mapRectToScene(item->boundingRect());
                 if (relatedRow) {
@@ -133,6 +135,10 @@ public:
                     geometry = card && card->isVisible()
                         ? card->mapRectToScene(card->boundingRect()).intersected(geometry)
                         : QRectF {};
+                } else if (playerDetail) {
+                    const QRectF content(
+                        0, 0, item->property("contentWidth").toDouble(), item->property("contentHeight").toDouble());
+                    geometry = item->mapRectToScene(content.intersected(item->boundingRect()));
                 }
                 QVariantMap state { { QStringLiteral("x"), geometry.x() }, { QStringLiteral("y"), geometry.y() },
                     { QStringLiteral("width"), geometry.width() }, { QStringLiteral("height"), geometry.height() } };
@@ -143,6 +149,8 @@ public:
                 }
                 if (texture)
                     state.insert(QStringLiteral("ready"), item->property("ready").toBool());
+                if (playerOptions)
+                    state.insert(QStringLiteral("repeatFocusIndex"), item->property("automationRepeatFocusIndex"));
                 if (libraryRow) {
                     state.insert(QStringLiteral("moveMode"), item->property("moveMode").toBool());
                     state.insert(QStringLiteral("currentIndex"), item->property("currentIndex").toInt());
@@ -155,6 +163,7 @@ public:
                     : showHidden            ? QStringLiteral("showHiddenLibraries")
                     : playerSettings        ? QStringLiteral("playerSettings")
                     : playerOptions         ? QStringLiteral("playerOptions")
+                    : playerDetail          ? name
                     : relatedRow            ? QStringLiteral("relatedCard")
                                             : QStringLiteral("seekBar");
                 result.insert(key, state);

@@ -50,7 +50,7 @@ void decodeOffline(const QString& url)
     require(player, "offline decoder creates");
     require(mpv_set_option_string(player, "vo", "null") == 0 && mpv_set_option_string(player, "ao", "null") == 0
             && mpv_set_option_string(player, "audio", "no") == 0 && mpv_set_option_string(player, "hwdec", "no") == 0
-            && mpv_set_option_string(player, "speed", "10") == 0 && mpv_initialize(player) == 0,
+            && mpv_set_option_string(player, "untimed", "yes") == 0 && mpv_initialize(player) == 0,
         "offline decoder initializes without network or GUI");
     const QByteArray bytes = url.toUtf8();
     const char *command[] = { "loadfile", bytes.constData(), nullptr };
@@ -58,9 +58,18 @@ void decodeOffline(const QString& url)
     bool loaded = false;
     bool decoded = false;
     bool ended = false;
+    int endReason = -1;
+    int endError = 0;
+#if defined(Q_OS_IOS) && defined(Q_PROCESSOR_X86_64)
+    // The hosted Intel simulator required over five minutes to finish its
+    // system-app boot stage. Allow bounded decoder scheduling headroom there.
+    constexpr int deadlineMs = 30000;
+#else
+    constexpr int deadlineMs = 10000;
+#endif
     QElapsedTimer timer;
     timer.start();
-    while (!ended && timer.elapsed() < 10000) {
+    while (!ended && timer.elapsed() < deadlineMs) {
         const mpv_event *event = mpv_wait_event(player, 0.1);
         if (event->event_id == MPV_EVENT_FILE_LOADED)
             loaded = true;
@@ -68,13 +77,25 @@ void decodeOffline(const QString& url)
             decoded = true;
         if (event->event_id == MPV_EVENT_END_FILE) {
             const auto *end = static_cast<mpv_event_end_file *>(event->data);
-            require(end && end->reason == MPV_END_FILE_REASON_EOF && end->error == 0,
-                "offline media finishes without decode failure");
+            if (end) {
+                endReason = end->reason;
+                endError = end->error;
+            }
             ended = true;
         }
     }
+    const qint64 elapsedMs = timer.elapsed();
     mpv_terminate_destroy(player);
-    require(loaded && decoded && ended, "downloaded media actually decodes to EOF offline");
+    const QByteArray result = QStringLiteral("downloaded media actually decodes to EOF offline (loaded=%1, decoded=%2, "
+                                             "ended=%3, reason=%4, error=%5, ms=%6)")
+                                  .arg(loaded)
+                                  .arg(decoded)
+                                  .arg(ended)
+                                  .arg(endReason)
+                                  .arg(endError)
+                                  .arg(elapsedMs)
+                                  .toUtf8();
+    require(loaded && decoded && ended && endReason == MPV_END_FILE_REASON_EOF && endError == 0, result.constData());
 }
 }
 
