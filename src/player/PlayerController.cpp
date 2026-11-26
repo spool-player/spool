@@ -7,9 +7,11 @@
 #include "../platform/MpvConfigPolicy.h"
 #include "../platform/NativeAppWindow.h"
 #include "../platform/PlatformPaths.h"
+#include "../platform/PlatformPerformanceSampler.h"
 #include "../platform/PlatformPlaybackSurface.h"
 #include "../platform/PlatformSystemProbes.h"
 #include "../provider/PlaybackSource.h"
+#include "../provider/SpeedTest.h"
 #include "MpvOptionProfile.h"
 #include "MpvVideoItem.h"
 #include "PlaybackFailurePolicy.h"
@@ -30,6 +32,7 @@ extern "C" {
 #include <QMetaObject>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
+#include <QSet>
 #include <QThread>
 #include <QUrl>
 #include <QtGlobal>
@@ -63,6 +66,51 @@ namespace {
 
     constexpr uint64_t kTimePosRefreshReply = 0x6a666e7074730001ULL;
     constexpr uint64_t kNetworkMetricsReply = 0x6375726c73746174ULL;
+
+    constexpr uint64_t kTransportConfigureReply = 0x7463000000000000ULL;
+    constexpr uint64_t kTransportLoadReply = 0x746c000000000000ULL;
+
+    // The acknowledgement, not submission order, authorizes the pending load.
+    int configureTransport(mpv_handle *handle, const PlaybackSession& session, qint64 epoch, uint64_t replyId)
+    {
+        char *keys[10];
+        mpv_node values[10] {};
+        int count = 0;
+        const auto integer = [&](const char *key, qint64 value) {
+            keys[count] = const_cast<char *>(key);
+            values[count].format = MPV_FORMAT_INT64;
+            values[count++].u.int64 = value;
+        };
+        const auto number = [&](const char *key, double value) {
+            keys[count] = const_cast<char *>(key);
+            values[count].format = MPV_FORMAT_DOUBLE;
+            values[count++].u.double_ = value;
+        };
+        integer("format", 2);
+        integer("op", 0);
+        integer("playback-epoch", epoch);
+        if (session.sourceBitrate > 0)
+            number("source-bitrate", static_cast<double>(session.sourceBitrate));
+        if (session.deliveryBitrate > 0)
+            number("delivery-bitrate", static_cast<double>(session.deliveryBitrate));
+        if (session.sourceSizeBytes > 0)
+            integer("source-size-bytes", session.sourceSizeBytes);
+        if (session.deliverySizeBytes > 0)
+            integer("delivery-size-bytes", session.deliverySizeBytes);
+        if (session.sourceRuntimeTicks > 0)
+            number("source-duration-seconds", session.sourceRuntimeTicks / 1e7);
+        if (session.deliveryRuntimeTicks > 0)
+            number("delivery-duration-seconds", session.deliveryRuntimeTicks / 1e7);
+        keys[count] = const_cast<char *>("direct-file");
+        values[count].format = MPV_FORMAT_FLAG;
+        values[count++].u.flag = session.playMethod.compare(QStringLiteral("DirectPlay"), Qt::CaseInsensitive) == 0;
+        mpv_node_list list { count, values, keys };
+        mpv_node control {};
+        control.format = MPV_FORMAT_NODE_MAP;
+        control.u.list = &list;
+        return mpv_set_property_async(handle, replyId, "curl-transport-control", MPV_FORMAT_NODE, &control);
+    }
+    constexpr uint64_t kCacheSpeedReply = 0x6375726c73706565ULL;
     constexpr uint64_t kFullscreenSetReply = 0x6673000000000000ULL;
     constexpr uint64_t kFullscreenObservation = 0x666f000000000000ULL;
     constexpr uint64_t kFullscreenReplyMask = 0xffff000000000000ULL;
@@ -167,8 +215,59 @@ namespace {
         return static_cast<qint64>(seconds * 10000000.0);
     }
 
-    // Curl's public snapshot contains numeric counters and nested numeric sample
-    // maps. Never propagate string values into support/CLI diagnostics.
+    // Deliberate diagnostic schema: neither new numeric fields nor arbitrary
+    // strings from a future mpv build may silently enter CLI/support reports.
+    bool networkMetricKeyAllowed(const QString& key)
+    {
+        static const QSet<QString> keys { QStringLiteral("active-requests"), QStringLiteral("peak-active-requests"),
+            QStringLiteral("active-streams"), QStringLiteral("peak-active-streams"),
+            QStringLiteral("requests-per-stream"), QStringLiteral("range-bytes"), QStringLiteral("ring-bytes"),
+            QStringLiteral("started-requests"), QStringLiteral("finished-requests"), QStringLiteral("failed-requests"),
+            QStringLiteral("retry-attempts"), QStringLiteral("received-bytes"),
+            QStringLiteral("ordered-available-bytes"), QStringLiteral("consumer-delivered-bytes"),
+            QStringLiteral("readable-bytes"), QStringLiteral("retained-bytes"), QStringLiteral("reorder-bytes"),
+            QStringLiteral("prefix-publication-available"), QStringLiteral("copy-in-bytes"),
+            QStringLiteral("copy-out-bytes"), QStringLiteral("reorder-copy-bytes"), QStringLiteral("body-callbacks"),
+            QStringLiteral("worker-iterations"), QStringLiteral("coalesced-wakeups"),
+            QStringLiteral("head-of-line-events"), QStringLiteral("reorder-wait-seconds"),
+            QStringLiteral("oldest-gap-seconds"), QStringLiteral("perform-wall-seconds"),
+            QStringLiteral("dispatch-wall-seconds"), QStringLiteral("poll-wall-seconds"),
+            QStringLiteral("callback-time-included"), QStringLiteral("snapshot-truncated"),
+            QStringLiteral("average-received-bytes-per-second"), QStringLiteral("peak-received-bytes-per-second"),
+            QStringLiteral("current-received-bytes-per-second"), QStringLiteral("elapsed-seconds"),
+            QStringLiteral("curl-thread-cpu-seconds"), QStringLiteral("curl-thread-wall-seconds"),
+            QStringLiteral("consumer-thread-cpu-seconds"), QStringLiteral("consumer-thread-cpu-available"),
+            QStringLiteral("curl-thread-cpu-available"), QStringLiteral("ring-wait-seconds"),
+            QStringLiteral("consumer-wait-seconds"), QStringLiteral("head-of-line-seconds"),
+            QStringLiteral("peak-reorder-bytes"), QStringLiteral("physical-connections"),
+            QStringLiteral("streams-per-connection"), QStringLiteral("recent-scheduling-lateness-ms"),
+            QStringLiteral("peak-scheduling-lateness-ms"), QStringLiteral("open-sockets"),
+            QStringLiteral("scheduling-lateness-p50-ms"), QStringLiteral("scheduling-lateness-p99-ms"),
+            QStringLiteral("scheduling-lateness-available"), QStringLiteral("sockets-opened"),
+            QStringLiteral("tcp-rtt-min-ms"), QStringLiteral("tcp-rtt-max-ms"),
+            QStringLiteral("max-socket-receive-buffer-bytes"), QStringLiteral("host-rmem-max-bytes"),
+            QStringLiteral("host-receive-autotune-max-bytes"), QStringLiteral("hw-aes"),
+            QStringLiteral("playback-epoch"), QStringLiteral("stale-controls"), QStringLiteral("rejected-controls"),
+            QStringLiteral("background-network"), QStringLiteral("declared-bits-per-second"),
+            QStringLiteral("playback-state-updates"), QStringLiteral("playback-buffer-seconds"),
+            QStringLiteral("playback-demand-bits-per-second"), QStringLiteral("playback-user-paused"),
+            QStringLiteral("selected-requests"), QStringLiteral("ttfb-ms"), QStringLiteral("capacity-bytes-per-second"),
+            QStringLiteral("capacity-samples"), QStringLiteral("stream-id"), QStringLiteral("lane-samples"),
+            QStringLiteral("concurrency-samples"), QStringLiteral("streams"), QStringLiteral("connections"),
+            QStringLiteral("protocol-samples"), QStringLiteral("connection-id"), QStringLiteral("socket-generation"),
+            QStringLiteral("http-version"), QStringLiteral("transport"), QStringLiteral("socket-receive-buffer-bytes"),
+            QStringLiteral("socket-receive-buffer-available"), QStringLiteral("receive-window-bytes"),
+            QStringLiteral("receive-window-available"), QStringLiteral("tcp-rtt-ms"),
+            QStringLiteral("tcp-rtt-available"), QStringLiteral("cpu-ns-per-ordered-byte"), QStringLiteral("lane"),
+            QStringLiteral("active-seconds"), QStringLiteral("average-bytes-per-second"),
+            QStringLiteral("current-bytes-per-second"), QStringLiteral("peak-bytes-per-second"),
+            QStringLiteral("samples"), QStringLiteral("requests") };
+        if (keys.contains(key))
+            return true;
+        constexpr QLatin1String available("-available");
+        return key.endsWith(available) && keys.contains(key.chopped(available.size()));
+    }
+
     QVariant networkMetricValue(const mpv_node& node, int depth = 0)
     {
         if (depth > 4)
@@ -184,9 +283,14 @@ namespace {
             QVariantMap result;
             if (node.u.list) {
                 for (int i = 0; i < node.u.list->num; ++i) {
+                    if (!node.u.list->keys[i])
+                        continue;
+                    const QString key = QString::fromUtf8(node.u.list->keys[i]);
+                    if (!networkMetricKeyAllowed(key))
+                        continue;
                     const QVariant value = networkMetricValue(node.u.list->values[i], depth + 1);
-                    if (value.isValid() && node.u.list->keys[i])
-                        result.insert(QString::fromUtf8(node.u.list->keys[i]), value);
+                    if (value.isValid())
+                        result.insert(key, value);
                 }
             }
             return result;
@@ -194,8 +298,9 @@ namespace {
         case MPV_FORMAT_NODE_ARRAY: {
             QVariantList result;
             if (node.u.list) {
-                result.reserve(node.u.list->num);
-                for (int i = 0; i < node.u.list->num; ++i)
+                const int count = std::min(node.u.list->num, 64);
+                result.reserve(count);
+                for (int i = 0; i < count; ++i)
                     result.append(networkMetricValue(node.u.list->values[i], depth + 1));
             }
             return result;
@@ -383,6 +488,7 @@ PlayerController::~PlayerController()
 void PlayerController::prepareForShutdown()
 {
     ++m_playGeneration;
+    m_pendingTransportLoads.clear();
     m_idleMpvPreparationEnabled = false;
     m_idleMpvPreparationScheduled = false;
     m_mpvPreparationContinuation = {};
@@ -406,6 +512,7 @@ void PlayerController::teardownMpv(bool async)
     const quint64 generation = ++m_mpvTeardownGeneration;
     Diagnostics::Phase phase(QStringLiteral("shutdown"), QStringLiteral("player_teardown_mpv"));
     ++m_mpvEventGeneration;
+    m_pendingTransportLoads.clear();
     m_idleMpvPreparationEnabled = false;
     m_idleMpvPreparationScheduled = false;
     m_mpvPreparationContinuation = {};
@@ -480,18 +587,19 @@ void PlayerController::prepareMpvAsync(bool needsVideoSurface, bool embeddedVide
     preparation->embeddedVideo = embeddedVideo;
     preparation->hardwareDecoding = m_hardwareDecoding;
     preparation->userConfig = usesUserMpvConfig();
-    const int parallelRequests = m_api ? m_api->playbackParallelRequests() : 1;
+    const int parallelRequests = m_maxStreamingThreads;
     const auto network = MpvOptionProfile::networkProfile(preparation->platform, parallelRequests);
     qInfo().nospace() << "player: curl profile source=MpvOptionProfile platform="
                       << platformPlaybackBackendName(embeddedVideo) << " requestsPerStream=" << network.parallelRequests
-                      << " rangeBytes=" << network.rangeBytes << " ringBytes=" << network.ringBytes;
+                      << " rangeBytes=" << network.rangeBytes << " ringBytes=" << network.ringBytes
+                      << " enabled=" << m_threadedStreaming << " forced=" << m_forceStreamingThreads;
     QByteArray certificateBundle = QFile::encodeName(writeTrustBundle());
     if (certificateBundle.isEmpty())
         certificateBundle = MpvOptionProfile::systemCertificateBundle();
     preparation->options = MpvOptionProfile::preInitializeOptions(m_mpvConfigPolicy);
     auto applicationOptions = MpvOptionProfile::applicationOptions(preparation->platform, needsVideoSurface,
         m_audioOutputMode, {}, m_demuxerMaxBytes, m_demuxerMaxBackBytes, parallelRequests, embeddedVideo,
-        mpvShaderCachePath(), certificateBundle, m_renderQuality);
+        mpvShaderCachePath(), certificateBundle, m_renderQuality, m_threadedStreaming, m_forceStreamingThreads);
     applicationOptions.push_back({ "sub-fonts-dir", m_subtitleFontsPath });
     applicationOptions.push_back({ "osd-fonts-dir", m_subtitleFontsPath });
     applicationOptions.push_back({ "osd-font", QByteArrayLiteral("IBM Plex Sans Var") });
@@ -588,11 +696,11 @@ bool PlayerController::configureAndInitializeMpv(mpv_handle *handle, const MpvPr
         "--input-vo-keyboard=no",
         "--input-cursor=no",
         "--terminal=no",
+        "--osc=no",
     };
-    char *embeddingArguments[std::size(embeddingOptions) + 5] {};
-    size_t argumentCount = 0;
+    char *embeddingArguments[std::size(embeddingOptions) + 4] {};
     for (size_t i = 0; i < std::size(embeddingOptions); ++i)
-        embeddingArguments[argumentCount++] = embeddingOptions[i];
+        embeddingArguments[i] = embeddingOptions[i];
     // --gpu-api picks one of mpv's own ra_ctx backends: a native context and
     // swapchain of its own. Video and idle handles use --vo=libmpv, while
     // audio uses --vo=null below. None owns a desktop surface. The embedded
@@ -609,20 +717,17 @@ bool PlayerController::configureAndInitializeMpv(mpv_handle *handle, const MpvPr
     // nothing to constrain. The option stays at auto for both.
     QByteArray softwareDecodeOption = QByteArrayLiteral("--hwdec=no");
     if (!preparation.hardwareDecoding)
-        embeddingArguments[argumentCount++] = softwareDecodeOption.data();
+        embeddingArguments[std::size(embeddingOptions)] = softwareDecodeOption.data();
     char audioVideoOutputOption[] = "--vo=null";
     char audioVideoTrackOption[] = "--vid=no";
     char audioDisplayOption[] = "--audio-display=no";
     if (!preparation.needsVideoSurface) {
         embeddingArguments[0] = audioVideoOutputOption;
-        embeddingArguments[argumentCount++] = audioVideoTrackOption;
-        embeddingArguments[argumentCount++] = audioDisplayOption;
+        // Keep the argument list contiguous when hardware decoding is enabled.
+        size_t index = std::size(embeddingOptions) + (preparation.hardwareDecoding ? 0 : 1);
+        embeddingArguments[index++] = audioVideoTrackOption;
+        embeddingArguments[index] = audioDisplayOption;
     }
-    char oscOption[] = "--osc=no";
-    // Builds without Lua (such as iOS and tvOS) omit the osc option entirely,
-    // and mpv_initialize_opts rejects unknown command-line options.
-    if (mpv_set_option_string(handle, "osc", "no") != MPV_ERROR_OPTION_NOT_FOUND)
-        embeddingArguments[argumentCount++] = oscOption;
     if (preparation.userConfig)
         qInfo() << "player: user mpv config enabled; embedding overrides vo, gpu-api, gpu-context,"
                    " wid, force-window, idle, keep-open, input-vo-keyboard, input-cursor, terminal and osc";
@@ -1298,6 +1403,7 @@ void PlayerController::playLocalFiles(const QList<QUrl>& urls)
 void PlayerController::playSession(const PlaybackSession& session, bool startPaused, const QList<QUrl>& localFiles)
 {
     const quint64 generation = ++m_playGeneration;
+    m_pendingTransportLoads.clear();
     m_mpvPreparationContinuation = {};
     const bool needsVideoSurface = MpvOptionProfile::needsVideoSurface(session);
     const QString nextMediaKind = needsVideoSurface ? QStringLiteral("video") : QStringLiteral("audio");
@@ -1385,7 +1491,13 @@ void PlayerController::playSession(const PlaybackSession& session, bool startPau
 
     m_session = session;
     m_networkMetrics.clear();
+    m_streamingPerformanceMetrics.clear();
     m_networkQueryPending = false;
+    m_cacheSpeedQueryPending = false;
+    m_sessionThreadedStreaming = m_threadedStreaming;
+    m_streamingPerformanceSampler.reset();
+    m_previousCurlCpuSeconds = -1;
+    m_previousCurlWallSeconds = -1;
     m_networkBufferSeconds = 0;
     m_networkVideoBitrate = 0;
     m_networkAudioBitrate = 0;
@@ -1604,7 +1716,7 @@ void PlayerController::finishPlaySession(
         return;
     }
     QByteArray loadFileOptions = MpvOptionProfile::loadFileOptions(session);
-    if (m_api && !m_networkOrigin.isEmpty()) {
+    if (m_sessionThreadedStreaming && m_api && !m_networkOrigin.isEmpty()) {
         // Resolve seeds per file, not from whichever account was active when
         // the speculative core was initialized.
         const QVariantMap& profile = m_sessionNetworkProfile;
@@ -1615,29 +1727,92 @@ void PlayerController::finishPlaySession(
             loadFileOptions += '=';
             loadFileOptions += value;
         };
-        addOption("curl-adaptive", "yes");
-        addOption("curl-parallel-requests", "4");
-        addOption("curl-initial-requests",
-            QByteArray::number(std::clamp(profile.value(QStringLiteral("initial-requests"), 1).toInt(), 1, 4)));
-        addOption(
-            "curl-latency-ms", QByteArray::number(profile.value(QStringLiteral("latency-ms")).toDouble(), 'f', 3));
-        addOption("curl-observed-bps",
-            QByteArray::number(profile.value(QStringLiteral("capacity-bytes-per-second")).toDouble(), 'f', 0));
+        addOption("curl-adaptive", m_forceStreamingThreads ? "no" : "yes");
+        addOption("curl-parallel-requests", QByteArray::number(m_maxStreamingThreads));
+        const QVariantList samples = profile.value(QStringLiteral("concurrency-samples")).toList();
+        const NetworkLaneSelection selection
+            = selectNetworkLanes(samples, networkMediaBitrate(), m_maxStreamingThreads);
+        const int initialRequests = m_forceStreamingThreads ? m_maxStreamingThreads : selection.requests;
+        double capacity = 0;
+        double latency = 0;
+        for (const QVariant& value : samples) {
+            const QVariantMap point = value.toMap();
+            if (point.value(QStringLiteral("requests")).toInt() == initialRequests) {
+                capacity = point.value(QStringLiteral("capacity-bytes-per-second")).toDouble();
+                latency = point.value(QStringLiteral("ttfb-ms")).toDouble();
+                break;
+            }
+        }
+        addOption("curl-initial-requests", QByteArray::number(initialRequests));
+        addOption("curl-ttfb-ms", QByteArray::number(latency, 'f', 3));
+        addOption("curl-observed-bps", QByteArray::number(capacity, 'f', 0));
+        qInfo().nospace() << "player: streaming selection selectedRequests=" << initialRequests
+                          << " maxRequests=" << m_maxStreamingThreads << " forced=" << m_forceStreamingThreads
+                          << " reason=" << (m_forceStreamingThreads ? 3 : selection.reason)
+                          << " capacityMbps=" << capacity * 8 / 1e6 << " mediaMbps=" << networkMediaBitrate() / 1e6;
         addOption("curl-media-bitrate", QByteArray::number(networkMediaBitrate(), 'f', 0));
     }
-    m_networkTimer.start();
-    const char *loadCommand[] = { "loadfile", urlBytes.constData(), "replace", "-1",
-        loadFileOptions.isEmpty() ? nullptr : loadFileOptions.constData(), nullptr };
-    if (mpv_command(handle, loadCommand) < 0) {
-        m_mpvLifecycle.cancelFileLoad();
-        m_errorText = QStringLiteral("libmpv rejected the playback URL.");
-#ifdef Q_OS_ANDROID
-        if (m_contentPlaybackFile.isOpen())
-            scheduleMpvTeardown();
-#endif
-        stopProgressReporting(true);
+    if (m_sessionThreadedStreaming || m_logStreamingPerformance)
+        m_networkTimer.start();
+    QByteArrayList loadCommand { QByteArrayLiteral("loadfile"), urlBytes, QByteArrayLiteral("replace"),
+        QByteArrayLiteral("-1") };
+    if (!loadFileOptions.isEmpty())
+        loadCommand.append(loadFileOptions);
+    configureTransportForLoad(std::move(loadCommand));
+}
+
+void PlayerController::configureTransportForLoad(QByteArrayList loadCommand)
+{
+    auto *handle = m_mpvLifecycle.handle();
+    if (!handle)
+        return;
+    const quint64 serial = ++m_transportReplySerial;
+    Q_ASSERT((serial & kFullscreenReplyMask) == 0);
+    const qint64 epoch = m_sessionThreadedStreaming ? ++m_transportEpoch : 0;
+    m_pendingTransportLoads.insert(serial, { m_mpvEventGeneration, m_playGeneration, epoch, std::move(loadCommand) });
+    if (!m_sessionThreadedStreaming) {
+        submitTransportLoad(serial);
         return;
     }
+    if (configureTransport(handle, m_session, epoch, kTransportConfigureReply | serial) < 0) {
+        m_pendingTransportLoads.remove(serial);
+        failTransportLoad(true);
+    }
+}
+
+void PlayerController::submitTransportLoad(quint64 serial)
+{
+    auto pending = m_pendingTransportLoads.find(serial);
+    if (pending == m_pendingTransportLoads.end())
+        return;
+    if (pending->coreGeneration != m_mpvEventGeneration || pending->playGeneration != m_playGeneration
+        || (pending->epoch && pending->epoch != m_transportEpoch)) {
+        m_pendingTransportLoads.erase(pending);
+        return;
+    }
+    QList<const char *> args;
+    args.reserve(pending->command.size() + 1);
+    for (const QByteArray& arg : std::as_const(pending->command))
+        args.append(arg.constData());
+    args.append(nullptr);
+    const int error = mpv_command_async(m_mpvLifecycle.handle(), kTransportLoadReply | serial, args.data());
+    pending->command.clear();
+    if (error < 0) {
+        m_pendingTransportLoads.erase(pending);
+        failTransportLoad(false);
+    }
+}
+
+void PlayerController::failTransportLoad(bool configuration)
+{
+    m_mpvLifecycle.cancelFileLoad();
+    m_errorText = configuration ? QStringLiteral("libmpv rejected the streaming policy.")
+                                : QStringLiteral("libmpv rejected the playback URL.");
+#ifdef Q_OS_ANDROID
+    if (m_contentPlaybackFile.isOpen())
+        scheduleMpvTeardown();
+#endif
+    stopProgressReporting(true);
 }
 
 bool PlayerController::loadLocalFiles(const QList<QUrl>& urls)
@@ -2469,6 +2644,47 @@ void PlayerController::setForwardCacheSizeMiB(int sizeMiB)
     qInfo() << "player: forward cache size" << QString::number(sizeMiB) + QStringLiteral(" MiB");
     discardPreparedMpvForOptionChange("forward cache size change");
 }
+
+void PlayerController::setThreadedStreaming(bool enabled)
+{
+    if (m_threadedStreaming == enabled)
+        return;
+    m_threadedStreaming = enabled;
+    discardPreparedMpvForOptionChange("threaded streaming change");
+}
+
+void PlayerController::setMaxStreamingThreads(int threads)
+{
+    threads = std::clamp(threads, 1, 16);
+    if (m_maxStreamingThreads == threads)
+        return;
+    m_maxStreamingThreads = threads;
+    discardPreparedMpvForOptionChange("streaming thread limit change");
+}
+
+void PlayerController::setForceStreamingThreads(bool force)
+{
+    if (m_forceStreamingThreads == force)
+        return;
+    m_forceStreamingThreads = force;
+    discardPreparedMpvForOptionChange("forced streaming threads change");
+}
+
+void PlayerController::setLogStreamingPerformance(bool enabled)
+{
+    if (m_logStreamingPerformance == enabled)
+        return;
+    m_logStreamingPerformance = enabled;
+    m_streamingPerformanceSampler.reset();
+    m_streamingPerformanceMetrics.clear();
+    m_previousCurlCpuSeconds = -1;
+    m_previousCurlWallSeconds = -1;
+    if (m_sessionActive && enabled)
+        m_networkTimer.start();
+    else if (!m_sessionThreadedStreaming)
+        m_networkTimer.stop();
+}
+
 void PlayerController::setMpvConfigPolicy(const MpvConfigPolicy& policy)
 {
     if (!policy.valid || policy == m_mpvConfigPolicy)
@@ -2491,28 +2707,65 @@ void PlayerController::updateNetworkTransport()
     auto *handle = m_mpvLifecycle.handle();
     if (!handle || !m_sessionActive)
         return;
-    char bitrateKey[] = "media-bitrate";
-    char bufferKey[] = "buffer-seconds";
-    char pausedKey[] = "paused";
-    char *keys[] = { bitrateKey, bufferKey, pausedKey };
-    mpv_node values[3] {};
-    values[0].format = MPV_FORMAT_DOUBLE;
-    values[0].u.double_ = networkMediaBitrate();
-    values[1].format = MPV_FORMAT_DOUBLE;
-    values[1].u.double_ = m_networkBufferSeconds;
-    values[2].format = MPV_FORMAT_FLAG;
-    values[2].u.flag = m_paused || m_seeking;
-    mpv_node_list list { 3, values, keys };
-    mpv_node control {};
-    control.format = MPV_FORMAT_NODE_MAP;
-    control.u.list = &list;
-    // Async APIs copy their arguments. Neither operation waits for curl/the core
-    // while Qt needs the GUI thread for rendering.
-    mpv_set_property_async(handle, 0, "curl-transport-control", MPV_FORMAT_NODE, &control);
+    if (m_logStreamingPerformance && !m_cacheSpeedQueryPending) {
+        m_cacheSpeedQueryPending
+            = mpv_get_property_async(handle, kCacheSpeedReply, "cache-speed", MPV_FORMAT_INT64) >= 0;
+    }
+    if (!m_sessionThreadedStreaming)
+        return;
+    // mpv reports pause, buffer and demand to its transport itself; this only
+    // reads metrics, asynchronously, so Qt never waits on curl or the core.
     if (!m_networkQueryPending) {
         m_networkQueryPending
             = mpv_get_property_async(handle, kNetworkMetricsReply, "curl-transport-metrics", MPV_FORMAT_NODE) >= 0;
     }
+}
+
+void PlayerController::logStreamingPerformance(qint64 inputBytesPerSecond)
+{
+    if (!m_logStreamingPerformance)
+        return;
+    if (!m_streamingPerformanceSampler)
+        m_streamingPerformanceSampler = std::make_unique<PlatformPerformanceSampler>();
+    PlatformPerformanceSample cpu;
+    m_streamingPerformanceSampler->sample(-1, cpu);
+    const bool curlCpuAvailable = m_networkMetrics.value(QStringLiteral("curl-thread-cpu-available")).toBool();
+    const double curlCpu = m_networkMetrics.value(QStringLiteral("curl-thread-cpu-seconds")).toDouble();
+    const double curlWall = m_networkMetrics.value(QStringLiteral("curl-thread-wall-seconds")).toDouble();
+    const double ringWait = m_networkMetrics.value(QStringLiteral("ring-wait-seconds")).toDouble();
+    const double consumerWait = m_networkMetrics.value(QStringLiteral("consumer-wait-seconds")).toDouble();
+    const bool intervalAvailable = m_previousCurlWallSeconds >= 0 && curlWall > m_previousCurlWallSeconds;
+    const bool cpuIntervalAvailable
+        = intervalAvailable && curlCpuAvailable && m_previousCurlCpuSeconds >= 0 && curlCpu >= m_previousCurlCpuSeconds;
+    const double curlCpuPercent = cpuIntervalAvailable
+        ? 100 * (curlCpu - m_previousCurlCpuSeconds) / (curlWall - m_previousCurlWallSeconds)
+        : 0;
+    const double ringWaitMs = intervalAvailable ? std::max(0.0, ringWait - m_previousRingWaitSeconds) * 1000 : 0;
+    const double consumerWaitMs
+        = intervalAvailable ? std::max(0.0, consumerWait - m_previousConsumerWaitSeconds) * 1000 : 0;
+    m_previousCurlCpuSeconds = curlCpuAvailable ? curlCpu : -1;
+    m_previousCurlWallSeconds = curlWall;
+    m_previousRingWaitSeconds = ringWait;
+    m_previousConsumerWaitSeconds = consumerWait;
+    m_streamingPerformanceMetrics.insert(QStringLiteral("input-bytes-per-second"), inputBytesPerSecond);
+    m_streamingPerformanceMetrics.insert(QStringLiteral("buffer-seconds"), m_networkBufferSeconds);
+    m_streamingPerformanceMetrics.insert(QStringLiteral("process-cpu-percent"), cpu.processCpuPercent);
+    m_streamingPerformanceMetrics.insert(QStringLiteral("process-cpu-available"), cpu.available);
+    m_streamingPerformanceMetrics.insert(QStringLiteral("mpv-cpu-percent"), cpu.mpvCpuPercent);
+    m_streamingPerformanceMetrics.insert(QStringLiteral("curl-thread-cpu-percent"), curlCpuPercent);
+    m_streamingPerformanceMetrics.insert(QStringLiteral("curl-thread-cpu-percent-available"), cpuIntervalAvailable);
+    qInfo().nospace() << "player: streaming performance threaded=" << m_sessionThreadedStreaming
+                      << " selectedRequests=" << m_networkMetrics.value(QStringLiteral("selected-requests")).toInt()
+                      << " inputMbps=" << (inputBytesPerSecond < 0 ? -1.0 : inputBytesPerSecond * 8.0 / 1e6)
+                      << " wireMbps="
+                      << m_networkMetrics.value(QStringLiteral("current-received-bytes-per-second")).toDouble() * 8
+            / 1e6 << " capacityMbps="
+                      << m_networkMetrics.value(QStringLiteral("capacity-bytes-per-second")).toDouble() * 8 / 1e6
+                      << " mediaMbps=" << networkMediaBitrate() / 1e6 << " bufferSeconds=" << m_networkBufferSeconds
+                      << " paused=" << m_paused << " seeking=" << m_seeking << " cpuAvailable=" << cpu.available
+                      << " processCpuPct=" << cpu.processCpuPercent << " mpvCpuPct=" << cpu.mpvCpuPercent
+                      << " curlCpuAvailable=" << cpuIntervalAvailable << " curlCpuPct=" << curlCpuPercent
+                      << " ringWaitMs=" << ringWaitMs << " consumerWaitMs=" << consumerWaitMs;
 }
 
 void PlayerController::startProgressReporting()
@@ -2531,6 +2784,7 @@ void PlayerController::startProgressReporting()
 
 void PlayerController::stopProgressReporting(bool failed, bool reachedEnd, bool explicitStop)
 {
+    m_pendingTransportLoads.clear();
     Diagnostics::Phase phase(QStringLiteral("player"), QStringLiteral("stop_progress_reporting"),
         { { QStringLiteral("failed"), failed }, { QStringLiteral("reachedEnd"), reachedEnd } });
     if (!m_sessionActive && !m_progressTimer.isActive()) {
@@ -2818,6 +3072,24 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_
         });
         break;
     case MPV_EVENT_SET_PROPERTY_REPLY: {
+        if ((event->reply_userdata & kFullscreenReplyMask) == kTransportConfigureReply) {
+            const quint64 serial = event->reply_userdata & kFullscreenSerialMask;
+            const int error = event->error;
+            postMpvEvent(generation, [this, serial, error] {
+                const auto pending = m_pendingTransportLoads.constFind(serial);
+                if (pending == m_pendingTransportLoads.cend() || pending->coreGeneration != m_mpvEventGeneration
+                    || pending->playGeneration != m_playGeneration || pending->epoch != m_transportEpoch)
+                    return;
+                if (error < 0) {
+                    m_pendingTransportLoads.remove(serial);
+                    failTransportLoad(true);
+                } else {
+                    updateBackgroundNetwork();
+                    submitTransportLoad(serial);
+                }
+            });
+            break;
+        }
         if ((event->reply_userdata & kFullscreenReplyMask) != kFullscreenSetReply)
             break;
         const uint64_t serial = event->reply_userdata & kFullscreenSerialMask;
@@ -2838,7 +3110,37 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_
         });
         break;
     }
+    case MPV_EVENT_COMMAND_REPLY: {
+        if ((event->reply_userdata & kFullscreenReplyMask) != kTransportLoadReply)
+            break;
+        const quint64 serial = event->reply_userdata & kFullscreenSerialMask;
+        const int error = event->error;
+        postMpvEvent(generation, [this, serial, error] {
+            const auto pending = m_pendingTransportLoads.find(serial);
+            if (pending == m_pendingTransportLoads.end())
+                return;
+            const bool current = pending->coreGeneration == m_mpvEventGeneration
+                && pending->playGeneration == m_playGeneration
+                && (!pending->epoch || pending->epoch == m_transportEpoch);
+            m_pendingTransportLoads.erase(pending);
+            if (current && error < 0)
+                failTransportLoad(false);
+        });
+        break;
+    }
     case MPV_EVENT_GET_PROPERTY_REPLY: {
+        if (event->reply_userdata == kCacheSpeedReply) {
+            const auto *property = static_cast<mpv_event_property *>(event->data);
+            const qint64 bytesPerSecond
+                = event->error >= 0 && property && property->data && property->format == MPV_FORMAT_INT64
+                ? *static_cast<int64_t *>(property->data)
+                : -1;
+            postMpvEvent(generation, [this, bytesPerSecond] {
+                m_cacheSpeedQueryPending = false;
+                logStreamingPerformance(bytesPerSecond);
+            });
+            break;
+        }
         if (event->reply_userdata == kNetworkMetricsReply) {
             const auto *property = static_cast<mpv_event_property *>(event->data);
             const QVariantMap metrics
@@ -3340,11 +3642,51 @@ void PlayerController::skipActiveSegment()
     seek(activeSegmentEndSeconds());
 }
 
+void PlayerController::setBackgroundNetwork(bool active)
+{
+    m_backgroundNetwork = active;
+    updateBackgroundNetwork();
+}
+
+void PlayerController::updateBackgroundNetwork()
+{
+    auto *handle = m_mpvLifecycle.handle();
+    if (!handle || !m_sessionThreadedStreaming || m_transportEpoch <= 0)
+        return;
+    char formatKey[] = "format";
+    char opKey[] = "op";
+    char epochKey[] = "playback-epoch";
+    char backgroundKey[] = "background-network";
+    char *keys[] = { formatKey, opKey, epochKey, backgroundKey };
+    mpv_node values[4] {};
+    values[0].format = values[1].format = values[2].format = MPV_FORMAT_INT64;
+    values[0].u.int64 = 2;
+    values[1].u.int64 = 1;
+    values[2].u.int64 = m_transportEpoch;
+    values[3].format = MPV_FORMAT_FLAG;
+    values[3].u.flag = m_backgroundNetwork || m_trickplayNetwork;
+    mpv_node_list list { 4, values, keys };
+    mpv_node control {};
+    control.format = MPV_FORMAT_NODE_MAP;
+    control.u.list = &list;
+    // An update for an older epoch is ignored by mpv, so a late signal is harmless.
+    mpv_set_property_async(handle, 0, "curl-transport-control", MPV_FORMAT_NODE, &control);
+}
+
 void PlayerController::setTrickplayService(TrickplayService *service)
 {
+    if (m_trickplay)
+        disconnect(m_trickplay, nullptr, this, nullptr);
     m_trickplay = service;
-    if (service)
+    m_trickplayNetwork = service && service->fetching();
+    updateBackgroundNetwork();
+    if (service) {
         connect(service, &TrickplayService::changed, this, &PlayerController::trickplayChanged);
+        connect(service, &TrickplayService::fetchingChanged, this, [this](bool active) {
+            m_trickplayNetwork = active;
+            updateBackgroundNetwork();
+        });
+    }
 }
 
 QVariantMap PlayerController::trickplayForSeconds(double seconds) const

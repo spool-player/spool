@@ -30,12 +30,10 @@ public:
     virtual QByteArray mediaRequestHeaders() const = 0;
     // The origin whose remembered TLS trust decision covers media URLs.
     virtual QUrl mediaOrigin() const = 0;
-    // Hard range-request cap; the learned initial count lives in the profile.
-    virtual int playbackParallelRequests() const = 0;
     // Native-only transport learning. Rates are bytes/s; media bitrate is bits/s.
-    // {initial-requests:1..4, latency-ms, capacity-bytes-per-second,
+    // {initial-requests:1..4, ttfb-ms, capacity-bytes-per-second,
     //  measured-bitrate:bits/s, concurrency-samples:[{requests, capacity-bytes-per-second,
-    //  latency-ms, updated-at-ms}]} contains only fresh observations.
+    //  ttfb-ms, updated-at-ms}]} contains only fresh observations.
     // Feedback is curl-transport-metrics plus observed-at-ms (UTC epoch ms)
     // and media-bitrate (bits/s). Only non-cache-blocked concurrency samples
     // with increasing stream-id/capacity-samples are learned.

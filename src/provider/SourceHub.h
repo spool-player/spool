@@ -150,6 +150,8 @@ public:
     void setPlaybackActive(bool active);
     void refreshSpeedTests();
     QString speedTestDescription() const;
+    // Automation-safe numeric observations only; never account names or origins.
+    QVariantMap speedTestStatus() const;
 
     // Catalog
     bool signedIn() const override;

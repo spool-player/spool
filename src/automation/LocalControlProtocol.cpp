@@ -8,6 +8,7 @@
 #include <QJsonDocument>
 #include <QLocalSocket>
 #include <QNetworkProxy>
+#include <QProcess>
 #include <QRegularExpression>
 #include <QStandardPaths>
 #include <QTcpSocket>
@@ -64,12 +65,21 @@ QString directory(QString *error)
             return {};
         }
     } else {
+#ifdef SPOOL_WEBOS
+        base = QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation))
+                   .filePath(QStringLiteral("runtime"));
+        if (!QDir().mkpath(base)) {
+            *error = QStringLiteral("Cannot create the app runtime directory");
+            return {};
+        }
+#else
 #if defined(SPOOL_ANDROID) || defined(SPOOL_APPLE_MOBILE)
         base = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation);
 #elif defined(Q_OS_UNIX)
         base = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
 #else
         base = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+#endif
 #endif
     }
     return privateDirectory(base, error);
@@ -166,6 +176,111 @@ QJsonObject readDescriptor(const QString& path)
             [](QChar value) { return !((value >= '0' && value <= '9') || (value >= 'a' && value <= 'f')); }))
         return {};
 #endif
+    return result;
+}
+
+bool validSshHost(const QString& host)
+{
+    static const QRegularExpression expression(
+        QStringLiteral("^(?:[A-Za-z0-9_][A-Za-z0-9_.-]*@)?[A-Za-z0-9][A-Za-z0-9_.-]{0,252}$"));
+    return expression.match(host).hasMatch();
+}
+
+QByteArray sshExchange(const QString& host, const QString& command, const QByteArray& input, int timeoutMs,
+    qsizetype maxBytes, QString *error, int forwardPort)
+{
+    if (!validSshHost(host)) {
+        *error = QStringLiteral("Invalid SSH host; use [USER@]HOST without options or shell syntax");
+        return {};
+    }
+    QElapsedTimer clock;
+    clock.start();
+    const auto remaining = [&] { return qMax(0, timeoutMs - int(clock.elapsed())); };
+    QProcess process;
+    process.setStandardErrorFile(QProcess::nullDevice());
+    QStringList arguments { QStringLiteral("-F"), QStringLiteral("/dev/null"), QStringLiteral("-T"),
+        QStringLiteral("-o"), QStringLiteral("BatchMode=yes"), QStringLiteral("-o"),
+        QStringLiteral("StrictHostKeyChecking=yes"), QStringLiteral("-o"), QStringLiteral("ConnectTimeout=10"),
+        QStringLiteral("-o"), QStringLiteral("ConnectionAttempts=1"), QStringLiteral("-o"),
+        QStringLiteral("ServerAliveInterval=5"), QStringLiteral("-o"), QStringLiteral("ServerAliveCountMax=1"),
+        QStringLiteral("-o"), QStringLiteral("ClearAllForwardings=yes"), QStringLiteral("-o"),
+        QStringLiteral("ControlMaster=no"), QStringLiteral("-o"), QStringLiteral("ControlPath=none") };
+    if (forwardPort > 0)
+        arguments << QStringLiteral("-W") << QStringLiteral("127.0.0.1:%1").arg(forwardPort);
+    arguments.append(host);
+    if (!command.isEmpty())
+        arguments.append(command);
+    process.start(QStringLiteral("ssh"), arguments);
+    if (!process.waitForStarted(remaining())) {
+        *error = QStringLiteral("Cannot start SSH");
+    } else if (process.write(input) != input.size()) {
+        *error = QStringLiteral("Cannot send SSH input");
+    } else {
+        // Script execution needs EOF to finish reading the script. Forwarded
+        // requests must not half-close TCP while an async operation is pending.
+        bool inputClosed = forwardPort <= 0;
+        if (inputClosed)
+            process.closeWriteChannel();
+        QByteArray output;
+        while (true) {
+            output += process.readAllStandardOutput();
+            if (output.size() > maxBytes) {
+                *error = QStringLiteral("SSH response exceeds the size limit");
+                break;
+            }
+            if (!inputClosed && output.contains('\n')) {
+                process.closeWriteChannel();
+                inputClosed = true;
+            }
+            if (process.state() == QProcess::NotRunning) {
+                if (process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0)
+                    return output;
+                *error = QStringLiteral(
+                    "SSH failed; check trusted host key, noninteractive authentication and forwarding");
+                break;
+            }
+            if (remaining() <= 0) {
+                *error = QStringLiteral("SSH command timed out");
+                break;
+            }
+            process.waitForReadyRead(remaining());
+        }
+    }
+    if (process.state() != QProcess::NotRunning) {
+        process.kill();
+        process.waitForFinished(1000);
+    }
+    return {};
+}
+
+QJsonObject requestSsh(const QString& host, const QJsonObject& descriptor, const QString& command,
+    const QJsonObject& arguments, int timeoutMs)
+{
+    const QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    const int port = descriptor.value(QStringLiteral("port")).toInt();
+    if (descriptor.value(QStringLiteral("transport")).toString() != QStringLiteral("tcp")
+        || descriptor.value(QStringLiteral("endpoint")).toString() != QStringLiteral("127.0.0.1") || port < 1
+        || port > 65535 || descriptor.value(QStringLiteral("token")).toString().size() != 64)
+        return failure(
+            id, QStringLiteral("invalid_descriptor"), QStringLiteral("Remote control requires loopback TCP"));
+    const QByteArray bytes
+        = QJsonDocument(QJsonObject { { QStringLiteral("id"), id }, { QStringLiteral("command"), command },
+                            { QStringLiteral("args"), arguments },
+                            { QStringLiteral("token"), descriptor.value(QStringLiteral("token")) } })
+              .toJson(QJsonDocument::Compact)
+        + '\n';
+    if (bytes.size() > MaxRequestBytes)
+        return failure(id, QStringLiteral("request_too_large"), QStringLiteral("Request exceeds 64 KiB"));
+    QString error;
+    const QByteArray reply = sshExchange(host, {}, bytes, timeoutMs, MaxResponseBytes, &error, port);
+    if (!error.isEmpty())
+        return failure(id, QStringLiteral("ssh_failed"), error);
+    QJsonParseError parseError;
+    const QJsonObject result = QJsonDocument::fromJson(reply.trimmed(), &parseError).object();
+    if (parseError.error != QJsonParseError::NoError || result.value(QStringLiteral("id")).toString() != id
+        || !result.value(QStringLiteral("ok")).isBool())
+        return failure(
+            id, QStringLiteral("invalid_response"), QStringLiteral("Invalid response or mismatched request ID"));
     return result;
 }
 

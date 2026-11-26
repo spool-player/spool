@@ -40,7 +40,9 @@ namespace Spool {
 namespace {
     const QStringList SettingKeys { QStringLiteral("playback/seekPreviews"),
         QStringLiteral("playback/accurateTrickplay"), QStringLiteral("playback/trickplayPreviewScalePercent"),
-        QStringLiteral("appearance/uiScalePercent"), QStringLiteral("playback/renderQuality") };
+        QStringLiteral("appearance/uiScalePercent"), QStringLiteral("playback/renderQuality"),
+        QStringLiteral("playback/threadedStreaming"), QStringLiteral("playback/maxStreamingThreads"),
+        QStringLiteral("playback/forceStreamingThreads"), QStringLiteral("playback/logStreamingPerformance") };
     QCoro::Task<MovieItem> itemStateTask(SourceHub *sources, QString itemId, QString field, QJsonValue value)
     {
         if (field == QStringLiteral("played"))
@@ -557,6 +559,14 @@ void LocalCommandServer::dispatch(QIODevice *socket, const QJsonObject& request)
             return;
         }
         done(items(args));
+    } else if (command == QStringLiteral("speed-test")) {
+        if (args.contains(QStringLiteral("refresh")) && !args.value(QStringLiteral("refresh")).isBool()) {
+            invalid(QStringLiteral("refresh must be a boolean"));
+            return;
+        }
+        if (args.value(QStringLiteral("refresh")).toBool())
+            m_app->refreshConnectionSpeed();
+        done(QJsonObject::fromVariantMap(m_sources->speedTestStatus()));
     } else if (command == QStringLiteral("downloads")) {
         const QString action = args.value(QStringLiteral("action")).toString(QStringLiteral("list"));
         if ((action == QStringLiteral("start") || action == QStringLiteral("retry")) && !m_downloads->enabled()) {
@@ -751,8 +761,7 @@ void LocalCommandServer::dispatch(QIODevice *socket, const QJsonObject& request)
     } else if (command == QStringLiteral("settings-get") || command == QStringLiteral("settings-set")) {
         const QString key = args.value(QStringLiteral("key")).toString();
         if (!key.isEmpty() && !SettingKeys.contains(key)) {
-            invalid(QStringLiteral(
-                "Only seek preview enable/quality/scale, UI scale and render quality settings are exposed"));
+            invalid(QStringLiteral("Only allowlisted playback and appearance settings are exposed"));
             return;
         }
         if (command == QStringLiteral("settings-get")) {

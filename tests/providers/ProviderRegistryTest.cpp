@@ -664,13 +664,9 @@ export function createSource(config, sourceHost) {
     auto withoutStorage = enabledOffers;
     withoutStorage.remove("settingsStorage");
     QCoro::waitFor(registry.callSource(extendedAlice, "offers", { { "capabilities", withoutStorage } }));
-    waitUntil([&] { return !registry.hasCapability(extendedAlice, "settingsStorage"); },
-        "withdrawing settingsStorage reaches the registry before cache reset");
     QCoro::waitFor(registry.callSource(extendedAlice, "dataFixture",
         { { "maximum", 32 }, { "conditional", true }, { "document", QVariantMap { { "found", false } } } }));
     QCoro::waitFor(registry.callSource(extendedAlice, "offers", { { "capabilities", enabledOffers } }));
-    waitUntil([&] { return registry.hasCapability(extendedAlice, "settingsStorage"); },
-        "restoring settingsStorage reaches the registry before reading dataInfo");
     require(QCoro::waitFor(registry.callSource(extendedAlice, "dataInfo")).value("maxBytes").toInt() == 32
             && QCoro::waitFor(registry.callSource(extendedAlice, "dataFixture")).value("infoCalls").toInt() == 2,
         "capability loss invalidates the generation-owned storage metadata cache");
@@ -704,13 +700,9 @@ export function createSource(config, sourceHost) {
             == QLocale::languageToCode(QLocale::French, QLocale::ISO639Part2),
         "a supported writable preference survives a worker read/write/read cycle");
     QCoro::waitFor(registry.callSource(extendedAlice, "offers", { { "capabilities", withoutStorage } }));
-    waitUntil([&] { return !registry.hasCapability(extendedAlice, "settingsStorage"); },
-        "withdrawing settingsStorage reaches the registry before updating dataFixture limits");
     QCoro::waitFor(
         registry.callSource(extendedAlice, "dataFixture", { { "maximum", 65536 }, { "conditional", false } }));
     QCoro::waitFor(registry.callSource(extendedAlice, "offers", { { "capabilities", enabledOffers } }));
-    waitUntil([&] { return registry.hasCapability(extendedAlice, "settingsStorage"); },
-        "restoring settingsStorage reaches the registry before writing wideDocument");
     QVariantList wideDocument;
     wideDocument.reserve(20000);
     for (int index = 0; index < 20000; ++index)

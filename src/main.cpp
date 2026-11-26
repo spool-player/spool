@@ -3,6 +3,7 @@
 #include "app/ArtworkService.h"
 #include "app/CollectionEditingController.h"
 #include "app/CpuTopology.h"
+#include "app/DownloadManager.h"
 #include "app/GraphicsStartup.h"
 #include "app/GroupPlaybackController.h"
 #include "app/LocalizationManager.h"
@@ -13,14 +14,11 @@
 #include "app/TrickplayPreviewItem.h"
 #include "app/TrickplayService.h"
 #include "app/UserItemStateController.h"
+#include "automation/LocalCommandServer.h"
 #include "cache/DatabaseManager.h"
 #include "common/AsyncTask.h"
 #include "common/LogRotation.h"
 #include "common/TlsTrust.h"
-#if !defined(SPOOL_WEBOS)
-#include "automation/LocalCommandServer.h"
-#endif
-#include "app/DownloadManager.h"
 #include "diagnostics/Diagnostics.h"
 #include "diagnostics/InputLatencyMonitor.h"
 #include "diagnostics/RenderBenchmark.h"
@@ -492,9 +490,7 @@ int main(int argc, char **argv)
     g_startupTimer.start();
     QElapsedTimer& startupTimer = g_startupTimer;
     bool launchTest = false;
-#ifndef SPOOL_WEBOS
     int automationPort = -1;
-#endif
     QString dataDirectory;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-v") == 0) {
@@ -507,10 +503,6 @@ int main(int argc, char **argv)
             Spool::setDiagnosticUrlsUnredacted(true);
         const QByteArray argument(argv[i]);
         if (argument == "--automation-port" || argument.startsWith("--automation-port=")) {
-#ifdef SPOOL_WEBOS
-            std::fprintf(stderr, "Loopback automation is not supported on webOS\n");
-            return 1;
-#else
             QByteArray value;
             if (argument == "--automation-port") {
                 if (++i >= argc) {
@@ -528,7 +520,6 @@ int main(int argc, char **argv)
                 return 1;
             }
             automationPort = int(port);
-#endif
         }
         if (strcmp(argv[i], "--data-dir") == 0) {
 #if defined(SPOOL_WEBOS) || defined(SPOOL_ANDROID) || defined(SPOOL_APPLE_MOBILE)
@@ -726,6 +717,17 @@ int main(int argc, char **argv)
             }
         }
     }
+    // Luna JSON launch parameters are applied above, after the early argv pass.
+    // Parse the opt-in here as well so a normal packaged webOS launch can use it.
+    if (automationPort < 0 && qEnvironmentVariableIsSet("SPOOL_AUTOMATION_PORT")) {
+        bool valid = false;
+        const uint port = qEnvironmentVariable("SPOOL_AUTOMATION_PORT").toUInt(&valid);
+        if (!valid || port > 65535) {
+            std::fprintf(stderr, "SPOOL_AUTOMATION_PORT requires a port in 0..65535\n");
+            return 1;
+        }
+        automationPort = int(port);
+    }
     if (arguments.contains(QStringLiteral("--diagnose-and-exit"))
         || arguments.contains(QStringLiteral("--dump-diagnostics"))) {
         Spool::Diagnostics::dumpDiagnostics(QStringLiteral("command-line"));
@@ -855,6 +857,9 @@ int main(int argc, char **argv)
     auto player = std::make_unique<Spool::PlayerController>(
         &window, hub.playback(), &tlsTrust, Spool::bundledFontsPath(appRootPath));
     player->setTrickplayService(&trickplay);
+    QObject::connect(artworkService.get(), &Spool::ArtworkService::fetchingChanged, player.get(),
+        &Spool::PlayerController::setBackgroundNetwork);
+    player->setBackgroundNetwork(artworkService->fetching());
     player->setDemuxerBudget(memoryBudget.mpvDemuxerMaxBytes, memoryBudget.mpvDemuxerMaxBackBytes);
     Spool::ScreenSaverInhibitor screenSaverInhibitor;
     const auto updateScreenSaver = [&screenSaverInhibitor, player = player.get()] {
@@ -1324,21 +1329,21 @@ int main(int argc, char **argv)
     QTimer::singleShot(1000, router.get(), [router = router.get()] { router->beginSession(false); });
     QTimer::singleShot(15'000, &app,
         [cachePath] { QThreadPool::globalInstance()->start([cachePath] { pruneStaleQmlCaches(cachePath); }); });
-#if !defined(SPOOL_WEBOS)
     Spool::LocalCommandServer localCommands(controller.get(), router.get(), &window, &downloads, &hub);
     const bool controlDisabled = app.arguments().contains(QStringLiteral("--no-local-control"));
     if (automationPort >= 0 && controlDisabled) {
         std::fprintf(stderr, "--automation-port conflicts with --no-local-control\n");
         return 1;
     }
-#if defined(SPOOL_ANDROID) || defined(SPOOL_APPLE_MOBILE)
+#if defined(SPOOL_WEBOS) || defined(SPOOL_ANDROID) || defined(SPOOL_APPLE_MOBILE)
     const bool startLocalControl = automationPort >= 0;
 #else
     const bool startLocalControl = !controlDisabled;
 #endif
     if (startLocalControl) {
         QString error;
-        const QString instance = optionValue(app.arguments(), QStringLiteral("--instance"), "SPOOL_INSTANCE");
+        const QString instance = optionValue(app.arguments(), QStringLiteral("--instance"), "SPOOL_AUTOMATION_INSTANCE",
+            qEnvironmentVariable("SPOOL_INSTANCE"));
         const bool started = automationPort >= 0 ? localCommands.startTcp(instance, quint16(automationPort), &error)
                                                  : localCommands.start(instance, &error);
         if (!started) {
@@ -1351,7 +1356,6 @@ int main(int argc, char **argv)
     QObject::connect(&app, &QCoreApplication::aboutToQuit, &localCommands, &Spool::LocalCommandServer::stop);
     QObject::connect(
         &window, &Spool::NativeAppWindow::closeRequested, &localCommands, &Spool::LocalCommandServer::stop);
-#endif
 
     QTimer::singleShot(0, &window, [&startupTimer]() {
         logLine("startup: first event-loop turn at %lld ms", static_cast<long long>(startupTimer.elapsed()));

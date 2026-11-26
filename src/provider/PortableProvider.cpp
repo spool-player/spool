@@ -119,10 +119,6 @@ public:
     {
         return m_origin;
     }
-    int playbackParallelRequests() const override
-    {
-        return 4;
-    }
     QVariantMap playbackNetworkProfile() const override
     {
         return m_owner->m_registry->playbackNetworkProfile(m_owner->m_accountId, m_origin);
@@ -180,6 +176,13 @@ public:
         session.sourceBitrate = source.value(QStringLiteral("bitrate")).toLongLong();
         session.sourceWidth = source.value(QStringLiteral("width")).toInt();
         session.sourceHeight = source.value(QStringLiteral("height")).toInt();
+        // Admitted and normalized to whole numbers by the script runtime.
+        session.sourceSizeBytes = source.value(QStringLiteral("sizeBytes")).toLongLong();
+        session.sourceRuntimeTicks = source.value(QStringLiteral("runtimeTicks")).toLongLong();
+        const QVariantMap delivery = result.value(QStringLiteral("delivery")).toMap();
+        session.deliveryBitrate = delivery.value(QStringLiteral("bitrate")).toLongLong();
+        session.deliverySizeBytes = delivery.value(QStringLiteral("sizeBytes")).toLongLong();
+        session.deliveryRuntimeTicks = delivery.value(QStringLiteral("runtimeTicks")).toLongLong();
         // mpv lists a file's own tracks first and subtitle files after them,
         // in the order they are added, so the streams are kept in that order.
         // A subtitle file mpv cannot fetch is left out rather than shifting

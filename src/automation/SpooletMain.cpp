@@ -2,6 +2,7 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -25,9 +26,9 @@ QJsonObject help()
 {
     return { { QStringLiteral("ok"), true },
         { QStringLiteral("result"),
-            QJsonObject {
-                { QStringLiteral("usage"),
-                    QStringLiteral("spoolet [--instance ID | --descriptor FILE] [--timeout MS] COMMAND [ARGS]") },
+            QJsonObject { { QStringLiteral("usage"),
+                              QStringLiteral("spoolet [--host USER@HOST] [--instance ID | --descriptor FILE] "
+                                             "[--timeout MS] COMMAND [ARGS]") },
                 { QStringLiteral("commands"),
                     QJsonArray { QStringLiteral("help | instances | status | state"),
                         QStringLiteral(
@@ -43,6 +44,7 @@ QJsonObject help()
                         QStringLiteral(
                             "downloads list | options ITEM_ID | start ITEM_ID INDEX | cancel|retry|remove|play JOB_ID"),
                         QStringLiteral("settings get [KEY] | settings set KEY JSON_VALUE"),
+                        QStringLiteral("speed-test [status] (start measurement, or read numeric progress and results)"),
                         QStringLiteral("open browse|resume|next-up|context|similar INDEX (select like a person would)"),
                         QStringLiteral("item-state QUALIFIED_ID [played|favorite true|false | position SECONDS] "
                                        "(writes through the provider, then reads the item back from the server)"),
@@ -53,7 +55,11 @@ QJsonObject help()
                         "All stdout is JSON. Commands are bounded and never prompt. When multiple instances run, "
                         "--instance is required. Playback/navigation acceptance is not a promise that provider I/O has "
                         "completed: poll status. Screenshot waits for a new Qt frame, then atomically writes PNG; "
-                        "separate native video planes are reported as excluded.") } } } };
+                        "separate native video planes are reported as excluded. --host uses noninteractive SSH "
+                        "with an already trusted host key and forwards stdin to remote IPv4 loopback; no TV CLI "
+                        "or LAN listener is needed. With --host, --descriptor is an absolute REMOTE private "
+                        "descriptor path; otherwise it is local. --instance selects a discovered instance on "
+                        "the selected host. Tokens are never printed.") } } } };
 }
 }
 
@@ -64,22 +70,27 @@ int main(int argc, char **argv)
     QStringList arguments = app.arguments().mid(1);
     QString instance;
     QString descriptorPath;
+    QString host;
     int timeout = Spool::LocalControl::RequestTimeoutMs;
     while (!arguments.isEmpty() && arguments.first().startsWith(QStringLiteral("--"))) {
         const QString option = arguments.takeFirst();
         if (option == QStringLiteral("--help"))
             return print(help());
         if ((option != QStringLiteral("--instance") && option != QStringLiteral("--timeout")
-                && option != QStringLiteral("--descriptor"))
+                && option != QStringLiteral("--descriptor") && option != QStringLiteral("--host"))
             || arguments.isEmpty())
-            return error(QStringLiteral("Expected --instance ID, --descriptor FILE or --timeout MS; see help"));
+            return error(QStringLiteral("Expected --host, --instance, --descriptor or --timeout; see help"));
         const QString value = arguments.takeFirst();
         if (option == QStringLiteral("--instance")) {
             if (!Spool::LocalControl::validInstance(value))
                 return error(QStringLiteral("Invalid instance identifier"));
             instance = value;
         } else if (option == QStringLiteral("--descriptor")) {
-            descriptorPath = QFileInfo(value).absoluteFilePath();
+            descriptorPath = value;
+        } else if (option == QStringLiteral("--host")) {
+            if (!Spool::LocalControl::validSshHost(value))
+                return error(QStringLiteral("Invalid SSH host; use [USER@]HOST"));
+            host = value;
         } else {
             bool valid = false;
             timeout = value.toInt(&valid);
@@ -89,12 +100,22 @@ int main(int argc, char **argv)
     }
     if (!instance.isEmpty() && !descriptorPath.isEmpty())
         return error(QStringLiteral("--instance and --descriptor are mutually exclusive"));
+    if (!descriptorPath.isEmpty()) {
+        if (!host.isEmpty() && !QDir::isAbsolutePath(descriptorPath))
+            return error(QStringLiteral("Remote descriptor path must be absolute"));
+        if (host.isEmpty())
+            descriptorPath = QFileInfo(descriptorPath).absoluteFilePath();
+    }
     if (arguments.isEmpty() || arguments == QStringList { QStringLiteral("help") })
         return print(help());
     QString command = arguments.takeFirst();
     QJsonObject args;
     const auto count = [&](int low, int high) { return arguments.size() >= low && arguments.size() <= high; };
-    if (command == QStringLiteral("navigate")) {
+    if (command == QStringLiteral("speed-test")) {
+        if (!arguments.isEmpty() && arguments != QStringList { QStringLiteral("status") })
+            return error(QStringLiteral("Usage: speed-test [status]"));
+        args.insert(QStringLiteral("refresh"), arguments.isEmpty());
+    } else if (command == QStringLiteral("navigate")) {
         if (!count(1, 2))
             return error(QStringLiteral("Usage: navigate ROUTE [MODULE_ID|SETTING_KEY]"));
         const QString route = arguments.first();
@@ -117,9 +138,8 @@ int main(int argc, char **argv)
             : command == QStringLiteral("library")           ? QStringLiteral("id")
                                                              : QStringLiteral("path");
         args.insert(key,
-            command == QStringLiteral("screenshot") && descriptorPath.isEmpty()
-                ? QFileInfo(arguments.first()).absoluteFilePath()
-                : arguments.first());
+            command == QStringLiteral("screenshot") && host.isEmpty() ? QFileInfo(arguments.first()).absoluteFilePath()
+                                                                      : arguments.first());
     } else if (command == QStringLiteral("text")) {
         if (!count(1, 1))
             return error(QStringLiteral("Usage: text TEXT | text --stdin"));
@@ -273,6 +293,67 @@ int main(int argc, char **argv)
                    .contains(command)
         || !arguments.isEmpty()) {
         return error(QStringLiteral("Unknown command or extra arguments; see spoolet help"));
+    }
+    if (!host.isEmpty()) {
+        if (command == QStringLiteral("instances") && !descriptorPath.isEmpty())
+            return error(QStringLiteral("instances does not accept an explicit descriptor"));
+        QFile script(QStringLiteral(":/automation/RemoteDiscovery.sh"));
+        if (!script.open(QIODevice::ReadOnly))
+            return error(QStringLiteral("Remote discovery script is unavailable"));
+        const auto quote = [](QString value) {
+            value.replace(QLatin1Char('\''), QStringLiteral("'\\''"));
+            return QLatin1Char('\'') + value + QLatin1Char('\'');
+        };
+        QElapsedTimer clock;
+        clock.start();
+        const auto remaining = [&] { return qMax(0, timeout - int(clock.elapsed())); };
+        QString discoveryError;
+        const QByteArray output = Spool::LocalControl::sshExchange(host,
+            QStringLiteral("sh -s -- descriptors %1 %2").arg(quote(instance), quote(descriptorPath)), script.readAll(),
+            remaining(), 64 * 4097, &discoveryError);
+        if (!discoveryError.isEmpty())
+            return error(discoveryError);
+        QList<QJsonObject> descriptors;
+        for (const QByteArray& line : output.split('\n')) {
+            if (line.trimmed().isEmpty())
+                continue;
+            const QJsonObject row = QJsonDocument::fromJson(line).object();
+            const int port = row.value(QStringLiteral("port")).toInt();
+            const QString id = row.value(QStringLiteral("instance")).toString();
+            if (line.size() > 4096 || !Spool::LocalControl::validInstance(id) || (!instance.isEmpty() && id != instance)
+                || row.value(QStringLiteral("transport")).toString() != QStringLiteral("tcp")
+                || row.value(QStringLiteral("endpoint")).toString() != QStringLiteral("127.0.0.1") || port < 1
+                || port > 65535 || row.value(QStringLiteral("token")).toString().size() != 64)
+                return error(QStringLiteral("Remote discovery contains an invalid loopback descriptor"));
+            descriptors.append(row);
+            if (descriptors.size() > 64)
+                return error(QStringLiteral("Too many remote instances; use --instance"));
+        }
+        if (descriptors.isEmpty())
+            return error(QStringLiteral("No private remote descriptors found; launch with SPOOL_AUTOMATION_PORT"));
+        QList<QJsonObject> live;
+        QJsonArray instances;
+        for (const QJsonObject& row : descriptors) {
+            if (remaining() <= 0)
+                return error(QStringLiteral("Remote discovery timed out"));
+            const QJsonObject reply
+                = Spool::LocalControl::requestSsh(host, row, QStringLiteral("status"), {}, remaining());
+            if (reply.value(QStringLiteral("ok")).toBool()) {
+                live.append(row);
+                instances.append(reply.value(QStringLiteral("result")));
+            } else if (!instance.isEmpty() || !descriptorPath.isEmpty()) {
+                return print(reply);
+            }
+        }
+        if (command == QStringLiteral("instances"))
+            return print({ { QStringLiteral("ok"), true },
+                { QStringLiteral("result"), QJsonObject { { QStringLiteral("instances"), instances } } } });
+        if (live.size() != 1)
+            return error(live.isEmpty() ? QStringLiteral("No reachable remote instances found")
+                                        : QStringLiteral("Multiple remote instances; use --instance ID"));
+        if (remaining() <= 0)
+            return error(QStringLiteral("Remote command timed out"));
+        return print(Spool::LocalControl::requestSsh(host, live.first(), command, args, remaining()));
     }
     if (!descriptorPath.isEmpty()) {
         const QJsonObject descriptor = Spool::LocalControl::readDescriptor(descriptorPath);

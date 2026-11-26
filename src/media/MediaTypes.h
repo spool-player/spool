@@ -425,6 +425,13 @@ struct PlaybackSession {
     qint64 sourceBitrate = 0;
     int sourceWidth = 0;
     int sourceHeight = 0;
+    // Selected original edition and the representation actually delivered;
+    // 0 is unknown. Delivered size/duration may differ under remux/transcode.
+    qint64 sourceSizeBytes = 0;
+    qint64 sourceRuntimeTicks = 0;
+    qint64 deliveryBitrate = 0;
+    qint64 deliverySizeBytes = 0;
+    qint64 deliveryRuntimeTicks = 0;
     qint64 runtimeTicks = 0;
     QList<MediaStreamInfo> mediaStreams;
     std::vector<MediaSegment> segments;

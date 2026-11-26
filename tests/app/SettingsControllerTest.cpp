@@ -85,6 +85,10 @@ SPOOL_TEST_MAIN("settings-controller")
         "fresh profile unexpectedly enabled unlimited local-network playback");
     require(settings.value(QStringLiteral("playback/forwardCacheSizeMiB")).toInt() == 32,
         "fresh profile did not use the 32 MB forward cache default");
+    require(settings.value(QStringLiteral("playback/threadedStreaming")).toBool()
+            && settings.value(QStringLiteral("playback/maxStreamingThreads")).toInt() == 4
+            && !settings.value(QStringLiteral("playback/forceStreamingThreads")).toBool(),
+        "fresh profile did not preserve adaptive streaming with a four-request maximum");
     require(settings.value(QStringLiteral("playback/rememberSeriesAudioTrack")).toBool(),
         "fresh profile did not remember per-series audio tracks by default");
     require(settings.playerControlTooltipsEnabled(), "fresh profile unexpectedly hid player control tooltips");
@@ -97,6 +101,14 @@ SPOOL_TEST_MAIN("settings-controller")
     require(QCoro::waitFor(database.loadSettingAsync(QStringLiteral("playback/forwardCacheSizeMiB")))
             == QStringLiteral("256"),
         "forward cache size was not persisted");
+    // Hiding dependent controls must not discard their next-playback preferences.
+    QCoro::waitFor(settings.applyValues({ { QStringLiteral("playback/threadedStreaming"), false },
+                                            { QStringLiteral("playback/maxStreamingThreads"), 99 },
+                                            { QStringLiteral("playback/forceStreamingThreads"), true } },
+        Spool::ChangeOrigin::User));
+    require(QCoro::waitFor(database.loadSettingAsync(QStringLiteral("playback/maxStreamingThreads")))
+            == QStringLiteral("16"),
+        "streaming request count was not clamped and persisted");
     settings.setValue(QStringLiteral("playback/rememberSeriesAudioTrack"), false);
     require(!settings.value(QStringLiteral("playback/rememberSeriesAudioTrack")).toBool(),
         "series audio-track retention toggle was not updated");
@@ -193,6 +205,17 @@ SPOOL_TEST_MAIN("settings-controller")
     require(restored.audioDelayMs() == 120, "persisted global desktop audio delay was not restored");
     require(restored.value(QStringLiteral("playback/forwardCacheSizeMiB")).toString() == QStringLiteral("256"),
         "persisted forward cache size was not restored");
+    require(!restored.value(QStringLiteral("playback/threadedStreaming")).toBool()
+            && restored.value(QStringLiteral("playback/maxStreamingThreads")).toInt() == 16
+            && restored.value(QStringLiteral("playback/forceStreamingThreads")).toBool(),
+        "disabled threaded streaming lost its persisted request preferences");
+    QCoro::waitFor(restored.applyValues({ { QStringLiteral("playback/threadedStreaming"), true },
+                                            { QStringLiteral("playback/maxStreamingThreads"), 0 } },
+        Spool::ChangeOrigin::User));
+    require(restored.value(QStringLiteral("playback/threadedStreaming")).toBool()
+            && restored.value(QStringLiteral("playback/maxStreamingThreads")).toInt() == 1
+            && restored.value(QStringLiteral("playback/forceStreamingThreads")).toBool(),
+        "re-enabling threaded streaming lost force mode or failed to clamp the minimum request count");
     require(!restored.value(QStringLiteral("playback/rememberSeriesAudioTrack")).toBool(),
         "series audio-track retention toggle was not restored");
     require(!restored.remoteControlTargetEnabled(), "persisted remote target toggle was not restored");

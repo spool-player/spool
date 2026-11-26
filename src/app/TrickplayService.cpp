@@ -376,6 +376,14 @@ void TrickplayService::request(int index, TrickplayImageResponse *response)
     startDecode(index);
 }
 
+void TrickplayService::setFetching(bool active)
+{
+    if (m_fetching != active) {
+        m_fetching = active;
+        emit fetchingChanged(active);
+    }
+}
+
 void TrickplayService::abortFetch()
 {
     if (m_reply) {
@@ -384,6 +392,7 @@ void TrickplayService::abortFetch()
         m_reply->deleteLater();
     }
     m_reply.clear();
+    setFetching(false);
     m_fetchIndex = -1;
     m_fetchBytes.clear();
     m_fetchUrl.clear();
@@ -424,6 +433,7 @@ void TrickplayService::fetch(int index, bool speculative)
     m_fetchSpeculative = speculative;
     QNetworkReply *reply = m_network->get(request);
     m_reply = reply;
+    setFetching(true);
     connect(reply, &QNetworkReply::readyRead, this, [this, reply] {
         if (reply->bytesAvailable() > MaximumBytes - m_fetchBytes.size()) {
             reply->abort();
@@ -433,6 +443,7 @@ void TrickplayService::fetch(int index, bool speculative)
     });
     connect(reply, &QNetworkReply::finished, this, [this, reply] {
         m_reply.clear();
+        setFetching(false);
         const int index = std::exchange(m_fetchIndex, -1);
         const bool speculative = m_fetchSpeculative;
         QString error = reply->error() == QNetworkReply::NoError ? QString() : reply->errorString();

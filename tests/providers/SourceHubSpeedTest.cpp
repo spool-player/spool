@@ -42,7 +42,7 @@ QVariantMap feedback(quint64 stream, double rate, int requests = 1)
         { "observed-at-ms", QDateTime::currentMSecsSinceEpoch() }, { "media-bitrate", 80'000'000 },
         { "concurrency-samples",
             QVariantList { QVariantMap { { "requests", requests }, { "capacity-bytes-per-second", rate },
-                { "latency-ms", 120.0 }, { "samples", 1 } } } } };
+                { "ttfb-ms", 120.0 }, { "samples", 1 } } } } };
 }
 }
 
@@ -69,7 +69,7 @@ export function createSource(configuration) {
                 return {bitrate:126000000, parallelRequests:1, origin:configuration.origin,
                     'concurrency-samples':[1,2,4].map(function(requests, index) {
                         return {requests:requests, 'capacity-bytes-per-second':[10000000,20000000,21000000][index],
-                            'latency-ms':120, 'elapsed-seconds':0.4, 'received-bytes':4194304};
+                            'ttfb-ms':120, 'elapsed-seconds':0.4, 'received-bytes':4194304};
                     })};
             });
         },
@@ -132,8 +132,8 @@ export function createSource(configuration) {
         resolve(melbourne);
         require(hub.playback()->playbackNetworkProfile().value("concurrency-samples").toList().size() == 3,
             "full benchmark curve reaches native playback without SDK changes");
-        require(hub.playback()->playbackNetworkProfile().value("initial-requests").toInt() == 1,
-            "no demand starts conservatively instead of choosing the fastest probe");
+        require(hub.playback()->playbackNetworkProfile().value("initial-requests").toInt() == 2,
+            "startup chooses minimum concurrency within the probe noise band instead of a tiny peak gain");
         const QUrl melbourneOrigin = hub.playback()->mediaOrigin();
         auto measured = feedback(1, 20'000'000, 2);
         hub.playback()->updatePlaybackNetworkProfile(melbourneOrigin, measured);
@@ -160,7 +160,35 @@ export function createSource(configuration) {
         }
         resolve(nj);
         const QUrl njOrigin = hub.playback()->mediaOrigin();
-        hub.playback()->updatePlaybackNetworkProfile(njOrigin, feedback(3, 40'000'000));
+        const auto probe = [&](double singleRate) {
+            return registry.recordSpeedTest(nj,
+                { { "origin", njOrigin.toString() },
+                    { "concurrency-samples",
+                        QVariantList { QVariantMap { { "requests", 1 }, { "capacity-bytes-per-second", singleRate },
+                                           { "ttfb-ms", 5.0 } },
+                            QVariantMap {
+                                { "requests", 2 }, { "capacity-bytes-per-second", 12'000'000.0 }, { "ttfb-ms", 5.0 } },
+                            QVariantMap { { "requests", 4 }, { "capacity-bytes-per-second", 10'000'000.0 },
+                                { "ttfb-ms", 5.0 } } } } });
+        };
+        require(probe(40'000'000), "negative-scaling probe records");
+        auto impossibleDemand = feedback(3, 8'000'000, 4);
+        impossibleDemand["media-bitrate"] = 800'000'000;
+        hub.playback()->updatePlaybackNetworkProfile(njOrigin, impossibleDemand);
+        require(hub.playback()->playbackNetworkProfile().value("initial-requests").toInt() == 1,
+            "unreachable demand chooses the fast single lane, not the previous slower four lanes");
+        auto actualSingle = feedback(4, 6'000'000);
+        actualSingle["media-bitrate"] = 800'000'000;
+        hub.playback()->updatePlaybackNetworkProfile(njOrigin, actualSingle);
+        require(hub.playback()->playbackNetworkProfile().value("initial-requests").toInt() == 2,
+            "actual single-lane playback overrides its faster Qt prior at the same concurrency");
+        require(probe(90'000'000), "later probe refresh records");
+        require(hub.playback()->playbackNetworkProfile().value("initial-requests").toInt() == 2,
+            "a newer Qt probe cannot replace fresh actual-playback evidence");
+        hub.playback()->updatePlaybackNetworkProfile(njOrigin, feedback(5, 30'000'000, 16));
+        require(hub.playback()->playbackNetworkProfile().value("initial-requests").toInt() == 16,
+            "forced sixteen-request playback supplies valid learning instead of being silently rejected");
+        hub.playback()->updatePlaybackNetworkProfile(njOrigin, feedback(6, 40'000'000));
         const auto learnedNj = hub.playback()->playbackNetworkProfile();
         require(learnedNj.value("initial-requests").toInt() == 1
                 && learnedNj.value("capacity-bytes-per-second").toDouble() > 20'000'000,

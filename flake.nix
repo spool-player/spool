@@ -823,20 +823,6 @@
           SPOOL_ANDROID_QT_HOST = "${androidQtHost}";
           shellHook = gitHooksShellHook;
         };
-
-        android-packaging = pkgs.mkShell {
-          packages = with pkgs; [
-            android.sdk
-            bashInteractive
-            git
-            jdk17_headless
-            python3
-          ];
-          ANDROID_HOME = "${android.sdk}/libexec/android-sdk";
-          ANDROID_SDK_ROOT = "${android.sdk}/libexec/android-sdk";
-          JAVA_HOME = pkgs.jdk17_headless.home;
-          shellHook = gitHooksShellHook;
-        };
       } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         windows-proton = pkgs.mkShell {
           packages = with pkgs; [

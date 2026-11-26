@@ -349,8 +349,6 @@ const QVector<SettingSpec>& settingSpecs()
                 .onDesktop(),
             sliderSpec("playback/controlFadeDelaySeconds", "Playback", "Hide player controls after", "", "4", 1, 10, 1,
                 "s", SettingTarget::External),
-            toggleSpec("playback/seekPreviews", "Playback", "Seek previews",
-                "Thumbnails while seeking. Off hides them and stops downloading them", true, SettingTarget::External),
             toggleSpec("playback/accurateTrickplay", "Playback", "Accurate seek previews",
                 "Uses a slower, accurate JPEG transform. Off uses the faster transform; both preserve encoded "
                 "resolution",
@@ -436,6 +434,30 @@ const QVector<SettingSpec>& settingSpecs()
             sliderSpec("playback/forwardCacheSizeMiB", "Streaming", "Read-ahead buffer",
                 "Applies the next time something plays", "32", 16, 2048, 1, "MB", SettingTarget::ForwardCacheSize,
                 SettingNormalizer::PowerOfTwoRange)
+                .advanced(),
+            toggleSpec("playback/seekPreviews", "Streaming", "Seek previews",
+                "Thumbnails while seeking. Off hides them and stops downloading them", true, SettingTarget::External),
+            toggleSpec("playback/threadedStreaming", "Streaming", "Optimized streaming",
+                "Downloads with parallel range requests and adapts to the connection. Off uses standard mpv "
+                "networking. Applies to the next playback",
+                true, SettingTarget::ThreadedStreaming)
+                .advanced(),
+            sliderSpec("playback/maxStreamingThreads", "Streaming", "Maximum concurrent requests",
+                "Most network requests in flight at once; not decoding threads or sockets. Adapts up to this "
+                "limit. Applies to the next playback",
+                "4", 1, 16, 1, "", SettingTarget::MaxStreamingThreads)
+                .advanced()
+                .whenSetTo("playback/threadedStreaming", "true"),
+            toggleSpec("playback/forceStreamingThreads", "Streaming", "Use fixed request count",
+                "Always uses the maximum instead of adapting the count. Other safety and optimization still "
+                "apply. Applies to the next playback",
+                false, SettingTarget::ForceStreamingThreads)
+                .advanced()
+                .whenSetTo("playback/threadedStreaming", "true"),
+            toggleSpec("playback/logStreamingPerformance", "Streaming", "Log streaming performance",
+                "Log actual playback download speed, buffering and CPU usage once per second. "
+                "Off by default; does not log media URLs or credentials",
+                false, SettingTarget::LogStreamingPerformance)
                 .advanced(),
 
             selectSpec("subtitles/language", "Subtitles", "Preferred language",
@@ -643,13 +665,14 @@ const QVector<SettingSpec>& settingSpecs()
             QStringLiteral("playback/autoAdjustQuality"), QStringLiteral("playback/graphicsApi"),
             QStringLiteral("playback/hdrOutput"), QStringLiteral("playback/hdrPeakNits"),
             QStringLiteral("settings/audioOutputMode"), QStringLiteral("playback/forwardCacheSizeMiB"),
-            QStringLiteral("subtitles/hdrBrightnessPercent"), QStringLiteral("input/redButton"),
-            QStringLiteral("input/greenButton"), QStringLiteral("input/yellowButton"),
-            QStringLiteral("input/blueButton"), QStringLiteral("updates/automatic"),
-            QStringLiteral("providers/updates"), QStringLiteral("shell/diagnostics"),
-            QStringLiteral("settings/toneMappingVisualization"), QStringLiteral("shell/latencyGuard"),
-            QStringLiteral("shell/latencyOverlay"), QStringLiteral("theme/antialiasedText"),
-            QStringLiteral("theme/renderMode") };
+            QStringLiteral("playback/threadedStreaming"), QStringLiteral("playback/maxStreamingThreads"),
+            QStringLiteral("playback/forceStreamingThreads"), QStringLiteral("subtitles/hdrBrightnessPercent"),
+            QStringLiteral("input/redButton"), QStringLiteral("input/greenButton"),
+            QStringLiteral("input/yellowButton"), QStringLiteral("input/blueButton"),
+            QStringLiteral("updates/automatic"), QStringLiteral("providers/updates"),
+            QStringLiteral("shell/diagnostics"), QStringLiteral("settings/toneMappingVisualization"),
+            QStringLiteral("shell/latencyGuard"), QStringLiteral("shell/latencyOverlay"),
+            QStringLiteral("theme/antialiasedText"), QStringLiteral("theme/renderMode") };
         for (SettingSpec& spec : rows) {
             const QString key = QString::fromLatin1(spec.key);
             const QLatin1String group(spec.group);

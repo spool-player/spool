@@ -833,6 +833,22 @@ void SettingsController::applySchemaValue(const SettingSpec& spec, const QVarian
         if (apply && m_player)
             m_player->setForwardCacheSizeMiB(m_forwardCacheSizeMiB);
         break;
+    case SettingTarget::ThreadedStreaming:
+        if (m_player && (apply || !m_localSettingsLoaded))
+            m_player->setThreadedStreaming(value.toBool());
+        break;
+    case SettingTarget::MaxStreamingThreads:
+        if (m_player && (apply || !m_localSettingsLoaded))
+            m_player->setMaxStreamingThreads(value.toInt());
+        break;
+    case SettingTarget::ForceStreamingThreads:
+        if (m_player && (apply || !m_localSettingsLoaded))
+            m_player->setForceStreamingThreads(value.toBool());
+        break;
+    case SettingTarget::LogStreamingPerformance:
+        if (m_player && (apply || !m_localSettingsLoaded))
+            m_player->setLogStreamingPerformance(value.toBool());
+        break;
     case SettingTarget::PlayerVolumeSlider:
         break;
     case SettingTarget::AudioDelay:

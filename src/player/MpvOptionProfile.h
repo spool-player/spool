@@ -40,6 +40,8 @@ public:
         int ringBytes;
         int rangeBytes;
         int parallelRequests;
+        // libcurl receive buffer per transfer; each active request holds one.
+        int readBytes;
     };
 
     static NetworkProfile networkProfile(Platform platform, int parallelRequests = 1);
@@ -65,7 +67,8 @@ public:
         const QByteArray& demuxerMaxBytes = QByteArrayLiteral("64M"),
         const QByteArray& demuxerMaxBackBytes = QByteArrayLiteral("32M"), int parallelRequests = 1,
         bool embeddedVideo = false, const QByteArray& shaderCachePath = {},
-        const QByteArray& certificateBundlePath = {}, RenderQuality quality = RenderQuality::Balanced);
+        const QByteArray& certificateBundlePath = {}, RenderQuality quality = RenderQuality::Balanced,
+        bool threadedStreaming = true, bool forceStreamingThreads = false);
     static std::vector<MpvOption> subtitleOptions(
         const SubtitlePreferences& preferences, bool subtitlesEnabled, bool hdrPlayback = false);
 };

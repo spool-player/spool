@@ -164,6 +164,7 @@ SPOOL_TEST_MAIN("mpv-option-profile")
     require(valueFor(desktop, "curl-enabled") == "yes", "desktop should use the libcurl stream backend");
     require(valueFor(desktop, "curl-buffer-size") == "4194304", "desktop should use a 4 MiB network ring");
     require(valueFor(desktop, "curl-max-request-size") == "1048576", "desktop should issue 1 MiB ranges");
+    require(valueFor(desktop, "curl-read-size") == "262144", "desktop should read 256 KiB per curl callback");
     require(valueFor(desktop, "curl-parallel-requests") == "1", "desktop should default to one range request");
     require(valueFor(desktop, "network-timeout") == "15", "a silent connection should be retried after 15 s");
     require(
@@ -364,6 +365,7 @@ SPOOL_TEST_MAIN("mpv-option-profile")
     require(valueFor(webOSPcm, "curl-enabled") == "yes", "webOS should use the libcurl stream backend");
     require(valueFor(webOSPcm, "curl-buffer-size") == "2097152", "webOS should use a 2 MiB network ring");
     require(valueFor(webOSPcm, "curl-max-request-size") == "524288", "webOS should issue 512 KiB ranges");
+    require(valueFor(webOSPcm, "curl-read-size") == "131072", "webOS should read 128 KiB per curl callback");
     require(valueFor(webOSPcm, "curl-parallel-requests") == "1", "webOS should default to one range request");
     require(
         valueFor(webOSPcm, "gpu-shader-cache-dir").isEmpty(), "webOS should not configure the desktop shader cache");

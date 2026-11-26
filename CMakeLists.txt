@@ -393,14 +393,12 @@ qt_add_executable(spool
     src/app/GraphicsStartup.h
 )
 
-if(NOT SPOOL_WEBOS)
-    target_sources(spool PRIVATE
-        src/automation/LocalCommandServer.cpp
-        src/automation/LocalCommandServer.h
-        src/automation/LocalControlProtocol.cpp
-        src/automation/LocalControlProtocol.h
-    )
-endif()
+target_sources(spool PRIVATE
+    src/automation/LocalCommandServer.cpp
+    src/automation/LocalCommandServer.h
+    src/automation/LocalControlProtocol.cpp
+    src/automation/LocalControlProtocol.h
+)
 if(NOT ANDROID AND NOT SPOOL_WEBOS AND NOT SPOOL_APPLE_MOBILE)
     add_executable(spoolet
         src/automation/SpooletMain.cpp
@@ -409,6 +407,8 @@ if(NOT ANDROID AND NOT SPOOL_WEBOS AND NOT SPOOL_APPLE_MOBILE)
     )
     target_link_libraries(spoolet PRIVATE Qt6::Core Qt6::Network)
     target_include_directories(spoolet PRIVATE src)
+    qt_add_resources(spoolet remote_discovery PREFIX "/automation"
+        BASE src/automation FILES src/automation/RemoteDiscovery.sh)
     if(UNIX AND NOT APPLE)
         set_target_properties(spoolet PROPERTIES INSTALL_RPATH "$ORIGIN/../lib")
     endif()
@@ -1055,6 +1055,8 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
         target_sources(spool-tests PRIVATE tests/automation/LocalControlProtocolTest.cpp
             tests/automation/LocalControlAdmissionTest.cpp src/automation/LocalControlProtocol.cpp
             src/automation/LocalCommandServer.cpp)
+        add_dependencies(spool-tests spoolet)
+        target_compile_definitions(spool-tests PRIVATE SPOOL_TEST_SPOOLET="$<TARGET_FILE:spoolet>")
     endif()
     add_test(NAME traditional-native COMMAND spool-tests --run-all --results "${CMAKE_CURRENT_BINARY_DIR}/traditional-results.json")
     set_tests_properties(traditional-native PROPERTIES LABELS traditional ENVIRONMENT "${SPOOL_TEST_ENV}" TIMEOUT 0)
@@ -1340,7 +1342,8 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
             add_test(NAME curl-transport
                 COMMAND "${Python3_EXECUTABLE}" "${MPV_ACTIVE_SOURCE_DIR}/test/curl_transport.py"
                     --libmpv "${SPOOL_CURL_TEST_MPV}" -v)
-            set_tests_properties(curl-transport PROPERTIES LABELS traditional TIMEOUT 180)
+            # The real-HTTP suite runs about 330 s of playback serially.
+            set_tests_properties(curl-transport PROPERTIES LABELS traditional TIMEOUT 600)
         endif()
     endif()
     if(SPOOL_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")

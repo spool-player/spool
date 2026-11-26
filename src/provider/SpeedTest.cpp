@@ -2,6 +2,7 @@
 
 #include "ScriptBridge.h"
 
+#include <QDebug>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QUuid>
@@ -12,11 +13,55 @@
 
 namespace Spool {
 
+NetworkLaneSelection selectNetworkLanes(const QVariantList& samples, double mediaBitrate, int maxRequests)
+{
+    double best = 0;
+    maxRequests = std::clamp(maxRequests, 1, 16);
+    for (const QVariant& value : samples) {
+        const auto sample = value.toMap();
+        const int requests = sample.value(QStringLiteral("requests")).toInt();
+        const double capacity = sample.value(QStringLiteral("capacity-bytes-per-second")).toDouble();
+        if (requests >= 1 && requests <= maxRequests && std::isfinite(capacity))
+            best = std::max(best, capacity);
+    }
+    if (!(best > 0))
+        return {};
+    // Sub-15% gains are not evidence that another socket is useful, especially
+    // on fast links where scheduling and connection warmup dominate tiny tests.
+    double threshold = best * 0.85;
+    int reason = 1;
+    if (std::isfinite(mediaBitrate) && mediaBitrate > 0 && mediaBitrate * 1.75 / 8 <= threshold) {
+        threshold = mediaBitrate * 1.75 / 8;
+        reason = 2;
+    }
+    int selected = 17;
+    for (const QVariant& value : samples) {
+        const auto sample = value.toMap();
+        const int requests = sample.value(QStringLiteral("requests")).toInt();
+        if (requests >= 1 && requests <= maxRequests
+            && sample.value(QStringLiteral("capacity-bytes-per-second")).toDouble() >= threshold)
+            selected = std::min(selected, requests);
+    }
+    return { selected <= 16 ? selected : 1, reason };
+}
+
 SpeedTest::SpeedTest(ScriptAccess *access, Completion completion, QObject *parent)
     : QObject(parent)
     , m_access(access)
     , m_completion(std::move(completion))
 {
+    m_roundDeadline.setSingleShot(true);
+    connect(&m_roundDeadline, &QTimer::timeout, this, [this] {
+        qint64 received = m_round >= 0 ? m_received[m_round] : 0;
+        for (int i = 0; i < m_count; ++i) {
+            if (m_lanes[i].reply && !drain(i))
+                return;
+            received += m_lanes[i].received;
+        }
+        if (received == 0)
+            return finish(QStringLiteral("network_error"));
+        completeRound();
+    });
 }
 
 SpeedTest::~SpeedTest()
@@ -26,6 +71,7 @@ SpeedTest::~SpeedTest()
 
 void SpeedTest::abort()
 {
+    m_roundDeadline.stop();
     for (Lane& lane : m_lanes) {
         if (!lane.reply)
             continue;
@@ -36,7 +82,7 @@ void SpeedTest::abort()
     }
 }
 
-void SpeedTest::finish(QString error, qint64 bitrate, int lanes)
+void SpeedTest::finish(QString error, qint64 bitrate)
 {
     if (m_done)
         return;
@@ -46,11 +92,19 @@ void SpeedTest::finish(QString error, qint64 bitrate, int lanes)
     QVariantMap result;
     if (error.isEmpty()) {
         QVariantList samples;
-        for (int i = 0; i < 3; ++i)
+        for (int i = 0; i < 3; ++i) {
             samples.append(QVariantMap { { QStringLiteral("requests"), 1 << i },
                 { QStringLiteral("capacity-bytes-per-second"), m_rates[i] / 8 },
-                { QStringLiteral("latency-ms"), m_latencies[i] }, { QStringLiteral("elapsed-seconds"), m_durations[i] },
-                { QStringLiteral("received-bytes"), 4 * 1024 * 1024 } });
+                { QStringLiteral("ttfb-ms"), m_latencies[i] }, { QStringLiteral("elapsed-seconds"), m_durations[i] },
+                { QStringLiteral("received-bytes"), m_received[i] } });
+            qInfo("streaming probe sample requests=%d capacity_bytes_per_second=%.0f ttfb_ms=%.3f "
+                  "elapsed_seconds=%.3f received_bytes=%lld",
+                1 << i, m_rates[i] / 8, m_latencies[i], m_durations[i], static_cast<long long>(m_received[i]));
+        }
+        const auto selection = selectNetworkLanes(samples, m_targetBitrate);
+        const int lanes = selection.requests;
+        qInfo("streaming probe selection requests=%d reason=%d media_bitrate=%.0f", lanes, selection.reason,
+            m_targetBitrate);
         QUrl endpoint;
         endpoint.setScheme(m_request.url().scheme());
         endpoint.setHost(m_request.url().host());
@@ -137,11 +191,17 @@ void SpeedTest::round(int lanes, qint64 totalBytes)
     m_remaining = lanes;
     m_expected = totalBytes / lanes;
     m_elapsed.start();
+    if (m_round < 0 || m_received[m_round] == 0)
+        m_pointElapsed.start();
+    // Each operating point gets at most 2.5 s (including repeated chunks),
+    // leaving room for warmup and JS completion inside the operation's 15 s.
+    m_roundDeadline.start(std::max(1, 2500 - int(m_pointElapsed.elapsed())));
+    ++m_transfer;
     for (int i = 0; i < lanes; ++i) {
         QString address = m_template;
         address.replace(QStringLiteral("{bytes}"), QString::number(m_expected));
         address.replace(QStringLiteral("{nonce}"),
-            m_nonce + QLatin1Char('-') + QString::number(m_round + 1) + QLatin1Char('-') + QString::number(i));
+            m_nonce + QLatin1Char('-') + QString::number(m_transfer) + QLatin1Char('-') + QString::number(i));
         const QUrl url(address, QUrl::StrictMode);
         if ((url.scheme() != QStringLiteral("http") && url.scheme() != QStringLiteral("https"))
             || !m_access->allows(url))
@@ -236,34 +296,46 @@ void SpeedTest::finished(int index)
     lane.reply = nullptr;
     if (--m_remaining != 0)
         return;
+    completeRound();
+}
+
+void SpeedTest::completeRound()
+{
+    const qint64 nanoseconds = std::max<qint64>(1, m_elapsed.nsecsElapsed());
+    qint64 received = 0;
+    double latency = 0;
+    for (int i = 0; i < m_count; ++i) {
+        received += m_lanes[i].received;
+        latency += (m_lanes[i].firstByteNs >= 0 ? m_lanes[i].firstByteNs : nanoseconds) / 1.0e6;
+    }
+    abort();
     if (m_round >= 0) {
-        const qint64 nanoseconds = std::max<qint64>(1, m_elapsed.nsecsElapsed());
-        m_rates[m_round] = static_cast<double>(m_expected * m_count) * 8.0e9 / nanoseconds;
-        m_durations[m_round] = nanoseconds / 1.0e9;
-        double latency = 0;
-        for (int i = 0; i < m_count; ++i)
-            latency += std::max<qint64>(0, m_lanes[i].firstByteNs) / 1.0e6;
-        m_latencies[m_round] = latency / m_count;
+        const double previousDuration = m_durations[m_round];
+        m_received[m_round] += received;
+        m_durations[m_round] += nanoseconds / 1.0e9;
+        m_latencies[m_round] = (m_latencies[m_round] * previousDuration + latency / m_count * (nanoseconds / 1.0e9))
+            / m_durations[m_round];
+        m_rates[m_round] = m_received[m_round] * 8.0 / m_durations[m_round];
+        // Short transfers get more wall time instead of rewarding a single
+        // millisecond-scale result. Bound both traffic and duration; Range
+        // probes repeat the minimum-size resource rather than reading past it.
+        if (m_durations[m_round] < 0.4 && m_received[m_round] < 64 * 1024 * 1024 && m_pointElapsed.elapsed() < 2500)
+            return round(m_count, std::min(m_chunkBytes, 64LL * 1024 * 1024 - m_received[m_round]));
+    } else {
+        const double predicted = received * 0.4e9 / nanoseconds;
+        // Power-of-two batches fit common server buffer size classes, while
+        // each lane still gets exactly the requested bounded payload.
+        m_chunkBytes = 4 * 1024 * 1024;
+        if (!m_range) {
+            while (m_chunkBytes < 32 * 1024 * 1024 && m_chunkBytes * 2 <= predicted)
+                m_chunkBytes *= 2;
+        }
     }
-    if (++m_round == 0)
-        return round(1, 4 * 1024 * 1024);
-    if (m_round == 1)
-        return round(2, 4 * 1024 * 1024);
-    // Always measure every operating point. The controller needs the complete
-    // curve to identify negative scaling, not just the winner of a race.
-    if (m_round == 2)
-        return round(4, 4 * 1024 * 1024);
-    int selected = 0;
-    if (m_targetBitrate > 0) {
-        while (selected < 2 && m_rates[selected] < m_targetBitrate * 1.75)
-            ++selected;
-        if (m_rates[selected] < m_targetBitrate * 1.75)
-            selected = 0;
-    }
-    // Without playback demand, one lane is the neutral startup choice; the
-    // full measured curve is preserved for the adaptive controller.
+    // Always measure the complete curve, including negative scaling.
+    if (++m_round < 3)
+        return round(1 << m_round, m_chunkBytes);
     const qint64 bitrate = std::llround(*std::max_element(m_rates.cbegin(), m_rates.cend()) * 0.75);
-    finish({}, bitrate, 1 << selected);
+    finish({}, bitrate);
 }
 
 } // namespace Spool

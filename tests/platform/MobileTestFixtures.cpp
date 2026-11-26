@@ -10,7 +10,6 @@
 
 namespace SpoolTests {
 namespace {
-    QTemporaryDir *extractedDirectory = nullptr;
     QString extractedRoot;
 }
 
@@ -23,9 +22,8 @@ const QString& mobileFixtureRoot()
 
 bool prepareMobileFixtures()
 {
-    if (!extractedDirectory)
-        extractedDirectory = new QTemporaryDir(QDir::tempPath() + QStringLiteral("/spool-test-fixtures-XXXXXX"));
-    if (!extractedDirectory->isValid()) {
+    static QTemporaryDir directory(QDir::tempPath() + QStringLiteral("/spool-test-fixtures-XXXXXX"));
+    if (!directory.isValid()) {
         std::fprintf(stderr, "mobile tests: cannot create isolated fixture directory\n");
         return false;
     }
@@ -33,21 +31,14 @@ bool prepareMobileFixtures()
     QDirIterator fixtures(prefix, QDir::Files, QDirIterator::Subdirectories);
     while (fixtures.hasNext()) {
         const QString source = fixtures.next();
-        const QString destination = extractedDirectory->filePath(source.mid(prefix.size()));
+        const QString destination = directory.filePath(source.mid(prefix.size()));
         if (!QDir().mkpath(QFileInfo(destination).absolutePath()) || !QFile::copy(source, destination)) {
             std::fprintf(stderr, "mobile tests: cannot extract packaged fixture\n");
             return false;
         }
     }
-    extractedRoot = extractedDirectory->path();
+    extractedRoot = directory.path();
     return true;
-}
-
-void cleanupMobileFixtures()
-{
-    extractedRoot.clear();
-    delete extractedDirectory;
-    extractedDirectory = nullptr;
 }
 
 } // namespace SpoolTests
