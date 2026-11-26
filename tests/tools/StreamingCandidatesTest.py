@@ -22,16 +22,16 @@ if len(argv) != 6 or argv[0] != '--instance' or argv[2] != 'catalog':
 library, offset, limit = argv[3], int(argv[4]), int(argv[5])
 if limit <= 0:
     sys.exit(64)
-with open(os.environ['SPOOL_FAKE_LOG'], 'a') as log:
-    log.write('{} {}\n'.format(library, offset))
+events = []
 entry = json.loads(open(os.environ['SPOOL_FAKE_CATALOG']).read())['libraries'][library]
 failure = entry.get('fail') if entry.get('failOffset', offset) == offset else None
 if entry.get('delay'):
-    with open(os.environ['SPOOL_FAKE_LOG'] + '.events', 'a') as log:
-        log.write(json.dumps([time.monotonic(), 1]) + '\n')
+    events.append([time.monotonic(), 1])
     time.sleep(entry['delay'])
-    with open(os.environ['SPOOL_FAKE_LOG'] + '.events', 'a') as log:
-        log.write(json.dumps([time.monotonic(), -1]) + '\n')
+    events.append([time.monotonic(), -1])
+record_path = os.path.join(os.environ['SPOOL_FAKE_LOG'], '{}-{}.json'.format(os.getpid(), time.monotonic_ns()))
+with open(record_path, 'w') as log:
+    json.dump({'call': '{} {}'.format(library, offset), 'events': events}, log)
 if failure == 'exit':
     sys.stderr.write(entry['noise'])
     sys.exit(3)
@@ -82,7 +82,8 @@ class StreamingCandidatesTest(unittest.TestCase):
             self.fake = self.root / 'spoolet'
             self.fake.write_text(FAKE_SPOOLET, encoding='utf-8')
             self.fake.chmod(self.fake.stat().st_mode | stat.S_IEXEC)
-        self.log = self.root / 'calls.log'
+        self.log = self.root / 'calls'
+        self.log.mkdir()
 
     def run_tool(self, config, arguments):
         catalog = self.root / 'catalog.json'
@@ -95,8 +96,11 @@ class StreamingCandidatesTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         return json.loads(result.stdout)
 
+    def read_records(self):
+        return [json.loads(path.read_text()) for path in sorted(self.log.glob('*.json'))]
+
     def calls(self):
-        return self.log.read_text().split() if self.log.exists() else []
+        return [record['call'] for record in self.read_records()]
 
     def test_parallel_pages_rank_all_rows_without_fetching_past_total(self):
         rows = [item(str(i), [source(1000000 + i, i + 1, 1920, 1080)], url=NOISE)
@@ -109,11 +113,13 @@ class StreamingCandidatesTest(unittest.TestCase):
         self.assertEqual([r['id'] for r in report['candidates']], ['349', '348', '347'])
         self.assertEqual(report['libraries'][0], {'library': 'movies', 'scanned': 350,
                          'total': 350, 'unknownBitrate': 0, 'complete': True})
-        calls = self.log.read_text().splitlines()
+        records = self.read_records()
+        calls = [record['call'] for record in records]
         self.assertEqual(set(calls), {'movies 0', 'movies 100', 'movies 200', 'movies 300'})
         self.assertEqual(len(calls), 4)
         active = peak = 0
-        for _, change in sorted(json.loads(line) for line in Path(str(self.log) + '.events').read_text().splitlines()):
+        events = [event for record in records for event in record['events']]
+        for _, change in sorted(events):
             active += change
             peak = max(peak, active)
         self.assertLessEqual(peak, 2, 'catalog scan exceeded its concurrent provider operation limit')

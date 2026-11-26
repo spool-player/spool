@@ -208,6 +208,7 @@ private:
     void resetApplicationState();
     void resetVisibleModels();
     void loadLibraries();
+    bool hasMissingSourceLibraries() const;
     void loadMoreCurrentItems();
     void loadBrowseBlock(int start);
     void loadBrowseIndex();
@@ -290,6 +291,7 @@ private:
     quint64 m_albumQueueGeneration = 0;
     bool m_episodeQueuePending = false;
     LibraryListModel m_libraries;
+    bool m_librariesLoading = false;
     MovieItem m_activePlaybackItem;
     QString m_activeMediaSourceId;
     qint64 m_activeSourceBitrate = 0;

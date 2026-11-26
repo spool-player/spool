@@ -224,8 +224,7 @@ namespace {
 
         static void onMpvUpdate(void *ctx)
         {
-            auto *item = static_cast<MpvVideoItem *>(ctx);
-            QMetaObject::invokeMethod(item, "update", Qt::QueuedConnection);
+            static_cast<MpvVideoItem *>(ctx)->scheduleMpvUpdate();
         }
 
         QMetaObject::Connection m_frameSwappedConnection;
@@ -272,6 +271,7 @@ namespace {
             // Qt owns the external-command bracket and binds this item's FBO.
             // Nested begin/end calls enqueue RHI state inside that bracket.
             if (m_lifecycle.hasPendingHandle()) {
+                QQuickOpenGLUtils::resetOpenGLState();
                 m_lifecycle.releaseContext();
                 if (auto *next = m_lifecycle.nextHandle())
                     createRenderContext(next);
@@ -292,6 +292,12 @@ namespace {
             QOpenGLFramebufferObject *fbo = framebufferObject();
             if (!fbo)
                 return;
+
+            // Qt's QQuickFramebufferObject boundary does not restore all GL
+            // raster/VAO/blend/scissor state between frames; libmpv requires
+            // default OpenGL state before every render pass.
+            QQuickOpenGLUtils::resetOpenGLState();
+            fbo->bind();
 
             mpv_opengl_fbo mpfbo {};
             mpfbo.fbo = static_cast<int>(fbo->handle());
@@ -911,6 +917,18 @@ void MpvVideoItem::setMpvHandle(mpv_handle *handle)
         m_releaseCompleted.reset();
         m_attachCompleted = std::make_shared<std::atomic_bool>(false);
     }
+    update();
+}
+
+void MpvVideoItem::scheduleMpvUpdate()
+{
+    if (!m_updateScheduled.exchange(true, std::memory_order_acq_rel))
+        QMetaObject::invokeMethod(this, &MpvVideoItem::handleMpvUpdate, Qt::QueuedConnection);
+}
+
+void MpvVideoItem::handleMpvUpdate()
+{
+    m_updateScheduled.store(false, std::memory_order_release);
     update();
 }
 

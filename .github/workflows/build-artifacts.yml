@@ -1394,7 +1394,7 @@ jobs:
           SPOOL_ANDROID_KEYSTORE_STORE_PASS: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release && secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD || '' }}
           SPOOL_ANDROID_KEYSTORE_KEY_PASS: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release && secrets.ANDROID_RELEASE_KEY_PASSWORD || '' }}
         run: |
-          nix develop .#android -c bash tools/android/build-universal-apk.sh \
+          nix develop .#android-packaging -c bash tools/android/build-universal-apk.sh \
             dist/android/spool-universal.apk \
             dist/android/universal-inputs \
             dist/android/spool-arm64-v8a.apk \
@@ -1406,7 +1406,7 @@ jobs:
           EXPECTED_CERT_SHA256: 0c9deff0513eed6d43521df31ad6d2d8e928c029b146d902f4bcc25a883c1fb8
         run: |
           set -euo pipefail
-          nix develop .#android -c bash -c "
+          nix develop .#android-packaging -c bash -c "
             output=\"\$(\"\$ANDROID_HOME/build-tools/36.0.0/apksigner\" verify --verbose --print-certs dist/android/spool-universal.apk)\"
             printf '%s\n' \"\$output\"
             grep -Fq \"Signer #1 certificate SHA-256 digest: \$EXPECTED_CERT_SHA256\" <<<\"\$output\"

@@ -52,7 +52,7 @@ def command(arguments, *, check=True, timeout=30, input=None, env=None):
 
 def diagnostic(text):
     # Only controlled native test diagnostics. Never print provider/app payloads.
-    markers = ("video result:", "orientation:", "viewport:", "first video frame", "native presentation:",
+    markers = ("video result:", "orientation:", "viewport:", "first video frame", "native presentation:", "native OSD:",
                "render context handoff did not complete", "render context was not ready",
                "failed to initialize mpv", "tvOS audio smoke:", "tvOS credentials smoke:",
                "An error was encountered processing the command", "dyld[", "spool-test-require:")
@@ -1248,7 +1248,7 @@ def export_attempt(private, destination, result):
             r"^app-journey: production spoolet rejected ([a-z_-]{1,32}) "
             r"\(exit=(-?[0-9]+), code=([a-z_]{1,64}), elapsed_ms=([0-9]+), "
             r"timeout_origin=(unknown|server|client_write|client_response)\)")
-        reason_pattern = re.compile(r'^app-journey: ([A-Za-z0-9 ,.:;()=_\x27"-]{1,200})$')
+        reason_pattern = re.compile(r'^app-journey: ([A-Za-z0-9 ,.:;()=_\x27"-]{1,400})$')
         with log.open(encoding="utf-8", errors="replace") as stream:
             for line in stream:
                 stripped = line.rstrip("\r\n")
@@ -1262,7 +1262,7 @@ def export_attempt(private, destination, result):
                     continue
                 reason_match = reason_pattern.match(stripped)
                 if reason_match:
-                    reason = reason_match.group(1)
+                    reason = reason_match.group(1)[:240]
                     if ("retained at" not in reason and "://" not in reason and
                             "/" not in reason and not re.search(r"[a-fA-F0-9]{24,}", reason)):
                         lines.append("reason=" + reason)

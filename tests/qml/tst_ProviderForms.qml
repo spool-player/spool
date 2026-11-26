@@ -26,6 +26,7 @@ TestCase {
         property var completions: []
         property var pendingAuthentication: null
         property var pendingAuthenticationRejection: null
+        property int authenticationCount: 0
         property var pendingPoll: null
         property int closes: 0
         function request(operation, args) {
@@ -44,11 +45,13 @@ TestCase {
                                            users: [],
                                            codeEnabled: true
                                        })
-            if (operation === "authenticate")
+            if (operation === "authenticate") {
+                ++authenticationCount
                 return new Promise((resolve, reject) => {
                     pendingAuthentication = resolve
                     pendingAuthenticationRejection = reject
                 })
+            }
             if (operation === "codeStart")
                 return Promise.resolve({
                                            code: "123456",
@@ -78,6 +81,36 @@ TestCase {
             codeStartOperation: "codeStart"
             codePollOperation: "codePoll"
             codeEnabledField: "codeEnabled"
+        }
+    }
+    Component {
+        id: routedLogin
+        KeyRouter {
+            id: router
+            property alias form: form
+            activeTarget: routeAdapter
+            textInputActive: InputKeys.isTextInputItem(router.Window.window ? router.Window.window.activeFocusItem :
+                                                                              null)
+
+            QtObject {
+                id: routeAdapter
+                function activate() {
+                    form.activate()
+                }
+                function longPress() {
+                    return false
+                }
+            }
+
+            ServerLogin {
+                id: form
+                anchors.fill: parent
+                provider: testCase.providerContext
+                codeLabel: "Link code"
+                codeStartOperation: "codeStart"
+                codePollOperation: "codePoll"
+                codeEnabledField: "codeEnabled"
+            }
         }
     }
     Component {
@@ -154,6 +187,7 @@ TestCase {
         provider.completions = []
         provider.pendingAuthentication = null
         provider.pendingAuthenticationRejection = null
+        provider.authenticationCount = 0
         provider.pendingPoll = null
         provider.closes = 0
         provider.arguments = {
@@ -178,6 +212,41 @@ TestCase {
                 return found
         }
         return null
+    }
+    function test_tvUsernameAcceptStaysOnPasswordRow() {
+        const previousFollowsFocus = Theme.textEntryFollowsFocus
+        const previousKeyboardFocus = Metrics.keyboardFocusActive
+        Theme.textEntryFollowsFocus = false
+        Metrics.keyboardFocusActive = true
+        try {
+            const shell = form(routedLogin)
+            shell.form.connect("fixture.invalid")
+            tryCompare(shell.form, "step", "account")
+            const username = accessibleItem(shell.form, "Username")
+            const password = accessibleItem(shell.form, "Password")
+            verify(username)
+            verify(password)
+            const usernameRow = username.parent
+            const passwordRow = password.parent
+            tryVerify(() => usernameRow.activeFocus && !username.activeFocus)
+            keyClick(Qt.Key_Return)
+            verify(username.activeFocus)
+            username.text = "journey"
+            keyClick(Qt.Key_Return)
+            verify(passwordRow.activeFocus)
+            verify(!password.activeFocus,
+                   "accepting Username must land on Password row without re-triggering KeyRouter")
+            compare(provider.authenticationCount, 0)
+            keyClick(Qt.Key_Return)
+            verify(password.activeFocus)
+            compare(provider.authenticationCount, 0)
+            password.text = "incorrect-password"
+            keyClick(Qt.Key_Return)
+            tryCompare(provider, "authenticationCount", 1)
+        } finally {
+            Theme.textEntryFollowsFocus = previousFollowsFocus
+            Metrics.keyboardFocusActive = previousKeyboardFocus
+        }
     }
     function test_wrappedRejectionKeepsPasswordVisibleWithoutFocusSteal() {
         const view = form(login)
