@@ -59,6 +59,33 @@ SPOOL_TEST_MAIN("settings-controller")
     SettingsController settings(&database, nullptr, &artwork);
     QCoro::waitFor(settings.loadLocalAsync());
 
+    const QString systemDialogs = QStringLiteral("appearance/systemFileDialogs");
+    const QString systemMediaControls = QStringLiteral("appearance/appleMediaControls");
+    const QString navigateMenu = QStringLiteral("appearance/macOSNavigateMenu");
+#if defined(Q_OS_MACOS)
+    constexpr bool mediaControlsDefault = false;
+#else
+    constexpr bool mediaControlsDefault = true;
+#endif
+    require(settings.value(systemDialogs).toBool(), "system file dialogs must start enabled");
+    require(settings.value(systemMediaControls).toBool() == mediaControlsDefault,
+        "system playback controls must use the platform-preserving default");
+    require(!settings.value(navigateMenu).toBool(), "the macOS menu must be opt-in");
+    QCoro::waitFor(settings.applyValues({ { systemDialogs, false } }, Spool::ChangeOrigin::User));
+    SettingsController restoredDialogs(&database, nullptr, &artwork);
+    QCoro::waitFor(restoredDialogs.loadLocalAsync());
+    require(!restoredDialogs.value(systemDialogs).toBool(), "file dialog preference must survive profile reload");
+    require(restoredDialogs.value(systemMediaControls).toBool() == mediaControlsDefault,
+        "file dialog mode must leave the playback controls preference alone");
+    QCoro::waitFor(settings.applyValues(
+        { { systemDialogs, true }, { systemMediaControls, !mediaControlsDefault }, { navigateMenu, true } },
+        Spool::ChangeOrigin::User));
+    QCoro::waitFor(restoredDialogs.loadLocalAsync());
+    require(restoredDialogs.value(systemDialogs).toBool()
+            && restoredDialogs.value(systemMediaControls).toBool() != mediaControlsDefault,
+        "Apple file dialogs and system playback controls must persist independently");
+    require(restoredDialogs.value(navigateMenu).toBool(), "the optional macOS menu must survive profile reload");
+
     // Automatic encoding is part of the device contract, not an expected value
     // obtained from the policy being tested. Native Apple TV keeps WebP; only
     // webOS and Android televisions choose JPEG.

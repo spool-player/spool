@@ -26,6 +26,8 @@ enum class SettingPlatform {
     Desktop,
     WebOS,
     Android,
+    MacOS,
+    Apple,
 };
 
 enum class SettingSyncPolicy { Never, PortableDefault, DeviceOptIn };
@@ -167,6 +169,8 @@ struct SettingSpec {
     SettingSpec onDesktop() const;
     SettingSpec onWebOS() const;
     SettingSpec onAndroid() const;
+    SettingSpec onMacOS() const;
+    SettingSpec onApple() const;
     SettingSpec whenSetTo(const char *otherKey, const char *otherValue) const;
     SettingSpec duringHdrPlayback() const;
 };

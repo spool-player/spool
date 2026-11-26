@@ -41,7 +41,7 @@ FocusScope {
         drain()
     }
     function drain() {
-        if (blocked || opened || files.visible || pendingDrops.length === 0)
+        if (blocked || opened || (filePicker.item && filePicker.item.visible) || pendingDrops.length === 0)
             return
         const urls = pendingDrops[0]
         pendingDrops = pendingDrops.slice(1)
@@ -114,8 +114,19 @@ FocusScope {
         Store.installInspected(installationToken)
     }
     function openFiles() {
-        if (!blocked && !opened)
-            files.open()
+        if (blocked || opened || (filePicker.item && filePicker.item.visible))
+            return
+        const useSystemDialog = Qt.platform.os !== "osx" || Settings.values["appearance/systemFileDialogs"] !== false
+        const options = useSystemDialog ? 0 : FileDialog.DontUseNativeDialog
+        if (!filePicker.item || filePicker.item.options !== options) {
+            const currentFolder = filePicker.item ? filePicker.item.currentFolder : null
+            filePicker.active = false
+            filePicker.active = true
+            filePicker.item.options = options
+            if (currentFolder)
+                filePicker.item.currentFolder = currentFolder
+        }
+        filePicker.item.open()
     }
     function back() {
         if (phase !== "installing")
@@ -123,11 +134,8 @@ FocusScope {
         return true
     }
     function routeKey(key, inputPhase, repeat) {
-        if (InputKeys.isBack(key, false, false)) {
-            if (inputPhase === "release")
-                back()
-            return true
-        }
+        if (InputKeys.isBack(key, false, false))
+            return false
         const selected = buttons.findIndex(b => b.activeFocus)
         if (InputKeys.isAccept(key)) {
             if (inputPhase === "press" && !repeat && selected < 0)
@@ -232,14 +240,17 @@ FocusScope {
             root.inspectNext()
         }
     }
-    FileDialog {
-        id: files
-        title: "Open files or Spool provider packages (.szo)"
-        fileMode: FileDialog.OpenFiles
-        nameFilters: ["All files (*)"]
-        onAccepted: root.submitUrls(selectedFiles)
-        onVisibleChanged: if (!visible)
-                              Qt.callLater(root.drain)
+    Loader {
+        id: filePicker
+        active: false
+        sourceComponent: FileDialog {
+            title: "Open files or Spool provider packages (.szo)"
+            fileMode: FileDialog.OpenFiles
+            nameFilters: ["All files (*)"]
+            onAccepted: root.submitUrls(selectedFiles)
+            onVisibleChanged: if (!visible)
+                                  Qt.callLater(root.drain)
+        }
     }
     Rectangle {
         anchors.fill: parent

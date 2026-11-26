@@ -916,6 +916,13 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
             macos-titlebar tests/platform/MacOSTitlebarTest.mm
         )
     endif()
+    if(APPLE AND NOT SPOOL_APPLE_MOBILE)
+        list(APPEND SPOOL_TESTS_platform
+            macos-native-menu tests/platform/MacOSMenuTest.mm
+            apple-media-controls tests/platform/AppleMediaControlsTest.mm)
+        set_source_files_properties(tests/platform/MacOSMenuTest.mm tests/platform/AppleMediaControlsTest.mm
+            PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    endif()
     set(SPOOL_TESTS_providers
         local-provider tests/providers/LocalProviderTest.cpp
         script-runtime tests/providers/ScriptRuntimeTest.cpp

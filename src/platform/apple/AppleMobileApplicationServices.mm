@@ -2,14 +2,12 @@
 #include "platform/NativeAppWindow.h"
 #include "player/PlayerController.h"
 #include "AppleMobileRuntime.h"
+#include "AppleSystemMediaControls.h"
 #include <atomic>
 
 #include <QGuiApplication>
 #include <QMetaObject>
-#include <QPointer>
-#include <QTimer>
 #import <AVFoundation/AVFoundation.h>
-#import <MediaPlayer/MediaPlayer.h>
 #import <UIKit/UIKit.h>
 #import <TargetConditionals.h>
 
@@ -23,9 +21,8 @@ struct PlatformApplicationServices::PlatformData : QObject {
     NativeAppWindow& window;
     PlayerController *player;
     NSMutableArray *observers = [NSMutableArray array];
-    NSMutableArray *commands = [NSMutableArray array];
+    std::unique_ptr<AppleSystemMediaControls> mediaControls;
     bool resumeAfterInterruption = false;
-    QTimer nowPlayingTimer;
 
     PlatformData(ApplicationHooks& hooks, NativeAppWindow& window)
         : hooks(hooks), window(window), player(hooks.player) { }
@@ -33,25 +30,9 @@ struct PlatformApplicationServices::PlatformData : QObject {
     {
         for (id observer in observers)
             [NSNotificationCenter.defaultCenter removeObserver:observer];
-        for (NSArray *registration in commands)
-            [(MPRemoteCommand *)registration[0] removeTarget:registration[1]];
-        MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo = nil;
+        mediaControls.reset();
         [AVAudioSession.sharedInstance setActive:NO
             withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation error:nil];
-    }
-    void updateNowPlaying()
-    {
-        if (!player->sessionActive()) {
-            MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo = nil;
-            return;
-        }
-        MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo = @{
-            MPMediaItemPropertyTitle: [NSString stringWithUTF8String:player->title().toUtf8().constData()],
-            MPMediaItemPropertyPlaybackDuration: @(player->durationSeconds()),
-            MPNowPlayingInfoPropertyElapsedPlaybackTime: @(player->estimatedPositionSeconds()),
-            MPNowPlayingInfoPropertyPlaybackRate: @(player->paused() ? 0.0 : player->effectivePlaybackSpeed()),
-            MPNowPlayingInfoPropertyIsLiveStream: @(player->durationSeconds() <= 0),
-        };
     }
     void syncSession()
     {
@@ -66,19 +47,7 @@ struct PlatformApplicationServices::PlatformData : QObject {
         }
         if (error)
             emit hooks.toastRequested(QStringLiteral("Could not activate the system audio output."));
-        updateNowPlaying();
-    }
-    void command(MPRemoteCommand *command, std::function<void(MPRemoteCommandEvent *)> action)
-    {
-        QPointer<PlayerController> guard(player);
-        id token = [command addTargetWithHandler:^MPRemoteCommandHandlerStatus(MPRemoteCommandEvent *event) {
-            if (!guard)
-                return MPRemoteCommandHandlerStatusCommandFailed;
-            QMetaObject::invokeMethod(this, [guard, action, event] { if (guard) action(event); }, Qt::QueuedConnection);
-            return MPRemoteCommandHandlerStatusSuccess;
-        }];
-        [commands addObject:@[ command, token ]];
-        command.enabled = YES;
+        mediaControls->updateNowPlaying();
     }
 };
 PlatformApplicationServices::PlatformApplicationServices(
@@ -89,10 +58,7 @@ void PlatformApplicationServices::start()
 {
     auto *p = m_platform.get();
     QObject::connect(p->player, &PlayerController::sessionActiveChanged, p, [p] { p->syncSession(); });
-    QObject::connect(p->player, &PlayerController::playbackStateChanged, p, [p] { p->updateNowPlaying(); });
-    p->nowPlayingTimer.setInterval(1000);
-    QObject::connect(&p->nowPlayingTimer, &QTimer::timeout, p, [p] { p->updateNowPlaying(); });
-    p->nowPlayingTimer.start();
+    p->mediaControls = std::make_unique<AppleSystemMediaControls>(p->hooks);
     QObject::connect(qGuiApp, &QGuiApplication::applicationStateChanged, p, [p](Qt::ApplicationState state) {
         if (state == Qt::ApplicationActive) {
             renderingAllowed.store(true, std::memory_order_release);
@@ -136,16 +102,6 @@ void PlatformApplicationServices::start()
         object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *) {
             QMetaObject::invokeMethod(p, [p] { if (p->hooks.memoryPressure) p->hooks.memoryPressure(QStringLiteral("critical")); }, Qt::QueuedConnection);
         }]];
-    auto *center = MPRemoteCommandCenter.sharedCommandCenter;
-    p->command(center.playCommand, [p](auto *) { p->player->setPaused(false); });
-    p->command(center.pauseCommand, [p](auto *) { p->player->setPaused(true); });
-    p->command(center.togglePlayPauseCommand, [p](auto *) { p->player->togglePause(); });
-    p->command(center.stopCommand, [p](auto *) { if (p->hooks.stopPlayback) p->hooks.stopPlayback(); });
-    p->command(center.nextTrackCommand, [p](auto *) { if (p->hooks.playNext) p->hooks.playNext(); });
-    p->command(center.previousTrackCommand, [p](auto *) { if (p->hooks.playPrevious) p->hooks.playPrevious(); });
-    p->command(center.changePlaybackPositionCommand, [p](MPRemoteCommandEvent *event) {
-        p->player->seek([(MPChangePlaybackPositionCommandEvent *)event positionTime]);
-    });
 #if !TARGET_OS_TV
     QObject::connect(&p->hooks, &ApplicationHooks::diagnosticsReportSaved, p, [p](const QString& path) {
         const QByteArray encoded = path.toUtf8();

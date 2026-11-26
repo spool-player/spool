@@ -54,3 +54,11 @@ clock adjustments. It does not shut down or suspend the device. If the app event
 loop is delayed, playback stops on the first callback that observes the elapsed
 deadline, including a stream negotiation callback; device suspension and process
 termination remain platform lifecycle behavior.
+
+## Apple system controls and panels
+
+- On macOS, **Appearance → macOS file and folder dialogs** is enabled by default. Turn it off to use the Qt Quick file and folder pickers. The preference applies the next time a picker opens.
+- On macOS, **Appearance → macOS Navigate menu** adds Open Files, Search, and Settings to the system menu bar. It is off by default. The native commands use the existing QML shortcut handlers.
+- **Appearance → System playback controls** adds Spool's Now Playing information and system transport callbacks. It is opt-in on macOS and enabled by default on iOS and tvOS. Turn it off to withdraw Now Playing information and system commands.
+
+These preferences are stored independently on each installation. Linux offscreen checks exercise preference storage and the Qt Quick picker. The `macos-native-menu` selector exercises AppKit menu attachment, actions, and removal on hosted macOS. The `apple-media-controls` selector exercises MediaPlayer registration state and metadata removal on hosted macOS and in iOS and tvOS simulators. Verify native Cocoa panels on macOS and use physical Apple devices for Siri Remote gestures and end-to-end playback control from system surfaces. [Apple MediaPlayer remote interactions](https://developer.apple.com/documentation/avfoundation/supporting-remote-interactions-in-tvos)

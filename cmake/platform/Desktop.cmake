@@ -5,7 +5,7 @@ function(spool_add_desktop_sources native_target core_target)
         src/platform/desktop/DesktopPlaybackSurface.cpp
         src/platform/desktop/DesktopPlaybackRuntime.cpp
     )
-    target_sources(${native_target} PRIVATE
-        src/platform/desktop/DesktopApplicationServices.cpp
-    )
+    if(NOT APPLE)
+        target_sources(${native_target} PRIVATE src/platform/desktop/DesktopApplicationServices.cpp)
+    endif()
 endfunction()

@@ -15,15 +15,19 @@ function(spool_configure_macos_targets native_target core_target)
     endif()
 
     target_sources(${core_target} PRIVATE
+        src/platform/apple/AppleSystemMediaControls.mm
         src/platform/macos/MacOSSettingsPolicy.cpp
         src/platform/macos/MacOSPlatformPaths.cpp
         src/platform/macos/MacOSCredentialStore.cpp
+        src/platform/macos/MacOSApplicationServices.mm
         src/platform/macos/MacOSSystemProbes.cpp
         src/platform/macos/MacOSTitlebar.mm
         src/platform/macos/MacOSDisplayOutput.mm
         src/platform/macos/MacOSDisplayOutput.h
         src/platform/desktop/UnsupportedPerformanceSampler.cpp
     )
+    set_source_files_properties(src/platform/apple/AppleSystemMediaControls.mm src/platform/macos/MacOSApplicationServices.mm
+        PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
     target_compile_definitions(${core_target} PRIVATE
         "SPOOL_MACOS_CREDENTIAL_SERVICE=\"${SPOOL_MACOS_CREDENTIAL_SERVICE}\""
     )
@@ -37,7 +41,7 @@ function(spool_configure_macos_targets native_target core_target)
         set_source_files_properties("${SPOOL_MACOS_ICON}" PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
         target_sources(${native_target} PRIVATE "${SPOOL_MACOS_ICON}")
     endif()
-    target_link_libraries(${core_target} PUBLIC PkgConfig::MPV "-framework Security" "-framework AppKit")
+    target_link_libraries(${core_target} PUBLIC PkgConfig::MPV "-framework Security" "-framework AppKit" "-framework MediaPlayer")
     target_link_libraries(${native_target} PRIVATE "-framework IOKit")
     set_target_properties(${native_target} PROPERTIES
         MACOSX_BUNDLE TRUE
