@@ -16,6 +16,8 @@ bool validInstance(const QString& instance);
 bool privateFile(const QString& path);
 QJsonObject readDescriptor(const QString& path);
 // SSH transports the capability over stdin only; no remote spoolet is required.
+// Platforms built without Qt process support report SSH as unavailable; their
+// local socket/TCP control protocol remains supported.
 bool validSshHost(const QString& host);
 QByteArray sshExchange(const QString& host, const QString& command, const QByteArray& input, int timeoutMs,
     qsizetype maxBytes, QString *error, int forwardPort = 0);

@@ -8,7 +8,9 @@
 #include <QJsonDocument>
 #include <QLocalSocket>
 #include <QNetworkProxy>
+#if QT_CONFIG(process)
 #include <QProcess>
+#endif
 #include <QRegularExpression>
 #include <QStandardPaths>
 #include <QTcpSocket>
@@ -193,6 +195,7 @@ QByteArray sshExchange(const QString& host, const QString& command, const QByteA
         *error = QStringLiteral("Invalid SSH host; use [USER@]HOST without options or shell syntax");
         return {};
     }
+#if QT_CONFIG(process)
     QElapsedTimer clock;
     clock.start();
     const auto remaining = [&] { return qMax(0, timeoutMs - int(clock.elapsed())); };
@@ -251,6 +254,15 @@ QByteArray sshExchange(const QString& host, const QString& command, const QByteA
         process.waitForFinished(1000);
     }
     return {};
+#else
+    Q_UNUSED(command)
+    Q_UNUSED(input)
+    Q_UNUSED(timeoutMs)
+    Q_UNUSED(maxBytes)
+    Q_UNUSED(forwardPort)
+    *error = QStringLiteral("SSH transport is unavailable on this platform");
+    return {};
+#endif
 }
 
 QJsonObject requestSsh(const QString& host, const QJsonObject& descriptor, const QString& command,

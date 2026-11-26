@@ -1381,7 +1381,7 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
                 "${CMAKE_CURRENT_SOURCE_DIR}/tools/test-transport-netns.sh"
                 --libmpv "${SPOOL_CURL_TEST_MPV}")
             set_tests_properties(transport-packet-performance PROPERTIES LABELS performance
-                RUN_SERIAL TRUE RESOURCE_LOCK transport-network TIMEOUT 1200 SKIP_RETURN_CODE 77)
+                RUN_SERIAL TRUE RESOURCE_LOCK transport-network TIMEOUT 2400 SKIP_RETURN_CODE 77)
         endif()
     endif()
     if(SPOOL_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")

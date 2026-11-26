@@ -58,7 +58,10 @@ if (-not $VerifyOnly) {
         # their own builds of some of these. Chocolatey is a no-op when the
         # pinned version is the installed one.
         $pinned = $package.ContainsKey('Version')
-        if (-not $pinned -and (Get-Command "$($package.Provides).exe" -ErrorAction SilentlyContinue)) {
+        $available = if ($package.Provides -eq 'perl') {
+            [bool](Get-NativeWindowsPerl)
+        } else { [bool](Get-Command "$($package.Provides).exe" -ErrorAction SilentlyContinue) }
+        if (-not $pinned -and $available) {
             Write-Host "$($package.Name) is already installed"
             continue
         }
@@ -80,7 +83,12 @@ if (-not $VerifyOnly) {
 $missing = @()
 foreach ($tool in $requiredTools) {
     $command = Get-Command $tool -ErrorAction SilentlyContinue
-    if ($command) {
+    if ($tool -eq 'perl') {
+        $nativePerl = Get-NativeWindowsPerl
+        if ($nativePerl) {
+            Write-Host "native Perl -> $nativePerl"
+        } else { $missing += 'native Windows Perl (Strawberry Perl)' }
+    } elseif ($command) {
         Write-Host "$tool -> $($command.Source)"
     } else {
         $missing += $tool

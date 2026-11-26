@@ -352,7 +352,15 @@ void JellyfinFixture::handle(QTcpSocket *socket, const QByteArray& header, const
             items.append(movie());
         if (!playedOnly && (ids.isEmpty() || ids.contains(episodeId)))
             items.append(episode());
-        const QJsonObject result { { "Items", items }, { "TotalRecordCount", items.size() } };
+        const auto total = items.size();
+        const int offset = std::max(0, query.queryItemValue("StartIndex").toInt());
+        bool limitPresent = false;
+        const int requested = query.queryItemValue("Limit").toInt(&limitPresent);
+        const auto limit = limitPresent ? std::max(0, requested) : total;
+        QJsonArray page;
+        for (qsizetype index = offset; index < total && page.size() < limit; ++index)
+            page.append(items.at(index));
+        const QJsonObject result { { "Items", page }, { "TotalRecordCount", total }, { "StartIndex", offset } };
         if (libraryBrowse && libraryBrowseHeld) {
             socket->setProperty("heldBrowse", true);
             pendingBrowse.append({ socket, QJsonDocument(result).toJson(QJsonDocument::Compact) });

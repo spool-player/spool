@@ -18,6 +18,7 @@ FocusScope {
     property var allSettingsRows: []
     property var expandedGroups: ({})
     property bool reconcilingSettingsRows: false
+    property int rowFocusRevision: 0
     readonly property bool directionRelease: true
     property var recoveryGesture: ({
                                        "key": 0
@@ -47,6 +48,7 @@ FocusScope {
         const changed = sourceId !== id
         sourceId = id
         if (changed) {
+            ++rowFocusRevision
             pageMode = id.length ? "category" : "index"
             categoryId = id.length ? "streaming" : ""
             searchQuery = ""
@@ -93,6 +95,7 @@ FocusScope {
     function openSearch() {
         if (modalVisible || editingKey.length || inputCompositionActive())
             return false
+        ++rowFocusRevision
         searchField.focusField()
         return true
     }
@@ -915,8 +918,12 @@ FocusScope {
         finishRowEdit()
         choiceDialogAnchor = null
         choiceDialogRow = null
+        const revision = rowFocusRevision
         Qt.callLater(function () {
-            selectRow(currentIndex, true)
+            // Closing a popup must not steal a newer search/edit or another
+            // route's focus while its deferred layout work finishes.
+            if (revision === rowFocusRevision && visible && activeFocus && !searchField.editing)
+                selectRow(currentIndex, true)
         })
     }
 
@@ -930,8 +937,12 @@ FocusScope {
     function closeHomeProviders() {
         homeProvidersVisible = false
         homeProvidersAnchor = null
+        const revision = rowFocusRevision
         Qt.callLater(function () {
-            selectRow(currentIndex, true)
+            // Closing a popup must not steal a newer search/edit or another
+            // route's focus while its deferred layout work finishes.
+            if (revision === rowFocusRevision && visible && activeFocus && !searchField.editing)
+                selectRow(currentIndex, true)
         })
     }
 
