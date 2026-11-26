@@ -1,6 +1,5 @@
 #include "MemoryBudget.h"
 #include "../platform/PlatformSystemProbes.h"
-#include "StreamingCachePolicy.h"
 
 #include <algorithm>
 
@@ -21,7 +20,7 @@ MemoryBudget MemoryBudget::detect()
     budget.artworkByteCacheBytes = static_cast<int>(
         std::clamp(effectiveMem / policy.artworkDivisor, policy.minimumArtworkBytes, policy.maximumArtworkBytes));
 
-    const StreamingCacheTarget demuxerCache = computeStreamingCacheTarget({
+    budget.demuxerCache = computeStreamingCacheTarget({
         .totalMemoryBytes = effectiveMem,
         .availableMemoryBytes = streamingMemory.availableBytes,
         .availableMemoryKnown = streamingMemory.available,
@@ -29,8 +28,6 @@ MemoryBudget MemoryBudget::detect()
         .autoScaleEnabled = true,
         .configuredForwardBytes = 0,
     });
-    budget.mpvDemuxerMaxBytes = QByteArray::number(demuxerCache.forwardBytes);
-    budget.mpvDemuxerMaxBackBytes = QByteArray::number(demuxerCache.backBytes);
     return budget;
 }
 

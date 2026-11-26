@@ -175,6 +175,7 @@ namespace {
     constexpr uint64_t kColorDiagnosticReply = 0x636f000000000000ULL;
     constexpr uint64_t kFullscreenSetReply = 0x6673000000000000ULL;
     constexpr uint64_t kFullscreenObservation = 0x666f000000000000ULL;
+    constexpr uint64_t kOutputDiagnosticObservation = 0x6f64000000000000ULL;
     constexpr uint64_t kMpvReplyKindMask = 0xffff000000000000ULL;
     constexpr uint64_t kMpvReplySerialMask = ~kMpvReplyKindMask;
     constexpr auto kNightModeFilter
@@ -383,6 +384,14 @@ namespace {
         default:
             return {};
         }
+    }
+
+    void applyMpvDemuxerCacheTarget(mpv_handle *handle, const StreamingCacheTarget& target)
+    {
+        int64_t forwardBytes = target.forwardBytes;
+        int64_t backBytes = target.backBytes;
+        mpv_set_property_async(handle, 0, "demuxer-max-bytes", MPV_FORMAT_INT64, &forwardBytes);
+        mpv_set_property_async(handle, 0, "demuxer-max-back-bytes", MPV_FORMAT_INT64, &backBytes);
     }
 
     void logMemoryStats()
@@ -684,9 +693,11 @@ void PlayerController::prepareMpvAsync(bool needsVideoSurface, bool embeddedVide
     if (certificateBundle.isEmpty())
         certificateBundle = MpvOptionProfile::systemCertificateBundle();
     preparation->options = MpvOptionProfile::preInitializeOptions(m_mpvConfigPolicy);
-    auto applicationOptions = MpvOptionProfile::applicationOptions(preparation->platform, needsVideoSurface,
-        m_audioOutputMode, {}, m_streamingOptions, m_demuxerMaxBytes, m_demuxerMaxBackBytes, embeddedVideo,
-        mpvShaderCachePath(), certificateBundle, m_renderQuality, m_alsaBufferMs);
+    const StreamingCacheTarget cacheTarget = m_activeDemuxerTarget;
+    auto applicationOptions
+        = MpvOptionProfile::applicationOptions(preparation->platform, needsVideoSurface, m_audioOutputMode, {},
+            m_streamingOptions, QByteArray::number(cacheTarget.forwardBytes), QByteArray::number(cacheTarget.backBytes),
+            embeddedVideo, mpvShaderCachePath(), certificateBundle, m_renderQuality, m_alsaBufferMs);
     applicationOptions.push_back({ "sub-fonts-dir", m_subtitleFontsPath });
     applicationOptions.push_back({ "osd-fonts-dir", m_subtitleFontsPath });
     applicationOptions.push_back({ "osd-font", QByteArrayLiteral("IBM Plex Sans Var") });
@@ -716,7 +727,7 @@ void PlayerController::prepareMpvAsync(bool needsVideoSurface, bool embeddedVide
     connect(worker, &QThread::finished, worker, &QObject::deleteLater);
     connect(
         worker, &QThread::finished, this,
-        [this, preparation] {
+        [this, preparation, cacheTarget] {
             if (m_mpvPreparation != preparation)
                 return; // The snapshot owns and disposes of stale cores off-thread.
             m_mpvPreparation.reset();
@@ -731,6 +742,10 @@ void PlayerController::prepareMpvAsync(bool needsVideoSurface, bool embeddedVide
                 return;
             }
             m_idleMpvHandle = std::exchange(preparation->handle, nullptr);
+            // The main thread can resample memory while the worker initializes
+            // its snapshot. Apply the current limit before the core can load.
+            if (cacheTarget != m_activeDemuxerTarget)
+                applyMpvDemuxerCacheTarget(m_idleMpvHandle, m_activeDemuxerTarget);
             refreshTransportCapabilities(m_idleMpvHandle);
             m_idleMpvNeedsVideoSurface = preparation->needsVideoSurface;
             m_idleMpvEmbeddedVideo = preparation->embeddedVideo;
@@ -1009,9 +1024,10 @@ void PlayerController::observeMpvProperties(mpv_handle *handle)
     mpv_observe_property(handle, 0, "demuxer-cache-duration", MPV_FORMAT_DOUBLE);
     mpv_observe_property(handle, 0, "video-bitrate", MPV_FORMAT_DOUBLE);
     mpv_observe_property(handle, 0, "audio-bitrate", MPV_FORMAT_DOUBLE);
+    for (const char *name : { "current-vo", "current-ao", "video-codec", "video-dec-params/pixelformat" })
+        mpv_observe_property(handle, kOutputDiagnosticObservation, name, MPV_FORMAT_STRING);
     if (platformMpvOptionProfile() == MpvOptionProfile::Platform::Desktop) {
-        for (const char *name : { "current-vo", "current-gpu-context", "video-codec", "video-dec-params/pixelformat" })
-            mpv_observe_property(handle, 0, name, MPV_FORMAT_STRING);
+        mpv_observe_property(handle, kOutputDiagnosticObservation, "current-gpu-context", MPV_FORMAT_STRING);
         synchronizeWindowFullscreen(handle);
         mpv_observe_property(handle, 0, "speed", MPV_FORMAT_DOUBLE);
         mpv_observe_property(handle, 0, "mute", MPV_FORMAT_FLAG);
@@ -2756,49 +2772,16 @@ void PlayerController::previewSubtitlePreferences(const SubtitlePreferences& pre
     }
 }
 
-static qint64 parseByteBudgetOption(const QByteArray& raw, qint64 fallback)
-{
-    const QByteArray trimmed = raw.trimmed();
-    if (trimmed.isEmpty())
-        return fallback;
-    qint64 multiplier = 1;
-    QByteArray digits = trimmed;
-    const char suffix = digits.back();
-    if (suffix == 'K' || suffix == 'k') {
-        multiplier = 1024LL;
-        digits.chop(1);
-    } else if (suffix == 'M' || suffix == 'm') {
-        multiplier = 1024LL * 1024;
-        digits.chop(1);
-    } else if (suffix == 'G' || suffix == 'g') {
-        multiplier = 1024LL * 1024 * 1024;
-        digits.chop(1);
-    }
-    bool ok = false;
-    const qint64 value = digits.toLongLong(&ok);
-    return ok && value > 0 ? value * multiplier : fallback;
-}
-
-void PlayerController::setDemuxerBudget(const QByteArray& maxBytes, const QByteArray& maxBackBytes)
+void PlayerController::setDemuxerBudget(StreamingCacheTarget target)
 {
     constexpr qint64 mib = 1024LL * 1024;
-    StreamingCacheTarget target = m_activeDemuxerTarget;
-    if (target.forwardBytes <= 0)
-        target.forwardBytes = parseByteBudgetOption(m_demuxerMaxBytes, 64 * mib);
-    if (target.backBytes <= 0)
-        target.backBytes = parseByteBudgetOption(m_demuxerMaxBackBytes, 32 * mib);
-
-    if (!maxBytes.isEmpty())
-        target.forwardBytes = parseByteBudgetOption(maxBytes, target.forwardBytes);
     if (m_forwardCacheSizeMiB > 0)
         target.forwardBytes = std::max(target.forwardBytes, static_cast<qint64>(m_forwardCacheSizeMiB) * mib);
-    if (!maxBackBytes.isEmpty())
-        target.backBytes = parseByteBudgetOption(maxBackBytes, target.backBytes);
 
-    const StreamingCacheTarget previous = m_activeDemuxerTarget;
+    if (target == m_activeDemuxerTarget)
+        return;
     applyDemuxerCacheTarget(target, false);
-    if (target != previous)
-        discardPreparedMpvForOptionChange("demuxer budget change");
+    discardPreparedMpvForOptionChange("demuxer budget change");
 }
 
 void PlayerController::setForwardCacheSizeMiB(int sizeMiB)
@@ -3597,10 +3580,7 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_
                 if (m_muted.exchange(muted) != muted)
                     emit volumeChanged();
             });
-        } else if ((strcmp(property->name, "current-vo") == 0 || strcmp(property->name, "current-gpu-context") == 0
-                       || strcmp(property->name, "video-codec") == 0
-                       || strcmp(property->name, "video-dec-params/pixelformat") == 0)
-            && property->format == MPV_FORMAT_STRING) {
+        } else if (event->reply_userdata == kOutputDiagnosticObservation && property->format == MPV_FORMAT_STRING) {
             const auto value = *static_cast<char **>(property->data);
             qInfo() << "player: output diagnostic" << property->name << (value ? value : "unavailable");
         } else if (strcmp(property->name, "hwdec-current") == 0 && property->format == MPV_FORMAT_STRING) {
@@ -3911,28 +3891,19 @@ void PlayerController::skipActiveSegment()
 
 void PlayerController::applyDemuxerCacheTarget(const StreamingCacheTarget& target, bool applyLive)
 {
-    const QByteArray nextForward = QByteArray::number(target.forwardBytes);
-    const QByteArray nextBack = QByteArray::number(target.backBytes);
-    const bool changed
-        = target != m_activeDemuxerTarget || m_demuxerMaxBytes != nextForward || m_demuxerMaxBackBytes != nextBack;
-    if (!changed)
+    if (target == m_activeDemuxerTarget)
         return;
 
     m_activeDemuxerTarget = target;
-    m_demuxerMaxBytes = nextForward;
-    m_demuxerMaxBackBytes = nextBack;
     qInfo("player: demuxer cache target forward=%lldMiB back=%lldMiB",
         static_cast<long long>(target.forwardBytes / (1024LL * 1024)),
         static_cast<long long>(target.backBytes / (1024LL * 1024)));
 
     if (!applyLive)
         return;
-    if (auto *handle = m_mpvLifecycle.handle()) {
-        int64_t forwardValue = target.forwardBytes;
-        int64_t backValue = target.backBytes;
-        mpv_set_property_async(handle, 0, "demuxer-max-bytes", MPV_FORMAT_INT64, &forwardValue);
-        mpv_set_property_async(handle, 0, "demuxer-max-back-bytes", MPV_FORMAT_INT64, &backValue);
-    }
+    auto *handle = m_mpvLifecycle.handle();
+    if (handle || m_idleMpvHandle)
+        applyMpvDemuxerCacheTarget(handle ? handle : m_idleMpvHandle, target);
 }
 
 void PlayerController::updateStreamingMemoryGrant()
