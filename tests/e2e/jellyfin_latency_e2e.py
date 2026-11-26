@@ -144,6 +144,9 @@ class JellyfinTestServer:
             payload = json.loads(raw) if raw and "json" in ctype else raw
             return resp.status, payload
 
+    def server_command(self, arguments: list[str]) -> list[str]:
+        return [self.jellyfin_bin, *arguments]
+
     def start(self) -> dict:
         started = time.monotonic()
         config_dir = self.root / "jf-config"
@@ -171,8 +174,7 @@ class JellyfinTestServer:
         self.log_path = self.root / "jellyfin-stderr.log"
         self._log_file = self.log_path.open("w+b")
         self.proc = subprocess.Popen(
-            [
-                self.jellyfin_bin,
+            self.server_command([
                 "--datadir",
                 str(data_dir),
                 "--configdir",
@@ -185,7 +187,7 @@ class JellyfinTestServer:
                 "--nonetchange",
                 "--published-server-url",
                 self.base_url,
-            ],
+            ]),
             stdout=self._log_file,
             stderr=subprocess.STDOUT,
             env=env,

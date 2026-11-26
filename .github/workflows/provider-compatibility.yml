@@ -1,0 +1,152 @@
+name: Provider compatibility
+run-name: ${{ inputs.version && format('{0} {1} {2}', inputs.provider == 'plex' && 'Plex' || inputs.provider == 'emby' && 'Emby' || 'Jellyfin', inputs.version, inputs.image_digest) || 'Discover upstream provider releases' }}
+
+on:
+  schedule:
+    - cron: '29 3 * * *'
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: Provider tested when a version and digest are supplied.
+        type: choice
+        default: jellyfin
+        options: [jellyfin, emby, plex]
+      version:
+        description: Stable server version. Leave version and digest empty to discover releases.
+        type: string
+      image_digest:
+        description: Immutable digest of the official Linux x86-64 server image.
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  discover:
+    name: Check upstream releases
+    if: ${{ github.ref_name == github.event.repository.default_branch && !inputs.version && !inputs.image_digest }}
+    runs-on: ubuntu-24.04
+    outputs:
+      candidates: ${{ steps.scan.outputs.candidates }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Resolve official image digests
+        id: scan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          candidate_file="$RUNNER_TEMP/provider-candidates.tsv"
+          {
+            gh api --method GET repos/jellyfin/jellyfin/releases -f per_page=100 \
+              | python3 tools/provider-releases.py jellyfin
+            gh api --method GET repos/MediaBrowser/Emby.Releases/releases -f per_page=100 \
+              | python3 tools/provider-releases.py emby
+            curl --fail --silent --show-error --location --max-time 30 https://plex.tv/api/downloads/5.json \
+              | python3 tools/provider-releases.py plex
+          } > "$candidate_file"
+          candidates="$(base64 -w0 "$candidate_file")"  # multiline output without an output delimiter
+          printf 'candidates=%s\n' "$candidates" >> "$GITHUB_OUTPUT"
+
+      - name: Verify dispatch deduplication with a local Git remote
+        run: bash tests/tools/provider-compatibility-dispatch.sh
+
+  dispatch:
+    name: Dispatch newly published versions
+    needs: discover
+    if: ${{ needs.discover.outputs.candidates != '' }}
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: provider-compatibility-dispatch
+      cancel-in-progress: false
+    permissions:
+      actions: write
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Dispatch and persist receipts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SERVER: ${{ github.server_url }}
+          BRANCH: ${{ github.event.repository.default_branch }}
+          CANDIDATES: ${{ needs.discover.outputs.candidates }}
+        run: |
+          set -euo pipefail
+          gh auth setup-git
+          candidates="$RUNNER_TEMP/provider-candidates.tsv"
+          printf '%s' "$CANDIDATES" | base64 --decode > "$candidates"
+          bash tools/dispatch-provider-compatibility.sh "$candidates" "$REPO" "$BRANCH" "$SERVER" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+  compatibility:
+    name: ${{ inputs.provider }} provider contract
+    if: ${{ github.event_name == 'workflow_dispatch' && (inputs.version != '' || inputs.image_digest != '') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    concurrency:
+      group: provider-compatibility-${{ inputs.provider }}-${{ inputs.version }}-${{ inputs.image_digest }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: ./.github/actions/install-nix
+        with:
+          nix_conf: |
+            experimental-features = nix-command flakes
+      - uses: cachix/cachix-action@3ba601ff5bbb07c7220846facfa2cd81eeee15a1 # v16
+        with:
+          name: spool
+          skipPush: true
+      - name: Validate candidate and build the host
+        env:
+          PROVIDER: ${{ inputs.provider }}
+          VERSION: ${{ inputs.version }}
+          IMAGE_DIGEST: ${{ inputs.image_digest }}
+        run: |
+          set -euo pipefail
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          case "$PROVIDER" in
+            jellyfin) [[ "$VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] ;;
+            emby) [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+){3}$ ]] ;;
+            plex) [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+){3}-[0-9a-f]{9}$ ]] ;;
+            *) exit 1 ;;
+          esac
+          nix develop .#native -c bash tools/build-linux-release.sh
+      - name: Test the official container through the bundled provider
+        env:
+          PROVIDER: ${{ inputs.provider }}
+          VERSION: ${{ inputs.version }}
+          IMAGE_DIGEST: ${{ inputs.image_digest }}
+        run: |
+          nix develop .#native -c env PYTHONDONTWRITEBYTECODE=1 \
+            python "tests/e2e/${PROVIDER}_provider_compatibility.py" \
+            --image-digest "$IMAGE_DIGEST" --version "$VERSION" \
+            --spool-tests build/linux-release/app/spool-tests \
+            --report build/linux-release/app/provider-compatibility.json
+      - name: Report result
+        if: ${{ !cancelled() }}
+        run: |
+          {
+            echo '### Provider compatibility'
+            if [[ -f build/linux-release/app/provider-compatibility.json ]]; then
+              echo '```json'
+              cat build/linux-release/app/provider-compatibility.json
+              echo '```'
+            else
+              echo 'The job stopped before it could write a compatibility receipt.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        if: ${{ !cancelled() }}
+        with:
+          name: internal-provider-compatibility
+          path: build/linux-release/app/provider-compatibility.json
+          if-no-files-found: warn
+          retention-days: 7

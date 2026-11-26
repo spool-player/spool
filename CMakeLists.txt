@@ -942,6 +942,13 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
         stream-quality-control tests/providers/StreamQualityControlTest.cpp
         live-jellyfin tests/providers/LiveJellyfinTest.cpp
     )
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        list(APPEND SPOOL_TESTS_providers
+            emby-provider-compatibility tests/providers/EmbyCompatibilityTest.cpp
+            open-movies-provider tests/providers/OpenMoviesCompatibilityTest.cpp
+            plex-provider-compatibility tests/providers/PlexCompatibilityTest.cpp
+            stremio-addon-provider tests/providers/StremioAddonTest.cpp)
+    endif()
     set(SPOOL_TESTS_player
         playback-timeline tests/player/PlaybackTimelineTest.cpp
         playback-track-parser tests/player/PlaybackTrackParserTest.cpp
