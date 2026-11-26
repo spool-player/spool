@@ -199,6 +199,7 @@ build_curl() {
   local stamp="$PREFIX/lib/.spool-curl-configuration" pin
   pin="$(python3 "$ROOT/tools/streaming-fingerprint.py" --root "$ROOT" --target "$ABI:$API:$($CC --version):static-http" --wrapper "${BASH_SOURCE[0]}" --wrapper "$ROOT/tools/lib/streaming-build.sh")"
   [[ -f "$PREFIX/lib/libcurl.a" && -f "$stamp" && "$(<"$stamp")" == "$pin" ]] && return
+  rm -rf "$BUILD_ROOT/streaming"
   source "$ROOT/tools/lib/streaming-build.sh"
   build_streaming_http "$SOURCE_ROOT" "$BUILD_ROOT/streaming" "$PREFIX" OFF \
     -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_ROOT/build/cmake/android.toolchain.cmake" \

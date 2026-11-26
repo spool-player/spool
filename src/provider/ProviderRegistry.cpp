@@ -117,6 +117,11 @@ namespace {
             || !networkNumber(point.value(QStringLiteral("ordered-bytes-per-second"))) || !networkRate(rate)
             || !networkNumber(point.value(QStringLiteral("ttfb-ms"))) || ttfb < 0 || ttfb > 60000)
             return {};
+        // Native playback knows its negotiated protocol and request shape;
+        // unknown dimensions are reserved for the independent Qt probe prior.
+        if (point.value(QStringLiteral("source")).toInt() == 2
+            && (http == 0 || point.value(QStringLiteral("range-bytes")).toLongLong() == 0))
+            return {};
         const bool manual = point.value(QStringLiteral("receive-profile")).toInt() == 1;
         const qint64 receive = point.value(QStringLiteral("receive-bytes")).toLongLong();
         if ((manual && receive < 1024 * 1024) || (!manual && receive != 0))

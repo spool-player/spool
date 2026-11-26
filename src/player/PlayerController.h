@@ -443,6 +443,7 @@ private:
     std::function<void()> m_mpvPreparationContinuation;
     QTimer m_progressTimer;
     QTimer m_networkTimer;
+    QTimer m_idleStreamingMemoryTimer;
     QVariantMap m_networkMetrics;
     QVariantMap m_transportCapabilities;
     void refreshTransportCapabilities(mpv_handle *handle);

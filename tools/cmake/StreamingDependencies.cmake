@@ -45,6 +45,13 @@ else()
         streaming_bool(CURL_DISABLE_${protocol} ON)
     endforeach()
     streaming_bool(CURL_USE_OPENSSL ON)
+    # Curl disables pkg-config by default on Android and Apple mobile targets.
+    # Every wrapper supplies an isolated target-only pkg-config directory;
+    # use it so the NDK/SDK find-root rules do not hide the installed closure.
+    streaming_bool(CURL_USE_PKGCONFIG ON)
+    foreach(dependency NGHTTP2 NGHTTP3 NGTCP2)
+        streaming_bool(${dependency}_USE_STATIC_LIBS ${streaming_static})
+    endforeach()
     streaming_bool(USE_NGHTTP2 ON)
     streaming_bool(USE_NGHTTP3 ON)
     streaming_bool(USE_NGTCP2 ON)

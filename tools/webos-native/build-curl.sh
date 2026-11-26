@@ -21,7 +21,6 @@ JOBS="$(recommended_parallel_jobs 512 1024)"
 bash "$ROOT/tools/prepare-streaming-sources.sh" --root "$ROOT" --output "$SRC_ROOT"
 [[ "$PHASE" != fetch ]] || exit 0
 ensure_webos_sdk_host_tools "$SDK_ROOT"
-export PATH="$SDK_ROOT/bin:$PATH"
 export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
 export PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig:$SYSROOT/usr/lib/pkgconfig"
 export PKG_CONFIG_SYSROOT_DIR="$SYSROOT"
@@ -34,7 +33,7 @@ mkdir -p "$BUILD_ROOT/openssl"
   cd "$BUILD_ROOT/openssl"
   "$SRC_ROOT/openssl/Configure" linux-armv4 shared \
     no-apps no-docs no-tests no-comp no-dtls no-srp no-ssl3 no-weak-ssl-ciphers \
-    --prefix="$TARGET_PREFIX" --libdir=lib --cross-compile-prefix=arm-webos-linux-gnueabi- \
+    --prefix="$TARGET_PREFIX" --libdir=lib --cross-compile-prefix="$SDK_ROOT/bin/arm-webos-linux-gnueabi-" \
     "$(webos_tune_cflags)"
   make -j"$JOBS"
   make DESTDIR="$SYSROOT" install_sw

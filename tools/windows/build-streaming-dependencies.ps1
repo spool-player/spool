@@ -8,14 +8,26 @@ $cygpath = Join-Path $msys 'usr\bin\cygpath.exe'
 $sources = Join-Path $root 'build\windows-deps\streaming-sources'
 $builds = Join-Path $root 'build\windows-deps\streaming-build'
 $prefix = Join-Path $root 'build\windows-deps\streaming-prefix'
-$unixRoot = (& $cygpath -u $root).Trim()
-$unixSources = (& $cygpath -u $sources).Trim()
+function Convert-StreamingPath {
+    param([string] $FilePath)
+    $converted = & $cygpath -u $FilePath
+    if ($LASTEXITCODE -ne 0 -or -not $converted) { throw "Converting streaming path failed: $FilePath" }
+    return ($converted -join "`n").Trim()
+}
+$unixRoot = Convert-StreamingPath $root
+$unixSources = Convert-StreamingPath $sources
+$env:PKG_CONFIG = Join-Path $msys 'usr\bin\pkgconf.exe'
+& $env:PKG_CONFIG --version | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'The target pkg-config resolver is unavailable.' }
+Remove-Item Env:PKG_CONFIG_SYSROOT_DIR -ErrorAction SilentlyContinue
 & $bash "$unixRoot/tools/prepare-streaming-sources.sh" --root $unixRoot --output $unixSources
 if ($LASTEXITCODE -ne 0) { throw 'Preparing verified streaming sources failed.' }
 $fingerprintArgs = @((Join-Path $root 'tools\streaming-fingerprint.py'), '--root', $root,
     '--target', "windows-x64:static:MD:$(& clang --version)", '--wrapper', $PSCommandPath)
-$pin = (& python @fingerprintArgs).Trim()
+$fingerprintOutput = & python @fingerprintArgs
 if ($LASTEXITCODE -ne 0) { throw 'Computing streaming dependency identity failed.' }
+$pin = ($fingerprintOutput -join "`n").Trim()
+if ($pin -notmatch '^[0-9a-f]{64}$') { throw 'Invalid streaming dependency identity.' }
 $stamp = Join-Path $prefix '.spool-streaming-configuration'
 if (-not $Clean -and (Test-Path $stamp) -and (Get-Content $stamp -Raw).Trim() -eq $pin) { return }
 if (Test-Path $builds) { Remove-Item $builds -Recurse -Force }
@@ -32,7 +44,7 @@ try {
     & nmake install_dev
     if ($LASTEXITCODE -ne 0) { throw 'Installing OpenSSL failed.' }
 } finally { Pop-Location }
-$env:PKG_CONFIG_PATH = (& $cygpath -u "$prefix/lib/pkgconfig").Trim()
+$env:PKG_CONFIG_PATH = Convert-StreamingPath "$prefix/lib/pkgconfig"
 foreach ($name in @('nghttp2', 'nghttp3', 'ngtcp2', 'curl')) {
     & cmake -S (Join-Path $sources $name) -B (Join-Path $builds $name) -GNinja `
         "-DSTREAMING_DEPENDENCY=$name" -DSTREAMING_SHARED=OFF `
@@ -40,17 +52,21 @@ foreach ($name in @('nghttp2', 'nghttp3', 'ngtcp2', 'curl')) {
         -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl `
         -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL "-DCMAKE_INSTALL_PREFIX=$prefix" `
         "-DCMAKE_PREFIX_PATH=$prefix" "-DOPENSSL_ROOT_DIR=$prefix" -DOPENSSL_USE_STATIC_LIBS=ON `
-        -DCURL_ZLIB=OFF -DCURL_USE_SCHANNEL=OFF
+        -DCURL_ZLIB=OFF -DCURL_USE_SCHANNEL=OFF -DCURL_CA_NATIVE=ON
     if ($LASTEXITCODE -ne 0) { throw "Configuring $name failed." }
     & cmake --build (Join-Path $builds $name) --parallel 4
     if ($LASTEXITCODE -ne 0) { throw "Building $name failed." }
     & cmake --install (Join-Path $builds $name)
     if ($LASTEXITCODE -ne 0) { throw "Installing $name failed." }
 }
-# curl-config is a shell script even in a Windows cross-compatible install.
-$unixPrefix = (& $cygpath -u $prefix).Trim()
-$features = (& $bash "$unixPrefix/bin/curl-config" --features) -join ' '
-if ($LASTEXITCODE -ne 0 -or $features -notmatch '\bHTTP2\b' -or $features -notmatch '\bHTTP3\b' -or $features -notmatch '\balt-svc\b') {
-    throw 'Installed curl lacks HTTP2, HTTP3 or alt-svc.'
-}
+& cmake -S (Join-Path $root 'tools\cmake\QuicBatchingProbe') -B (Join-Path $builds 'quic-batching-probe') -GNinja `
+    -DCMAKE_C_COMPILER=clang-cl -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL `
+    "-DSTREAMING_CURL_SOURCE=$(Join-Path $sources 'curl')" "-DSTREAMING_CURL_BUILD=$(Join-Path $builds 'curl')" `
+    "-DSTREAMING_INSTALLED_PC=$(Join-Path $prefix 'lib\pkgconfig\libcurl.pc')"
+if ($LASTEXITCODE -ne 0) { throw 'Auditing compiled QUIC batching capabilities failed.' }
+# Audit metadata using native Python and the explicit MSYS shell; no target
+# binary or implicit system package can satisfy a wrong-version closure.
+& python (Join-Path $root 'tools\check-streaming-dependencies.py') --prefix $prefix `
+    --manifest (Join-Path $root 'tools\manifests\streaming-third-party.json') --bash $bash --require-native-ca
+if ($LASTEXITCODE -ne 0) { throw 'The Windows streaming feature/version audit failed.' }
 [IO.File]::WriteAllText($stamp, "$pin`n")

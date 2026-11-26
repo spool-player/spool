@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -20,7 +21,8 @@ class StreamingDependenciesTest(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         for relative in ('tools/lib/manifest-sources.sh', 'tools/prepare-streaming-sources.sh',
-                         'tools/streaming-fingerprint.py', 'tools/cmake/StreamingDependencies.cmake'):
+                         'tools/streaming-fingerprint.py', 'tools/cmake/StreamingDependencies.cmake',
+                         'tools/cmake/QuicBatchingProbe/CMakeLists.txt'):
             target = self.root / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / relative, target)
@@ -89,6 +91,51 @@ class StreamingDependenciesTest(unittest.TestCase):
         wrapper.write_text('changed')
         self.assertNotEqual(initial, identity('arm:28:static'))
 
+    @unittest.skipUnless(shutil.which('ninja'), 'Ninja is required by the production dependency builder')
+    def test_dependency_builder_stops_on_first_configure_failure_even_inside_conditional(self):
+        sources = self.root / 'sources'
+        for name in NAMES[1:]:
+            source = sources / name
+            source.mkdir(parents=True)
+            source.joinpath('CMakeLists.txt').write_text('cmake_minimum_required(VERSION 3.20)\n'
+                'project(FailureFixture NONE)\n'
+                + ('message(FATAL_ERROR "fixture configuration rejected")\n' if name == 'nghttp2'
+                   else 'file(WRITE "${CMAKE_BINARY_DIR}/entered" "configured")\n'))
+        builds = self.root / 'builds'
+        # Conditional callers suppress bash errexit inside functions. The owner
+        # must propagate the failing configure command itself, before siblings.
+        result = subprocess.run(['bash', '-c',
+            'set -e; ROOT="$1"; source "$ROOT/tools/lib/streaming-build.sh"; '
+            'if build_streaming_http "$2" "$3" "$4" OFF; then exit 99; else exit "$?"; fi',
+            'bash', str(ROOT), str(sources), str(builds), str(self.root / 'prefix')],
+            capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotEqual(result.returncode, 99)
+        self.assertIn('fixture configuration rejected', result.stdout + result.stderr)
+        self.assertFalse((builds / 'nghttp3').exists())
+
+    def test_batching_metadata_tracks_actual_target_compile_capability(self):
+        source = self.root / 'curl'
+        (source / 'lib').mkdir(parents=True)
+        (source / 'include').mkdir()
+        build = self.root / 'curl-build'
+        (build / 'lib').mkdir(parents=True)
+        metadata = self.root / 'libcurl.pc'
+        metadata.write_text('Name: test-curl\nVersion: 1\n')
+        setup = source / 'lib/curl_setup.h'
+        for available in (True, False):
+            setup.write_text('#include <sys/socket.h>\n#define HAVE_NETINET_UDP_H 1\n'
+                             '#define USE_NGTCP2 1\n#define USE_NGHTTP3 1\n#define HAVE_SENDMSG 1\n'
+                             + ('#define HAVE_SENDMMSG 1\n' if available else ''))
+            configured = subprocess.run(['cmake', '-S', str(ROOT / 'tools/cmake/QuicBatchingProbe'),
+                '-B', str(self.root / 'probe'), '-DSTREAMING_CURL_SOURCE=' + str(source),
+                '-DSTREAMING_CURL_BUILD=' + str(build), '-DSTREAMING_INSTALLED_PC=' + str(metadata)],
+                capture_output=True, text=True)
+            self.assertEqual(configured.returncode, 0, configured.stdout + configured.stderr)
+            expected = '1' if available and sys.platform.startswith('linux') else '0'
+            self.assertIn('spool_quic_batching=' + expected, metadata.read_text())
+            self.assertEqual(metadata.read_text().count('spool_quic_batching='), 1)
+
     def test_cmake_policy_builds_selected_library_and_requires_protocols(self):
         source = self.root / 'project'
         source.mkdir()
@@ -117,7 +164,7 @@ add_library(sample sample.c)
                         '-C', str(ROOT / 'tools/cmake/StreamingDependencies.cmake')], capture_output=True, text=True)
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     subprocess.run(['cmake', '--build', str(build)], check=True, capture_output=True)
-                    extension = '.so' if shared == 'ON' else '.a'
+                    extension = ('.dylib' if sys.platform == 'darwin' else '.so') if shared == 'ON' else '.a'
                     self.assertTrue((build / ('libsample' + extension)).is_file())
         result = subprocess.run(['cmake', '-DSTREAMING_DEPENDENCY=bad', '-DSTREAMING_SHARED=ON',
             '-P', str(ROOT / 'tools/cmake/StreamingDependencies.cmake')], capture_output=True)

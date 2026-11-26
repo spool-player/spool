@@ -15,6 +15,7 @@ root = args.root.resolve()
 manifest = args.manifest or root / 'tools/manifests/streaming-third-party.json'
 files = [manifest, root / 'tools/prepare-streaming-sources.sh',
          root / 'tools/lib/manifest-sources.sh', root / 'tools/cmake/StreamingDependencies.cmake',
+         root / 'tools/cmake/QuicBatchingProbe/CMakeLists.txt',
          Path(__file__).resolve(), *args.wrapper]
 for source in json.loads(manifest.read_text())['sources'].values():
     files.extend(root / patch for patch in source.get('patches', []))

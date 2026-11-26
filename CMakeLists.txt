@@ -1046,6 +1046,21 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
     else()
     find_package(Threads REQUIRED)
     find_package(Qt6 REQUIRED COMPONENTS QuickTest)
+    # Packaged libmpv disables Meson's test executables. Keep its standalone
+    # policy and accounting contracts in the native application's CI suite.
+    foreach(transport_module IN ITEMS budget controller policy)
+        set(transport_test "spool-curl-${transport_module}-tests")
+        add_executable(${transport_test}
+            "${MPV_ACTIVE_SOURCE_DIR}/stream/curl_${transport_module}.c"
+            "${MPV_ACTIVE_SOURCE_DIR}/test/curl_${transport_module}.c")
+        target_include_directories(${transport_test} PRIVATE "${MPV_ACTIVE_SOURCE_DIR}")
+        target_compile_features(${transport_test} PRIVATE c_std_11)
+        if(UNIX)
+            target_link_libraries(${transport_test} PRIVATE m)
+        endif()
+        add_test(NAME "curl-${transport_module}" COMMAND ${transport_test})
+        set_tests_properties("curl-${transport_module}" PROPERTIES LABELS traditional TIMEOUT 30)
+    endforeach()
     get_target_property(SPOOL_APP_SOURCES spool SOURCES)
     set(SPOOL_TEST_PLATFORM_SOURCES ${SPOOL_APP_SOURCES})
     list(FILTER SPOOL_TEST_PLATFORM_SOURCES INCLUDE REGEX "/[A-Za-z]+PlatformCapabilities\\.cpp$")
@@ -1144,6 +1159,9 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
     add_test(NAME module-seam
         COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-module-seam.sh"
     )
+
+    add_test(NAME streaming-candidates
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/StreamingCandidatesTest.py")
 
     add_test(NAME network-shaper
         COMMAND "${Python3_EXECUTABLE}"
@@ -1338,7 +1356,12 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
                 INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL OFF)
         endforeach()
         set_tests_properties(provider-sdk-tool local-provider-overrides ffmpeg-capability-generator module-seam
-            network-shaper render-benchmark-report altstore-source player-setup-report test-driver-ordering PROPERTIES LABELS traditional)
+            network-shaper streaming-candidates render-benchmark-report altstore-source player-setup-report test-driver-ordering PROPERTIES LABELS traditional)
+        if(UNIX)
+            add_test(NAME streaming-dependencies COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/StreamingDependenciesTest.py")
+            set_tests_properties(streaming-dependencies PROPERTIES LABELS traditional TIMEOUT 120)
+        endif()
         if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
             set_tests_properties(package-audit webos-tooling PROPERTIES LABELS traditional)
             # Exercise the actual curl scheduler/counters, not just its exposed
@@ -1349,9 +1372,6 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
                     --libmpv "${SPOOL_CURL_TEST_MPV}" -v)
             # The real-HTTP suite runs about 330 s of playback serially.
             set_tests_properties(curl-transport PROPERTIES LABELS traditional TIMEOUT 600)
-            add_test(NAME streaming-dependencies COMMAND "${Python3_EXECUTABLE}"
-                "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/StreamingDependenciesTest.py")
-            set_tests_properties(streaming-dependencies PROPERTIES LABELS traditional TIMEOUT 120)
             add_test(NAME transport-protocols COMMAND "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/tests/transport/protocols.py"
                 --transport-helper "${MPV_ACTIVE_SOURCE_DIR}/test/curl_transport.py"
