@@ -61,20 +61,107 @@ try {
     $env:CC = $originalCC
     $env:CXX = $originalCXX
 }
+# OpenSSL's MSVC install_dev writes CMake config files but omits pkg-config
+# files, which libngtcp2_crypto_ossl.pc and libcurl.pc require via
+# Requires.private when Meson resolves static libcurl.
+$opensslVersionHeader = Get-Content -LiteralPath (Join-Path $prefix 'include\openssl\opensslv.h') -Raw
+if ($opensslVersionHeader -notmatch '#\s*define\s+OPENSSL_VERSION_STR\s+"([^"]+)"') {
+    throw 'Failed to read installed OpenSSL version from opensslv.h.'
+}
+$opensslVersion = $Matches[1]
+$pkgConfigDir = Join-Path $prefix 'lib\pkgconfig'
+New-Item -ItemType Directory -Force $pkgConfigDir | Out-Null
+$prefixForward = $prefix -replace '\\', '/'
+$utf8NoBom = [Text.UTF8Encoding]::new($false)
+[IO.File]::WriteAllText((Join-Path $pkgConfigDir 'libcrypto.pc'), @"
+prefix=$prefixForward
+exec_prefix=`${prefix}
+libdir=`${exec_prefix}/lib
+includedir=`${prefix}/include
+
+Name: OpenSSL-libcrypto
+Description: OpenSSL cryptography library
+Version: $opensslVersion
+Libs: -L`${libdir} -llibcrypto
+Libs.private: -lws2_32 -lgdi32 -lcrypt32 -ladvapi32 -luser32
+Cflags: -I`${includedir}
+"@.Replace("`r`n", "`n") + "`n", $utf8NoBom)
+[IO.File]::WriteAllText((Join-Path $pkgConfigDir 'libssl.pc'), @"
+prefix=$prefixForward
+exec_prefix=`${prefix}
+libdir=`${exec_prefix}/lib
+includedir=`${prefix}/include
+
+Name: OpenSSL-libssl
+Description: Secure Sockets Layer and cryptography libraries
+Version: $opensslVersion
+Requires.private: libcrypto
+Libs: -L`${libdir} -llibssl
+Cflags: -I`${includedir}
+"@.Replace("`r`n", "`n") + "`n", $utf8NoBom)
+[IO.File]::WriteAllText((Join-Path $pkgConfigDir 'openssl.pc'), @"
+prefix=$prefixForward
+exec_prefix=`${prefix}
+libdir=`${exec_prefix}/lib
+includedir=`${prefix}/include
+
+Name: OpenSSL
+Description: Secure Sockets Layer and cryptography libraries and tools
+Version: $opensslVersion
+Requires: libssl libcrypto
+"@.Replace("`r`n", "`n") + "`n", $utf8NoBom)
 $env:PKG_CONFIG_PATH = Convert-StreamingPath "$prefix/lib/pkgconfig"
+$staticMacroByPc = @{
+    'nghttp2' = @{ 'libnghttp2.pc' = '-DNGHTTP2_STATICLIB' }
+    'nghttp3' = @{ 'libnghttp3.pc' = '-DNGHTTP3_STATICLIB' }
+    'ngtcp2' = @{
+        'libngtcp2.pc' = '-DNGTCP2_STATICLIB'
+        'libngtcp2_crypto_ossl.pc' = '-DNGTCP2_STATICLIB'
+    }
+}
 foreach ($name in @('nghttp2', 'nghttp3', 'ngtcp2', 'curl')) {
-    & cmake -S (Join-Path $sources $name) -B (Join-Path $builds $name) -GNinja `
-        "-DSTREAMING_DEPENDENCY=$name" -DSTREAMING_SHARED=OFF `
-        -C (Join-Path $root 'tools\cmake\StreamingDependencies.cmake') `
-        -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl `
-        -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL "-DCMAKE_INSTALL_PREFIX=$prefix" `
-        "-DCMAKE_PREFIX_PATH=$prefix" "-DOPENSSL_ROOT_DIR=$prefix" -DOPENSSL_USE_STATIC_LIBS=ON `
-        -DCURL_ZLIB=OFF -DCURL_USE_SCHANNEL=OFF -DCURL_CA_NATIVE=ON
+    $cmakeArgs = @(
+        '-S', (Join-Path $sources $name),
+        '-B', (Join-Path $builds $name),
+        '-GNinja',
+        "-DSTREAMING_DEPENDENCY=$name",
+        '-DSTREAMING_SHARED=OFF',
+        '-C', (Join-Path $root 'tools\cmake\StreamingDependencies.cmake'),
+        '-DCMAKE_BUILD_TYPE=Release',
+        '-DCMAKE_C_COMPILER=clang-cl',
+        '-DCMAKE_CXX_COMPILER=clang-cl',
+        '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL',
+        "-DCMAKE_INSTALL_PREFIX=$prefix",
+        "-DCMAKE_PREFIX_PATH=$prefix",
+        "-DOPENSSL_ROOT_DIR=$prefix",
+        '-DOPENSSL_USE_STATIC_LIBS=ON',
+        '-DCURL_ZLIB=OFF',
+        '-DCURL_USE_SCHANNEL=OFF',
+        '-DCURL_CA_NATIVE=ON'
+    )
+    # Upstream nghttp2/nghttp3/ngtcp2 Windows .pc files omit *_STATICLIB,
+    # causing pkg-config consumers like curl to emit __declspec(dllimport).
+    if ($name -in @('ngtcp2', 'curl')) {
+        $cmakeArgs += '-DCMAKE_C_FLAGS=-DNGHTTP2_STATICLIB -DNGHTTP3_STATICLIB -DNGTCP2_STATICLIB'
+    }
+    & cmake @cmakeArgs
     if ($LASTEXITCODE -ne 0) { throw "Configuring $name failed." }
     & cmake --build (Join-Path $builds $name) --parallel 4
     if ($LASTEXITCODE -ne 0) { throw "Building $name failed." }
     & cmake --install (Join-Path $builds $name)
     if ($LASTEXITCODE -ne 0) { throw "Installing $name failed." }
+    if ($staticMacroByPc.ContainsKey($name)) {
+        foreach ($entry in $staticMacroByPc[$name].GetEnumerator()) {
+            $pcPath = Join-Path $pkgConfigDir $entry.Key
+            if (Test-Path -LiteralPath $pcPath) {
+                $pcText = Get-Content -LiteralPath $pcPath -Raw
+                if ($pcText -notmatch [regex]::Escape($entry.Value)) {
+                    $pcText = [regex]::Replace($pcText, '(?m)^Cflags:(.*)$', "Cflags:`$1 $($entry.Value)")
+                    [IO.File]::WriteAllText($pcPath, $pcText.Replace("`r`n", "`n"), $utf8NoBom)
+                }
+            }
+        }
+    }
 }
 & cmake -S (Join-Path $root 'tools\cmake\QuicBatchingProbe') -B (Join-Path $builds 'quic-batching-probe') -GNinja `
     -DCMAKE_C_COMPILER=clang-cl -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL `
@@ -83,6 +170,9 @@ foreach ($name in @('nghttp2', 'nghttp3', 'ngtcp2', 'curl')) {
 if ($LASTEXITCODE -ne 0) { throw 'Auditing compiled QUIC batching capabilities failed.' }
 # Audit metadata using native Python and the explicit MSYS shell; no target
 # binary or implicit system package can satisfy a wrong-version closure.
+$curlPkgFlags = & $env:PKG_CONFIG --cflags --libs --static libcurl
+if ($LASTEXITCODE -ne 0) { throw 'Static pkg-config resolution for libcurl failed.' }
+Write-Host "libcurl static pkg-config: $curlPkgFlags"
 & python (Join-Path $root 'tools\check-streaming-dependencies.py') --prefix $prefix `
     --manifest (Join-Path $root 'tools\manifests\streaming-third-party.json') --bash $bash --require-native-ca
 if ($LASTEXITCODE -ne 0) { throw 'The Windows streaming feature/version audit failed.' }

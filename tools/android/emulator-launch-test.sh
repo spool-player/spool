@@ -51,6 +51,7 @@ if [[ -z "${SPOOL_E2E_SPOOLET:-}" ]]; then
   read -r SPOOL_E2E_SPOOLET <"$host_build/native-spoolet-path.txt"
 fi
 export SPOOL_DEVICE_HOST_E2E SPOOL_E2E_SPOOLET
+export SPOOL_E2E_ADB="$ADB"
 export SPOOL_E2E_ISOLATED_DEVICE=1
 
 # Realize the emulator and system image before the adb registration deadline.
@@ -195,8 +196,11 @@ launch_category() {
     fail "$package" "$package activity is not present"
   "$ADB" logcat -d -s Spool:V | grep -qF 'startup: QML source loaded' ||
     fail "$package" "$package did not load its QML scene"
-  ! "$ADB" logcat -d -s Spool:V | grep -qE '\[qml\] |\[qt:(crit|fatal)\] ' ||
+  if "$ADB" logcat -d -s Spool:V | grep -qE '\[qml\] |\[qt:(crit|fatal)\] '; then
+    "$ADB" logcat -d -s Spool:V | grep -E '\[qml\] |\[qt:(crit|fatal)\] ' |
+      sed -E 's#https?://[^ ]+#<url>#g' | head -n 40 >&2 || true
     fail "$package" "$package reported QML errors"
+  fi
   ! "$ADB" logcat -d -b crash -b main | grep -qE 'FATAL EXCEPTION|Fatal signal' ||
     fail "$package" "Android reported a fatal launch failure for $package"
 

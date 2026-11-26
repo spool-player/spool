@@ -72,6 +72,10 @@ SPOOL_TEST_MAIN("script-runtime")
         QCoro::waitFor(std::move(removed));
         QCoro::waitFor(std::move(replacement));
         QCoro::waitFor(runtime.call("reused", "inspect"));
+        // Drain queued main-thread events already posted by the worker thread
+        // before inspect completed; QCoro::waitFor returns as soon as its
+        // future finishes without flushing other queued meta-calls.
+        QCoreApplication::processEvents();
         require(events == QList<QVariantMap> { QVariantMap { { "capabilities", newOffer } } },
             "queued capability events from a removed generation cannot change a replacement account");
     }

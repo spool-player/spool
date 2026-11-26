@@ -117,8 +117,9 @@
         then pinned pkgs.ffmpeg_9-full
         # The x86_64-darwin maintenance branch predates FFmpeg 9. Its generic
         # derivation supports newer upstream versions; discard its two obsolete
-        # FFmpeg 8 configure switches when building the newer source.
-        else (pinned (pkgs.ffmpeg-full.override { withCelt = false; })).overrideAttrs (old: {
+        # FFmpeg 8 configure switches when building the newer source, and
+        # disable lcevcdec because 26.05 ships 4.1.0 while FFmpeg 9.1 needs >= 4.2.
+        else (pinned (pkgs.ffmpeg-full.override { withCelt = false; withLcevcdec = false; })).overrideAttrs (old: {
           configureFlags = builtins.filter (flag:
             !builtins.elem flag [ "--disable-libcelt" "--disable-libshaderc" ])
             old.configureFlags;
@@ -211,6 +212,13 @@
       };
       pinnedQtOverlay = final: prev:
         let
+          # Intel macOS workflows override the root `nixpkgs` input to
+          # `nixpkgs-x86-darwin` (26.05-darwin, Qt 6.11) so `nix develop` can
+          # resolve `bashInteractive`. Keep the two Qt 6.12 nixpkgs patches
+          # that diverge from 26.05-darwin in-tree so Intel builds never depend
+          # on the unstable `nixpkgs` tree remaining unoverridden and always
+          # hash identically before and after `--override-input nixpkgs`.
+          isOlderQtChannel = prev.qt6.qtbase.version != toolchain.qt.version;
           srcs = builtins.mapAttrs (name: sha256: {
             version = toolchain.qt.version;
             src = final.fetchurl {
@@ -229,20 +237,29 @@
               patches = let
                 superseded = [ "find-qmlimportscanner.patch" "qmlimportscanner-import-path.patch"
                   "skip-missing-qml-directory.patch" "515cbbacfba9f4259c9c3b0714a31222c2b4c879.diff" ];
-                stale = patch: builtins.any (s: nixpkgs.lib.hasSuffix s (baseNameOf (toString patch))) superseded;
+                stale = patch: builtins.any (s: final.lib.hasSuffix s (baseNameOf (toString patch))) superseded;
                 inherited = old.patches or [];
-              in if builtins.any stale inherited
+              in if isOlderQtChannel && builtins.any stale inherited
                 then builtins.filter (patch: !stale patch) inherited
-                  ++ [ "${nixpkgs}/pkgs/development/libraries/qt-6/modules/qtbase/macdeployqt-fixes.patch" ]
+                  ++ [ ./tools/patches/qt6-nixpkgs/macdeployqt-fixes.patch ]
                 else inherited;
             });
             qtModule = qtPrev.qtModule.override { inherit srcs; };
             qtdeclarative = qtPrev.qtdeclarative.overrideAttrs (old: {
-              # The Intel maintenance channel backports this TableView fix.
-              # It is already in the pinned Qt release; applying it again fails.
-              patches = builtins.filter (patch:
-                !final.lib.hasSuffix "8a2c82be6ad90e3f2a0760d8bab1e3a8cdb2473a.diff" (toString patch))
-                (old.patches or []);
+              # The Intel maintenance channel ships 6.11 patches (and may
+              # backport fixes already in 6.12). Swap the 6.11
+              # use-versioned-import-path patch for the 6.12 version so
+              # qqmltypeloader.cpp patches cleanly on x86_64-darwin.
+              patches = let
+                inherited = builtins.filter (patch:
+                  !final.lib.hasSuffix "8a2c82be6ad90e3f2a0760d8bab1e3a8cdb2473a.diff" (toString patch))
+                  (old.patches or []);
+              in if isOlderQtChannel
+                then map (patch:
+                  if final.lib.hasSuffix "use-versioned-import-path.patch" (baseNameOf (toString patch))
+                  then ./tools/patches/qt6-nixpkgs/use-versioned-import-path.patch
+                  else patch) inherited
+                else inherited;
             });
           })) // {
             override = prev.qt6.override;

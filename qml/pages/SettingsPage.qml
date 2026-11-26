@@ -563,7 +563,8 @@ FocusScope {
         let capability = ""
         if (row.key === "playback/streamingHttpVersion") {
             const capabilities = Player.transportCapabilities
-            if (String(settingsValue(row)) === "http3" && capabilities && capabilities.http3 === false)
+            if (String(settingsValue(row)) === "http3" && capabilities && (capabilities.http3 === false
+                                                                           || capabilities["quic-batching"] === false))
                 capability = " · This build uses HTTP/2 with HTTP/1.1 fallback"
             if (capabilities && capabilities.http2 === false && String(settingsValue(row)) !== "http1")
                 capability = " · This build uses HTTP/1.1"

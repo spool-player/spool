@@ -968,6 +968,8 @@ def app_journey(platform, output, timeout, regression=None):
                               "port": service.server_address[1], "token": service.token})
     environment = dict(os.environ, SPOOL_E2E_DEVICE_JOURNEY_OWNER=str(capability),
                        SPOOL_E2E_ARTIFACT_DIR=str(output))
+    if platform == "android":
+        environment["SPOOL_E2E_ADB"] = owner.tool
     thread = threading.Thread(target=service.serve_forever, daemon=True)
     thread.start()
     process = None
@@ -1246,15 +1248,25 @@ def export_attempt(private, destination, result):
             r"^app-journey: production spoolet rejected ([a-z_-]{1,32}) "
             r"\(exit=(-?[0-9]+), code=([a-z_]{1,64}), elapsed_ms=([0-9]+), "
             r"timeout_origin=(unknown|server|client_write|client_response)\)")
+        reason_pattern = re.compile(r'^app-journey: ([A-Za-z0-9 ,.:;()=_\x27"-]{1,200})$')
         with log.open(encoding="utf-8", errors="replace") as stream:
             for line in stream:
-                match = pattern.match(line)
+                stripped = line.rstrip("\r\n")
+                match = pattern.match(stripped)
                 if match:
                     operation, code, error, elapsed, origin = match.groups()
                     controlled = (f"spoolet command={operation} exitCode={int(code)} code={error} "
                                   f"elapsed_ms={int(elapsed)} timeoutOrigin={origin}")
                     lines.append(controlled)
                     print("app-journey: " + controlled, flush=True)
+                    continue
+                reason_match = reason_pattern.match(stripped)
+                if reason_match:
+                    reason = reason_match.group(1)
+                    if ("retained at" not in reason and "://" not in reason and
+                            "/" not in reason and not re.search(r"[a-fA-F0-9]{24,}", reason)):
+                        lines.append("reason=" + reason)
+                        print("app-journey: " + reason, flush=True)
     (destination / "attempt.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
     allowed = {"native-result.json", "controller-result.json", "attempt.log", "frame.png", "library-text.png",
                "mobile-default-startup.png", NATIVE_DIAGNOSTIC_NAME}

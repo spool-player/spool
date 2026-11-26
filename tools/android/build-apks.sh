@@ -144,7 +144,23 @@ settings["qml-root-path"] = [sys.argv[2]]
 path.write_text(json.dumps(settings, indent=2) + "\n")
 PY
   done
-  cmake --build "$build" --target spool_make_apk --parallel "$JOBS"
+  local build_apk_target
+  build_apk_target() {
+    local apk_target="$1"
+    local attempt
+    for attempt in 1 2 3; do
+      if cmake --build "$build" --target "$apk_target" --parallel "$JOBS"; then
+        return 0
+      fi
+      if [[ $attempt -lt 3 ]]; then
+        echo "Retrying $apk_target after transient Gradle/Maven failure (attempt $((attempt + 1))/3)..." >&2
+        sleep $((attempt * 15))
+      fi
+    done
+    return 1
+  }
+
+  build_apk_target spool_make_apk
 
   local app_package="$build/android-build"
   if [[ "$developer" == ON ]]; then
@@ -161,7 +177,7 @@ PY
     # Never replace the signed non-debuggable release/universal inputs.
     cp -f "$apk" "$ROOT/dist/android/spool-e2e-app-${ABI}.apk"
     for target in spool-tests spool-e2e-tests; do
-      cmake --build "$build" --target "${target}_make_apk" --parallel "$JOBS"
+      build_apk_target "${target}_make_apk"
       apk="$build/android-build-${target}/${target}.apk"
       [[ -f "$apk" ]] || {
         echo "error: test APK was not generated at $apk" >&2

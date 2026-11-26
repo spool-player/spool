@@ -647,11 +647,14 @@ int main(int argc, char **argv)
     // selector owns its one Q(Core/Gui)Application and its complete environment.
     int selectorIndex = 1;
     bool fixtures = false;
+    bool remoteDevice = false;
     for (int index = 1; index < argc; ++index) {
         if (std::string_view(argv[index]) == "--fixture-suite")
             fixtures = true;
         if (std::string_view(argv[index]) == "--child")
             selectorIndex = index + 1;
+        if (std::string_view(argv[index]) == "--device")
+            remoteDevice = true;
     }
     bool supervisor = argc == 1;
     bool list = false;
@@ -662,7 +665,8 @@ int main(int argc, char **argv)
 #if defined(SPOOL_E2E_BINARY) && defined(Q_OS_LINUX) && !defined(SPOOL_ANDROID)
     // GUI selectors open real windows and drive input. Never on the person's
     // desktop: inside tools/test-gpu-session.sh, or explicitly offscreen.
-    if (!list && qEnvironmentVariable("SPOOL_PRIVATE_TEST_SESSION") != QLatin1String("1")
+    // Mobile host journeys (--device) use QCoreApplication and never open a host window.
+    if (!list && !remoteDevice && qEnvironmentVariable("SPOOL_PRIVATE_TEST_SESSION") != QLatin1String("1")
         && qEnvironmentVariable("QT_QPA_PLATFORM").section(QLatin1Char(':'), 0, 0) != QLatin1String("offscreen")) {
         std::cerr << "spool-e2e-tests runs only on a private display: use nix run .#tests, ctest, "
                      "tools/test-gpu-session.sh, or QT_QPA_PLATFORM=offscreen\n";
