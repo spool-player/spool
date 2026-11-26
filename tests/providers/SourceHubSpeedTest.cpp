@@ -445,6 +445,43 @@ export function createSource(configuration) {
                 && profile.value("last-selected-requests").toInt() == 1
                 && hub.playback()->mediaOrigin() == QUrl("https://melbourne.invalid"),
             "old learned formats reset without dropping accounts or their restored configuration");
+
+        // Extended high-RTT WAN probe with 8 lanes and HTTPS HTTP/2 vs HTTP/1.1 protocol tags.
+        require(registry.recordSpeedTest(melbourne,
+                    { { "origin", QStringLiteral("https://melbourne.invalid") }, { "parallelRequests", 8 },
+                        { "concurrency-samples",
+                            QVariantList {
+                                QVariantMap { { "requests", 1 }, { "http-version", 20 },
+                                    { "capacity-bytes-per-second", 1'700'000.0 }, { "ttfb-ms", 150.0 } },
+                                QVariantMap { { "requests", 2 }, { "http-version", 20 },
+                                    { "capacity-bytes-per-second", 1'750'000.0 }, { "ttfb-ms", 155.0 } },
+                                QVariantMap { { "requests", 4 }, { "http-version", 20 },
+                                    { "capacity-bytes-per-second", 1'800'000.0 }, { "ttfb-ms", 160.0 } },
+                                QVariantMap { { "requests", 4 }, { "http-version", 11 },
+                                    { "capacity-bytes-per-second", 6'800'000.0 }, { "ttfb-ms", 152.0 } },
+                                QVariantMap { { "requests", 8 }, { "http-version", 11 },
+                                    { "capacity-bytes-per-second", 12'400'000.0 }, { "ttfb-ms", 154.0 } },
+                            } } }),
+            "extended WAN probe with HTTP/1.1 comparison and 8-lane point must record cleanly");
+        const auto wanProfile = hub.playback()->playbackNetworkProfile();
+        require(wanProfile.value("last-selected-requests").toInt() == 8,
+            "extended WAN probe preserves 8-lane recommendation");
+        require(sampleFor(wanProfile, 4, 20, 0, 0).value("ordered-bytes-per-second").toDouble() == 1'800'000.0
+                && sampleFor(wanProfile, 4, 11, 0, 0).value("ordered-bytes-per-second").toDouble() == 6'800'000.0
+                && sampleFor(wanProfile, 8, 11, 0, 0).value("ordered-bytes-per-second").toDouble() == 12'400'000.0,
+            "protocol-tagged HTTP/2 vs HTTP/1.1 and 8-lane probe priors remain distinct and reach playback");
+        require(!registry.recordSpeedTest(melbourne,
+                    { { "origin", QStringLiteral("https://melbourne.invalid") },
+                        { "concurrency-samples",
+                            QVariantList {
+                                QVariantMap { { "requests", 1 }, { "http-version", 99 },
+                                    { "capacity-bytes-per-second", 1'000'000.0 }, { "ttfb-ms", 10.0 } },
+                                QVariantMap { { "requests", 2 }, { "capacity-bytes-per-second", 2'000'000.0 },
+                                    { "ttfb-ms", 10.0 } },
+                                QVariantMap { { "requests", 4 }, { "capacity-bytes-per-second", 3'000'000.0 },
+                                    { "ttfb-ms", 10.0 } },
+                            } } }),
+            "invalid http-version in probe sample must be rejected");
     }
     return 0;
 }

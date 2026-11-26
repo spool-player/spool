@@ -382,8 +382,8 @@ QByteArray MpvOptionProfile::preloadedSubtitleStreams(const PlaybackSession& ses
 
 MpvOptionProfile::NetworkProfile MpvOptionProfile::networkProfile(Platform platform)
 {
-    return platform == Platform::WebOS ? NetworkProfile { 2 * 1024 * 1024, 512 * 1024, 128 * 1024 }
-                                       : NetworkProfile { 4 * 1024 * 1024, 1024 * 1024, 256 * 1024 };
+    return platform == Platform::WebOS ? NetworkProfile { 4 * 1024 * 1024, 1024 * 1024, 128 * 1024 }
+                                       : NetworkProfile { 8 * 1024 * 1024, 4 * 1024 * 1024, 256 * 1024 };
 }
 
 QByteArray MpvOptionProfile::loadFileOptions(const PlaybackSession& session)

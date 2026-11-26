@@ -86,7 +86,7 @@ SPOOL_TEST_MAIN("settings-controller")
     require(settings.value(QStringLiteral("playback/forwardCacheSizeMiB")).toInt() == 32,
         "fresh profile did not use the 32 MB forward cache default");
     require(settings.value(QStringLiteral("playback/threadedStreaming")).toBool()
-            && settings.value(QStringLiteral("playback/maxStreamingThreads")).toInt() == 4
+            && settings.value(QStringLiteral("playback/maxStreamingThreads")).toInt() == 8
             && !settings.value(QStringLiteral("playback/forceStreamingThreads")).toBool(),
         "fresh profile did not preserve adaptive streaming with a four-request maximum");
     // Per-account overrides cross the real persistence boundary, remain local,

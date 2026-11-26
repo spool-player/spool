@@ -55,12 +55,29 @@ class NetworkShaperTest(unittest.IsolatedAsyncioTestCase):
         self.upstream.close()
         await self.upstream.wait_closed()
 
-    async def start_proxy(self, *, latency: float = 0, download_rate: float = 0) -> int:
+    async def start_proxy(
+        self,
+        *,
+        latency: float = 0,
+        download_rate: float = 0,
+        per_connection_rate: float = 0,
+        initial_window: int = 0,
+        max_window: int = 0,
+        stall_connection: int = 0,
+        stall_after_bytes: int = 0,
+        stall_seconds: float = 0.0,
+    ) -> int:
         self.shaper = network_shaper.Shaper(
             self.upstream_endpoint,
             latency_seconds=latency,
             upload_bytes_per_second=0,
             download_bytes_per_second=download_rate,
+            per_connection_download_bytes_per_second=per_connection_rate,
+            initial_window_bytes=initial_window,
+            max_window_bytes=max_window,
+            stall_connection=stall_connection,
+            stall_after_bytes=stall_after_bytes,
+            stall_seconds=stall_seconds,
             chunk_bytes=4096,
         )
         self.proxy = await asyncio.start_server(self.shaper.handle, "127.0.0.1", 0)
@@ -97,6 +114,46 @@ class NetworkShaperTest(unittest.IsolatedAsyncioTestCase):
         # A rate limit bounds throughput, not runner scheduling or socket delays.
         self.assertGreaterEqual(self.shaper.metrics.download_bytes, len(PAYLOAD) * 2)
         self.assertEqual(self.shaper.metrics.total_connections, 2)
+        self.assertGreaterEqual(self.shaper.metrics.peak_active_connections, 2)
+
+    async def test_per_connection_limit_scales_with_parallel_connections(self) -> None:
+        port = await self.start_proxy(per_connection_rate=256_000)
+        started_at = time.monotonic()
+        results = await asyncio.gather(self.fetch(port), self.fetch(port))
+        elapsed = time.monotonic() - started_at
+
+        self.assertTrue(all(body == PAYLOAD for _, body in results))
+        # Each 128 KiB connection is capped at 256 KB/s (~0.5s); running two in
+        # parallel must finish much faster than a 256 KB/s aggregate cap (~1.0s).
+        self.assertGreaterEqual(elapsed, 0.42)
+        self.assertLess(elapsed, 0.90)
+        self.assertEqual(self.shaper.metrics.peak_active_connections, 2)
+
+    async def test_slow_start_window_delays_single_connection_warmup(self) -> None:
+        # 128 KiB over 50ms RTT starting at 16 KiB cwnd requires ~4 RTTs (16+32+64+128).
+        port = await self.start_proxy(latency=0.025, initial_window=16 * 1024, max_window=128 * 1024)
+        started_at = time.monotonic()
+        _, body = await self.fetch(port)
+        elapsed = time.monotonic() - started_at
+
+        self.assertEqual(body, PAYLOAD)
+        self.assertGreaterEqual(elapsed, 0.18)
+
+    async def test_injects_one_shot_connection_stall(self) -> None:
+        port = await self.start_proxy(stall_connection=1, stall_after_bytes=8192, stall_seconds=0.25)
+        started_at = time.monotonic()
+        _, body1 = await self.fetch(port)
+        first_elapsed = time.monotonic() - started_at
+
+        started_at = time.monotonic()
+        _, body2 = await self.fetch(port)
+        second_elapsed = time.monotonic() - started_at
+
+        self.assertEqual(body1, PAYLOAD)
+        self.assertEqual(body2, PAYLOAD)
+        self.assertGreaterEqual(first_elapsed, 0.23)
+        self.assertLess(second_elapsed, 0.20)
+        self.assertEqual(self.shaper.metrics.injected_stalls, 1)
 
 
 class PacerTest(unittest.IsolatedAsyncioTestCase):
@@ -142,6 +199,43 @@ class PacerTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(sent, [(250, 100.0), (500, 100.25)])
                 await advance(100.75)
                 self.assertEqual(sent, [(250, 100.0), (500, 100.25), (100, 100.75)])
+
+
+class SlowStartWindowTest(unittest.IsolatedAsyncioTestCase):
+    async def test_doubles_cwnd_each_rtt_and_caps_at_max_window(self) -> None:
+        now = 10.0
+
+        async def fake_sleep(delay: float) -> None:
+            nonlocal now
+            now += delay
+
+        clock = SimpleNamespace(time=lambda: now)
+        timers = SimpleNamespace(get_running_loop=lambda: clock, sleep=fake_sleep)
+        window = network_shaper.SlowStartWindow(
+            rtt_seconds=0.1,
+            initial_window_bytes=10_000,
+            max_window_bytes=30_000,
+        )
+        with patch.object(network_shaper, "asyncio", timers):
+            # First 10 KB fits in IW10 immediately (t=10.0).
+            await window.wait(10_000)
+            self.assertAlmostEqual(now, 10.0, places=6)
+            self.assertEqual(window.cwnd_bytes, 10_000)
+
+            # Next 20 KB triggers 1 RTT wait (t=10.1), cwnd doubles to 20 KB.
+            await window.wait(20_000)
+            self.assertAlmostEqual(now, 10.1, places=6)
+            self.assertEqual(window.cwnd_bytes, 20_000)
+
+            # Next 30 KB triggers 2nd RTT wait (t=10.2), cwnd caps at 30 KB.
+            await window.wait(30_000)
+            self.assertAlmostEqual(now, 10.2, places=6)
+            self.assertEqual(window.cwnd_bytes, 30_000)
+
+            # Next 30 KB triggers 3rd RTT wait (t=10.3), cwnd stays capped at 30 KB.
+            await window.wait(30_000)
+            self.assertAlmostEqual(now, 10.3, places=6)
+            self.assertEqual(window.cwnd_bytes, 30_000)
 
 
 if __name__ == "__main__":

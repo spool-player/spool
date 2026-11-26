@@ -1240,25 +1240,39 @@ bool ProviderRegistry::recordSpeedTest(const QString& accountId, const QVariantM
     if (key.isEmpty() || !sourceRunning(accountId) || !accountOriginAllowed(accountId, origin))
         return false;
     const QVariantList input = result.value(QStringLiteral("concurrency-samples")).toList();
-    if (input.size() != 3)
+    if (input.size() < 3 || input.size() > 8)
         return false;
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     QVariantList samples;
-    int expected = 1;
-    for (const QVariant& value : input) {
-        const auto sample = value.toMap();
+    for (qsizetype index = 0; index < input.size(); ++index) {
+        const auto sample = input[index].toMap();
         const double rate = sample.value(QStringLiteral("capacity-bytes-per-second")).toDouble();
         const double ttfb = sample.value(QStringLiteral("ttfb-ms")).toDouble();
-        if (!networkInteger(sample.value(QStringLiteral("requests")), expected, expected)
-            || !networkNumber(sample.value(QStringLiteral("capacity-bytes-per-second"))) || !networkRate(rate)
-            || !networkNumber(sample.value(QStringLiteral("ttfb-ms"))) || ttfb < 0 || ttfb > 60000)
+        const int requests = sample.value(QStringLiteral("requests")).toInt();
+        const bool baselinePoint = index < 3;
+        const int expected = baselinePoint ? (1 << index) : requests;
+        const bool validRequests = baselinePoint
+            ? networkInteger(sample.value(QStringLiteral("requests")), expected, expected)
+            : (networkInteger(sample.value(QStringLiteral("requests")), 1, 16) && (requests & (requests - 1)) == 0);
+        int httpVersion = 0;
+        if (sample.contains(QStringLiteral("http-version"))) {
+            const QVariant rawHttp = sample.value(QStringLiteral("http-version"));
+            if (!networkInteger(rawHttp, 0, 30))
+                return false;
+            httpVersion = rawHttp.toInt();
+            if (httpVersion != 0 && httpVersion != 11 && httpVersion != 20 && httpVersion != 30)
+                return false;
+        }
+        if (!validRequests || !networkNumber(sample.value(QStringLiteral("capacity-bytes-per-second")))
+            || !networkRate(rate) || !networkNumber(sample.value(QStringLiteral("ttfb-ms"))) || ttfb < 0
+            || ttfb > 60000)
             return false;
-        samples.append(QVariantMap { { QStringLiteral("requests"), expected }, { QStringLiteral("http-version"), 0 },
-            { QStringLiteral("receive-profile"), 0 }, { QStringLiteral("receive-bytes"), 0 },
-            { QStringLiteral("range-bytes"), 0 }, { QStringLiteral("ordered-bytes-per-second"), rate },
-            { QStringLiteral("ttfb-ms"), ttfb }, { QStringLiteral("updated-at-ms"), now },
-            { QStringLiteral("source"), 1 }, { QStringLiteral("samples"), 1 } });
-        expected *= 2;
+        samples.append(
+            QVariantMap { { QStringLiteral("requests"), expected }, { QStringLiteral("http-version"), httpVersion },
+                { QStringLiteral("receive-profile"), 0 }, { QStringLiteral("receive-bytes"), 0 },
+                { QStringLiteral("range-bytes"), 0 }, { QStringLiteral("ordered-bytes-per-second"), rate },
+                { QStringLiteral("ttfb-ms"), ttfb }, { QStringLiteral("updated-at-ms"), now },
+                { QStringLiteral("source"), 1 }, { QStringLiteral("samples"), 1 } });
     }
     QVariantMap saved = m_networkProfiles.value(key).toMap();
     NetworkPoints points = networkPoints(saved, now);

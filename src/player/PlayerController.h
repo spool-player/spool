@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../app/StreamingCachePolicy.h"
 #include "../media/MediaTypes.h"
 #include "../platform/MpvConfigPolicy.h"
 #include "MpvLifecycle.h"
@@ -522,16 +523,16 @@ private:
     bool m_hardwareDecoding = true;
     QByteArray m_softwareRenderer;
     QByteArray m_audioSpdifCodecs;
-    bool m_threadedStreaming = true;
-    int m_maxStreamingThreads = 4;
-    bool m_forceStreamingThreads = false;
     bool m_logStreamingPerformance = false;
     MpvOptionProfile::StreamingOptions m_streamingOptions;
     MpvOptionProfile::StreamingOptions m_sessionStreamingOptions;
     qint64 m_jointExtraGrantBytes = 0;
     qint64 m_previousMemoryCandidate = 0;
+    StreamingCacheScaler m_demuxerCacheScaler;
+    StreamingCacheTarget m_activeDemuxerTarget {};
     QElapsedTimer m_streamingMemoryTimer;
     void updateStreamingMemoryGrant();
+    void applyDemuxerCacheTarget(const StreamingCacheTarget& target, bool applyLive);
     // The opening seconds are where a device that cannot keep up says so:
     // the picture is being scaled and tone-mapped from the first frame, and
     // nothing has warmed a cache yet.
@@ -559,7 +560,6 @@ private:
     bool m_syncPlaybackSpeedActive = false;
     QString m_audioOutputMode = QStringLiteral("auto");
     int m_alsaBufferMs = 40;
-    QByteArray m_automaticDemuxerMaxBytes = QByteArrayLiteral("64M");
     QByteArray m_demuxerMaxBytes = QByteArrayLiteral("64M");
     QByteArray m_demuxerMaxBackBytes = QByteArrayLiteral("32M");
     MpvConfigPolicy m_mpvConfigPolicy;

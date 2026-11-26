@@ -277,6 +277,75 @@ http {{
                     print(json.dumps({'scenario': 'h3-connection-failure-with-zero-retry-budget',
                                       'http-fallbacks': fallback_count, 'cooldown-reused': True,
                                       'pcm-bytes': len(expected)}), flush=True)
+                # Verify curl-http-mode=auto escapes a window-capped high-RTT
+                # HTTPS HTTP/2 single-socket bottleneck onto multiple HTTP/1.1
+                # connections while preserving bit-exact decoded PCM.
+                shaper_port = free_port('127.0.0.1')
+                while shaper_port in (tls, tcp, broken_quic):
+                    shaper_port = free_port('127.0.0.1')
+                shaper_script = Path(__file__).resolve().parents[2] / 'tools' / 'network-shaper.py'
+                shaper = subprocess.Popen(
+                    ['python3', str(shaper_script),
+                     '--listen', f'127.0.0.1:{shaper_port}',
+                     '--upstream', f'127.0.0.1:{tcp}',
+                     '--rtt-ms', '140', '--max-window-bytes', str(256 * 1024),
+                     '--initial-window-bytes', str(10 * 1460)],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                try:
+                    shaper_deadline = time.monotonic() + 5
+                    while True:
+                        if shaper.poll() is not None:
+                            raise AssertionError('network-shaper failed: ' + shaper.stderr.read().decode())
+                        try:
+                            with socket.create_connection(('127.0.0.1', shaper_port), timeout=.1):
+                                break
+                        except OSError:
+                            if time.monotonic() > shaper_deadline:
+                                raise AssertionError('network-shaper not ready')
+                            time.sleep(.025)
+                    output = root / 'auto-h1-escape.pcm'
+                    player = transport.Player(args.libmpv, **{
+                        'tls-ca-file': root / 'cert.pem', 'ao': 'pcm', 'ao-pcm-file': output,
+                        'ao-pcm-waveheader': 'no', 'audio-format': 's16',
+                        'curl-http-mode': 'auto', 'curl-fixed-requests': '0',
+                        'curl-max-request-size': str(2 << 20),
+                        'curl-receive-mode': 'fixed', 'curl-receive-bytes': str(4 << 20)})
+                    try:
+                        player.configure(1, max_requests=4, fixed_requests=0, http_mode=0,
+                                         receive_mode=2, receive_bytes=4 << 20,
+                                         direct_file=True, source_size_bytes=len(header) + len(expected),
+                                         source_duration_seconds=8, source_bitrate=16000000)
+                        player.check(player.transport_control({'format': 2, 'op': 1, 'playback-epoch': 1,
+                            'joint-extra-grant-bytes': 64 << 20, 'background-network': False}), 'grant')
+                        result = player.play(f'https://127.0.0.1:{shaper_port}/fixture.wav', timeout=60)
+                    finally:
+                        player.close()
+                    if output.read_bytes() != expected:
+                        raise AssertionError('auto HTTPS multi-socket HTTP/1.1 escape altered decoded PCM')
+                    snapshots = [sample for _, sample in result['samples']]
+                    if result['metrics']:
+                        snapshots.append(result['metrics'])
+                    auto_protocols = {row.get('effective-http-version', 0) for sample in snapshots
+                                      for row in sample.get('streams', [])}
+                    auto_protocols.update(row.get('http-version', 0) for sample in snapshots
+                                          for row in sample.get('connections', []))
+                    peak_physical = max((sample.get('physical-connections', 0) for sample in snapshots), default=0)
+                    if 11 not in auto_protocols or peak_physical < 2:
+                        raise AssertionError(
+                            f'auto HTTPS did not escape to multi-socket HTTP/1.1: '
+                            f'protocols={sorted(auto_protocols)} peak_physical={peak_physical}')
+                    print(json.dumps({'scenario': 'auto-https-multisocket-h1-escape',
+                                      'protocols': sorted(auto_protocols),
+                                      'peak-physical-connections': peak_physical,
+                                      'seconds': round(result['seconds'], 3),
+                                      'pcm-bytes': len(expected)}), flush=True)
+                finally:
+                    shaper.terminate()
+                    try:
+                        shaper.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        shaper.kill()
+                        shaper.wait()
         finally:
             nginx.terminate()
             try:

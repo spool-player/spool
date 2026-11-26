@@ -272,6 +272,8 @@ set(SPOOL_SHELL_SOURCES
     src/app/LibraryQuery.h
     src/app/MemoryBudget.cpp
     src/app/MemoryBudget.h
+    src/app/StreamingCachePolicy.cpp
+    src/app/StreamingCachePolicy.h
     src/app/PlaybackStopPolicy.h
     src/app/RouterController.cpp
     src/app/RouterController.h
@@ -869,6 +871,7 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
         artwork-concurrency tests/app/ArtworkConcurrencyTest.cpp
         settings-schema tests/app/SettingsSchemaTest.cpp
         settings-controller tests/app/SettingsControllerTest.cpp
+        streaming-cache-policy tests/app/StreamingCachePolicyTest.cpp
         settings-sync-controller tests/app/SettingsSyncControllerTest.cpp
         settings-sync-document tests/app/SettingsSyncDocumentTest.cpp
         router-controller tests/app/RouterControllerTest.cpp
@@ -1369,6 +1372,13 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
                 --transport-helper "${MPV_ACTIVE_SOURCE_DIR}/test/curl_transport.py"
                 --libmpv "${SPOOL_CURL_TEST_MPV}")
             set_tests_properties(transport-protocols PROPERTIES LABELS traditional TIMEOUT 300)
+            add_test(NAME jellyfin-latency-e2e COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/jellyfin_latency_e2e.py"
+                --libmpv "${SPOOL_CURL_TEST_MPV}"
+                --transport-helper "${MPV_ACTIVE_SOURCE_DIR}/test/curl_transport.py"
+                --shaper-script "${CMAKE_CURRENT_SOURCE_DIR}/tools/network-shaper.py"
+                --spool-tests "$<TARGET_FILE:spool-tests>")
+            set_tests_properties(jellyfin-latency-e2e PROPERTIES LABELS e2e TIMEOUT 300 SKIP_RETURN_CODE 77)
             add_test(NAME transport-packet-performance COMMAND bash
                 "${CMAKE_CURRENT_SOURCE_DIR}/tools/test-transport-netns.sh"
                 --libmpv "${SPOOL_CURL_TEST_MPV}")

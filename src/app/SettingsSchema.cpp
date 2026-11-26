@@ -479,7 +479,7 @@ const QVector<SettingSpec>& settingSpecs()
             sliderSpec("playback/maxStreamingThreads", "Streaming", "Maximum concurrent requests",
                 "Most network requests in flight at once; not decoding threads or sockets. Adapts up to this "
                 "limit. Applies to the next playback",
-                "4", 1, 16, 1, "", SettingTarget::MaxStreamingThreads)
+                "8", 1, 16, 1, "", SettingTarget::MaxStreamingThreads)
                 .perServer()
                 .advanced()
                 .whenSetTo("playback/threadedStreaming", "true"),

@@ -1160,7 +1160,8 @@ int main(int argc, char **argv)
                  },
                     [&tlsTrust](QWebSocket *socket, QUrl url) {
                         tlsTrust.attachWebSocket(socket, [url] { return url; }, QStringLiteral("Provider"));
-                    } });
+                    },
+                    {} });
             Spool::Async::runScoped(
                 &providers, providers.restore(), [] { }, [](const std::exception_ptr&) { }, "provider restore");
             // Checked once the launch has settled, so it never competes with

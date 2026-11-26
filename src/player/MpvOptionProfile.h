@@ -45,7 +45,7 @@ public:
 
     struct StreamingOptions {
         bool enabled = true;
-        int maxRequests = 4;
+        int maxRequests = 8;
         int fixedRequests = 0;
         bool explore = true;
         bool allowExtraMemory = true;

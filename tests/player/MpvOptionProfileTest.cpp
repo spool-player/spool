@@ -147,8 +147,8 @@ SPOOL_TEST_MAIN("mpv-option-profile")
     }
 
     const auto desktopNetwork = MpvOptionProfile::networkProfile(MpvOptionProfile::Platform::Desktop);
-    require(desktopNetwork.ringBytes == 4 * 1024 * 1024, "desktop curl ring profile changed");
-    require(desktopNetwork.rangeBytes == 1024 * 1024, "desktop curl range profile changed");
+    require(desktopNetwork.ringBytes == 8 * 1024 * 1024, "desktop curl ring profile changed");
+    require(desktopNetwork.rangeBytes == 4 * 1024 * 1024, "desktop curl range profile changed");
 
     const auto desktop = profileOptions(MpvConfigPolicy {}, MpvOptionProfile::Platform::Desktop, QStringLiteral("alsa"),
         QByteArrayLiteral("/tmp/mpv.log"));
@@ -166,8 +166,8 @@ SPOOL_TEST_MAIN("mpv-option-profile")
     require(valueFor(desktop, "gpu-shader-cache-dir") == "/tmp/mpv-shaders",
         "desktop should use the application-owned persistent shader cache");
     require(valueFor(desktop, "curl-enabled") == "yes", "desktop should use the libcurl stream backend");
-    require(valueFor(desktop, "curl-buffer-size") == "4194304", "desktop should use a 4 MiB network ring");
-    require(valueFor(desktop, "curl-max-request-size") == "1048576", "desktop should issue 1 MiB ranges");
+    require(valueFor(desktop, "curl-buffer-size") == "8388608", "desktop should use an 8 MiB network ring");
+    require(valueFor(desktop, "curl-max-request-size") == "4194304", "desktop should allow up to 4 MiB ranges");
     require(valueFor(desktop, "curl-read-size") == "262144", "desktop should read 256 KiB per curl callback");
     require(valueFor(desktop, "curl-parallel-requests") == "1", "desktop should default to one range request");
     require(valueFor(desktop, "network-timeout") == "15", "a silent connection should be retried after 15 s");
@@ -374,8 +374,8 @@ SPOOL_TEST_MAIN("mpv-option-profile")
 #endif
 
     const auto webOSNetwork = MpvOptionProfile::networkProfile(MpvOptionProfile::Platform::WebOS);
-    require(webOSNetwork.ringBytes == 2 * 1024 * 1024, "webOS curl ring profile changed");
-    require(webOSNetwork.rangeBytes == 512 * 1024, "webOS curl range profile changed");
+    require(webOSNetwork.ringBytes == 4 * 1024 * 1024, "webOS curl ring profile changed");
+    require(webOSNetwork.rangeBytes == 1024 * 1024, "webOS curl range profile changed");
 
     const auto webOSPcm = profileOptions(MpvConfigPolicy {}, MpvOptionProfile::Platform::WebOS,
         QStringLiteral("starfish-pcm"), QByteArrayLiteral("/tmp/mpv.log"));
@@ -385,8 +385,8 @@ SPOOL_TEST_MAIN("mpv-option-profile")
     require(valueFor(webOSPcm, "vo-starfish-audio-hint") == "yes", "Starfish PCM should advertise pipeline audio");
     require(valueFor(webOSPcm, "ao-starfish-feed-ahead") == "0.4", "Starfish PCM should use the measured feed window");
     require(valueFor(webOSPcm, "curl-enabled") == "yes", "webOS should use the libcurl stream backend");
-    require(valueFor(webOSPcm, "curl-buffer-size") == "2097152", "webOS should use a 2 MiB network ring");
-    require(valueFor(webOSPcm, "curl-max-request-size") == "524288", "webOS should issue 512 KiB ranges");
+    require(valueFor(webOSPcm, "curl-buffer-size") == "4194304", "webOS should use a 4 MiB network ring");
+    require(valueFor(webOSPcm, "curl-max-request-size") == "1048576", "webOS should allow up to 1 MiB ranges");
     require(valueFor(webOSPcm, "curl-read-size") == "131072", "webOS should read 128 KiB per curl callback");
     require(valueFor(webOSPcm, "curl-parallel-requests") == "1", "webOS should default to one range request");
     require(

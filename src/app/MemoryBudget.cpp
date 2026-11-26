@@ -1,5 +1,6 @@
 #include "MemoryBudget.h"
 #include "../platform/PlatformSystemProbes.h"
+#include "StreamingCachePolicy.h"
 
 #include <algorithm>
 
@@ -8,6 +9,7 @@ namespace Spool {
 MemoryBudget MemoryBudget::detect()
 {
     const PlatformMemoryPolicy policy = platformMemoryPolicy();
+    const PlatformStreamingMemoryState streamingMemory = platformStreamingMemoryState();
     MemoryBudget budget;
     budget.memTotalBytes = policy.totalBytes;
     const qint64 effectiveMem = budget.memTotalBytes > 0 ? budget.memTotalBytes : policy.fallbackBytes;
@@ -18,8 +20,17 @@ MemoryBudget MemoryBudget::detect()
         = lowMemory ? policy.baseQmlImageDiskCacheBytes / 2 : policy.baseQmlImageDiskCacheBytes;
     budget.artworkByteCacheBytes = static_cast<int>(
         std::clamp(effectiveMem / policy.artworkDivisor, policy.minimumArtworkBytes, policy.maximumArtworkBytes));
-    budget.mpvDemuxerMaxBytes = lowMemory ? QByteArrayLiteral("32M") : QByteArrayLiteral("64M");
-    budget.mpvDemuxerMaxBackBytes = lowMemory ? QByteArrayLiteral("16M") : QByteArrayLiteral("32M");
+
+    const StreamingCacheTarget demuxerCache = computeStreamingCacheTarget({
+        .totalMemoryBytes = effectiveMem,
+        .availableMemoryBytes = streamingMemory.availableBytes,
+        .availableMemoryKnown = streamingMemory.available,
+        .constrainedDevice = lowMemory,
+        .autoScaleEnabled = true,
+        .configuredForwardBytes = 0,
+    });
+    budget.mpvDemuxerMaxBytes = QByteArray::number(demuxerCache.forwardBytes);
+    budget.mpvDemuxerMaxBackBytes = QByteArray::number(demuxerCache.backBytes);
     return budget;
 }
 

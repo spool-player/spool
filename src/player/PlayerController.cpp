@@ -676,9 +676,10 @@ void PlayerController::prepareMpvAsync(bool needsVideoSurface, bool embeddedVide
     preparation->userConfig = usesUserMpvConfig();
     const auto network = MpvOptionProfile::networkProfile(preparation->platform);
     qInfo().nospace() << "player: curl profile source=MpvOptionProfile platform="
-                      << platformPlaybackBackendName(embeddedVideo) << " maxRequests=" << m_maxStreamingThreads
+                      << platformPlaybackBackendName(embeddedVideo) << " maxRequests=" << m_streamingOptions.maxRequests
                       << " rangeBytes=" << network.rangeBytes << " ringBytes=" << network.ringBytes
-                      << " enabled=" << m_threadedStreaming << " forced=" << m_forceStreamingThreads;
+                      << " enabled=" << m_streamingOptions.enabled
+                      << " forced=" << (m_streamingOptions.fixedRequests > 0);
     QByteArray certificateBundle = QFile::encodeName(writeTrustBundle());
     if (certificateBundle.isEmpty())
         certificateBundle = MpvOptionProfile::systemCertificateBundle();
@@ -1617,7 +1618,7 @@ void PlayerController::playSession(const PlaybackSession& session, bool startPau
     m_streamingPerformanceMetrics.clear();
     m_networkQueryPending = false;
     m_cacheSpeedQueryPending = false;
-    m_sessionThreadedStreaming = m_threadedStreaming;
+    m_sessionThreadedStreaming = m_streamingOptions.enabled;
     m_sessionStreamingOptions = m_streamingOptions;
     m_jointExtraGrantBytes = 0;
     m_streamingMemoryTimer.invalidate();
@@ -2755,22 +2756,48 @@ void PlayerController::previewSubtitlePreferences(const SubtitlePreferences& pre
     }
 }
 
+static qint64 parseByteBudgetOption(const QByteArray& raw, qint64 fallback)
+{
+    const QByteArray trimmed = raw.trimmed();
+    if (trimmed.isEmpty())
+        return fallback;
+    qint64 multiplier = 1;
+    QByteArray digits = trimmed;
+    const char suffix = digits.back();
+    if (suffix == 'K' || suffix == 'k') {
+        multiplier = 1024LL;
+        digits.chop(1);
+    } else if (suffix == 'M' || suffix == 'm') {
+        multiplier = 1024LL * 1024;
+        digits.chop(1);
+    } else if (suffix == 'G' || suffix == 'g') {
+        multiplier = 1024LL * 1024 * 1024;
+        digits.chop(1);
+    }
+    bool ok = false;
+    const qint64 value = digits.toLongLong(&ok);
+    return ok && value > 0 ? value * multiplier : fallback;
+}
+
 void PlayerController::setDemuxerBudget(const QByteArray& maxBytes, const QByteArray& maxBackBytes)
 {
-    bool changed = false;
+    constexpr qint64 mib = 1024LL * 1024;
+    StreamingCacheTarget target = m_activeDemuxerTarget;
+    if (target.forwardBytes <= 0)
+        target.forwardBytes = parseByteBudgetOption(m_demuxerMaxBytes, 64 * mib);
+    if (target.backBytes <= 0)
+        target.backBytes = parseByteBudgetOption(m_demuxerMaxBackBytes, 32 * mib);
+
     if (!maxBytes.isEmpty())
-        m_automaticDemuxerMaxBytes = maxBytes;
-    const QByteArray effectiveMaxBytes
-        = m_forwardCacheSizeMiB > 0 ? QByteArray::number(m_forwardCacheSizeMiB) + 'M' : m_automaticDemuxerMaxBytes;
-    if (!effectiveMaxBytes.isEmpty() && m_demuxerMaxBytes != effectiveMaxBytes) {
-        m_demuxerMaxBytes = effectiveMaxBytes;
-        changed = true;
-    }
-    if (!maxBackBytes.isEmpty() && m_demuxerMaxBackBytes != maxBackBytes) {
-        m_demuxerMaxBackBytes = maxBackBytes;
-        changed = true;
-    }
-    if (changed)
+        target.forwardBytes = parseByteBudgetOption(maxBytes, target.forwardBytes);
+    if (m_forwardCacheSizeMiB > 0)
+        target.forwardBytes = std::max(target.forwardBytes, static_cast<qint64>(m_forwardCacheSizeMiB) * mib);
+    if (!maxBackBytes.isEmpty())
+        target.backBytes = parseByteBudgetOption(maxBackBytes, target.backBytes);
+
+    const StreamingCacheTarget previous = m_activeDemuxerTarget;
+    applyDemuxerCacheTarget(target, false);
+    if (target != previous)
         discardPreparedMpvForOptionChange("demuxer budget change");
 }
 
@@ -2781,20 +2808,15 @@ void PlayerController::setForwardCacheSizeMiB(int sizeMiB)
         return;
 
     m_forwardCacheSizeMiB = sizeMiB;
-    const QByteArray effectiveMaxBytes = QByteArray::number(sizeMiB) + 'M';
-    if (effectiveMaxBytes == m_demuxerMaxBytes)
-        return;
-
-    m_demuxerMaxBytes = effectiveMaxBytes;
-    qInfo() << "player: forward cache size" << QString::number(sizeMiB) + QStringLiteral(" MiB");
-    discardPreparedMpvForOptionChange("forward cache size change");
+    qInfo() << "player: forward cache floor" << QString::number(sizeMiB) + QStringLiteral(" MiB");
+    m_demuxerCacheScaler = StreamingCacheScaler {};
+    updateStreamingMemoryGrant();
 }
 
 void PlayerController::setThreadedStreaming(bool enabled)
 {
-    if (m_threadedStreaming == enabled)
+    if (m_streamingOptions.enabled == enabled)
         return;
-    m_threadedStreaming = enabled;
     m_streamingOptions.enabled = enabled;
     discardPreparedMpvForOptionChange("threaded streaming change");
 }
@@ -2802,20 +2824,20 @@ void PlayerController::setThreadedStreaming(bool enabled)
 void PlayerController::setMaxStreamingThreads(int threads)
 {
     threads = std::clamp(threads, 1, 16);
-    if (m_maxStreamingThreads == threads)
+    if (m_streamingOptions.maxRequests == threads)
         return;
-    m_maxStreamingThreads = threads;
+    const bool forced = m_streamingOptions.fixedRequests > 0;
     m_streamingOptions.maxRequests = threads;
-    m_streamingOptions.fixedRequests = m_forceStreamingThreads ? threads : 0;
+    m_streamingOptions.fixedRequests = forced ? threads : 0;
     discardPreparedMpvForOptionChange("streaming thread limit change");
 }
 
 void PlayerController::setForceStreamingThreads(bool force)
 {
-    if (m_forceStreamingThreads == force)
+    const int fixed = force ? m_streamingOptions.maxRequests : 0;
+    if (m_streamingOptions.fixedRequests == fixed)
         return;
-    m_forceStreamingThreads = force;
-    m_streamingOptions.fixedRequests = force ? m_maxStreamingThreads : 0;
+    m_streamingOptions.fixedRequests = fixed;
     discardPreparedMpvForOptionChange("forced streaming threads change");
 }
 
@@ -2826,7 +2848,11 @@ void PlayerController::setStreamingExplore(bool enabled)
 
 void PlayerController::setStreamingMemoryLoan(bool enabled)
 {
+    if (m_streamingOptions.allowExtraMemory == enabled)
+        return;
     m_streamingOptions.allowExtraMemory = enabled;
+    m_demuxerCacheScaler = StreamingCacheScaler {};
+    updateStreamingMemoryGrant();
 }
 
 void PlayerController::setMaxExtraStreamingMemoryMiB(int size)
@@ -3185,6 +3211,7 @@ void PlayerController::flushPendingSeek()
 
 void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_handle *handle)
 {
+    Q_UNUSED(handle);
     if (!event)
         return;
 
@@ -3882,6 +3909,32 @@ void PlayerController::skipActiveSegment()
     seek(activeSegmentEndSeconds());
 }
 
+void PlayerController::applyDemuxerCacheTarget(const StreamingCacheTarget& target, bool applyLive)
+{
+    const QByteArray nextForward = QByteArray::number(target.forwardBytes);
+    const QByteArray nextBack = QByteArray::number(target.backBytes);
+    const bool changed
+        = target != m_activeDemuxerTarget || m_demuxerMaxBytes != nextForward || m_demuxerMaxBackBytes != nextBack;
+    if (!changed)
+        return;
+
+    m_activeDemuxerTarget = target;
+    m_demuxerMaxBytes = nextForward;
+    m_demuxerMaxBackBytes = nextBack;
+    qInfo("player: demuxer cache target forward=%lldMiB back=%lldMiB",
+        static_cast<long long>(target.forwardBytes / (1024LL * 1024)),
+        static_cast<long long>(target.backBytes / (1024LL * 1024)));
+
+    if (!applyLive)
+        return;
+    if (auto *handle = m_mpvLifecycle.handle()) {
+        int64_t forwardValue = target.forwardBytes;
+        int64_t backValue = target.backBytes;
+        mpv_set_property_async(handle, 0, "demuxer-max-bytes", MPV_FORMAT_INT64, &forwardValue);
+        mpv_set_property_async(handle, 0, "demuxer-max-back-bytes", MPV_FORMAT_INT64, &backValue);
+    }
+}
+
 void PlayerController::updateStreamingMemoryGrant()
 {
     constexpr qint64 mib = 1024LL * 1024;
@@ -3902,6 +3955,20 @@ void PlayerController::updateStreamingMemoryGrant()
         m_jointExtraGrantBytes = grant;
         updateBackgroundNetwork();
     }
+
+    // Automatically scale demuxer readahead and behind cache up to
+    // 128 MiB behind / 512 MiB forward at a 1:2 growth ratio based on free RAM.
+    const qint64 effectiveTotal = policy.totalBytes > 0 ? policy.totalBytes : policy.fallbackBytes;
+    const StreamingCacheTarget cacheCandidate = computeStreamingCacheTarget({
+        .totalMemoryBytes = effectiveTotal,
+        .availableMemoryBytes = memory.availableBytes,
+        .availableMemoryKnown = memory.available,
+        .constrainedDevice = constrained,
+        .autoScaleEnabled = options.allowExtraMemory,
+        .configuredForwardBytes = m_forwardCacheSizeMiB > 0 ? qint64(m_forwardCacheSizeMiB) * mib : 0,
+    });
+    const StreamingCacheTarget target = m_demuxerCacheScaler.update(cacheCandidate);
+    applyDemuxerCacheTarget(target, true);
 }
 
 void PlayerController::setBackgroundNetwork(bool active)

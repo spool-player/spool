@@ -260,9 +260,14 @@ SPOOL_TEST_MAIN("script-runtime")
                         responseBytes *= 2;
                     // Warmup is quick enough to exercise adaptive larger batches;
                     // measured larger samples still have a real parallel benefit.
-                    QTimer::singleShot(20 + bytes / (32 * 1024), socket, [socket, responseBytes] {
-                        socket->write("HTTP/1.1 200 OK\r\nContent-Length: " + QByteArray::number(responseBytes)
-                            + "\r\nSet-Cookie: speed=private\r\nConnection: close\r\n\r\n");
+                    const bool advertiseH3 = target.path() == QStringLiteral("/speed-h3");
+                    QTimer::singleShot(20 + bytes / (32 * 1024), socket, [socket, responseBytes, advertiseH3] {
+                        QByteArray headers = "HTTP/1.1 200 OK\r\nContent-Length: " + QByteArray::number(responseBytes)
+                            + "\r\nSet-Cookie: speed=private\r\n";
+                        if (advertiseH3)
+                            headers += "Alt-Svc: h3=\":443\"; ma=86400\r\n";
+                        headers += "Connection: close\r\n\r\n";
+                        socket->write(headers);
                         socket->write(QByteArray(responseBytes, 'x'));
                         socket->disconnectFromHost();
                     });
@@ -404,15 +409,17 @@ SPOOL_TEST_MAIN("script-runtime")
     double bestCapacity = 0;
     double selectedCapacity = 0;
     const QVariantList curve = measurement.value("concurrency-samples").toList();
-    require(curve.size() == 3, "native result preserves every concurrency operating point");
-    for (int index = 0; index < 3; ++index) {
+    require(curve.size() >= 3 && curve.size() <= 4, "native result preserves every concurrency operating point");
+    require(measurement.value("http-version").toInt() == 11 && !measurement.value("h3-advertised").toBool(),
+        "speed probe reports negotiated HTTP protocol and Alt-Svc HTTP/3 advertisement");
+    for (int index = 0; index < curve.size(); ++index) {
         const auto sample = curve[index].toMap();
         const double seconds = sample.value("elapsed-seconds").toDouble();
         const double rate = sample.value("capacity-bytes-per-second").toDouble();
         const double latencyMs = sample.value("ttfb-ms").toDouble();
         require(sample.value("requests").toInt() == (1 << index) && sample.value("received-bytes").toLongLong() > 0
                 && sample.value("received-bytes").toLongLong() <= 64 * 1024 * 1024 && seconds > 0 && latencyMs >= 35
-                && latencyMs <= seconds * 1000
+                && latencyMs <= seconds * 1000 && sample.value("http-version").toInt() == 11
                 && std::abs(rate * seconds - sample.value("received-bytes").toDouble()) < 1,
             "per-concurrency raw capacity accounts actual bounded payload and full wall time including TTFB");
         require(seconds >= 0.4 || sample.value("received-bytes").toLongLong() == 64 * 1024 * 1024,
@@ -432,9 +439,13 @@ SPOOL_TEST_MAIN("script-runtime")
     qint64 probeBytes = 0;
     for (int bytes : std::as_const(speedSizes))
         probeBytes += bytes;
-    require(speedSizes.front() == 512 * 1024 && probeBytes <= 512 * 1024 + 3 * 64 * 1024 * 1024,
+    require(speedSizes.front() == 512 * 1024 && probeBytes <= 512 * 1024 + curve.size() * 64 * 1024 * 1024,
         "warmup and adaptive complete-curve measurements have a bounded total byte budget");
-    require(speedMaximum == 4 && speedGuiTurns >= 5, "lane requests overlap without blocking GUI events");
+    require(speedMaximum >= 4 && speedGuiTurns >= 5, "lane requests overlap without blocking GUI events");
+    const auto h3Advertised = QCoro::waitFor(runtime->call("a", "speedTest", { { "path", "speed-h3" } }));
+    waitForSpeedAbort();
+    require(h3Advertised.value("h3-advertised").toBool() && h3Advertised.value("http-version").toInt() == 11,
+        "speed probe detects Alt-Svc h3 advertisement while reporting negotiated protocol");
     require(received.back().contains("Authorization: a-token"), "benchmark passes source authentication headers");
     const auto overlapping = QCoro::waitFor(runtime->call("a", "overlappingSpeedTests"));
     require(overlapping.value("error") == "request_denied" && overlapping.value("bitrate").toLongLong() >= 1000000,

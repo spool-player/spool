@@ -22,11 +22,11 @@
     "mpv-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1795215955,
-        "narHash": "sha256-W3o88zocNkbJyOHsShn9la9ZMwYqQwhM/0tX5EKiI1g=",
-        "ref": "refs/heads/net/integration",
-        "rev": "8eb31c4d7745d650bc3531cb90e140d53f81e571",
-        "revCount": 56227,
+        "lastModified": 1795681643,
+        "narHash": "sha256-71xK8qR/l3jf0+cLOkfV8KNpVwNno0Et801CEuKnYpc=",
+        "ref": "refs/heads/fix/paused-render-timeout-0.10.2",
+        "rev": "d3cc1b1caa397c82fdd5e3570f9bd701e6f9335e",
+        "revCount": 56251,
         "type": "git",
         "url": "file:./mpv"
       },

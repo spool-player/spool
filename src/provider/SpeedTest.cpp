@@ -13,6 +13,18 @@
 
 namespace Spool {
 
+namespace {
+
+    bool altSvcAdvertisesH3(const QByteArray& value)
+    {
+        if (value.isEmpty())
+            return false;
+        const QByteArray lower = value.toLower();
+        return lower.contains("h3=") || lower.contains("h3-29=");
+    }
+
+} // namespace
+
 SpeedTest::SpeedTest(ScriptAccess *access, Completion completion, QObject *parent)
     : QObject(parent)
     , m_access(access)
@@ -20,7 +32,9 @@ SpeedTest::SpeedTest(ScriptAccess *access, Completion completion, QObject *paren
 {
     m_roundDeadline.setSingleShot(true);
     connect(&m_roundDeadline, &QTimer::timeout, this, [this] {
-        qint64 received = m_round >= 0 ? m_received[m_round] : 0;
+        qint64 received = (m_round >= 0 && m_round < static_cast<int>(m_samples.size()))
+            ? m_samples[static_cast<size_t>(m_round)].receivedBytes
+            : 0;
         for (int i = 0; i < m_count; ++i) {
             if (m_lanes[i].reply && !drain(i))
                 return;
@@ -60,31 +74,41 @@ void SpeedTest::finish(QString error, qint64 bitrate)
     QVariantMap result;
     if (error.isEmpty()) {
         QVariantList samples;
-        for (int i = 0; i < 3; ++i) {
-            samples.append(QVariantMap { { QStringLiteral("requests"), 1 << i },
-                { QStringLiteral("capacity-bytes-per-second"), m_rates[i] / 8 },
-                { QStringLiteral("ttfb-ms"), m_latencies[i] }, { QStringLiteral("elapsed-seconds"), m_durations[i] },
-                { QStringLiteral("received-bytes"), m_received[i] } });
-            qInfo("streaming probe sample requests=%d capacity_bytes_per_second=%.0f ttfb_ms=%.3f "
+        double maxRate = 0.0;
+        int bestHttpVersion = 0;
+        for (const RoundSample& s : m_samples) {
+            if (s.rateBps > maxRate) {
+                maxRate = s.rateBps;
+                bestHttpVersion = s.httpVersion;
+            }
+            samples.append(QVariantMap { { QStringLiteral("requests"), s.requests },
+                { QStringLiteral("http-version"), s.httpVersion },
+                { QStringLiteral("capacity-bytes-per-second"), s.rateBps / 8.0 },
+                { QStringLiteral("ttfb-ms"), s.ttfbMs }, { QStringLiteral("elapsed-seconds"), s.durationS },
+                { QStringLiteral("received-bytes"), s.receivedBytes } });
+            qInfo("streaming probe sample requests=%d http=%d capacity_bytes_per_second=%.0f ttfb_ms=%.3f "
                   "elapsed_seconds=%.3f received_bytes=%lld",
-                1 << i, m_rates[i] / 8, m_latencies[i], m_durations[i], static_cast<long long>(m_received[i]));
+                s.requests, s.httpVersion, s.rateBps / 8.0, s.ttfbMs, s.durationS,
+                static_cast<long long>(s.receivedBytes));
         }
         // This count describes the offline probe only; native playback chooses
         // its own profile from the complete measured curve.
-        const double threshold = *std::max_element(m_rates.cbegin(), m_rates.cend()) * 0.85;
+        const double threshold = maxRate * 0.85;
         int lanes = 1;
-        for (int i = 0; i < 3; ++i) {
-            if (m_rates[i] >= threshold) {
-                lanes = 1 << i;
+        for (const RoundSample& s : m_samples) {
+            if (s.rateBps >= threshold) {
+                lanes = s.requests;
                 break;
             }
         }
-        qInfo("streaming probe selection requests=%d", lanes);
+        qInfo("streaming probe selection requests=%d http=%d h3_advertised=%d", lanes, bestHttpVersion,
+            m_h3Advertised ? 1 : 0);
         QUrl endpoint;
         endpoint.setScheme(m_request.url().scheme());
         endpoint.setHost(m_request.url().host());
         endpoint.setPort(m_request.url().port());
         result = { { QStringLiteral("bitrate"), bitrate }, { QStringLiteral("parallelRequests"), lanes },
+            { QStringLiteral("http-version"), bestHttpVersion }, { QStringLiteral("h3-advertised"), m_h3Advertised },
             { QStringLiteral("concurrency-samples"), samples }, { QStringLiteral("origin"), endpoint.toString() } };
     }
     completion(std::move(error), std::move(result));
@@ -154,22 +178,29 @@ void SpeedTest::start(const QVariantMap& options)
     // Compression measures generated/compressed bytes rather than link bandwidth.
     m_request.setRawHeader("Accept-Encoding", "identity");
     m_request.setRawHeader("Cache-Control", "no-cache, no-store");
-    round(1, 512 * 1024);
+    m_schedule = { { 1, false }, { 2, false }, { 4, false } };
+    m_samples.clear();
+    m_samples.reserve(5);
+    m_totalElapsed.start();
+    round(1, 512 * 1024, false);
 }
 
-void SpeedTest::round(int lanes, qint64 totalBytes)
+void SpeedTest::round(int lanes, qint64 totalBytes, bool forceHttp1)
 {
-    m_count = lanes;
-    m_remaining = lanes;
-    m_expected = totalBytes / lanes;
+    m_count = std::clamp(lanes, 1, static_cast<int>(m_lanes.size()));
+    m_remaining = m_count;
+    m_expected = totalBytes / m_count;
+    m_forceHttp1 = forceHttp1;
     m_elapsed.start();
-    if (m_round < 0 || m_received[m_round] == 0)
+    const bool continuing = m_round >= 0 && m_round < static_cast<int>(m_samples.size())
+        && m_samples[static_cast<size_t>(m_round)].receivedBytes > 0;
+    if (!continuing)
         m_pointElapsed.start();
     // Each operating point gets at most 2.5 s (including repeated chunks),
-    // leaving room for warmup and JS completion inside the operation's 15 s.
+    // leaving room for warmup, optional WAN probes, and JS completion inside 15 s.
     m_roundDeadline.start(std::max(1, 2500 - int(m_pointElapsed.elapsed())));
     ++m_transfer;
-    for (int i = 0; i < lanes; ++i) {
+    for (int i = 0; i < m_count; ++i) {
         QString address = m_template;
         address.replace(QStringLiteral("{bytes}"), QString::number(m_expected));
         address.replace(QStringLiteral("{nonce}"),
@@ -178,15 +209,17 @@ void SpeedTest::round(int lanes, qint64 totalBytes)
         if ((url.scheme() != QStringLiteral("http") && url.scheme() != QStringLiteral("https"))
             || !m_access->allows(url))
             return finish(QStringLiteral("request_denied"));
-        m_request.setUrl(url);
+        QNetworkRequest request = m_request;
+        request.setUrl(url);
+        request.setAttribute(QNetworkRequest::Http2AllowedAttribute, !forceHttp1);
         if (m_range) {
             const qint64 offset = i * m_expected;
-            m_request.setRawHeader(
+            request.setRawHeader(
                 "Range", "bytes=" + QByteArray::number(offset) + '-' + QByteArray::number(offset + m_expected - 1));
         }
-        QNetworkReply *reply = m_access->network->get(m_request);
+        QNetworkReply *reply = m_access->network->get(request);
         reply->setReadBufferSize(m_buffer.size());
-        m_lanes[i] = { reply, 0 };
+        m_lanes[i] = { reply, 0, false, -1, 0 };
         connect(reply, &QNetworkReply::metaDataChanged, this, [this, i] {
             m_lanes[i].responseChecked = false;
             checkResponse(i);
@@ -227,6 +260,12 @@ bool SpeedTest::checkResponse(int index)
         || (reply->hasRawHeader("Content-Length") && reply->rawHeader("Content-Length").toLongLong() != m_expected)) {
         finish(QStringLiteral("invalid_sample"));
         return false;
+    }
+    if (status != 0) {
+        const bool usedH2 = reply->attribute(QNetworkRequest::Http2WasUsedAttribute).toBool();
+        lane.httpVersion = usedH2 ? 20 : 11;
+        if (reply->hasRawHeader("Alt-Svc") && altSvcAdvertisesH3(reply->rawHeader("Alt-Svc")))
+            m_h3Advertised = true;
     }
     lane.responseChecked = status != 0;
     return true;
@@ -275,24 +314,48 @@ void SpeedTest::completeRound()
 {
     const qint64 nanoseconds = std::max<qint64>(1, m_elapsed.nsecsElapsed());
     qint64 received = 0;
-    double latency = 0;
+    double latency = 0.0;
+    int httpVersion = m_forceHttp1 ? 11 : 0;
     for (int i = 0; i < m_count; ++i) {
         received += m_lanes[i].received;
         latency += (m_lanes[i].firstByteNs >= 0 ? m_lanes[i].firstByteNs : nanoseconds) / 1.0e6;
+        if (m_lanes[i].httpVersion > 0)
+            httpVersion = m_lanes[i].httpVersion;
     }
     abort();
     if (m_round >= 0) {
-        const double previousDuration = m_durations[m_round];
-        m_received[m_round] += received;
-        m_durations[m_round] += nanoseconds / 1.0e9;
-        m_latencies[m_round] = (m_latencies[m_round] * previousDuration + latency / m_count * (nanoseconds / 1.0e9))
-            / m_durations[m_round];
-        m_rates[m_round] = m_received[m_round] * 8.0 / m_durations[m_round];
+        RoundSample& sample = m_samples[static_cast<size_t>(m_round)];
+        const double previousDuration = sample.durationS;
+        sample.receivedBytes += received;
+        sample.durationS += nanoseconds / 1.0e9;
+        sample.ttfbMs
+            = (sample.ttfbMs * previousDuration + latency / m_count * (nanoseconds / 1.0e9)) / sample.durationS;
+        sample.rateBps = sample.receivedBytes * 8.0 / sample.durationS;
+        if (httpVersion > 0)
+            sample.httpVersion = httpVersion;
         // Short transfers get more wall time instead of rewarding a single
         // millisecond-scale result. Bound both traffic and duration; Range
         // probes repeat the minimum-size resource rather than reading past it.
-        if (m_durations[m_round] < 0.4 && m_received[m_round] < 64 * 1024 * 1024 && m_pointElapsed.elapsed() < 2500)
-            return round(m_count, std::min(m_chunkBytes, 64LL * 1024 * 1024 - m_received[m_round]));
+        if (sample.durationS < 0.4 && sample.receivedBytes < 64 * 1024 * 1024 && m_pointElapsed.elapsed() < 2500)
+            return round(m_count, std::min(m_chunkBytes, 64LL * 1024 * 1024 - sample.receivedBytes), m_forceHttp1);
+
+        // After the 1/2/4-lane baseline curve finishes, probe higher WAN
+        // concurrency or escape an HTTPS HTTP/2 single-socket bottleneck when
+        // evidence warrants it and ample wall-clock budget remains.
+        if (m_round == 2 && m_samples.size() >= 3) {
+            const double ttfb0 = m_samples[0].ttfbMs;
+            const bool https = m_request.url().scheme() == QStringLiteral("https");
+            const bool h2Stalled = https && m_samples[2].httpVersion == 20 && ttfb0 >= 40.0
+                && m_samples[2].rateBps < m_samples[0].rateBps * 1.35;
+            if (h2Stalled && !m_addedHttp1Round && m_totalElapsed.elapsed() < 9500) {
+                m_addedHttp1Round = true;
+                m_schedule.push_back({ 4, true });
+            } else if (!m_addedWideRound && ttfb0 >= 60.0 && m_samples[2].rateBps >= m_samples[1].rateBps * 1.25
+                && m_totalElapsed.elapsed() < 8500) {
+                m_addedWideRound = true;
+                m_schedule.push_back({ 8, false });
+            }
+        }
     } else {
         const double predicted = received * 0.4e9 / nanoseconds;
         // Power-of-two batches fit common server buffer size classes, while
@@ -303,10 +366,15 @@ void SpeedTest::completeRound()
                 m_chunkBytes *= 2;
         }
     }
-    // Always measure the complete curve, including negative scaling.
-    if (++m_round < 3)
-        return round(1 << m_round, m_chunkBytes);
-    const qint64 bitrate = std::llround(*std::max_element(m_rates.cbegin(), m_rates.cend()) * 0.75);
+    if (++m_round < static_cast<int>(m_schedule.size())) {
+        const RoundSpec spec = m_schedule[static_cast<size_t>(m_round)];
+        m_samples.push_back(RoundSample { spec.lanes, spec.forceHttp1 ? 11 : 0, 0.0, 0.0, 0.0, 0 });
+        return round(spec.lanes, m_chunkBytes, spec.forceHttp1);
+    }
+    double maxRate = 0.0;
+    for (const RoundSample& s : m_samples)
+        maxRate = std::max(maxRate, s.rateBps);
+    const qint64 bitrate = std::llround(maxRate * 0.75);
     finish({}, bitrate);
 }
 

@@ -9,6 +9,7 @@
 
 #include <array>
 #include <functional>
+#include <vector>
 
 class QNetworkReply;
 
@@ -31,8 +32,24 @@ private:
         qint64 received = 0;
         bool responseChecked = false;
         qint64 firstByteNs = -1;
+        int httpVersion = 0;
     };
-    void round(int lanes, qint64 totalBytes);
+
+    struct RoundSpec {
+        int lanes = 1;
+        bool forceHttp1 = false;
+    };
+
+    struct RoundSample {
+        int requests = 1;
+        int httpVersion = 0;
+        double rateBps = 0.0;
+        double ttfbMs = 0.0;
+        double durationS = 0.0;
+        qint64 receivedBytes = 0;
+    };
+
+    void round(int lanes, qint64 totalBytes, bool forceHttp1 = false);
     bool drain(int lane);
     bool checkResponse(int lane);
     void finished(int lane);
@@ -45,12 +62,11 @@ private:
     QString m_template;
     QString m_nonce;
     QNetworkRequest m_request;
-    std::array<Lane, 4> m_lanes;
-    std::array<double, 3> m_rates {};
-    std::array<double, 3> m_latencies {};
-    std::array<double, 3> m_durations {};
-    std::array<qint64, 3> m_received {};
+    std::array<Lane, 8> m_lanes {};
+    std::vector<RoundSpec> m_schedule;
+    std::vector<RoundSample> m_samples;
     std::array<char, 64 * 1024> m_buffer;
+    QElapsedTimer m_totalElapsed;
     QElapsedTimer m_elapsed;
     QElapsedTimer m_pointElapsed;
     QTimer m_roundDeadline;
@@ -62,6 +78,10 @@ private:
     qint64 m_chunkBytes = 4 * 1024 * 1024;
     bool m_done = false;
     bool m_range = false;
+    bool m_forceHttp1 = false;
+    bool m_h3Advertised = false;
+    bool m_addedWideRound = false;
+    bool m_addedHttp1Round = false;
 };
 
 } // namespace Spool
