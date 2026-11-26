@@ -37,9 +37,9 @@
       "sha256": "f720b449bdf8354afd193ca90795ea7b2f9fec05c85ca9709c8ea69d4290157d"
     },
     "libplacebo": {
-      "revision": "a7a18af88ff0a17c04840dcb3246047bb6b46df3",
-      "url": "https://codeload.github.com/haasn/libplacebo/tar.gz/a7a18af88ff0a17c04840dcb3246047bb6b46df3",
-      "sha256": "ba0c8c011c19cb74bcee26646d2d6070447151da89a9abdd01c9034e768de8b2",
+      "revision": "275f7dea27924cdd34ab2e6c20e448b6bc4fab65",
+      "url": "https://codeload.github.com/haasn/libplacebo/tar.gz/275f7dea27924cdd34ab2e6c20e448b6bc4fab65",
+      "sha256": "adbca47395410ada01414bc527e0103c716b9b758be857464c40e5ff0ec695be",
       "vendoredSources": {
         "3rdparty/fast_float": {
           "url": "https://codeload.github.com/fastfloat/fast_float/tar.gz/97b54ca9e75f5303507699d27c6b4f4efe4641a1",
@@ -62,6 +62,11 @@
           "sha256": "75967a8288ff16044a86d1af462b96d2e75c435937efb75f2bb4102ab0382f29"
         }
       }
+    },
+    "dav1d": {
+      "revision": "6c7bee685677fd997a431302be4fea8ea4017606",
+      "url": "https://codeload.github.com/videolan/dav1d/tar.gz/6c7bee685677fd997a431302be4fea8ea4017606",
+      "sha256": "725d0ebe5bd19316aaaeee84a170b0f6f3930fc7cf53fa0c5bbe3c86ba1c2b15"
     }
   }
 }

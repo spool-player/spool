@@ -191,6 +191,16 @@ FocusScope {
 
     function routeKey(key, phase, repeat) {
         if (allProvidersButton.activeFocus || accountsButton.activeFocus) {
+            // Show all sits above the warning's button; move between them first.
+            const both = allProvidersButton.visible && accountsButton.visible
+            if (phase === "press" && both && key === Qt.Key_Down && allProvidersButton.activeFocus) {
+                InputKeys.focus(accountsButton)
+                return true
+            }
+            if (phase === "press" && both && key === Qt.Key_Up && accountsButton.activeFocus) {
+                InputKeys.focus(allProvidersButton)
+                return true
+            }
             if (phase === "press" && key === Qt.Key_Down)
                 return initialLoading || rows.focusPreferred("libraries")
             if (phase === "press" && key === Qt.Key_Up) {

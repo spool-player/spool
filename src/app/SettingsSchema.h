@@ -57,6 +57,7 @@ enum class SettingTarget {
     PlayerVolumeSlider,
     AudioDelay,
     AudioOutput,
+    AudioPassthrough,
     UiScale,
     ArtworkFormat,
     ArtworkWebpQuality,

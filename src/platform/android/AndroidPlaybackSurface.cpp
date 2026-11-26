@@ -1,10 +1,12 @@
 #include "platform/PlatformPlaybackSurface.h"
 
+#include "media/MediaTypes.h"
 #include "platform/NativeAppWindow.h"
 #include "player/MpvVideoItem.h"
 
 #include <QCoreApplication>
 #include <QDebug>
+#include <QHash>
 #include <QJniObject>
 #include <QMetaObject>
 #include <QMutex>
@@ -84,11 +86,64 @@ MpvOptionProfile::Platform platformMpvOptionProfile()
     return MpvOptionProfile::Platform::Android;
 }
 
-bool platformUsesEmbeddedVideo(const PlaybackSession&, bool directRequested)
+namespace {
+    // MediaCodec's name for a source video codec, or empty when there is no
+    // single one to ask about.
+    QString mediaCodecMime(const QString& codec)
+    {
+        const QString name = codec.toLower();
+        if (name == QLatin1String("hevc") || name == QLatin1String("h265"))
+            return QStringLiteral("video/hevc");
+        if (name == QLatin1String("h264") || name == QLatin1String("avc"))
+            return QStringLiteral("video/avc");
+        if (name == QLatin1String("av1"))
+            return QStringLiteral("video/av01");
+        if (name == QLatin1String("vp9"))
+            return QStringLiteral("video/x-vnd.on2.vp9");
+        if (name == QLatin1String("vp8"))
+            return QStringLiteral("video/x-vnd.on2.vp8");
+        if (name == QLatin1String("mpeg2video") || name == QLatin1String("mpeg2"))
+            return QStringLiteral("video/mpeg2");
+        if (name == QLatin1String("mpeg4"))
+            return QStringLiteral("video/mp4v-es");
+        return {};
+    }
+
+    bool hasHardwareDecoder(const QString& mime)
+    {
+        // Enumerating codecs costs tens of milliseconds and the answer never
+        // changes while the app runs.
+        static QHash<QString, bool> known;
+        static QMutex mutex;
+        const QMutexLocker locker(&mutex);
+        const auto found = known.constFind(mime);
+        if (found != known.constEnd())
+            return *found;
+        const bool hardware = QJniObject::callStaticMethod<jboolean>(
+            kBridge, "hasHardwareDecoder", "(Ljava/lang/String;)Z", QJniObject::fromString(mime).object<jstring>());
+        known.insert(mime, hardware);
+        return hardware;
+    }
+}
+
+bool platformUsesEmbeddedVideo(const PlaybackSession& session, bool directRequested)
 {
     // Embedded means "through the Qt scene graph". Direct is the opposite of
-    // it, and the only thing that decides is what the viewer asked for.
-    return !directRequested;
+    // it and what the viewer asked for, unless the device cannot decode this
+    // video in hardware: direct output would then show nothing, while the
+    // rendered path decodes in software (dav1d for AV1).
+    if (!directRequested)
+        return true;
+    for (const MediaStreamInfo& stream : session.mediaStreams) {
+        if (stream.type.compare(QLatin1String("video"), Qt::CaseInsensitive) != 0)
+            continue;
+        const QString mime = mediaCodecMime(stream.codec);
+        if (mime.isEmpty() || hasHardwareDecoder(mime))
+            return false;
+        qInfo() << "playback surface: no hardware decoder for" << stream.codec << "- rendering through the GPU path";
+        return true;
+    }
+    return false;
 }
 
 QString platformPlaybackBackendName(bool embeddedVideo)

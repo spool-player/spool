@@ -223,6 +223,7 @@ public:
     Q_INVOKABLE void setFileAudioDelayMs(int delayMs);
     Q_INVOKABLE void setSubtitleDelayMs(int delayMs);
     Q_INVOKABLE void setAudioOutputMode(const QString& mode);
+    void setAudioPassthrough(const QString& mode);
     // Applies to the next thing that plays: the render options are set on a
     // fresh mpv core, and every play request builds one.
     void setRenderQuality(MpvOptionProfile::RenderQuality quality);
@@ -505,6 +506,7 @@ private:
     bool m_directVideoOutput = false;
     bool m_hardwareDecoding = true;
     QByteArray m_softwareRenderer;
+    QByteArray m_audioSpdifCodecs;
     bool m_threadedStreaming = true;
     int m_maxStreamingThreads = 4;
     bool m_forceStreamingThreads = false;

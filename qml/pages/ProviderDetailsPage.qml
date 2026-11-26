@@ -289,12 +289,6 @@ FocusScope {
                         }
                         wrapMode: Text.WordWrap
                     }
-                    SecondaryText {
-                        Layout.fillWidth: true
-                        visible: !accountRow.modelData.hasSettings
-                        text: "No settings for this account."
-                        wrapMode: Text.WordWrap
-                    }
                     AppText {
                         Layout.fillWidth: true
                         visible: Boolean(accountRow.modelData.errorText)

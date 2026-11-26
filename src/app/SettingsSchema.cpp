@@ -93,6 +93,9 @@ namespace {
     constexpr SettingChoice kReceiveWindowChoices[]
         = { { "measured", "Measured" }, { "os-auto", "Let the system decide" }, { "4m", "4 MB (expert)" },
               { "8m", "8 MB (expert)" }, { "16m", "16 MB (expert)" } };
+    // mpv's audio-spdif codec lists. DTS-HD covers plain DTS cores too.
+    constexpr SettingChoice kAudioPassthroughChoices[] = { { "off", "Off" },
+        { "dolby", "Dolby Digital and Dolby Digital Plus" }, { "all", "Dolby, DTS and Dolby TrueHD" } };
     constexpr SettingChoice kMpvConfigModeChoices[]
         = { { "disabled", "Off" }, { "standard", "Standard mpv directory" }, { "custom", "Custom directory" } };
     constexpr SettingChoice kSubtitleStylingChoices[] = { { "Auto", "Automatic" },
@@ -416,6 +419,12 @@ const QVector<SettingSpec>& settingSpecs()
                 audioOutput.defaultValue, audioOutput.choices, audioOutput.choiceCount, SettingTarget::AudioOutput,
                 SettingNormalizer::AudioOutput)
                 .advanced(),
+            selectSpec("playback/audioPassthrough", "Playback", "Audio passthrough",
+                "Sends surround soundtracks to an AV receiver or soundbar undecoded. Leave off unless one is "
+                "connected over HDMI or optical",
+                "off", kAudioPassthroughChoices, SettingTarget::AudioPassthrough)
+                .advanced()
+                .onAndroid(),
             selectSpec("playback/mpvConfigMode", "Playback", "mpv configuration",
                 "Your own mpv config can change or break playback", "disabled", kMpvConfigModeChoices,
                 SettingTarget::MpvConfigMode)

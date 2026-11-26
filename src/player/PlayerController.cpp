@@ -690,6 +690,7 @@ void PlayerController::prepareMpvAsync(bool needsVideoSurface, bool embeddedVide
         { "audio-delay", QByteArray::number(static_cast<double>(effectiveAudioDelayMs()) / 1000.0, 'f', 3) },
         { "sub-delay", QByteArray::number(static_cast<double>(m_subtitleDelayMs.load()) / 1000.0, 'f', 3) },
         { "speed", QByteArray::number(effectivePlaybackSpeed(), 'f', 3) },
+        { "audio-spdif", m_audioSpdifCodecs },
     };
     for (auto& option :
         MpvOptionProfile::subtitleOptions(m_subtitlePreferences, m_tracks.subtitlesEnabled(), m_hdrPlayback))
@@ -2542,6 +2543,18 @@ void PlayerController::setAudioOutputMode(const QString& mode)
     qInfo() << "player: audio output mode changed" << normalized << "visible=" << m_visible;
     discardPreparedMpvForOptionChange("audio output mode change");
     emit audioOutputModeChanged();
+}
+
+void PlayerController::setAudioPassthrough(const QString& mode)
+{
+    const QByteArray codecs = mode == QLatin1String("all") ? QByteArrayLiteral("ac3,eac3,dts,dts-hd,truehd")
+        : mode == QLatin1String("dolby")                   ? QByteArrayLiteral("ac3,eac3")
+                                                           : QByteArray();
+    if (m_audioSpdifCodecs == codecs)
+        return;
+    m_audioSpdifCodecs = codecs;
+    qInfo() << "player: audio passthrough" << (codecs.isEmpty() ? QByteArrayLiteral("off") : codecs);
+    discardPreparedMpvForOptionChange("audio passthrough change");
 }
 
 void PlayerController::setVolume(int volume)

@@ -72,7 +72,7 @@ unset PKG_CONFIG_SYSROOT_DIR
 fetch_sources() {
   mkdir -p "$SOURCE_ROOT" "$BUILD_ROOT"
   local source
-  for source in freetype lua qcoro fribidi harfbuzz libass libplacebo; do
+  for source in freetype lua qcoro fribidi harfbuzz libass libplacebo dav1d; do
     prepare_manifest_source "$ROOT" "$MANIFEST" "$source" "$SOURCE_ROOT/$source"
   done
   bash "$ROOT/tools/prepare-streaming-sources.sh" --root "$ROOT" --output "$SOURCE_ROOT"
@@ -239,6 +239,14 @@ build_text_and_gpu_deps() {
     -Dtest=disabled -Dcompare=disabled -Dprofile=disabled -Dfuzz=disabled \
     -Dcheckasm=disabled -Dfontconfig=disabled -Dlibunibreak=disabled \
     -Dasm=disabled --buildtype release
+  # Software AV1. No Shield and few TV boxes decode AV1 in hardware, and
+  # FFmpeg's own AV1 decoder only drives a hardware accelerator. The x86_64
+  # emulator build skips the assembly, which would need nasm.
+  local dav1d_asm=true
+  [[ "$ABI" == x86_64 ]] && dav1d_asm=false
+  build_meson dav1d \
+    -Denable_tools=false -Denable_examples=false -Denable_tests=false \
+    -Denable_docs=false -Denable_asm="$dav1d_asm" --buildtype release
   build_meson libplacebo \
     -Ddemos=false -Dtests=false -Dbench=false -Dfuzz=false \
     -Dvulkan=disabled -Dvk-proc-addr=disabled -Dd3d11=disabled \

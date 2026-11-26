@@ -99,7 +99,6 @@ public:
     Q_INVOKABLE void resetServerValue(const QString& key, const QString& sourceId);
     Q_INVOKABLE void removeServerOverrides(const QString& sourceId);
     Q_INVOKABLE QString serverPlaybackSummary(const QString& sourceId) const;
-    QVariantMap playbackSnapshot(const QString& sourceId) const;
     void retainServerOverrides(const QStringList& accountIds);
     void preparePlayback(const QString& sourceId);
     bool playerControlTooltipsEnabled() const

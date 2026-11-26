@@ -304,15 +304,6 @@ void SettingsController::persistServerOverrides()
     emit serverOverridesChanged();
 }
 
-QVariantMap SettingsController::playbackSnapshot(const QString& sourceId) const
-{
-    QVariantMap result;
-    for (const auto& spec : settingSpecs())
-        if (spec.serverOverridable)
-            result.insert(keyString(spec), effectiveValue(keyString(spec), sourceId));
-    return result;
-}
-
 QString SettingsController::serverPlaybackSummary(const QString& sourceId) const
 {
     const auto rows = m_serverOverrides.value(serverKey(sourceId)).toMap();
@@ -1040,6 +1031,10 @@ void SettingsController::applySchemaValue(const SettingSpec& spec, const QVarian
         m_audioOutputMode = value.toString();
         if (apply && m_player)
             m_player->setAudioOutputMode(m_audioOutputMode);
+        break;
+    case SettingTarget::AudioPassthrough:
+        if (m_player && (apply || !m_localSettingsLoaded))
+            m_player->setAudioPassthrough(value.toString());
         break;
     case SettingTarget::VideoOutputMode:
         m_videoOutputMode = value.toString();

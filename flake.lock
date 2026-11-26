@@ -3,28 +3,28 @@
     "libplacebo-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1783535157,
-        "narHash": "sha256-cA8+APhpu3m38z5hs2EhsNlLb/xHAy/Tcxi5loFS6j0=",
+        "lastModified": 1792950923,
+        "narHash": "sha256-PYi21y7uAZUsbn9nqn4ZP8QB9iQ9pRvnIKdOtG0WeIw=",
         "owner": "haasn",
         "repo": "libplacebo",
-        "rev": "a7a18af88ff0a17c04840dcb3246047bb6b46df3",
+        "rev": "275f7dea27924cdd34ab2e6c20e448b6bc4fab65",
         "type": "github"
       },
       "original": {
         "owner": "haasn",
         "repo": "libplacebo",
-        "rev": "a7a18af88ff0a17c04840dcb3246047bb6b46df3",
+        "rev": "275f7dea27924cdd34ab2e6c20e448b6bc4fab65",
         "type": "github"
       }
     },
     "mpv-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1794611110,
-        "narHash": "sha256-BDyGg26+kQk6SssQwxrUsdvI81Rximm+H/XRcK0Cc7A=",
+        "lastModified": 1795191261,
+        "narHash": "sha256-nVtQSmxrdcDuKIv4Meh7Kr/iivZGxYXHDM1S45XPPAM=",
         "ref": "refs/heads/net/integration",
-        "rev": "9360911de75197e73f4be8f183beadcf90651a84",
-        "revCount": 55881,
+        "rev": "12b98730c08c11dc159a44a3f2882c346d2360e2",
+        "revCount": 56224,
         "type": "git",
         "url": "file:./mpv"
       },
