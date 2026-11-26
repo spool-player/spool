@@ -48,10 +48,10 @@ RouteLatencies resolveRouteLatencies(const QString& output, int displayMs, int o
     const QString key = normalizedOutputKey(output);
     // The controls can return zero-filled payloads before the route is ready.
     // These fallbacks are the calibrated values from the webOS sync experiment.
-    int fallbackOutput = firmwareMediaMs;
-    if (key == QStringLiteral("external_arc"))
+    int fallbackOutput = firmwareMediaMs >= 0 && firmwareMediaMs <= 2000 ? firmwareMediaMs : -1;
+    if (fallbackOutput < 0 && key == QStringLiteral("external_arc"))
         fallbackOutput = 53;
-    else if (key == QStringLiteral("tv_speaker"))
+    else if (fallbackOutput < 0 && key == QStringLiteral("tv_speaker"))
         fallbackOutput = 74;
     if (displayMs <= 0 && (outputMs > 0 || fallbackOutput >= 0 || key == QStringLiteral("bt_soundbar")))
         displayMs = 150;
