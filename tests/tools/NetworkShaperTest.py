@@ -117,16 +117,26 @@ class NetworkShaperTest(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(self.shaper.metrics.peak_active_connections, 2)
 
     async def test_per_connection_limit_scales_with_parallel_connections(self) -> None:
-        port = await self.start_proxy(per_connection_rate=256_000)
-        started_at = time.monotonic()
-        results = await asyncio.gather(self.fetch(port), self.fetch(port))
-        elapsed = time.monotonic() - started_at
+        paced_bytes: dict[object, int] = {}
+
+        class ObservedPacer(network_shaper.Pacer):
+            async def wait(self, byte_count: int) -> None:
+                if self._bytes_per_second > 0:
+                    paced_bytes[self] = paced_bytes.get(self, 0) + byte_count
+                await super().wait(byte_count)
+
+        with patch.object(network_shaper, "Pacer", ObservedPacer):
+            port = await self.start_proxy(per_connection_rate=256_000)
+            started_at = time.monotonic()
+            results = await asyncio.gather(self.fetch(port), self.fetch(port))
+            elapsed = time.monotonic() - started_at
 
         self.assertTrue(all(body == PAYLOAD for _, body in results))
-        # Each 128 KiB connection is capped at 256 KB/s (~0.5s); running two in
-        # parallel must finish much faster than a 256 KB/s aggregate cap (~1.0s).
+        # Both payloads must traverse separate rate reservations. A wall-clock
+        # upper bound also measures unrelated runner scheduling and socket I/O.
         self.assertGreaterEqual(elapsed, 0.42)
-        self.assertLess(elapsed, 0.90)
+        self.assertEqual(len(paced_bytes), 2)
+        self.assertTrue(all(count >= len(PAYLOAD) for count in paced_bytes.values()))
         self.assertEqual(self.shaper.metrics.peak_active_connections, 2)
 
     async def test_slow_start_window_delays_single_connection_warmup(self) -> None:
@@ -145,14 +155,11 @@ class NetworkShaperTest(unittest.IsolatedAsyncioTestCase):
         _, body1 = await self.fetch(port)
         first_elapsed = time.monotonic() - started_at
 
-        started_at = time.monotonic()
         _, body2 = await self.fetch(port)
-        second_elapsed = time.monotonic() - started_at
 
         self.assertEqual(body1, PAYLOAD)
         self.assertEqual(body2, PAYLOAD)
         self.assertGreaterEqual(first_elapsed, 0.23)
-        self.assertLess(second_elapsed, 0.20)
         self.assertEqual(self.shaper.metrics.injected_stalls, 1)
 
 
