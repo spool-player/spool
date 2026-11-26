@@ -160,14 +160,11 @@ OverlayDialog {
     }
 
     function routeKey(key, phase, repeat) {
+        if (InputKeys.isBack(key, false, false))
+            return false
         if (deletionJob)
             return deletionDialog.item ? deletionDialog.item.routeKey(key, phase, repeat) : true
         const current = root.Window.window ? root.Window.window.activeFocusItem : null
-        if (InputKeys.isBack(key, false, false)) {
-            if (phase === "release")
-                back()
-            return true
-        }
         if (InputKeys.isAccept(key))
             return !InputKeys.isTextInputItem(current)
         if (!InputKeys.isDirection(key))

@@ -1962,7 +1962,7 @@ SPOOL_TEST_MAIN("app-journey")
         require(
             !jobId.isEmpty() && fixture.mediaBytes >= fixture.mediaSize(), "download never fetched the fixture media");
         journey.label("Downloaded");
-        journey.click("Close");
+        journey.command({ "key", "back" });
 
         journey.command({ "navigate", "settings" });
         journey.label("Appearance");

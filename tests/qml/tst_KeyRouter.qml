@@ -19,6 +19,7 @@ TestCase {
 
     property bool lastRouteRepeat: false
     property string lastRoutePhase: ""
+
     Item {
         // Reproduces AppShell's route property, which previously shadowed the
         // router's unqualified route() helper at runtime.
@@ -87,7 +88,7 @@ TestCase {
         lastRoutePhase = ""
         keyRouter.pressedDirectionKey = 0
         keyRouter.clearAccept()
-        keyRouter.backClaimed = false
+        keyRouter.backClaimed = null
         keyRouter.typeAheadKey = 0
         keyRouter.textInputActive = false
         keyRouter.backspaceNavigatesInTextInput = false
@@ -141,7 +142,44 @@ TestCase {
             "isAutoRepeat": false
         }
         verify(!keyRouter.dispatch(event, "press"))
+        // A new app target can appear before UIKit sends the release.
+        keyRouter.activeTarget = target
         verify(!keyRouter.dispatch(event, "release"))
+        compare(routeCalls, 0)
+        compare(backCalls, 0)
+    }
+
+    function test_backHoldCannotDismissTheNextTarget() {
+        let modalDismissals = 0
+        keyRouter.activeTarget = {
+            back: function () {
+                ++modalDismissals
+                keyRouter.activeTarget = target
+                return true
+            }
+        }
+        routeResult = false
+        const event = {
+            key: Qt.Key_Escape,
+            text: "",
+            modifiers: Qt.NoModifier,
+            isAutoRepeat: false
+        }
+        verify(keyRouter.dispatch(event, "press"))
+        compare(modalDismissals, 1)
+
+        event.isAutoRepeat = true
+        verify(keyRouter.dispatch(event, "release"))
+        verify(keyRouter.dispatch(event, "press"))
+        compare(routeCalls, 0)
+        compare(backCalls, 0)
+
+        event.isAutoRepeat = false
+        verify(keyRouter.dispatch(event, "release"))
+        compare(backCalls, 0)
+        verify(keyRouter.dispatch(event, "press"))
+        compare(backCalls, 1)
+        verify(keyRouter.dispatch(event, "release"))
     }
 
     function test_directionUsesRouterHelper() {

@@ -18,7 +18,8 @@ FocusScope {
     property int armedKey: 0
     property bool longPressHandled: false
     property bool pressActivated: false
-    property bool backClaimed: false
+    // null means no press was seen, so a release-only remote can still go Back.
+    property var backClaimed: null
     property int typeAheadKey: 0
     property int pressedDirectionKey: 0
 
@@ -320,8 +321,13 @@ FocusScope {
     }
 
     function routeBack(phase, repeat) {
-        if (phase === "release" && backClaimed)
-            return true
+        if (repeat)
+            return backClaimed === true
+        if (phase === "release" && backClaimed !== null) {
+            const claimed = backClaimed
+            backClaimed = null
+            return claimed
+        }
         const target = activeTarget
         let claimed = router.deliver(target, Qt.Key_Back, phase, repeat)
         if (!claimed && target && target.back)
@@ -352,12 +358,8 @@ FocusScope {
     function dispatchNormalized(event, key, phase, repeat) {
         if (globalHandler && globalHandler(key, phase, repeat, event.modifiers))
             return true
-        if (InputKeys.isBack(key, false)) {
-            const handled = routeBack(phase, repeat)
-            if (phase === "release")
-                backClaimed = false
-            return handled
-        }
+        if (InputKeys.isBack(key, false))
+            return routeBack(phase, repeat)
         if (routeTypeAhead(event, key, phase))
             return true
         // A focused field keeps the horizontal keys, which move its caret, but
