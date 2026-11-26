@@ -141,10 +141,13 @@ assistive technology. Compact login tiles retain their lock badge above the stam
 
 **Profiles & servers** shows each set with its server(s), its startup choice and
 Add profile, then one tile per person. Tiles carry one short state (Watching,
-Opening…, PIN required, Couldn't open, Sign in again, Removing…). An actionable
-failure appears once beside its profile as an accessible alert, never as a raw
-provider code or duplicated toast. A pending switch can be cancelled with Back or
-the remotely focusable Cancel button, leaving the
+Opening…, PIN required, Connection issue, Sign in again, Removing…). Activation
+failures appear beside their profile as an accessible alert. A failed operation
+on a running account also warns on Home and emits a notification: a live provider
+runtime does not establish server reachability or valid credentials. A successful
+library request clears a connection failure; local configuration reads do not.
+Authentication failures require signing in again. A pending switch can be
+cancelled with Back or the remotely focusable Cancel button, leaving the
 current viewer unchanged. Every tile has a menu (Menu key, hold, right-click) with
 Remove, even while its activation is pending or has failed; removal cancels the
 pending activation and never requires a successful one. Selection returns Home only
@@ -156,6 +159,21 @@ Login admission opens that profile immediately, so unfinished or failed activati
 can be cancelled, retried or removed without waiting behind a login spinner.
 An incompatible catalogue update does not block signing in to an already installed,
 validated provider; the incompatible package itself still cannot be installed.
+
+Startup schedules saved identity/settings restoration before loading the full
+QML shell; disk and network work remain asynchronous. Home distinguishes its
+initial loading state from partially available content and keeps a small
+**Loading more…** indicator while another account or shelf is pending. When a
+later inventory adds libraries, Home refreshes again rather than treating an
+earlier partial inventory as complete. Surviving Home shelves keep their native
+models, while row insertions and moves update the view in place and preserve the
+focused card's viewport position. Existing library-grid rows and artwork remain
+visible during background refreshes.
+
+Provider result objects omit properties whose JavaScript value is `undefined`,
+including unknown optional playback facts such as source size or runtime. This
+does not coerce explicit `null` into a valid media fact, change array entries, or
+relax the bridge's node/byte limits.
 
 Add profile and Sign in again carry the selected server into setup; the viewer
 does not re-enter its address. `beginSetup(moduleId, accountId, purpose)` validates

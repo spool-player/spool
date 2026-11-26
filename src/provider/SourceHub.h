@@ -14,6 +14,7 @@
 #include <QSet>
 #include <QTimer>
 
+#include <functional>
 #include <memory>
 #include <optional>
 #include <utility>
@@ -139,6 +140,8 @@ public:
     QVariantMap remoteQueueRow(const MovieItem& item) const;
     // The viewer's standing streaming limits from settings.
     void setPlaybackPreferences(qint64 manualMaxBitrate, bool unlimitedLocalNetwork, bool preferRemux, int maxHeight);
+    void setPlaybackPreferenceResolver(std::function<QVariantMap(const QString&)> resolver);
+    void refreshPlaybackPreferences();
     struct ReportingQueueEntry {
         QString itemId;
         QString entryId;
@@ -230,7 +233,6 @@ private:
         enum class SpeedState { Pending, Running, Complete, Failed };
         SpeedState speedState = SpeedState::Pending;
         qint64 measuredBitrate = 0;
-        int parallelRequests = 1;
         struct RemotePreview {
             QString urlTemplate;
             QByteArray headers;
@@ -274,6 +276,7 @@ private:
     QStringList m_videoCodecs;
     bool m_restrictVideoCodecs = false;
     QVariantMap m_preferences;
+    std::function<QVariantMap(const QString&)> m_playbackPreferenceResolver;
     std::vector<ReportingQueueEntry> m_reportingQueue;
     QHash<QString, QVariantMap> m_queueSnapshots;
     std::vector<std::pair<QString, int>> m_queueLocations;

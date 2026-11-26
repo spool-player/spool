@@ -380,11 +380,10 @@ QByteArray MpvOptionProfile::preloadedSubtitleStreams(const PlaybackSession& ses
     return values.join(',');
 }
 
-MpvOptionProfile::NetworkProfile MpvOptionProfile::networkProfile(Platform platform, int parallelRequests)
+MpvOptionProfile::NetworkProfile MpvOptionProfile::networkProfile(Platform platform)
 {
-    const int requests = std::clamp(parallelRequests, 1, 16);
-    return platform == Platform::WebOS ? NetworkProfile { 2 * 1024 * 1024, 512 * 1024, requests, 128 * 1024 }
-                                       : NetworkProfile { 4 * 1024 * 1024, 1024 * 1024, requests, 256 * 1024 };
+    return platform == Platform::WebOS ? NetworkProfile { 2 * 1024 * 1024, 512 * 1024, 128 * 1024 }
+                                       : NetworkProfile { 4 * 1024 * 1024, 1024 * 1024, 256 * 1024 };
 }
 
 QByteArray MpvOptionProfile::loadFileOptions(const PlaybackSession& session)
@@ -480,9 +479,9 @@ QByteArray MpvOptionProfile::systemCertificateBundle()
 }
 
 std::vector<MpvOption> MpvOptionProfile::applicationOptions(Platform platform, bool needsVideoSurface,
-    const QString& audioOutputMode, const QByteArray& logPath, const QByteArray& demuxerMaxBytes,
-    const QByteArray& demuxerMaxBackBytes, int parallelRequests, bool embeddedVideo, const QByteArray& shaderCachePath,
-    const QByteArray& certificateBundlePath, RenderQuality quality, bool threadedStreaming, bool forceStreamingThreads)
+    const QString& audioOutputMode, const QByteArray& logPath, const StreamingOptions& streaming,
+    const QByteArray& demuxerMaxBytes, const QByteArray& demuxerMaxBackBytes, bool embeddedVideo,
+    const QByteArray& shaderCachePath, const QByteArray& certificateBundlePath, RenderQuality quality)
 {
     const bool webOS = platform == Platform::WebOS;
     const bool android = platform == Platform::Android;
@@ -490,7 +489,7 @@ std::vector<MpvOption> MpvOptionProfile::applicationOptions(Platform platform, b
     // graph everywhere and, on webOS, the software-decode path it reaches for
     // legacy codecs. It used to be clamped to webOS here because nowhere else
     // had a second option; Android does now.
-    const NetworkProfile network = networkProfile(platform, parallelRequests);
+    const NetworkProfile network = networkProfile(platform);
     const QString normalizedAudioOutput = webOS ? audioOutputMode : normalizedAudioOutputMode(audioOutputMode);
     const bool starfishAudio = webOS && !embeddedVideo
         && (audioOutputMode == QStringLiteral("starfish") || audioOutputMode == QStringLiteral("starfish-pcm"));
@@ -505,13 +504,24 @@ std::vector<MpvOption> MpvOptionProfile::applicationOptions(Platform platform, b
         { "cache-pause", "no" },
         { "demuxer-max-bytes", demuxerMaxBytes },
         { "demuxer-max-back-bytes", demuxerMaxBackBytes },
-        { "curl-enabled", threadedStreaming ? "yes" : "no" },
+        { "curl-enabled", streaming.enabled ? "yes" : "no" },
         { "curl-buffer-size", QByteArray::number(network.ringBytes) },
         { "curl-max-request-size", QByteArray::number(network.rangeBytes) },
         { "curl-read-size", QByteArray::number(network.readBytes) },
-        { "curl-parallel-requests", QByteArray::number(network.parallelRequests) },
-        { "curl-adaptive", forceStreamingThreads ? "no" : "yes" },
-        { "curl-initial-requests", forceStreamingThreads ? QByteArray::number(network.parallelRequests) : "1" },
+        { "curl-parallel-requests", QByteArray::number(streaming.maxRequests) },
+        { "curl-fixed-requests", QByteArray::number(streaming.fixedRequests) },
+        { "curl-explore", streaming.explore ? "yes" : "no" },
+        { "curl-receive-mode",
+            streaming.receiveMode == 2       ? "fixed"
+                : streaming.receiveMode == 0 ? "os-auto"
+                                             : "measured" },
+        { "curl-receive-bytes",
+            QByteArray::number(streaming.receiveBytes > 0 ? streaming.receiveBytes : 4 * 1024 * 1024) },
+        { "curl-http-mode",
+            streaming.httpMode == 3       ? "prefer-h3"
+                : streaming.httpMode == 2 ? "http1"
+                : streaming.httpMode == 1 ? "tcp"
+                                          : "auto" },
         // A connection that goes quiet without closing is retried after this
         // long rather than mpv's 60 s, which outlasts any demuxer cache.
         { "network-timeout", "15" },

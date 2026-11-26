@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "sources": {
+    "openssl": {
+      "version": "3.5.9",
+      "url": "https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz",
+      "sha256": "603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a"
+    },
+    "curl": {
+      "version": "8.22.0",
+      "url": "https://curl.se/download/curl-8.22.0.tar.xz",
+      "sha256": "f7ef3ae8a22e521f289803fe93543eb64c329b58aa73a9e224dfd915a2a5f4f7",
+      "patches": [
+        "tools/patches/curl-apple-mobile-sectrust.patch"
+      ]
+    },
+    "nghttp2": {
+      "version": "1.70.0",
+      "url": "https://github.com/nghttp2/nghttp2/releases/download/v1.70.0/nghttp2-1.70.0.tar.bz2",
+      "sha256": "8faca1f78aa99ac3bc1768a76b7e0f6b36d8e6a62c13818751b1d205f02f9405"
+    },
+    "nghttp3": {
+      "version": "1.18.0",
+      "url": "https://github.com/ngtcp2/nghttp3/releases/download/v1.18.0/nghttp3-1.18.0.tar.bz2",
+      "sha256": "ca232668b94a5e1fb54b41632cc56473ab48226483814410ef62a706294e6402"
+    },
+    "ngtcp2": {
+      "version": "1.23.0",
+      "url": "https://github.com/ngtcp2/ngtcp2/releases/download/v1.23.0/ngtcp2-1.23.0.tar.bz2",
+      "sha256": "de4b99ffc90d9b95744c44a0dab61c9f2a9848b881b8fdeb974aeb5ea10802ca"
+    }
+  }
+}

@@ -278,6 +278,7 @@ private:
     void updateCapabilities(const QString& sourceId, QVariantMap offers);
     QCoro::Task<bool> requestNetworkConsent(QString sourceId, QString scope, QString kind, QUrl origin = {});
     void cancelNetworkConsent(const QString& sourceId, const QString& scope = {});
+    void storeNetworkProfile(const QString& key, QVariantMap profile);
 
     QPointer<DatabaseManager> m_database;
     QString m_installDirectory;
@@ -310,7 +311,7 @@ private:
     // sign-in with the same provider is not asked again.
     QStringList m_lanApprovedModules;
     QHash<QString, QPair<quint64, quint64>> m_networkFeedback;
-    QHash<QString, QHash<int, quint64>> m_networkPointSamples;
+    QHash<QString, QHash<QString, quint64>> m_networkPointSamples;
     QTimer m_networkSaveTimer;
     QSet<QString> m_removingAccounts;
     std::shared_ptr<QPromise<bool>> m_consentPromise;

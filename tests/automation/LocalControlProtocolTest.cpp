@@ -350,6 +350,22 @@ else:
     const auto status = cli(target + QStringList { QStringLiteral("speed-test"), QStringLiteral("status") });
     require(status["ok"].toBool() && !status["result"].toObject()["args"].toObject()["refresh"].toBool(),
         "remote speed-test status does not restart measurement");
+    const auto sorted = cli(target + QStringList { "browse", "sort", "Bitrate", "Descending" });
+    require(sorted["ok"].toBool() && sorted["result"].toObject()["command"] == "browse-sort"
+            && sorted["result"].toObject()["args"].toObject()["sortBy"] == "Bitrate"
+            && sorted["result"].toObject()["args"].toObject()["sortOrder"] == "Descending",
+        "CLI forwards server-side sort and direction without loading library pages");
+    const auto catalog = cli(target + QStringList { "catalog", "12345678:section:1", "200", "100" });
+    require(catalog["ok"].toBool() && catalog["result"].toObject()["command"] == "catalog"
+            && catalog["result"].toObject()["args"].toObject()["offset"].toInt() == 200
+            && catalog["result"].toObject()["args"].toObject()["limit"].toInt() == 100,
+        "CLI forwards direct bounded catalog paging without moving the view");
+    for (const QStringList& invalidCatalog : { QStringList { "catalog", "12345678:section:1", "-1" },
+             QStringList { "catalog", "12345678:section:1", "0", "101" }, QStringList { "catalog" } })
+        require(!cli(target + invalidCatalog)["ok"].toBool(), "CLI rejects unbounded or malformed catalog pages");
+    for (const QStringList& invalidSort : { QStringList { "browse", "sort", "Bitrate", "backwards" },
+             QStringList { "browse", "sort", "Bitrate&token=secret" }, QStringList { "browse", "sort" } })
+        require(!cli(target + invalidSort)["ok"].toBool(), "CLI rejects malformed server sort arguments");
     require(!cli({ "--host", "root@device.test", "--descriptor", "relative.json", "status" })["ok"].toBool(),
         "remote explicit descriptor must be an absolute remote path");
     require(!cli({ "--host", "root@device.test", "--instance", "remote-test", "--descriptor", "/private/test.json",

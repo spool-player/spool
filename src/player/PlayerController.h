@@ -12,6 +12,7 @@
 
 #include <QByteArray>
 #include <QByteArrayList>
+#include <QElapsedTimer>
 #include <QHash>
 #include <QObject>
 #include <QSslCertificate>
@@ -43,6 +44,7 @@ class PlatformPerformanceSampler;
 class PlayerController final : public QObject {
     Q_OBJECT
     Q_PROPERTY(bool visible READ visible NOTIFY visibleChanged)
+    Q_PROPERTY(QVariantMap transportCapabilities READ transportCapabilities NOTIFY transportCapabilitiesChanged)
     Q_PROPERTY(bool sessionActive READ sessionActive NOTIFY sessionActiveChanged)
     Q_PROPERTY(bool fileLoaded READ fileLoaded NOTIFY playbackStateChanged)
     Q_PROPERTY(bool hdrPlayback READ hdrPlayback NOTIFY hdrPlaybackChanged)
@@ -122,6 +124,10 @@ public:
     double containerFps() const
     {
         return m_containerFps;
+    }
+    QVariantMap transportCapabilities() const
+    {
+        return m_transportCapabilities;
     }
     QVariantMap networkMetrics() const
     {
@@ -257,6 +263,11 @@ public:
     void setMaxStreamingThreads(int threads);
     void setForceStreamingThreads(bool force);
     void setLogStreamingPerformance(bool enabled);
+    void setStreamingExplore(bool enabled);
+    void setStreamingMemoryLoan(bool enabled);
+    void setMaxExtraStreamingMemoryMiB(int size);
+    void setStreamingReceiveWindowMode(const QString& mode);
+    void setStreamingHttpVersion(const QString& mode);
     void setMpvConfigPolicy(const MpvConfigPolicy& policy);
 
 signals:
@@ -286,6 +297,7 @@ signals:
         bool retryableCodecFailure, int audioStreamIndex, int subtitleStreamIndex);
     void streamSelectionChanged(int audioStreamIndex, int subtitleStreamIndex);
     void nightModeEnabledChanged();
+    void transportCapabilitiesChanged();
     void toneMappingVisualizationEnabledChanged();
     void audioDelayMsChanged();
     void fileAudioDelayMsChanged();
@@ -432,6 +444,8 @@ private:
     QTimer m_progressTimer;
     QTimer m_networkTimer;
     QVariantMap m_networkMetrics;
+    QVariantMap m_transportCapabilities;
+    void refreshTransportCapabilities(mpv_handle *handle);
     QVariantMap m_streamingPerformanceMetrics;
     QUrl m_networkOrigin;
     QByteArray m_sessionRequestHeaders;
@@ -494,6 +508,12 @@ private:
     int m_maxStreamingThreads = 4;
     bool m_forceStreamingThreads = false;
     bool m_logStreamingPerformance = false;
+    MpvOptionProfile::StreamingOptions m_streamingOptions;
+    MpvOptionProfile::StreamingOptions m_sessionStreamingOptions;
+    qint64 m_jointExtraGrantBytes = 0;
+    qint64 m_previousMemoryCandidate = 0;
+    QElapsedTimer m_streamingMemoryTimer;
+    void updateStreamingMemoryGrant();
     // The opening seconds are where a device that cannot keep up says so:
     // the picture is being scaled and tone-mapped from the first frame, and
     // nothing has warmed a cache yet.

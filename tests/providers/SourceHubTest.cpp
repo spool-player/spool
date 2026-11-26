@@ -13,6 +13,7 @@
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
+#include <QPersistentModelIndex>
 #include <QTemporaryDir>
 #include <QThread>
 
@@ -634,6 +635,27 @@ SPOOL_TEST_MAIN("source-hub")
         require(!home.setProviderShown(QStringLiteral("fixture.test"), false)
                 && home.hiddenProviderIds() == QStringList { QStringLiteral("fixture.other") },
             "the last provider that can fill Home cannot be turned off");
+        const auto homeLibraries = QCoro::waitFor(homeHub.fetchLibraries());
+        std::vector<LibraryItem> firstLibraries;
+        for (const LibraryItem& library : homeLibraries) {
+            if (homeHub.accountOf(library.id) == retainedAccount)
+                firstLibraries.push_back(library);
+        }
+        home.refresh(firstLibraries);
+        waitUntil([&] { return !home.loading(); }, "first restored account fills Home");
+        require(home.latestLibraryRows().size() == 1, "the first inventory contains one account");
+        auto *visibleShelf = qobject_cast<MovieGridModel *>(
+            home.latestLibraryRows().first().toMap().value(QStringLiteral("model")).value<QObject *>());
+        require(visibleShelf && visibleShelf->rowCount() > 1, "the visible shelf has a selectable second item");
+        const QPersistentModelIndex selectedCard(visibleShelf->index(1, 0));
+        const QString selectedId = selectedCard.data(MovieGridModel::ItemRole).value<MovieItem>().id;
+        home.refresh(homeLibraries);
+        waitUntil([&] { return !home.loading(); }, "late library inventory fills Home");
+        require(home.latestLibraryRows().size() == 2,
+            "an expanded inventory refreshes Home even after an earlier inventory finished");
+        require(
+            selectedCard.isValid() && selectedCard.data(MovieGridModel::ItemRole).value<MovieItem>().id == selectedId,
+            "late libraries preserve the existing shelf's selected item");
         home.refresh(QCoro::waitFor(homeHub.fetchLibraries()));
         waitUntil([&] { return !home.loading(); }, "multi-account homepage loads");
         require(home.latestLibraryRows().size() == 2, "homepage initially includes both accounts' latest rows");

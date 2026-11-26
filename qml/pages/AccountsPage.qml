@@ -104,10 +104,10 @@ FocusScope {
             return "pending"
         if (rows.some(account => account.needsSignIn))
             return "signIn"
-        if (rows.some(account => account.running && account.enabled))
-            return "active"
         if (rows.some(account => account.connectionState === "failed"))
             return "failed"
+        if (rows.some(account => account.running && account.enabled))
+            return "active"
         if (rows.some(account => account.locked))
             return "locked"
         if (rows.some(account => account.connectionState === "choose"))
@@ -128,7 +128,7 @@ FocusScope {
         case "signIn":
             return "Sign in again"
         case "failed":
-            return "Couldn't open"
+            return "Connection issue"
         case "locked":
             return "PIN required"
         case "starting":
@@ -203,7 +203,8 @@ FocusScope {
             return
         }
         // Any of the person's servers will do: activation brings the rest along.
-        const account = entry.accounts.find(row => !row.needsSignIn) || entry.accounts[0]
+        const account = entry.accounts.find(row => row.connectionState === "failed" && !row.needsSignIn)
+              || entry.accounts.find(row => !row.needsSignIn) || entry.accounts[0]
         pendingAccountId = account.id
         Providers.useAccount(account.id)
     }

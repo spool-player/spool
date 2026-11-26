@@ -11,7 +11,6 @@
 #include "../platform/PlatformPlaybackSurface.h"
 #include "../platform/PlatformSystemProbes.h"
 #include "../provider/PlaybackSource.h"
-#include "../provider/SpeedTest.h"
 #include "MpvOptionProfile.h"
 #include "MpvVideoItem.h"
 #include "PlaybackFailurePolicy.h"
@@ -38,6 +37,7 @@ extern "C" {
 #include <QtGlobal>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -71,10 +71,12 @@ namespace {
     constexpr uint64_t kTransportLoadReply = 0x746c000000000000ULL;
 
     // The acknowledgement, not submission order, authorizes the pending load.
-    int configureTransport(mpv_handle *handle, const PlaybackSession& session, qint64 epoch, uint64_t replyId)
+    int configureTransport(mpv_handle *handle, const PlaybackSession& session,
+        const MpvOptionProfile::StreamingOptions& options, const QUrl& origin, const QVariantList& samples,
+        qint64 epoch, uint64_t replyId)
     {
-        char *keys[10];
-        mpv_node values[10] {};
+        char *keys[24];
+        mpv_node values[24] {};
         int count = 0;
         const auto integer = [&](const char *key, qint64 value) {
             keys[count] = const_cast<char *>(key);
@@ -89,6 +91,59 @@ namespace {
         integer("format", 2);
         integer("op", 0);
         integer("playback-epoch", epoch);
+        integer("max-requests", options.maxRequests);
+        integer("fixed-requests", options.fixedRequests);
+        integer("receive-mode", options.receiveMode);
+        if (options.receiveMode == 2)
+            integer("receive-bytes", options.receiveBytes);
+        integer("http-mode", options.httpMode);
+        keys[count] = const_cast<char *>("explore");
+        values[count].format = MPV_FORMAT_FLAG;
+        values[count++].u.flag = options.explore;
+        QUrl canonicalOrigin;
+        canonicalOrigin.setScheme(origin.scheme());
+        canonicalOrigin.setHost(origin.host());
+        canonicalOrigin.setPort(origin.port());
+        const QByteArray originBytes = canonicalOrigin.toEncoded();
+        if (!originBytes.isEmpty()) {
+            keys[count] = const_cast<char *>("primary-origin");
+            values[count].format = MPV_FORMAT_STRING;
+            values[count++].u.string = const_cast<char *>(originBytes.constData());
+        }
+        // The property call copies the complete node synchronously before returning.
+        struct Prior {
+            char *keys[10];
+            mpv_node values[10] {};
+            mpv_node_list list {};
+        };
+        std::array<Prior, 64> priors {};
+        std::array<mpv_node, 64> rows {};
+        const char *priorFields[] = { "requests", "http-version", "receive-profile", "receive-bytes", "range-bytes",
+            "ordered-bytes-per-second", "ttfb-ms", "updated-at-ms", "source", "samples" };
+        int priorCount = 0;
+        for (const auto& entry : samples) {
+            if (priorCount == 64)
+                break;
+            const auto sample = entry.toMap();
+            auto& prior = priors[priorCount];
+            for (int field = 0; field < 10; ++field) {
+                prior.keys[field] = const_cast<char *>(priorFields[field]);
+                const auto value = sample.value(QString::fromLatin1(priorFields[field]));
+                const bool real = field == 5 || field == 6;
+                prior.values[field].format = real ? MPV_FORMAT_DOUBLE : MPV_FORMAT_INT64;
+                if (real)
+                    prior.values[field].u.double_ = value.toDouble();
+                else
+                    prior.values[field].u.int64 = value.toLongLong();
+            }
+            prior.list = { 10, prior.values, prior.keys };
+            rows[priorCount].format = MPV_FORMAT_NODE_MAP;
+            rows[priorCount++].u.list = &prior.list;
+        }
+        mpv_node_list priorList { priorCount, rows.data(), nullptr };
+        keys[count] = const_cast<char *>("transport-samples");
+        values[count].format = MPV_FORMAT_NODE_ARRAY;
+        values[count++].u.list = &priorList;
         if (session.sourceBitrate > 0)
             number("source-bitrate", static_cast<double>(session.sourceBitrate));
         if (session.deliveryBitrate > 0)
@@ -261,7 +316,17 @@ namespace {
             QStringLiteral("tcp-rtt-available"), QStringLiteral("cpu-ns-per-ordered-byte"), QStringLiteral("lane"),
             QStringLiteral("active-seconds"), QStringLiteral("average-bytes-per-second"),
             QStringLiteral("current-bytes-per-second"), QStringLiteral("peak-bytes-per-second"),
-            QStringLiteral("samples"), QStringLiteral("requests") };
+            QStringLiteral("samples"), QStringLiteral("requests"), QStringLiteral("transport-samples"),
+            QStringLiteral("receive-profile"), QStringLiteral("receive-bytes"), QStringLiteral("range-bytes"),
+            QStringLiteral("ordered-bytes-per-second"), QStringLiteral("updated-at-ms"), QStringLiteral("source"),
+            QStringLiteral("effective-http-version"), QStringLiteral("http-fallbacks"), QStringLiteral("origins"),
+            QStringLiteral("primary-origin-match"), QStringLiteral("origin-id"), QStringLiteral("h2-state"),
+            QStringLiteral("h3-state"), QStringLiteral("cooldown-remaining-ms"),
+            QStringLiteral("receive-requested-bytes"), QStringLiteral("receive-effective-bytes"),
+            QStringLiteral("receive-status"), QStringLiteral("udp-rcvbuf-requested"),
+            QStringLiteral("udp-rcvbuf-effective"), QStringLiteral("udp-drops"), QStringLiteral("urgency"),
+            QStringLiteral("state"), QStringLiteral("last-reason"), QStringLiteral("joint-extra-grant-bytes"),
+            QStringLiteral("allocated-extra-bytes"), QStringLiteral("reserved-socket-bytes") };
         if (keys.contains(key))
             return true;
         constexpr QLatin1String available("-available");
@@ -587,10 +652,9 @@ void PlayerController::prepareMpvAsync(bool needsVideoSurface, bool embeddedVide
     preparation->embeddedVideo = embeddedVideo;
     preparation->hardwareDecoding = m_hardwareDecoding;
     preparation->userConfig = usesUserMpvConfig();
-    const int parallelRequests = m_maxStreamingThreads;
-    const auto network = MpvOptionProfile::networkProfile(preparation->platform, parallelRequests);
+    const auto network = MpvOptionProfile::networkProfile(preparation->platform);
     qInfo().nospace() << "player: curl profile source=MpvOptionProfile platform="
-                      << platformPlaybackBackendName(embeddedVideo) << " requestsPerStream=" << network.parallelRequests
+                      << platformPlaybackBackendName(embeddedVideo) << " maxRequests=" << m_maxStreamingThreads
                       << " rangeBytes=" << network.rangeBytes << " ringBytes=" << network.ringBytes
                       << " enabled=" << m_threadedStreaming << " forced=" << m_forceStreamingThreads;
     QByteArray certificateBundle = QFile::encodeName(writeTrustBundle());
@@ -598,8 +662,8 @@ void PlayerController::prepareMpvAsync(bool needsVideoSurface, bool embeddedVide
         certificateBundle = MpvOptionProfile::systemCertificateBundle();
     preparation->options = MpvOptionProfile::preInitializeOptions(m_mpvConfigPolicy);
     auto applicationOptions = MpvOptionProfile::applicationOptions(preparation->platform, needsVideoSurface,
-        m_audioOutputMode, {}, m_demuxerMaxBytes, m_demuxerMaxBackBytes, parallelRequests, embeddedVideo,
-        mpvShaderCachePath(), certificateBundle, m_renderQuality, m_threadedStreaming, m_forceStreamingThreads);
+        m_audioOutputMode, {}, m_streamingOptions, m_demuxerMaxBytes, m_demuxerMaxBackBytes, embeddedVideo,
+        mpvShaderCachePath(), certificateBundle, m_renderQuality);
     applicationOptions.push_back({ "sub-fonts-dir", m_subtitleFontsPath });
     applicationOptions.push_back({ "osd-fonts-dir", m_subtitleFontsPath });
     applicationOptions.push_back({ "osd-font", QByteArrayLiteral("IBM Plex Sans Var") });
@@ -643,6 +707,7 @@ void PlayerController::prepareMpvAsync(bool needsVideoSurface, bool embeddedVide
                 return;
             }
             m_idleMpvHandle = std::exchange(preparation->handle, nullptr);
+            refreshTransportCapabilities(m_idleMpvHandle);
             m_idleMpvNeedsVideoSurface = preparation->needsVideoSurface;
             m_idleMpvEmbeddedVideo = preparation->embeddedVideo;
             qInfo() << "player: idle-prepared mpv initialized in" << preparation->elapsedMs << "ms";
@@ -653,6 +718,37 @@ void PlayerController::prepareMpvAsync(bool needsVideoSurface, bool embeddedVide
         },
         Qt::QueuedConnection);
     worker->start(QThread::LowPriority);
+}
+
+void PlayerController::refreshTransportCapabilities(mpv_handle *handle)
+{
+    mpv_node node {};
+    if (mpv_get_property(handle, "curl-transport-capabilities", MPV_FORMAT_NODE, &node) < 0)
+        return;
+    QVariantMap capabilities;
+    if (node.format == MPV_FORMAT_NODE_MAP && node.u.list) {
+        const QSet<QString> flags { QStringLiteral("http2"), QStringLiteral("http3"), QStringLiteral("alt-svc"),
+            QStringLiteral("quic-batching"), QStringLiteral("hw-aes") };
+        for (int i = 0; i < node.u.list->num; ++i) {
+            const QString key = QString::fromUtf8(node.u.list->keys[i]);
+            const auto& value = node.u.list->values[i];
+            if (flags.contains(key) && value.format == MPV_FORMAT_FLAG)
+                capabilities.insert(key, bool(value.u.flag));
+            else if (key == QLatin1String("curl-version") && value.format == MPV_FORMAT_INT64)
+                capabilities.insert(key, qint64(value.u.int64));
+            else if (key == QLatin1String("tls-backend") && value.format == MPV_FORMAT_STRING) {
+                const QString backend = QString::fromUtf8(value.u.string);
+                if (backend == QLatin1String("openssl") || backend == QLatin1String("schannel")
+                    || backend == QLatin1String("securetransport") || backend == QLatin1String("other"))
+                    capabilities.insert(key, backend);
+            }
+        }
+    }
+    mpv_free_node_contents(&node);
+    if (m_transportCapabilities != capabilities) {
+        m_transportCapabilities = capabilities;
+        emit transportCapabilitiesChanged();
+    }
 }
 
 void PlayerController::destroyIdleMpv(const char *reason)
@@ -1495,6 +1591,12 @@ void PlayerController::playSession(const PlaybackSession& session, bool startPau
     m_networkQueryPending = false;
     m_cacheSpeedQueryPending = false;
     m_sessionThreadedStreaming = m_threadedStreaming;
+    m_sessionStreamingOptions = m_streamingOptions;
+    m_jointExtraGrantBytes = 0;
+    m_previousMemoryCandidate = 0;
+    m_streamingMemoryTimer.invalidate();
+    updateStreamingMemoryGrant();
+    m_streamingMemoryTimer.start();
     m_streamingPerformanceSampler.reset();
     m_previousCurlCpuSeconds = -1;
     m_previousCurlWallSeconds = -1;
@@ -1716,42 +1818,6 @@ void PlayerController::finishPlaySession(
         return;
     }
     QByteArray loadFileOptions = MpvOptionProfile::loadFileOptions(session);
-    if (m_sessionThreadedStreaming && m_api && !m_networkOrigin.isEmpty()) {
-        // Resolve seeds per file, not from whichever account was active when
-        // the speculative core was initialized.
-        const QVariantMap& profile = m_sessionNetworkProfile;
-        const auto addOption = [&loadFileOptions](const char *name, const QByteArray& value) {
-            if (!loadFileOptions.isEmpty())
-                loadFileOptions += ',';
-            loadFileOptions += name;
-            loadFileOptions += '=';
-            loadFileOptions += value;
-        };
-        addOption("curl-adaptive", m_forceStreamingThreads ? "no" : "yes");
-        addOption("curl-parallel-requests", QByteArray::number(m_maxStreamingThreads));
-        const QVariantList samples = profile.value(QStringLiteral("concurrency-samples")).toList();
-        const NetworkLaneSelection selection
-            = selectNetworkLanes(samples, networkMediaBitrate(), m_maxStreamingThreads);
-        const int initialRequests = m_forceStreamingThreads ? m_maxStreamingThreads : selection.requests;
-        double capacity = 0;
-        double latency = 0;
-        for (const QVariant& value : samples) {
-            const QVariantMap point = value.toMap();
-            if (point.value(QStringLiteral("requests")).toInt() == initialRequests) {
-                capacity = point.value(QStringLiteral("capacity-bytes-per-second")).toDouble();
-                latency = point.value(QStringLiteral("ttfb-ms")).toDouble();
-                break;
-            }
-        }
-        addOption("curl-initial-requests", QByteArray::number(initialRequests));
-        addOption("curl-ttfb-ms", QByteArray::number(latency, 'f', 3));
-        addOption("curl-observed-bps", QByteArray::number(capacity, 'f', 0));
-        qInfo().nospace() << "player: streaming selection selectedRequests=" << initialRequests
-                          << " maxRequests=" << m_maxStreamingThreads << " forced=" << m_forceStreamingThreads
-                          << " reason=" << (m_forceStreamingThreads ? 3 : selection.reason)
-                          << " capacityMbps=" << capacity * 8 / 1e6 << " mediaMbps=" << networkMediaBitrate() / 1e6;
-        addOption("curl-media-bitrate", QByteArray::number(networkMediaBitrate(), 'f', 0));
-    }
     if (m_sessionThreadedStreaming || m_logStreamingPerformance)
         m_networkTimer.start();
     QByteArrayList loadCommand { QByteArrayLiteral("loadfile"), urlBytes, QByteArrayLiteral("replace"),
@@ -1774,7 +1840,10 @@ void PlayerController::configureTransportForLoad(QByteArrayList loadCommand)
         submitTransportLoad(serial);
         return;
     }
-    if (configureTransport(handle, m_session, epoch, kTransportConfigureReply | serial) < 0) {
+    if (configureTransport(handle, m_session, m_sessionStreamingOptions, m_networkOrigin,
+            m_sessionNetworkProfile.value(QStringLiteral("transport-samples")).toList(), epoch,
+            kTransportConfigureReply | serial)
+        < 0) {
         m_pendingTransportLoads.remove(serial);
         failTransportLoad(true);
     }
@@ -2650,6 +2719,7 @@ void PlayerController::setThreadedStreaming(bool enabled)
     if (m_threadedStreaming == enabled)
         return;
     m_threadedStreaming = enabled;
+    m_streamingOptions.enabled = enabled;
     discardPreparedMpvForOptionChange("threaded streaming change");
 }
 
@@ -2659,6 +2729,8 @@ void PlayerController::setMaxStreamingThreads(int threads)
     if (m_maxStreamingThreads == threads)
         return;
     m_maxStreamingThreads = threads;
+    m_streamingOptions.maxRequests = threads;
+    m_streamingOptions.fixedRequests = m_forceStreamingThreads ? threads : 0;
     discardPreparedMpvForOptionChange("streaming thread limit change");
 }
 
@@ -2667,7 +2739,40 @@ void PlayerController::setForceStreamingThreads(bool force)
     if (m_forceStreamingThreads == force)
         return;
     m_forceStreamingThreads = force;
+    m_streamingOptions.fixedRequests = force ? m_maxStreamingThreads : 0;
     discardPreparedMpvForOptionChange("forced streaming threads change");
+}
+
+void PlayerController::setStreamingExplore(bool enabled)
+{
+    m_streamingOptions.explore = enabled;
+}
+
+void PlayerController::setStreamingMemoryLoan(bool enabled)
+{
+    m_streamingOptions.allowExtraMemory = enabled;
+}
+
+void PlayerController::setMaxExtraStreamingMemoryMiB(int size)
+{
+    m_streamingOptions.maxExtraBytes = qBound(0, size, 128) * 1024LL * 1024;
+}
+
+void PlayerController::setStreamingReceiveWindowMode(const QString& mode)
+{
+    m_streamingOptions.receiveMode = mode == QLatin1String("os-auto") ? 0 : mode == QLatin1String("measured") ? 1 : 2;
+    m_streamingOptions.receiveBytes = mode == QLatin1String("4m") ? 4LL * 1024 * 1024
+        : mode == QLatin1String("8m")                             ? 8LL * 1024 * 1024
+        : mode == QLatin1String("16m")                            ? 16LL * 1024 * 1024
+                                                                  : 0;
+}
+
+void PlayerController::setStreamingHttpVersion(const QString& mode)
+{
+    m_streamingOptions.httpMode = mode == QLatin1String("http3") ? 3
+        : mode == QLatin1String("http1")                         ? 2
+        : mode == QLatin1String("tcp")                           ? 1
+                                                                 : 0;
 }
 
 void PlayerController::setLogStreamingPerformance(bool enabled)
@@ -2704,6 +2809,10 @@ double PlayerController::networkMediaBitrate() const
 
 void PlayerController::updateNetworkTransport()
 {
+    if (!m_streamingMemoryTimer.isValid() || m_streamingMemoryTimer.elapsed() >= 5000) {
+        updateStreamingMemoryGrant();
+        m_streamingMemoryTimer.restart();
+    }
     auto *handle = m_mpvLifecycle.handle();
     if (!handle || !m_sessionActive)
         return;
@@ -3642,6 +3751,28 @@ void PlayerController::skipActiveSegment()
     seek(activeSegmentEndSeconds());
 }
 
+void PlayerController::updateStreamingMemoryGrant()
+{
+    constexpr qint64 mib = 1024LL * 1024;
+    const auto memory = platformStreamingMemoryState();
+    const auto policy = platformMemoryPolicy();
+    const bool constrained = platformMpvOptionProfile() == MpvOptionProfile::Platform::WebOS
+        || (policy.totalBytes > 0 && policy.totalBytes < policy.lowMemoryBytes);
+    const qint64 reserve = (constrained ? 64 : 128) * mib;
+    const auto& options = m_sessionStreamingOptions;
+    const qint64 cap = options.maxExtraBytes > 0 ? options.maxExtraBytes : (constrained ? 32 : 64) * mib;
+    const qint64 desired = options.allowExtraMemory && memory.available
+        ? std::min(cap, std::max(qint64(0), memory.availableBytes - reserve) / 4)
+        : 0;
+    // Pressure shrinks admission immediately; growth needs two independent samples.
+    const qint64 grant = desired <= m_jointExtraGrantBytes ? desired : std::min(desired, m_previousMemoryCandidate);
+    m_previousMemoryCandidate = desired;
+    if (grant != m_jointExtraGrantBytes) {
+        m_jointExtraGrantBytes = grant;
+        updateBackgroundNetwork();
+    }
+}
+
 void PlayerController::setBackgroundNetwork(bool active)
 {
     m_backgroundNetwork = active;
@@ -3657,15 +3788,18 @@ void PlayerController::updateBackgroundNetwork()
     char opKey[] = "op";
     char epochKey[] = "playback-epoch";
     char backgroundKey[] = "background-network";
-    char *keys[] = { formatKey, opKey, epochKey, backgroundKey };
-    mpv_node values[4] {};
+    char grantKey[] = "joint-extra-grant-bytes";
+    char *keys[] = { formatKey, opKey, epochKey, backgroundKey, grantKey };
+    mpv_node values[5] {};
     values[0].format = values[1].format = values[2].format = MPV_FORMAT_INT64;
     values[0].u.int64 = 2;
     values[1].u.int64 = 1;
     values[2].u.int64 = m_transportEpoch;
     values[3].format = MPV_FORMAT_FLAG;
     values[3].u.flag = m_backgroundNetwork || m_trickplayNetwork;
-    mpv_node_list list { 4, values, keys };
+    values[4].format = MPV_FORMAT_INT64;
+    values[4].u.int64 = m_jointExtraGrantBytes;
+    mpv_node_list list { 5, values, keys };
     mpv_node control {};
     control.format = MPV_FORMAT_NODE_MAP;
     control.u.list = &list;

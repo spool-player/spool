@@ -88,6 +88,11 @@ namespace {
         { "480", "480p" },
         { "360", "360p" },
     };
+    constexpr SettingChoice kStreamingHttpChoices[] = { { "auto", "Automatic" },
+        { "http3", "Prefer HTTP/3, with fallback" }, { "tcp", "TCP only (no HTTP/3)" }, { "http1", "HTTP/1.1 only" } };
+    constexpr SettingChoice kReceiveWindowChoices[]
+        = { { "measured", "Measured" }, { "os-auto", "Let the system decide" }, { "4m", "4 MB (expert)" },
+              { "8m", "8 MB (expert)" }, { "16m", "16 MB (expert)" } };
     constexpr SettingChoice kMpvConfigModeChoices[]
         = { { "disabled", "Off" }, { "standard", "Standard mpv directory" }, { "custom", "Custom directory" } };
     constexpr SettingChoice kSubtitleStylingChoices[] = { { "Auto", "Automatic" },
@@ -236,6 +241,13 @@ namespace {
     }
 
 } // namespace
+
+SettingSpec SettingSpec::perServer() const
+{
+    auto spec = *this;
+    spec.serverOverridable = true;
+    return spec;
+}
 
 SettingSpec SettingSpec::advanced() const
 {
@@ -417,23 +429,29 @@ const QVector<SettingSpec>& settingSpecs()
 
             selectSpec("playback/maxStreamingHeight", "Streaming", "Resolution limit",
                 "Anything larger is scaled down by the server", "0", kMaxStreamingHeightChoices,
-                SettingTarget::MaxStreamingHeight),
+                SettingTarget::MaxStreamingHeight)
+                .perServer(),
             toggleSpec("playback/manualStreamingBitrate", "Streaming", "Set my own bitrate limit",
-                "Otherwise the limit is measured for you", false, SettingTarget::ManualStreamingBitrate),
+                "Otherwise the limit is measured for you", false, SettingTarget::ManualStreamingBitrate)
+                .perServer(),
             pageSpec("action/connectionSpeed", "Streaming", "Connection speed", "", SettingType::Action),
             sliderSpec("playback/maxStreamingBitrateMbps", "Streaming", "Bitrate limit",
                 "Anything higher is transcoded by the server", "120", 5, 1000, 5, "Mbps",
                 SettingTarget::MaxStreamingBitrate)
+                .perServer()
                 .whenSetTo("playback/manualStreamingBitrate", "true"),
             toggleSpec("playback/unlimitedLocalBitrate", "Streaming", "No limit on the local network",
                 "Applies when the server sees you as local", false, SettingTarget::UnlimitedLocalBitrate)
+                .perServer()
                 .advanced(),
             toggleSpec("playback/preferRemux", "Streaming", "Prefer remuxing",
                 "Repackages instead of re-encoding where it can", true, SettingTarget::PreferRemux)
+                .perServer()
                 .advanced(),
             sliderSpec("playback/forwardCacheSizeMiB", "Streaming", "Read-ahead buffer",
                 "Applies the next time something plays", "32", 16, 2048, 1, "MB", SettingTarget::ForwardCacheSize,
                 SettingNormalizer::PowerOfTwoRange)
+                .perServer()
                 .advanced(),
             toggleSpec("playback/seekPreviews", "Streaming", "Seek previews",
                 "Thumbnails while seeking. Off hides them and stops downloading them", true, SettingTarget::External),
@@ -441,17 +459,51 @@ const QVector<SettingSpec>& settingSpecs()
                 "Downloads with parallel range requests and adapts to the connection. Off uses standard mpv "
                 "networking. Applies to the next playback",
                 true, SettingTarget::ThreadedStreaming)
+                .perServer()
                 .advanced(),
             sliderSpec("playback/maxStreamingThreads", "Streaming", "Maximum concurrent requests",
                 "Most network requests in flight at once; not decoding threads or sockets. Adapts up to this "
                 "limit. Applies to the next playback",
                 "4", 1, 16, 1, "", SettingTarget::MaxStreamingThreads)
+                .perServer()
                 .advanced()
                 .whenSetTo("playback/threadedStreaming", "true"),
             toggleSpec("playback/forceStreamingThreads", "Streaming", "Use fixed request count",
                 "Always uses the maximum instead of adapting the count. Other safety and optimization still "
                 "apply. Applies to the next playback",
                 false, SettingTarget::ForceStreamingThreads)
+                .perServer()
+                .advanced()
+                .whenSetTo("playback/threadedStreaming", "true"),
+            toggleSpec("playback/streamingExplore", "Streaming", "Keep learning the connection",
+                "Try measured request counts and ranges when playback has enough buffer", true,
+                SettingTarget::StreamingExplore)
+                .perServer()
+                .advanced()
+                .whenSetTo("playback/threadedStreaming", "true"),
+            toggleSpec("playback/streamingMemoryLoan", "Streaming", "Use spare memory for streaming",
+                "Temporarily borrow available memory without reducing the read-ahead buffer", true,
+                SettingTarget::StreamingMemoryLoan)
+                .perServer()
+                .advanced()
+                .whenSetTo("playback/threadedStreaming", "true"),
+            sliderSpec("playback/maxExtraStreamingMemoryMiB", "Streaming", "Extra streaming memory limit",
+                "Zero chooses a device-appropriate limit. Memory pressure reduces this automatically", "0", 0, 128, 8,
+                "MB", SettingTarget::MaxExtraStreamingMemory)
+                .perServer()
+                .advanced()
+                .whenSetTo("playback/threadedStreaming", "true"),
+            selectSpec("playback/streamingHttpVersion", "Streaming", "HTTP version",
+                "Uses a supported lower version if the server or this build cannot use your preference", "auto",
+                kStreamingHttpChoices, SettingTarget::StreamingHttpVersion)
+                .perServer()
+                .advanced()
+                .whenSetTo("playback/threadedStreaming", "true"),
+            selectSpec("playback/streamingReceiveWindowMode", "Streaming", "Receive window",
+                "Measured starts with system tuning. Fixed sizes are expert overrides and remain subject to system "
+                "limits",
+                "measured", kReceiveWindowChoices, SettingTarget::StreamingReceiveWindowMode)
+                .perServer()
                 .advanced()
                 .whenSetTo("playback/threadedStreaming", "true"),
             toggleSpec("playback/logStreamingPerformance", "Streaming", "Log streaming performance",
@@ -704,7 +756,8 @@ const QVector<SettingSpec>& settingSpecs()
                 spec.searchKeywords = "sources server login account provider";
             if (portable.contains(key))
                 spec.syncPolicy = SettingSyncPolicy::PortableDefault;
-            else if (device.contains(key))
+            else if (device.contains(key) || key.startsWith(QLatin1String("playback/streaming"))
+                || key == QLatin1String("playback/maxExtraStreamingMemoryMiB"))
                 spec.syncPolicy = SettingSyncPolicy::DeviceOptIn;
             switch (spec.target) {
             case SettingTarget::AudioLanguage:
@@ -865,6 +918,7 @@ QVariantList settingSchemaModel()
             { QStringLiteral("dependsOnKey"), QLatin1String(spec.dependsOnKey) },
             { QStringLiteral("dependsOnValue"), QLatin1String(spec.dependsOnValue) },
             { QStringLiteral("requiresHdrPlayback"), spec.requiresHdrPlayback },
+            { QStringLiteral("perServer"), spec.serverOverridable },
             { QStringLiteral("syncPolicy"),
                 spec.syncPolicy == SettingSyncPolicy::PortableDefault   ? QStringLiteral("portable")
                     : spec.syncPolicy == SettingSyncPolicy::DeviceOptIn ? QStringLiteral("device")

@@ -177,6 +177,19 @@ void BrowseSessionController::resetPaging(const QString& cacheKey)
     emit pagingChanged();
 }
 
+void BrowseSessionController::beginRefresh()
+{
+    // The caller retires in-flight fetches, not the rows already on screen.
+    // Keep loaded blocks and the index, but free slots owned by those fetches.
+    m_blockTimer.stop();
+    m_pendingBlocks.clear();
+    m_abandonedBlocks.clear();
+    m_wantedBlocks.clear();
+    m_blockFailures.clear();
+    cancelSeek();
+    setLoadingMore(true);
+}
+
 void BrowseSessionController::resetSparseState()
 {
     m_blockTimer.stop();

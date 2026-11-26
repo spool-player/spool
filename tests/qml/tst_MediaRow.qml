@@ -125,6 +125,12 @@ TestCase {
         }
     }
 
+    SignalSpy {
+        id: activatedSpy
+        target: libraryRow
+        signalName: "activated"
+    }
+
     function initTestCase() {
         initialModel = libraryRow.model
     }
@@ -142,6 +148,7 @@ TestCase {
         openedContext = null
         moves = []
         headerActivations = 0
+        activatedSpy.clear()
     }
 
     function test_reorderRequiresExplicitMoveChoice() {
@@ -237,6 +244,23 @@ TestCase {
             tryVerify(() => recycledRow.currentCard() !== null)
             compare(recycledRow.currentCard().titleText(), "Shows")
         }
+    }
+
+    function test_libraryRefreshKeepsSelectedIdentityWhenOrderChanges() {
+        libraryRow.model = initialModel
+        tryCompare(libraryRow, "count", 2)
+        libraryRow.currentIndex = 0
+        libraryRow.focusList()
+        tryVerify(() => libraryRow.currentCard() !== null)
+        waitForRendering(libraryRow)
+        compare(libraryRow.currentCard().titleText(), "Movies")
+
+        libraryRow.model = initialModel.slice().reverse()
+        waitForRendering(libraryRow)
+        compare(libraryRow.currentCard().titleText(), "Movies")
+        libraryRow.activate()
+        compare(activatedSpy.count, 1)
+        compare(activatedSpy.signalArguments[0][1].libraryId, "aaaaaaaa:movies")
     }
 
     function test_touchPressDoesNotMoveSelectionBeforeClick() {

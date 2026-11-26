@@ -16,14 +16,6 @@ namespace Spool {
 
 struct ScriptAccess;
 
-// Minimum measured concurrency within 15% of peak capacity, or sufficient
-// playback headroom. Reason: 0 = unmeasured, 1 = capacity, 2 = playback demand.
-struct NetworkLaneSelection {
-    int requests = 1;
-    int reason = 0;
-};
-NetworkLaneSelection selectNetworkLanes(const QVariantList& samples, double mediaBitrate, int maxRequests = 16);
-
 // A worker-local benchmark. Destruction disconnects and aborts every lane;
 // the owning ScriptOperation supplies the shared 15-second deadline.
 class SpeedTest final : public QObject {
@@ -70,7 +62,6 @@ private:
     qint64 m_chunkBytes = 4 * 1024 * 1024;
     bool m_done = false;
     bool m_range = false;
-    double m_targetBitrate = 0;
 };
 
 } // namespace Spool

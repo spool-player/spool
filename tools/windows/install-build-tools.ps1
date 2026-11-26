@@ -18,6 +18,7 @@ param(
 $chocolateyPackages = @(
     @{ Name = 'meson'; Version = '1.9.1'; Provides = 'meson' },
     @{ Name = 'nasm'; Provides = 'nasm' },
+    @{ Name = 'strawberryperl'; Provides = 'perl' },
     @{ Name = 'nsis'; Provides = 'makensis' },
     # The launch screen carries the version, so it is rendered at configure
     # time rather than kept in the tree, and ImageMagick draws it.
@@ -30,11 +31,12 @@ $toolDirectories = @(
     (Join-Path $env:ProgramFiles 'LLVM\bin'),
     (Join-Path $env:ProgramFiles 'Meson'),
     (Join-Path $env:ProgramFiles 'NASM'),
+    (Join-Path $env:SystemDrive 'Strawberry\perl\bin'),
     (Join-Path ${env:ProgramFiles(x86)} 'NSIS')
 )
 
-$requiredTools = @('cmake', 'ninja', 'clang', 'lld-link', 'meson', 'nasm', 'makensis', 'magick')
-$msys2Packages = @('make', 'diffutils', 'pkgconf')
+$requiredTools = @('cmake', 'ninja', 'clang', 'lld-link', 'meson', 'nasm', 'makensis', 'magick', 'perl')
+$msys2Packages = @('make', 'diffutils', 'pkgconf', 'patch', 'tar', 'curl')
 
 function Add-ToolDirectoriesToPath {
     foreach ($directory in $toolDirectories) {

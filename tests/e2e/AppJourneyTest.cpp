@@ -110,14 +110,14 @@ public:
             ownership("prepare", { { "reversePort", reversePort } });
             remoteScreenshot = "/data/user/0/" + bundle + "/cache/journey-frame.png";
         } else {
-            require(this->kind == "tvos", "unknown mobile journey device");
+            require(this->kind == "tvos" || this->kind == "ios", "unknown mobile journey device");
             device = qEnvironmentVariable("SPOOL_TVOS_DEVICE");
-            require(!device.isEmpty(), "tvOS journey requires an explicit private simulator UUID");
+            require(!device.isEmpty(), "Apple journey requires an explicit private simulator UUID");
             tool = executable("SPOOL_E2E_XCRUN", QStandardPaths::findExecutable("xcrun"));
             bundle = qEnvironmentVariable("SPOOL_E2E_TVOS_BUNDLE", "com.sachk.spool");
             container = QString::fromUtf8(runTool({ "get_app_container", device, bundle, "data" })).trimmed();
             require(QDir::isAbsolutePath(container) && QDir(container).exists(),
-                "installed actual tvOS app data container is unavailable");
+                "installed actual Apple app data container is unavailable");
             remoteScreenshot = container + "/Library/Caches/journey-frame.png";
             ownership("prepare");
         }
@@ -1072,7 +1072,8 @@ SPOOL_TEST_MAIN("app-journey")
             if (arguments[index] == "--device") {
                 require(index + 1 < arguments.size(), "--device requires android or tvos");
                 deviceKind = arguments[++index];
-                require(deviceKind == "android" || deviceKind == "tvos", "--device requires android or tvos");
+                require(deviceKind == "android" || deviceKind == "tvos" || deviceKind == "ios",
+                    "--device requires android, tvos or ios");
             }
         }
         if (deviceKind.isEmpty()) {
@@ -1196,6 +1197,30 @@ SPOOL_TEST_MAIN("app-journey")
         require(itemId != "journey-movie" && (*episodeRow).toObject()["id"].toString() != "journey-episode",
             "provider items lost account scoping");
 
+        const auto libraryRows = journey.command({ "items", "libraries" })["items"].toArray();
+        const auto selectedLibrary = std::find_if(libraryRows.cbegin(), libraryRows.cend(),
+            [](const QJsonValue& row) { return row.toObject()["title"] == "Journey Library"; });
+        require(selectedLibrary != libraryRows.cend(), "selected library missing from the catalog inventory");
+        const auto catalogPage = journey.command({ "catalog", selectedLibrary->toObject()["id"].toString(), "0", "1" });
+        require(catalogPage["items"].toArray().size() == 1
+                && catalogPage["items"].toArray().first().toObject()["id"].toString() == itemId,
+            "direct catalog page did not preserve scoped provider identity or its row limit");
+        require(journey.command({ "items", "browse" })["count"].toInt(-1) == 2,
+            "catalog inspection changed the visible browse model");
+
+        fixturePhase = QStringLiteral("library-background-refresh");
+        const int browseBeforeRefresh = fixture.authenticatedBrowse;
+        fixture.setLibraryBrowseHeld(true);
+        journey.await([&] { return fixture.sendLibraryChanged(); }, "library event socket did not connect");
+        journey.await([&] { return fixture.authenticatedBrowse > browseBeforeRefresh; },
+            "library change did not request a refreshed listing");
+        require(journey.command({ "items", "browse" })["count"].toInt(-1) == 2,
+            "background refresh cleared the visible catalogue while awaiting the server");
+        require(posterVisible(journey.capture()), "background refresh blanked the existing library posters");
+        fixture.setLibraryBrowseHeld(false);
+        journey.await(
+            [&] { return !journey.state()["browseLoading"].toBool(); }, "background library refresh did not finish");
+
         fixturePhase = QStringLiteral("filter-empty-recovery");
         const int filtersBefore = fixture.playedFilterRequests;
         journey.click("Filter");
@@ -1296,7 +1321,10 @@ SPOOL_TEST_MAIN("app-journey")
 
         journey.command({ "navigate", "settings" });
         journey.label("Appearance");
-        journey.click("Playback");
+        journey.click("Search settings", true);
+        journey.text("playback/seekPreviews");
+        journey.command({ "key", "ok" });
+        journey.click("Seek previews", true);
         const bool originalPreview = journey.command({ "settings", "get", "playback/seekPreviews" })["values"]
                                          .toObject()["playback/seekPreviews"]
                                          .toBool();
@@ -1309,6 +1337,7 @@ SPOOL_TEST_MAIN("app-journey")
                     != originalPreview;
             },
             "settings UI toggle did not commit its public value");
+        journey.command({ "key", "back" });
         journey.command({ "key", "back" });
         journey.label("Appearance");
         journey.click("Downloads");

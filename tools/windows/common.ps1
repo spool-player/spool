@@ -119,7 +119,10 @@ function Get-MpvSourceRevision {
         'tools/windows/build-mpv.ps1', 'tools/windows/common.ps1',
         'tools/windows/build-ffmpeg.ps1', 'tools/windows/build-ffmpeg.sh',
         'tools/windows/check-ffmpeg.py', 'tools/windows/build-shader-tools.ps1',
-        'tools/windows/extract-archive.py',
+        'tools/windows/extract-archive.py', 'tools/windows/build-streaming-dependencies.ps1',
+        'tools/manifests/streaming-third-party.json', 'tools/cmake/StreamingDependencies.cmake',
+        'tools/prepare-streaming-sources.sh', 'tools/streaming-fingerprint.py',
+        'tools/patches/curl-apple-mobile-sectrust.patch', 'tools/lib/manifest-sources.sh',
         'tools/manifests/mpv-native.json', 'tools/manifests/ffmpeg-capabilities.json',
         'tools/manifests/toolchain.json', 'tools/ffmpeg-capabilities.py'
     )) {
