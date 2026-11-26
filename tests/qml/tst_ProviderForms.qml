@@ -202,7 +202,10 @@ TestCase {
         tryCompare(view, "busy", false)
         tryCompare(view, "error", view.errorMessages.invalid_credentials)
         compare(username.text, "member")
-        verify(password.activeFocus)
+        const focused = view.Window.activeFocusItem
+        verify(password.activeFocus, "expected password activeFocus, got " + (focused ? (focused.Accessible.name
+                                                                                         || focused.objectName
+                                                                                         || focused) : "null"))
         const error = accessibleItem(view, view.error)
         verify(error)
         compare(error.Accessible.role, Accessible.StaticText)

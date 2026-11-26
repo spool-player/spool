@@ -153,7 +153,10 @@ SPOOL_TEST_MAIN("mpv-option-profile")
     const auto desktop = profileOptions(MpvConfigPolicy {}, MpvOptionProfile::Platform::Desktop, QStringLiteral("alsa"),
         QByteArrayLiteral("/tmp/mpv.log"));
     require(valueFor(desktop, "vo") == "libmpv", "desktop should render through libmpv");
-#if defined(Q_OS_LINUX)
+#if defined(SPOOL_APPLE_MOBILE)
+    require(
+        valueFor(desktop, "hwdec") == "videotoolbox-copy", "Apple mobile should decode through VideoToolbox copy-back");
+#elif defined(Q_OS_LINUX)
     require(valueFor(desktop, "hwdec") == "auto-copy",
         "Linux desktop should copy decoded frames across the driver boundary");
 #else
@@ -170,8 +173,13 @@ SPOOL_TEST_MAIN("mpv-option-profile")
     require(valueFor(desktop, "network-timeout") == "15", "a silent connection should be retried after 15 s");
     require(
         valueFor(desktop, "initial-audio-sync").isEmpty(), "desktop should retain mpv's initial audio sync default");
+#if defined(SPOOL_APPLE_MOBILE)
+    require(valueFor(desktop, "audio-fallback-to-null") == "no",
+        "Apple mobile should keep AudioUnit output without silently falling back to null");
+#else
     require(valueFor(desktop, "audio-fallback-to-null") == "yes",
         "desktop playback should continue silently when no audio output device is available");
+#endif
     require(valueFor(desktop, "config") == "no", "disabled user configuration should bypass mpv.conf");
     require(indexOf(desktop, "config") < indexOf(desktop, "input-default-bindings"),
         "application input invariants must be applied after user configuration policy");
@@ -253,14 +261,21 @@ SPOOL_TEST_MAIN("mpv-option-profile")
     require(customConfigDirectory.isValid(), "temporary custom mpv directory was not created");
     const MpvConfigPolicy validatedCustom
         = validatedPlatformMpvConfigPolicy(QStringLiteral("custom"), customConfigDirectory.path());
+    const MpvConfigPolicy validatedFileUrl = validatedPlatformMpvConfigPolicy(
+        QStringLiteral("custom"), QUrl::fromLocalFile(customConfigDirectory.path()).toString());
+#if defined(SPOOL_APPLE_MOBILE)
+    require(!validatedCustom.valid && validatedCustom.mode == MpvConfigPolicy::Mode::Disabled,
+        "Apple mobile builds must reject external custom mpv configuration");
+    require(!validatedFileUrl.valid && validatedFileUrl.mode == MpvConfigPolicy::Mode::Disabled,
+        "Apple mobile builds must reject file-URL custom mpv configuration");
+#else
     require(validatedCustom.valid && validatedCustom.mode == MpvConfigPolicy::Mode::Custom,
         "existing custom mpv directory should validate");
     require(validatedCustom.directory == QFileInfo(customConfigDirectory.path()).canonicalFilePath(),
         "custom mpv directory should be canonicalized");
-    const MpvConfigPolicy validatedFileUrl = validatedPlatformMpvConfigPolicy(
-        QStringLiteral("custom"), QUrl::fromLocalFile(customConfigDirectory.path()).toString());
     require(validatedFileUrl.valid && validatedFileUrl.directory == validatedCustom.directory,
         "folder-dialog file URL should validate as a local directory");
+#endif
     const MpvConfigPolicy missingCustom
         = validatedPlatformMpvConfigPolicy(QStringLiteral("custom"), QStringLiteral("/path/that/does/not/exist"));
     require(!missingCustom.valid && missingCustom.mode == MpvConfigPolicy::Mode::Disabled,
@@ -320,7 +335,14 @@ SPOOL_TEST_MAIN("mpv-option-profile")
 
     const auto desktopAuto = profileOptions(MpvConfigPolicy {}, MpvOptionProfile::Platform::Desktop,
         QStringLiteral("auto"), QByteArrayLiteral("/tmp/mpv.log"));
+#if defined(SPOOL_APPLE_MOBILE)
+    require(
+        valueFor(desktopAuto, "ao") == "audiounit", "Apple mobile automatic audio should select RemoteIO AudioUnit");
+    require(valueFor(desktopAuto, "audio-exclusive") == "yes",
+        "Apple mobile audio should request exclusive AudioUnit session");
+#else
     require(valueFor(desktopAuto, "ao").isEmpty(), "automatic desktop audio should leave output probing to mpv");
+#endif
 #if defined(Q_OS_ANDROID)
     // Android is also Q_OS_LINUX, but its settings policy permits only auto.
     // Exercise the actual Android output profile instead of desktop devices.

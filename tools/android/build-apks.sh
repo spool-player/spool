@@ -144,6 +144,22 @@ settings["qml-root-path"] = [sys.argv[2]]
 path.write_text(json.dumps(settings, indent=2) + "\n")
 PY
   done
+  local gradle_home="${GRADLE_USER_HOME:-$HOME/.gradle}"
+  mkdir -p "$gradle_home/init.d"
+  cat > "$gradle_home/init.d/spool-maven-mirror.gradle" <<'GRADLE'
+allprojects {
+    buildscript {
+        repositories {
+            google()
+            maven { url = uri("https://maven-central.storage-download.googleapis.com/maven2/") }
+        }
+    }
+    repositories {
+        google()
+        maven { url = uri("https://maven-central.storage-download.googleapis.com/maven2/") }
+    }
+}
+GRADLE
   local build_apk_target
   build_apk_target() {
     local apk_target="$1"
@@ -154,6 +170,13 @@ PY
       fi
       if [[ $attempt -lt 3 ]]; then
         echo "Retrying $apk_target after transient Gradle/Maven failure (attempt $((attempt + 1))/3)..." >&2
+        local gradlew
+        for gradlew in "$build"/android-build*/gradlew; do
+          if [[ -x "$gradlew" ]]; then
+            "$gradlew" --stop >/dev/null 2>&1 || true
+          fi
+        done
+        rm -rf "${GRADLE_USER_HOME:-$HOME/.gradle}/caches/modules-2/metadata-"* 2>/dev/null || true
         sleep $((attempt * 15))
       fi
     done

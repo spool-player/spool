@@ -598,7 +598,7 @@ std::vector<MpvOption> MpvOptionProfile::applicationOptions(Platform platform, b
     } else {
         options.push_back({ "vo", needsVideoSurface ? "libmpv" : "null" });
 #if defined(SPOOL_APPLE_MOBILE)
-        options.push_back({ "audio-fallback-to-null", "no" });
+        options.push_back({ "audio-fallback-to-null", android ? "yes" : "no" });
 #else
         options.push_back({ "audio-fallback-to-null", "yes" });
 #endif
@@ -633,12 +633,14 @@ std::vector<MpvOption> MpvOptionProfile::applicationOptions(Platform platform, b
             // mature Android backend and restarts cleanly.
             options.push_back({ "ao", "audiotrack,opensles,null" });
         }
-    }
 #if defined(SPOOL_APPLE_MOBILE)
-    // AudioUnit otherwise enables MixWithOthers and defeats interruption focus.
-    options.push_back({ "ao", "audiounit" });
-    options.push_back({ "audio-exclusive", "yes" });
+        if (!android) {
+            // AudioUnit otherwise enables MixWithOthers and defeats interruption focus.
+            options.push_back({ "ao", "audiounit" });
+            options.push_back({ "audio-exclusive", "yes" });
+        }
 #endif
+    }
 
     const MpvOption applicationOptions[] = {
         { "osd-bar", "no" },

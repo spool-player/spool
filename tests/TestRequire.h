@@ -11,7 +11,7 @@ inline void require(bool condition, const char *message)
 {
     if (condition)
         return;
-    std::cerr << message << '\n';
+    std::cerr << "spool-test-require: " << message << '\n';
     std::exit(EXIT_FAILURE);
 }
 

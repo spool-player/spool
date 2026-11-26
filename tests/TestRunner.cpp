@@ -595,6 +595,20 @@ int supervise(QCoreApplication& app)
             row.insert(QStringLiteral("attempts"), attempts);
             results.insert(it->name, row);
             std::cout << it->name.toStdString() << ": " << status.toStdString() << '\n';
+            if (status == QStringLiteral("failed")) {
+                QFile diagFile(row.value(QStringLiteral("log")).toString());
+                if (diagFile.open(QIODevice::ReadOnly)) {
+                    int emitted = 0;
+                    while (!diagFile.atEnd() && emitted < 10) {
+                        const QByteArray raw = diagFile.readLine().trimmed();
+                        if ((raw.startsWith("spool-test-require: ") || raw.startsWith("app-journey: "))
+                            && !raw.contains("private failure artifacts") && !raw.contains("://")) {
+                            std::cerr << raw.constData() << '\n';
+                            ++emitted;
+                        }
+                    }
+                }
+            }
             persist();
             it = running.erase(it);
         }

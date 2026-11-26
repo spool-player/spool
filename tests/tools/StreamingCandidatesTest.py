@@ -72,9 +72,16 @@ class StreamingCandidatesTest(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.fake = self.root / 'spoolet'
-        self.fake.write_text(FAKE_SPOOLET)
-        self.fake.chmod(self.fake.stat().st_mode | stat.S_IEXEC)
+        if os.name == 'nt':
+            script = self.root / 'spoolet.py'
+            script.write_text(FAKE_SPOOLET, encoding='utf-8')
+            self.fake = self.root / 'spoolet.cmd'
+            self.fake.write_text('@echo off\r\n"{}" "{}" %*\r\n'.format(sys.executable, script),
+                                 encoding='utf-8')
+        else:
+            self.fake = self.root / 'spoolet'
+            self.fake.write_text(FAKE_SPOOLET, encoding='utf-8')
+            self.fake.chmod(self.fake.stat().st_mode | stat.S_IEXEC)
         self.log = self.root / 'calls.log'
 
     def run_tool(self, config, arguments):

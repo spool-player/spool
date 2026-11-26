@@ -55,7 +55,7 @@ def diagnostic(text):
     markers = ("video result:", "orientation:", "viewport:", "first video frame", "native presentation:",
                "render context handoff did not complete", "render context was not ready",
                "failed to initialize mpv", "tvOS audio smoke:", "tvOS credentials smoke:",
-               "An error was encountered processing the command", "dyld[")
+               "An error was encountered processing the command", "dyld[", "spool-test-require:")
     for line in text.splitlines():
         if any(marker in line for marker in markers):
             print(re.sub(r"https?://\S+", "[redacted-url]", line))
