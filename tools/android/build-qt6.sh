@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$ROOT/tools/lib/build-common.sh"
 source "$ROOT/tools/lib/manifest-sources.sh"
+# shellcheck source=tools/android/gradle-mirror.sh
+source "$ROOT/tools/android/gradle-mirror.sh"
 
 PHASE="${1:-all}"
 ABI="${ANDROID_ABI:-x86_64}"
@@ -241,6 +243,7 @@ build_module() {
 
 build_all() {
   require_environment
+  configure_android_gradle_mirror
   fetch_sources
   describe_parallel_jobs "$JOBS" "Android Qt" "${QT_ANDROID_MEMORY_PER_JOB_MIB:-1536}" "${QT_ANDROID_MEMORY_RESERVE_MIB:-2048}"
   build_qtbase

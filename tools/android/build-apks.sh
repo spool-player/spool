@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=tools/lib/manifest-sources.sh
 source "$ROOT/tools/lib/manifest-sources.sh"
+# shellcheck source=tools/android/gradle-mirror.sh
+source "$ROOT/tools/android/gradle-mirror.sh"
 ABI="${ANDROID_ABI:-x86_64}"
 QT_VERSION="${QT_VERSION:-$(toolchain_field "$ROOT" qt.version)}"
 DEPS_PREFIX="${ANDROID_DEPS_PREFIX:-$ROOT/build/android/deps/$ABI}"
@@ -144,22 +146,7 @@ settings["qml-root-path"] = [sys.argv[2]]
 path.write_text(json.dumps(settings, indent=2) + "\n")
 PY
   done
-  local gradle_home="${GRADLE_USER_HOME:-$HOME/.gradle}"
-  mkdir -p "$gradle_home/init.d"
-  cat > "$gradle_home/init.d/spool-maven-mirror.gradle" <<'GRADLE'
-allprojects {
-    buildscript {
-        repositories {
-            google()
-            maven { url = uri("https://maven-central.storage-download.googleapis.com/maven2/") }
-        }
-    }
-    repositories {
-        google()
-        maven { url = uri("https://maven-central.storage-download.googleapis.com/maven2/") }
-    }
-}
-GRADLE
+  configure_android_gradle_mirror
   local build_apk_target
   build_apk_target() {
     local apk_target="$1"
