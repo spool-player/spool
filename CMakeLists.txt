@@ -58,10 +58,16 @@ set(MPV_WEBOS_BUILD_DIR "${MPV_SOURCE_DIR}/build/webos-libmpv" CACHE PATH "webOS
 if(SPOOL_DEV_BUILD)
     set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
     set(CMAKE_INTERPROCEDURAL_OPTIMIZATION OFF)
+endif()
+
+if(NOT MSVC AND (SPOOL_DEV_BUILD OR "$ENV{CI}" STREQUAL "true"))
     find_program(CCACHE_PROGRAM ccache)
     if(CCACHE_PROGRAM)
-        set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
-        set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+        foreach(language IN ITEMS C CXX)
+            if(NOT DEFINED CMAKE_${language}_COMPILER_LAUNCHER)
+                set(CMAKE_${language}_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+            endif()
+        endforeach()
     endif()
 endif()
 

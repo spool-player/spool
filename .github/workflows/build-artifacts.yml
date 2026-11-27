@@ -89,10 +89,11 @@ on:
 permissions:
   contents: read
 env:
-  # PRs consume public caches but never receive publishing credentials.
-  SPOOL_CACHE_WRITE: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+  # Same-repository PRs write within their own merge-ref cache scope.
+  SPOOL_CACHE_WRITE: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
+  SPOOL_TRUSTED_BUILD: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
 concurrency:
-  group: build-artifacts-${{ github.ref }}-${{ github.sha }}
+  group: build-artifacts-${{ github.event_name }}-${{ github.ref }}${{ github.event_name != 'pull_request' && format('-{0}', github.sha) || '' }}
   cancel-in-progress: true
 
 jobs:
@@ -183,8 +184,7 @@ jobs:
           gc-max-store-size-linux: 2G
           # Stale entries under the same prefix are dead weight against the
           # shared repository quota, and nothing restores them once the key moves.
-          # Release tags and PR merge refs only restore; trusted branch builds
-          # can save and prune their own GitHub cache scope.
+          # A build can only save and prune its own GitHub cache scope.
           save: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release }}
           purge: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release }}
           purge-prefixes: nix-lint-${{ runner.os }}-
@@ -266,7 +266,7 @@ jobs:
         env:
           BUILD_ROOT: ${{ github.workspace }}/build/linux-sanitizers
           SPOOL_CMAKE_EXTRA_ARGS: -DSPOOL_SANITIZERS=ON
-          JOBS: 2
+          SPOOL_BUILD_MEMORY_PER_JOB_MIB: 3072
         run: nix develop .#native -c bash tools/build-linux-release.sh
       - name: Exercise actual bounded decoder and provider-package consumer
         run: |
@@ -335,40 +335,41 @@ jobs:
           nix build --accept-flake-config .#native-qt-cache \
             --out-link "$RUNNER_TEMP/spool-native-qt" --print-build-logs
       - name: Publish tailored Qt
-        if: ${{ env.SPOOL_CACHE_WRITE == 'true' }}
+        if: ${{ env.SPOOL_TRUSTED_BUILD == 'true' }}
         env:
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
         run: |
           if [[ -n "$CACHIX_AUTH_TOKEN" ]]; then
             cachix push spool "$RUNNER_TEMP/spool-native-qt"
           fi
-      - name: Build cached nix run package
-        if: ${{ env.SPOOL_CACHE_WRITE == 'true' }}
-        run: |
-          nix build --accept-flake-config .#native-cache \
-            --out-link "$RUNNER_TEMP/spool-native" --print-build-logs
-      - name: Publish native cache
-        if: ${{ env.SPOOL_CACHE_WRITE == 'true' }}
-        env:
-          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
-        run: |
-          if [[ -n "$CACHIX_AUTH_TOKEN" ]]; then
-            cachix push spool "$RUNNER_TEMP/spool-native"
-          fi
-
-
+      - name: Read mpv revision
+        id: mpv-revision
+        run: echo "revision=$(git rev-parse HEAD:mpv)" >>"$GITHUB_OUTPUT"
       - uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
         id: linux-build-cache
         with:
-          path: .ccache
-          key: linux5-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock', 'mpv/meson.build', 'mpv/meson.options', 'tools/manifests/mpv-native.json', 'tools/manifests/ffmpeg-capabilities.json', 'tools/manifests/toolchain.json', 'tools/manifests/linuxdeploy.json', 'tools/ffmpeg-capabilities.py', 'tools/package-audit.py', 'tools/build-linux-release.sh', 'tools/package-appimage.sh', 'tools/package-linux-bundle.sh', 'tools/lib/build-common.sh', 'tools/lib/qt-deploy.sh', 'CMakeLists.txt') }}
-          restore-keys: |
-            linux5-${{ runner.os }}-
+          path: |
+            build/linux-release/mpv
+            build/linux-release/mpv-prefix
+            build/linux-release/app
+            .ccache
+          key: linux-build-${{ runner.arch }}-${{ steps.mpv-revision.outputs.revision }}-${{ hashFiles('flake.nix', 'flake.lock', 'tools/manifests/toolchain.json', 'tools/manifests/mpv-native.json', 'tools/build-linux-release.sh', 'tools/lib/build-common.sh') }}
 
       # The default dev shell has no Qt on purpose (it is the hermetic Qt-source
       # build shell). The native app build needs nixpkgs Qt, so use .#native.
       - name: Build host app
         run: nix develop .#native -c bash tools/build-linux-release.sh
+
+      - name: Save Linux build cache
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release && steps.linux-build-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
+        with:
+          path: |
+            build/linux-release/mpv
+            build/linux-release/mpv-prefix
+            build/linux-release/app
+            .ccache
+          key: ${{ steps.linux-build-cache.outputs.cache-primary-key }}
 
       - name: Run traditional and real GUI e2e tests
         run: |
@@ -556,13 +557,6 @@ jobs:
           if-no-files-found: error
           retention-days: ${{ inputs.release && 1 || 7 }}
 
-      - name: Save Linux build cache
-        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release && steps.linux-build-cache.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
-        with:
-          path: .ccache
-          key: ${{ steps.linux-build-cache.outputs.cache-primary-key }}
-
   macos-dmg:
     name: macOS DMG (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
@@ -634,29 +628,16 @@ jobs:
           nix build --accept-flake-config .#native-qt-cache \
             --out-link "$RUNNER_TEMP/spool-native-qt" --print-build-logs
       - name: Publish tailored Qt
-        if: ${{ env.SPOOL_CACHE_WRITE == 'true' }}
+        if: ${{ env.SPOOL_TRUSTED_BUILD == 'true' }}
         env:
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
         run: |
           if [[ -n "$CACHIX_AUTH_TOKEN" ]]; then
             cachix push spool "$RUNNER_TEMP/spool-native-qt"
           fi
-      - name: Build cached nix run package
-        if: ${{ env.SPOOL_CACHE_WRITE == 'true' }}
-        run: |
-          nix build --accept-flake-config .#native-cache \
-            --out-link "$RUNNER_TEMP/spool-native" --print-build-logs
-      - name: Publish native cache
-        if: ${{ env.SPOOL_CACHE_WRITE == 'true' }}
-        env:
-          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
-        run: |
-          if [[ -n "$CACHIX_AUTH_TOKEN" ]]; then
-            cachix push spool "$RUNNER_TEMP/spool-native"
-          fi
-
-
-
+      - name: Read mpv revision
+        id: mpv-revision
+        run: echo "revision=$(git rev-parse HEAD:mpv)" >>"$GITHUB_OUTPUT"
       - uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
         id: macos-build-cache
         with:
@@ -664,10 +645,8 @@ jobs:
             build/macos/mpv
             build/macos/mpv-prefix
             build/macos/app
-            ~/Library/Caches/ccache
-          key: macos-${{ matrix.arch }}-${{ hashFiles('flake.nix', 'flake.lock', 'mpv/meson.build', 'tools/manifests/mpv-native.json', 'tools/manifests/ffmpeg-capabilities.json', 'tools/manifests/toolchain.json', 'tools/ffmpeg-capabilities.py', 'tools/package-audit.py', 'tools/build-macos.sh', 'tools/package-macos-dmg.sh', 'tools/sign-macos.sh', 'tools/lib/build-common.sh', 'tools/lib/qt-deploy.sh', 'CMakeLists.txt') }}
-          restore-keys: |
-            macos-${{ matrix.arch }}-
+            .ccache
+          key: macos-build-${{ matrix.arch }}-${{ steps.mpv-revision.outputs.revision }}-${{ hashFiles('flake.nix', 'flake.lock', 'tools/manifests/toolchain.json', 'tools/manifests/mpv-native.json', 'tools/build-macos.sh', 'tools/lib/build-common.sh') }}
 
       # Older Nix releases reject the relative path input recorded by newer
       # lock files when the root flake comes from a shallow Git checkout.
@@ -716,6 +695,17 @@ jobs:
           SPOOL_TEST_RENDER_BACKEND: opengl
         run: nix develop .#native --no-write-lock-file -c bash tools/build-macos.sh
 
+
+      - name: Save macOS build cache
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release && steps.macos-build-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
+        with:
+          path: |
+            build/macos/mpv
+            build/macos/mpv-prefix
+            build/macos/app
+            .ccache
+          key: ${{ steps.macos-build-cache.outputs.cache-primary-key }}
 
       - name: Run macOS traditional and real GUI e2e tests
         env:
@@ -766,7 +756,7 @@ jobs:
 
 
       - name: Sign macOS application
-        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.enable_macos_signing }}
+        if: ${{ env.SPOOL_TRUSTED_BUILD == 'true' && inputs.enable_macos_signing }}
         env:
           MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
@@ -776,7 +766,7 @@ jobs:
       - name: Package DMG
         run: nix develop .#native --no-write-lock-file -c bash tools/package-macos-dmg.sh
       - name: Sign macOS disk image
-        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.enable_macos_signing }}
+        if: ${{ env.SPOOL_TRUSTED_BUILD == 'true' && inputs.enable_macos_signing }}
         env:
           MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
@@ -808,7 +798,7 @@ jobs:
           dmg="$(printf '%s\n' dist/*.dmg)"
           tar -czf "${dmg}.app.tar.gz" -C build/macos/install Spool.app
       - name: Notarize and staple DMG
-        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.enable_macos_signing }}
+        if: ${{ env.SPOOL_TRUSTED_BUILD == 'true' && inputs.enable_macos_signing }}
         timeout-minutes: 20
         continue-on-error: true
         env:
@@ -825,17 +815,6 @@ jobs:
             dist/*.dmg.app.tar.gz
           if-no-files-found: error
           retention-days: ${{ inputs.release && 1 || 7 }}
-
-      - name: Save macOS build cache
-        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release && steps.macos-build-cache.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
-        with:
-          path: |
-            build/macos/mpv
-            build/macos/mpv-prefix
-            build/macos/app
-            ~/Library/Caches/ccache
-          key: ${{ steps.macos-build-cache.outputs.cache-primary-key }}
 
       - name: Retain native macOS test journals and selector logs
         if: always()
@@ -1208,7 +1187,7 @@ jobs:
           nix develop --accept-flake-config .#android \
             --profile "$RUNNER_TEMP/android-shell" -c true
       - name: Publish the Android dev shell
-        if: ${{ env.SPOOL_CACHE_WRITE == 'true' }}
+        if: ${{ env.SPOOL_TRUSTED_BUILD == 'true' }}
         env:
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
         run: |
@@ -1261,7 +1240,7 @@ jobs:
             '
 
       - name: Prepare Android release keystore
-        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release }}
+        if: ${{ env.SPOOL_TRUSTED_BUILD == 'true' && inputs.release }}
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
         run: |
@@ -1272,10 +1251,10 @@ jobs:
 
       - name: Build the Android APK
         env:
-          SPOOL_ANDROID_KEYSTORE_PATH: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release && format('{0}/spool-release.p12', runner.temp) || '' }}
-          SPOOL_ANDROID_KEYSTORE_ALIAS: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release && secrets.ANDROID_RELEASE_KEY_ALIAS || '' }}
-          SPOOL_ANDROID_KEYSTORE_STORE_PASS: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release && secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD || '' }}
-          SPOOL_ANDROID_KEYSTORE_KEY_PASS: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release && secrets.ANDROID_RELEASE_KEY_PASSWORD || '' }}
+          SPOOL_ANDROID_KEYSTORE_PATH: ${{ env.SPOOL_TRUSTED_BUILD == 'true' && inputs.release && format('{0}/spool-release.p12', runner.temp) || '' }}
+          SPOOL_ANDROID_KEYSTORE_ALIAS: ${{ env.SPOOL_TRUSTED_BUILD == 'true' && inputs.release && secrets.ANDROID_RELEASE_KEY_ALIAS || '' }}
+          SPOOL_ANDROID_KEYSTORE_STORE_PASS: ${{ env.SPOOL_TRUSTED_BUILD == 'true' && inputs.release && secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD || '' }}
+          SPOOL_ANDROID_KEYSTORE_KEY_PASS: ${{ env.SPOOL_TRUSTED_BUILD == 'true' && inputs.release && secrets.ANDROID_RELEASE_KEY_PASSWORD || '' }}
           ANDROID_ABI: ${{ matrix.abi }}
           SPOOL_ANDROID_BUILD_TESTS: ${{ matrix.abi == 'x86_64' && 'ON' || 'OFF' }}
         run: nix develop .#android -c bash tools/android/build-apks.sh
@@ -1302,7 +1281,7 @@ jobs:
           PY
 
       - name: Verify Android release signing identity
-        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release }}
+        if: ${{ env.SPOOL_TRUSTED_BUILD == 'true' && inputs.release }}
         env:
           EXPECTED_CERT_SHA256: 0c9deff0513eed6d43521df31ad6d2d8e928c029b146d902f4bcc25a883c1fb8
         run: |
@@ -1452,7 +1431,7 @@ jobs:
           path: dist/android/universal-inputs/armeabi-v7a
 
       - name: Prepare Android release keystore
-        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release }}
+        if: ${{ env.SPOOL_TRUSTED_BUILD == 'true' && inputs.release }}
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
         run: |
@@ -1463,10 +1442,10 @@ jobs:
 
       - name: Package the universal APK
         env:
-          SPOOL_ANDROID_KEYSTORE_PATH: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release && format('{0}/spool-release.p12', runner.temp) || '' }}
-          SPOOL_ANDROID_KEYSTORE_ALIAS: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release && secrets.ANDROID_RELEASE_KEY_ALIAS || '' }}
-          SPOOL_ANDROID_KEYSTORE_STORE_PASS: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release && secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD || '' }}
-          SPOOL_ANDROID_KEYSTORE_KEY_PASS: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release && secrets.ANDROID_RELEASE_KEY_PASSWORD || '' }}
+          SPOOL_ANDROID_KEYSTORE_PATH: ${{ env.SPOOL_TRUSTED_BUILD == 'true' && inputs.release && format('{0}/spool-release.p12', runner.temp) || '' }}
+          SPOOL_ANDROID_KEYSTORE_ALIAS: ${{ env.SPOOL_TRUSTED_BUILD == 'true' && inputs.release && secrets.ANDROID_RELEASE_KEY_ALIAS || '' }}
+          SPOOL_ANDROID_KEYSTORE_STORE_PASS: ${{ env.SPOOL_TRUSTED_BUILD == 'true' && inputs.release && secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD || '' }}
+          SPOOL_ANDROID_KEYSTORE_KEY_PASS: ${{ env.SPOOL_TRUSTED_BUILD == 'true' && inputs.release && secrets.ANDROID_RELEASE_KEY_PASSWORD || '' }}
         run: |
           nix develop .#android-packaging -c bash tools/android/build-universal-apk.sh \
             dist/android/spool-universal.apk \
@@ -1475,7 +1454,7 @@ jobs:
             dist/android/spool-armeabi-v7a.apk
 
       - name: Verify Android release signing identity
-        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && inputs.release }}
+        if: ${{ env.SPOOL_TRUSTED_BUILD == 'true' && inputs.release }}
         env:
           EXPECTED_CERT_SHA256: 0c9deff0513eed6d43521df31ad6d2d8e928c029b146d902f4bcc25a883c1fb8
         run: |
@@ -1518,6 +1497,8 @@ jobs:
       QT_ARCH: win64_${{ needs.toolchain.outputs.qt_windows_kit }}
       SPOOL_QT_ROOT: C:\Qt\${{ needs.toolchain.outputs.qt_version }}\${{ needs.toolchain.outputs.qt_windows_kit }}
       SPOOL_QCORO_ROOT: C:\Qt\${{ needs.toolchain.outputs.qcoro_windows_prefix }}
+      SCCACHE_DIR: ${{ github.workspace }}\.sccache
+      SCCACHE_CACHE_SIZE: 1G
 
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
@@ -1597,13 +1578,40 @@ jobs:
           path: build/windows-deps/mpv
           key: windows-mpv-${{ runner.os }}-${{ steps.mpv-revision.outputs.revision }}-${{ hashFiles('tools/manifests/streaming-third-party.json', 'tools/prepare-streaming-sources.sh', 'tools/streaming-fingerprint.py', 'tools/check-streaming-dependencies.py', 'tools/cmake/StreamingDependencies.cmake', 'tools/cmake/QuicBatchingProbe/CMakeLists.txt', 'tools/lib/streaming-build.sh', 'tools/patches/curl-*.patch', 'tools/windows/build-streaming-dependencies.ps1', 'tools/windows/build-mpv.ps1', 'tools/windows/build-ffmpeg.ps1', 'tools/windows/build-ffmpeg.sh', 'tools/windows/check-ffmpeg.py', 'tools/windows/build-shader-tools.ps1', 'tools/windows/common.ps1', 'tools/manifests/mpv-native.json', 'tools/manifests/ffmpeg-capabilities.json', 'tools/manifests/toolchain.json', 'tools/ffmpeg-capabilities.py') }}
 
+      - name: Install sccache
+        uses: Mozilla-Actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with:
+          version: v0.18.0
+
+      - name: Identify the MSVC compiler
+        id: msvc
+        shell: pwsh
+        run: |
+          . tools\windows\common.ps1
+          Import-MsvcEnvironment
+          $compiler = (Get-Item -LiteralPath $env:CC).VersionInfo.FileVersion
+          "version=$compiler" >> $env:GITHUB_OUTPUT
+
+      - name: Restore Windows compiler cache
+        id: sccache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
+        with:
+          path: ${{ env.SCCACHE_DIR }}
+          key: windows-sccache-${{ steps.msvc.outputs.version }}-${{ github.sha }}
+          restore-keys: windows-sccache-${{ steps.msvc.outputs.version }}-
+
       - name: Build application
         shell: pwsh
         env:
           MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
-        run: tools\windows\build.ps1 -Clean -CMakeArguments '-DSPOOL_TEST_RENDER_BACKEND=opengl'
+        run: tools\windows\build.ps1 -Clean -UseSccache -CMakeArguments '-DSPOOL_TEST_RENDER_BACKEND=opengl'
 
-
+      - name: Save Windows compiler cache
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release && steps.sccache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
+        with:
+          path: ${{ env.SCCACHE_DIR }}
+          key: ${{ steps.sccache.outputs.cache-primary-key }}
 
       - name: Install pinned Windows GPU and OCR test runtime
         shell: pwsh
