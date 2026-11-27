@@ -1535,7 +1535,7 @@ QCoro::Task<void> AppController::startPlayback(MovieItem playItem, bool startPau
     if (!guard || !m_playbackLoadGeneration.isCurrent(generation))
         co_return;
     m_settings->preparePlayback(m_provider->accountOf(session.itemId));
-    m_player->play(session, startPaused);
+    m_player->play(session, startPaused, restartActive);
     m_playingAccountId = m_provider->accountOf(session.itemId);
     if (!guard || !m_playbackLoadGeneration.isCurrent(generation))
         co_return;
