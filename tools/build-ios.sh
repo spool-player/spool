@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT/tools/lib/manifest-sources.sh"
 [[ "$(uname -s)" == Darwin ]] || { echo 'iOS builds require macOS and Xcode.' >&2; exit 1; }
 : "${QT_TARGET_PREFIX:?Set QT_TARGET_PREFIX to the iOS Qt kit}"
 : "${QT_HOST_PATH:?Set QT_HOST_PATH to the matching macOS Qt kit}"
 export APPLE_SYSTEM=iOS
 export APPLE_SDK="${APPLE_SDK:-iphoneos}"
 if [[ "$APPLE_SDK" == iphonesimulator ]]; then
-  export APPLE_ARCH="${APPLE_ARCH:-x86_64}"
+  export APPLE_ARCH="${APPLE_ARCH:-$(uname -m)}"
 else
   export APPLE_ARCH="${APPLE_ARCH:-arm64}"
 fi
-export APPLE_DEPLOYMENT_TARGET="${APPLE_DEPLOYMENT_TARGET:-17.0}"
+export APPLE_DEPLOYMENT_TARGET="${APPLE_DEPLOYMENT_TARGET:-$(toolchain_field "$ROOT" apple.iosDeploymentTarget)}"
 case "$APPLE_SDK:$APPLE_ARCH" in
   iphoneos:arm64|iphonesimulator:arm64|iphonesimulator:x86_64) ;;
   *) echo "error: unsupported iOS SDK/architecture: $APPLE_SDK/$APPLE_ARCH" >&2; exit 1 ;;
@@ -35,9 +36,14 @@ xcrun --sdk "$APPLE_SDK" --show-sdk-path >/dev/null
 bash "$ROOT/tools/apple/build-ios-scanner.sh"
 BASE="$ROOT/build/apple/$APPLE_SDK-$APPLE_ARCH"
 export APPLE_DEPS_PREFIX="${APPLE_DEPS_PREFIX:-$BASE/prefix}"
-if [[ "${BUILD_DEPENDENCIES:-1}" == 1 ]]; then "$ROOT/tools/apple/build-dependencies.sh"; fi
-export PKG_CONFIG_PATH="$APPLE_DEPS_PREFIX/lib/pkgconfig"
-export PKG_CONFIG_LIBDIR="$PKG_CONFIG_PATH"
+case "${BUILD_DEPENDENCIES:-1}" in
+  1) bash "$ROOT/tools/apple/build-dependencies.sh" ;;
+  mpv) bash "$ROOT/tools/apple/build-dependencies.sh" mpv ;;
+  0) ;;
+  *) echo 'error: BUILD_DEPENDENCIES must be 0, 1, or mpv' >&2; exit 2 ;;
+esac
+export PKG_CONFIG_LIBDIR="${APPLE_MPV_PREFIX:+$APPLE_MPV_PREFIX/lib/pkgconfig:}$APPLE_DEPS_PREFIX/lib/pkgconfig"
+export PKG_CONFIG_PATH="$PKG_CONFIG_LIBDIR"
 ASSETS="$BASE/Spool.xcassets"
 mkdir -p "$ASSETS/AppIcon.appiconset"
 magick "$ROOT/app/icons/png/spool/1024.png" -background black -alpha remove -alpha off "$ASSETS/AppIcon.appiconset/icon.png"

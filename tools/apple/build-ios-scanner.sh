@@ -4,14 +4,13 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$ROOT/tools/lib/manifest-sources.sh"
 [[ "$(uname -s)" == Darwin ]] || { echo 'iOS host tools require macOS and Xcode.' >&2; exit 1; }
 : "${QT_HOST_PATH:?Set QT_HOST_PATH to the pinned macOS Qt kit}"
-manifest="$ROOT/tools/manifests/toolchain.json"
-version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["qt"]["version"])' "$manifest")"
+version="$(toolchain_field "$ROOT" qt.version)"
 [[ "$("$QT_HOST_PATH/bin/qtpaths" --query QT_VERSION)" == "$version" ]] || {
   echo "error: QT_HOST_PATH must supply Qt $version host tools" >&2; exit 1;
 }
-base_url="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["qt"]["baseUrl"])' "$manifest")"
-sha="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["qt"]["sources"]["qtdeclarative"])' "$manifest")"
-series="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["qt"]["series"])' "$manifest")"
+base_url="$(toolchain_qt_sources_url "$ROOT")"
+sha="$(toolchain_field "$ROOT" qt.sources.qtdeclarative)"
+series="$(toolchain_field "$ROOT" qt.series)"
 source_root="$ROOT/build/apple/qt-sources/$version/qtdeclarative"
 archive="$ROOT/build/apple/downloads/qtdeclarative-everywhere-src-$version.tar.xz"
 download_verified "$base_url/qtdeclarative-everywhere-src-$version.tar.xz" "$sha" "$archive"

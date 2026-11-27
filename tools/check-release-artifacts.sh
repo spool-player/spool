@@ -15,6 +15,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 build="$root/.github/workflows/build-artifacts.yml"
 release="$root/.github/workflows/release.yml"
 ios="$root/.github/workflows/ios-review.yml"
+tvos="$root/.github/workflows/tvos.yml"
 status=0
 tvos_devices=0
 ios_devices=0
@@ -30,10 +31,10 @@ names="$(awk '
     next
   }
   in_upload && /^[[:space:]]*-[[:space:]]/ { in_upload = 0 }
-' "$build" "$ios")"
+' "$build" "$ios" "$tvos")"
 
 [[ -n "$names" ]] || {
-  echo "error: found no uploaded artifacts to check in build-artifacts.yml" >&2
+  echo "error: found no uploaded artifacts to check in the build workflows" >&2
   exit 1
 }
 

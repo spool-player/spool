@@ -11,7 +11,7 @@ fi
 : "${QT_HOST_PATH:?Set QT_HOST_PATH to the pinned macOS Qt host-tools prefix}"
 APPLE_SDK="${APPLE_SDK:-appletvsimulator}"
 APPLE_ARCH="${APPLE_ARCH:-arm64}"
-APPLE_DEPLOYMENT_TARGET="${APPLE_DEPLOYMENT_TARGET:-16.0}"
+APPLE_DEPLOYMENT_TARGET="${APPLE_DEPLOYMENT_TARGET:-$(toolchain_field "$ROOT" apple.tvosDeploymentTarget)}"
 case "$APPLE_SDK:$APPLE_ARCH" in
   appletvos:arm64|appletvsimulator:arm64|appletvsimulator:x86_64) ;;
   *) echo "error: unsupported tvOS SDK/architecture: $APPLE_SDK/$APPLE_ARCH" >&2; exit 1 ;;
@@ -20,9 +20,9 @@ xcrun --sdk "$APPLE_SDK" --show-sdk-path >/dev/null
 for tool in cmake ninja curl python3 gpatch; do
   command -v "$tool" >/dev/null || { echo "error: missing $tool" >&2; exit 1; }
 done
-manifest="$ROOT/tools/manifests/toolchain.json"
-version="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["qt"]["version"])' "$manifest")"
-base_url="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["qt"]["baseUrl"])' "$manifest")"
+version="$(toolchain_field "$ROOT" qt.version)"
+base_url="$(toolchain_qt_sources_url "$ROOT")"
+series="$(toolchain_field "$ROOT" qt.series)"
 if [[ "$("$QT_HOST_PATH/bin/qtpaths" --query QT_VERSION)" != "$version" ]]; then
   echo "error: QT_HOST_PATH must supply Qt $version host tools" >&2
   exit 1
@@ -38,8 +38,8 @@ mkdir -p "$source_root" "$build_root/empty-pkgconfig" "$prefix"
 # Qt retains a UIKit tvOS source port, but does not list tvOS as an officially
 # supported/tested platform. A successful source build is a prerequisite, not
 # evidence of device playback, accessibility, or App Store acceptance.
-for module in qtbase qtshadertools qttasktree qtdeclarative qtsvg qtimageformats qtwebsockets qttools; do
-  sha="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["qt"]["sources"][sys.argv[2]])' "$manifest" "$module")"
+while IFS= read -r module; do
+  sha="$(toolchain_field "$ROOT" "qt.sources.$module")"
   archive="$ROOT/build/apple/downloads/$module-everywhere-src-$version.tar.xz"
   download_verified "$base_url/$module-everywhere-src-$version.tar.xz" "$sha" "$archive"
   extract_verified_source "$archive" "$sha" "$source_root/$module"
@@ -56,7 +56,6 @@ for module in qtbase qtshadertools qttasktree qtdeclarative qtsvg qtimageformats
   if [[ "$module" == qtdeclarative ]]; then
     # Reuse the project's existing scanner subtree fix. The official host kit
     # otherwise scans deliberately invalid Qt parser fixtures under build/.
-    series="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["qt"]["series"])' "$manifest")"
     patch_file="$ROOT/tools/webos-native/patches/qtdeclarative-$series-qmlimportscanner-exclude-subtrees.patch"
     if gpatch --dry-run --forward --silent -d "$source_root/$module" -p1 <"$patch_file" >/dev/null 2>&1; then
       gpatch --forward -d "$source_root/$module" -p1 <"$patch_file"
@@ -92,5 +91,5 @@ for module in qtbase qtshadertools qttasktree qtdeclarative qtsvg qtimageformats
   fi
   cmake --build "$build_root/$module" --parallel "$jobs" -- -k 0
   cmake --install "$build_root/$module"
-done
+done < <(manifest_json_array "$ROOT/tools/manifests/toolchain.json" apple.tvosQtSourceModules)
 printf 'Built source Qt %s for %s/%s at %s\n' "$version" "$APPLE_SDK" "$APPLE_ARCH" "$prefix"

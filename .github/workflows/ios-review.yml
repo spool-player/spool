@@ -32,9 +32,11 @@ jobs:
             arch: arm64
             qt_kit: ios_device
     env:
+      APPLE_SYSTEM: iOS
       APPLE_SDK: ${{ matrix.sdk }}
       APPLE_ARCH: ${{ matrix.arch }}
       APPLE_BUILD: build/apple/${{ matrix.sdk }}-${{ matrix.arch }}
+      APPLE_MPV_PREFIX: ${{ github.workspace }}/build/apple/${{ matrix.sdk }}-${{ matrix.arch }}/mpv-prefix
       SPOOL_CACHE_WRITE: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && !inputs.release }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
@@ -53,65 +55,39 @@ jobs:
             }
           fi
           echo "Building source $GITHUB_SHA with bundle/package version $version"
-      - name: Install native build tools
-        run: brew install cmake ninja meson pkg-config bash python imagemagick nasm gpatch ffmpeg tesseract
-      - name: Resolve Qt kits and Apple SDK
-        id: apple-toolchain
-        shell: bash
-        run: |
-          version="$(bash tools/toolchain-versions.sh qt.version)"
-          echo "version=$version" >>"$GITHUB_OUTPUT"
-          echo "QT_HOST_PATH=$RUNNER_TEMP/Qt/$version/macos" >>"$GITHUB_ENV"
-          echo "QT_TARGET_PREFIX=$RUNNER_TEMP/Qt/$version/${{ matrix.qt_kit }}" >>"$GITHUB_ENV"
-          identity="$(
-            {
-              xcodebuild -version
-              xcrun --sdk "$APPLE_SDK" --show-sdk-build-version
-              xcrun --sdk "$APPLE_SDK" --show-sdk-path
-            } | shasum -a 256
-          )"
-          echo "key=${identity%% *}" >>"$GITHUB_OUTPUT"
-      - name: Restore Qt host and iOS kits
-        id: qt-cache
+      - uses: ./.github/actions/apple-build-tools
+        id: apple
+        with:
+          sdk: ${{ matrix.sdk }}
+          ios-kit: ${{ matrix.qt_kit }}
+          cache-write: ${{ env.SPOOL_CACHE_WRITE }}
+      - name: Restore iOS media dependencies
+        id: media
         uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
         with:
-          path: ${{ runner.temp }}/Qt
-          key: ios-kits-${{ runner.arch }}-${{ matrix.qt_kit }}-${{ steps.apple-toolchain.outputs.version }}-${{ hashFiles('tools/apple/aqt-ios.py', '.github/workflows/ios-review.yml') }}
-      - name: Install pinned Qt host and iOS kits
-        if: steps.qt-cache.outputs.cache-hit != 'true'
-        env:
-          QT_VERSION: ${{ steps.apple-toolchain.outputs.version }}
-          QT_IOS_KIT: ${{ matrix.qt_kit }}
-        shell: bash
-        run: |
-          python3 -m venv "$RUNNER_TEMP/aqt"
-          "$RUNNER_TEMP/aqt/bin/pip" install aqtinstall==3.3.0
-          modules=(qtshadertools qtwebsockets qtimageformats qttasktree)
-          "$RUNNER_TEMP/aqt/bin/aqt" install-qt mac desktop "$QT_VERSION" clang_64 \
-            -O "$RUNNER_TEMP/Qt" -m "${modules[@]}"
-          "$RUNNER_TEMP/aqt/bin/python" tools/apple/aqt-ios.py install-qt mac ios "$QT_VERSION" "$QT_IOS_KIT" \
-            -O "$RUNNER_TEMP/Qt" -m "${modules[@]}"
-      - name: Save Qt host and iOS kits
-        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && steps.qt-cache.outputs.cache-hit != 'true' }}
+          path: ${{ env.APPLE_BUILD }}/prefix
+          key: apple-media-${{ matrix.sdk }}-${{ matrix.arch }}-${{ steps.apple.outputs.sdk-key }}-${{ steps.apple.outputs.ios-kit-key }}-${{ steps.apple.outputs.ios-deployment-target }}-${{ steps.apple.outputs.apple-deps-key }}
+      - name: Build iOS media dependencies
+        if: steps.media.outputs.cache-hit != 'true'
+        run: bash tools/apple/build-dependencies.sh media
+      - name: Save iOS media dependencies
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && steps.media.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
         with:
-          path: ${{ runner.temp }}/Qt
-          key: ${{ steps.qt-cache.outputs.cache-primary-key }}
-      - name: Read mpv revision
-        id: mpv-revision
-        run: echo "revision=$(git rev-parse HEAD:mpv)" >>"$GITHUB_OUTPUT"
-      - name: Restore iOS build
+          path: ${{ env.APPLE_BUILD }}/prefix
+          key: ${{ steps.media.outputs.cache-primary-key }}
+      - name: Restore iOS mpv and app builds
         id: ios-build-cache
         uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
         with:
           path: |
-            ${{ env.APPLE_BUILD }}/prefix
+            ${{ env.APPLE_MPV_PREFIX }}
             ${{ env.APPLE_BUILD }}/app
-          key: ios-build-${{ matrix.sdk }}-${{ matrix.arch }}-${{ steps.apple-toolchain.outputs.key }}-${{ steps.mpv-revision.outputs.revision }}-${{ hashFiles('tools/apple/build-dependencies.sh', 'tools/manifests/*.json', 'tools/build-ios.sh', 'tools/lib/*.sh', 'tools/patches/**') }}
+          key: ios-app-${{ steps.media.outputs.cache-primary-key }}-${{ steps.apple.outputs.mpv-key }}-${{ steps.apple.outputs.ios-app-key }}
       - name: Build native iOS application
         shell: bash
         env:
-          BUILD_DEPENDENCIES: ${{ steps.ios-build-cache.outputs.cache-hit == 'true' && '0' || '1' }}
+          BUILD_DEPENDENCIES: ${{ steps.ios-build-cache.outputs.cache-hit == 'true' && '0' || 'mpv' }}
           APPLE_CODE_SIGNING_ALLOWED: 'NO'
           # The published IPA is unsigned, for sideloading, so it is the open
           # build (all providers, provider downloads); the simulator smoke
@@ -124,7 +100,7 @@ jobs:
         uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
         with:
           path: |
-            ${{ env.APPLE_BUILD }}/prefix
+            ${{ env.APPLE_MPV_PREFIX }}
             ${{ env.APPLE_BUILD }}/app
           key: ${{ steps.ios-build-cache.outputs.cache-primary-key }}
       - name: Build native host controller for iOS application journeys

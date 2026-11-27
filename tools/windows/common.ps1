@@ -163,10 +163,13 @@ function Get-MpvSourceRevision {
         'tools/prepare-streaming-sources.sh', 'tools/streaming-fingerprint.py',
         'tools/patches/curl-apple-mobile-sectrust.patch', 'tools/lib/manifest-sources.sh',
         'tools/manifests/mpv-native.json', 'tools/manifests/ffmpeg-capabilities.json',
-        'tools/manifests/toolchain.json', 'tools/ffmpeg-capabilities.py'
+        'tools/ffmpeg-capabilities.py'
     )) {
         $inputs.Add("$file=$((Get-FileHash -LiteralPath (Join-Path $root $file) -Algorithm SHA256).Hash)")
     }
+    $toolchain = Get-ToolchainManifest
+    $inputs.Add(($toolchain.ffmpeg | ConvertTo-Json -Compress))
+    $inputs.Add(($toolchain.shaderTools | ConvertTo-Json -Depth 5 -Compress))
     $preferredLlvm = Get-PreferredWindowsLlvmBin
     foreach ($name in @('cl.exe', 'clang.exe', 'lld-link.exe')) {
         $toolPath = if ($preferredLlvm -and $name -ne 'cl.exe' -and (Test-Path -LiteralPath (Join-Path $preferredLlvm $name) -PathType Leaf)) {

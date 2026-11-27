@@ -1,0 +1,12 @@
+# Python wheels pin the tools that generate cached build trees.
+cmake==4.2.3
+ninja==1.13.0
+meson==1.9.1
+# Other host tool names are Homebrew formulae. The runner may already have them.
+bash
+pkgconf
+imagemagick
+nasm
+gpatch
+ffmpeg
+tesseract
