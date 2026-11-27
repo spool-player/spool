@@ -38,6 +38,11 @@
       "automerge": false
     },
     {
+      "description": "Update the Nix archive release pin together with the installer action digest",
+      "matchPackageNames": ["nixbuild/nix-quick-install-action"],
+      "groupName": "Nix quick installer"
+    },
+    {
       "description": "Preserve readable action versions beside immutable digests",
       "matchManagers": ["github-actions"],
       "pinDigests": true,
@@ -47,8 +52,16 @@
   "customManagers": [
     {
       "customType": "regex",
-      "managerFilePatterns": ["/\\.github/workflows/.*\\.ya?ml$/"],
+      "managerFilePatterns": ["/^\\.github/(?:workflows|actions)/.*\\.ya?ml$/"],
       "matchStrings": ["(?<depName>[A-Za-z0-9_.-]+)_VERSION:\\s*(?<currentValue>[^\\s#]+)\\s*#\\s*renovate: datasource=(?<datasource>\\S+)(?: depName=(?<packageName>\\S+))?"],
+      "versioningTemplate": "loose"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^tools/manifests/toolchain\\.json$/"],
+      "matchStrings": ["\"quickInstallRelease\"\\s*:\\s*\"(?<currentValue>v\\d+)\""],
+      "depNameTemplate": "nixbuild/nix-quick-install-action",
+      "datasourceTemplate": "github-releases",
       "versioningTemplate": "loose"
     },
     {

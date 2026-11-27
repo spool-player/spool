@@ -1,5 +1,6 @@
 param(
     [switch]$Clean,
+    [switch]$UseSccache,
     [string[]]$CMakeArguments = @()
 )
 
@@ -25,6 +26,11 @@ if ($Clean -and (Test-Path -LiteralPath $buildDir)) {
 
 Push-Location $root
 try {
+    if ($UseSccache) {
+        $launcher = (Get-Command sccache.exe -ErrorAction Stop).Source
+        $CMakeArguments += "-DCMAKE_C_COMPILER_LAUNCHER=$launcher"
+        $CMakeArguments += "-DCMAKE_CXX_COMPILER_LAUNCHER=$launcher"
+    }
     cmake --preset windows-release @CMakeArguments
     if ($LASTEXITCODE -ne 0) { throw 'CMake configuration failed.' }
     $ninjaCommands = Get-Content -LiteralPath (Join-Path $buildDir 'build.ninja') -Raw

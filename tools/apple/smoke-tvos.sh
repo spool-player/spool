@@ -12,14 +12,14 @@ esac
 host_build="${SPOOL_DEVICE_HOST_BUILD_DIR:-$ROOT/build/macos/app}"
 if [[ -z "${SPOOL_DEVICE_HOST_E2E:-}" ]]; then
   [[ -f "$host_build/native-spool-e2e-path.txt" ]] || {
-    echo 'error: build the native host journey controller with tools/build-macos.sh first' >&2
+    echo "error: missing native journey controller path in $host_build" >&2
     exit 1
   }
   read -r SPOOL_DEVICE_HOST_E2E <"$host_build/native-spool-e2e-path.txt"
 fi
 if [[ -z "${SPOOL_E2E_SPOOLET:-}" ]]; then
   [[ -f "$host_build/native-spoolet-path.txt" ]] || {
-    echo 'error: build the matching native spoolet with tools/build-macos.sh first' >&2
+    echo "error: missing native spoolet path in $host_build" >&2
     exit 1
   }
   read -r SPOOL_E2E_SPOOLET <"$host_build/native-spoolet-path.txt"
@@ -98,7 +98,7 @@ status=0
 # CTest traditional and e2e phases use run-device-tests.py, requiring fresh native
 # nonce receipts and preserving the extra Keychain/sandbox consumer receipt.
 # Both phases finish even when a selector fails, crashes, or exceeds its deadline.
-nix develop "$ROOT#native" -c python "$ROOT/tools/run-tests.py" \
+python3 "$ROOT/tools/run-tests.py" \
   --build-dir "$build_dir" --config Release --workers 1 || status=1
 # Keep the product bundle's UI launch contract in addition to native GPU/QML
 # selectors. This is not substituted for a provider/playback app journey.

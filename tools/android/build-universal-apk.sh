@@ -22,6 +22,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=tools/android/signing.sh
 source "$ROOT/tools/android/signing.sh"
+# shellcheck source=tools/lib/manifest-sources.sh
+source "$ROOT/tools/lib/manifest-sources.sh"
 
 [[ $# -ge 4 ]] || {
   echo "usage: $0 OUT.apk INPUTS_DIR IN.apk IN.apk [...]" >&2
@@ -42,7 +44,7 @@ done
 }
 
 : "${ANDROID_HOME:?run through nix develop .#android}"
-BUILD_TOOLS="${ANDROID_BUILD_TOOLS:-$ANDROID_HOME/build-tools/36.0.0}"
+BUILD_TOOLS="${ANDROID_BUILD_TOOLS:-$ANDROID_HOME/build-tools/$(toolchain_field "$ROOT" android.buildTools)}"
 for tool in zipalign apksigner; do
   [[ -x "$BUILD_TOOLS/$tool" ]] || {
     echo "error: $tool missing at $BUILD_TOOLS/$tool" >&2

@@ -1,18 +1,6 @@
 {
   "schemaVersion": 1,
-  "qtVersion": "6.12.0",
-  "series": "6.12",
-  "baseUrl": "https://ftp.fau.de/qtproject/archive/qt/6.12/6.12.0/submodules",
-  "modules": [
-    {"name": "qtbase", "sha256": "a951bd163c7b80fc6b8c88d7668fb56abf91c152373e13c10666763238131307"},
-    {"name": "qtshadertools", "sha256": "c7d84f436e1aaef39fdcadebf2bd71bdf24dc69497e13f2e0198873cbbfea2ab"},
-    {"name": "qttools", "sha256": "8dab8f3611496486a470ad5f115ceea584f36bc22a2b8b6f6ebdbafbb8160693"},
-    {"name": "qtdeclarative", "sha256": "311f3a2603e1973bb59baef9dfa740a376de713157d4782ee043681e889c9260"},
-    {"name": "qtwebsockets", "sha256": "21690a365cd5fbfa8dea051473e98968df9f4eca0121fed7481d1215b7455a31"},
-    {"name": "qtwayland", "sha256": "ae14d9bcf1bb3c300a3ab2e6a53f50284e5c6c966a4ac4cc5aedcb1bc74e4d02"},
-    {"name": "qtimageformats", "sha256": "0943132b5db8de6b6a7f1d162682173e8763c7ed94e80fd39113292845f67762"},
-    {"name": "qtsvg", "sha256": "e4ab39534ec97987b1b9b60ef7f4d3253d5912a69f8c713a01753174a4029331"}
-  ],
+  "modules": ["qtbase", "qtshadertools", "qttools", "qtdeclarative", "qtwebsockets", "qtwayland", "qtimageformats", "qtsvg"],
   "patches": [
     "tools/webos-native/patches/qtbase-6.12-webos-qstorageinfo-linux.patch",
     "tools/webos-native/patches/qtbase-6.12-webos-qelfparser.patch",
@@ -31,17 +19,9 @@
     "buildrootVersion": "2025.02.1",
     "gccVersion": "14.2.0"
   },
-  "outputs": {
-    "hostPrefix": "build/qt6-612-host-install",
-    "sharedTargetPrefix": "build/qt6-612-target-install",
-    "staticTargetPrefix": "build/qt6-612-target-static-install"
-  },
   "configure": {
     "host": ["release", "examples=off", "tests=off", "opengl=off"],
     "targetShared": ["release", "examples=off", "tests=off", "shared"],
     "targetStatic": ["release", "examples=off", "tests=off", "static"]
-  },
-  "submodules": {
-    "mpv": "09c26d3803000730ced3b9245c5c3cc286142e76"
   }
 }

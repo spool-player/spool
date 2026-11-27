@@ -265,11 +265,13 @@ def workflow_artifact_contract(script: Path) -> None:
         shutil.copyfile(script, checker)
         release = workflows / "release.yml"
         release.write_text("pattern: spool-*\n")
+        build_workflow = workflows / "build-artifacts.yml"
         ios_workflow = workflows / "ios-review.yml"
-        for names, ios_names, expected, reason in (
-            (("spool-linux", "spool-tvos-device-arm64", "internal-tvos-simulator-arm64"),
+        tvos_workflow = workflows / "tvos.yml"
+        for tvos_names, ios_names, expected, reason in (
+            (("spool-tvos-device-arm64", "internal-tvos-simulator-arm64"),
              ("spool-ios-device-arm64", "internal-ios-simulator-x86_64"), 0, "checked"),
-            (("spool-linux",), ("spool-ios-device-arm64",), 1, "exactly one spool-tvos-device-arm64"),
+            ((), ("spool-ios-device-arm64",), 1, "exactly one spool-tvos-device-arm64"),
             (("spool-tvos-device-arm64", "spool-tvos-simulator-arm64"),
              ("spool-ios-device-arm64",), 1, "must be internal-*"),
             (("spool-tvos-device-arm64", "spool-tvos-device-arm64"),
@@ -282,7 +284,8 @@ def workflow_artifact_contract(script: Path) -> None:
             (("spool-tvos-device-arm64",), ("spool-ios-device-arm64", "spool-ios-simulator-x86_64"),
              1, "must be internal-*"),
         ):
-            for workflow, uploads in ((workflows / "build-artifacts.yml", names), (ios_workflow, ios_names)):
+            for workflow, uploads in ((build_workflow, ("spool-linux",)),
+                                      (ios_workflow, ios_names), (tvos_workflow, tvos_names)):
                 workflow.write_text("".join(
                     f"- uses: actions/upload-artifact@v4\n  with:\n    name: {name}\n" for name in uploads
                 ))

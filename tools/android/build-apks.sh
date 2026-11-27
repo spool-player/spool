@@ -65,12 +65,15 @@ source "$ROOT/tools/android/signing.sh"
 build_qcoro() {
   local build="$ROOT/build/android/qcoro-build/$ABI"
   local prefix="$ROOT/build/android/qcoro/$ABI"
+  local source="$ROOT/build/android/sources/third-party/qcoro"
   if [[ -f "$prefix/lib/cmake/QCoro6/QCoro6Config.cmake" ]]; then
     printf 'Android QCoro for %s is current\n' "$ABI"
     return
   fi
+  # A restored media prefix does not include the QCoro source tree.
+  prepare_manifest_source "$ROOT" "$ROOT/tools/manifests/android-third-party.json" qcoro "$source"
   rm -rf "$build" "$prefix"
-  "$QT_PREFIX/bin/qt-cmake" -S "$ROOT/build/android/sources/third-party/qcoro" -B "$build" -GNinja \
+  "$QT_PREFIX/bin/qt-cmake" -S "$source" -B "$build" -GNinja \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_SYSTEM_PREFIX_PATH="$NDK_PREFIX_PATH" \
     -DCMAKE_INSTALL_PREFIX="$prefix" \
@@ -122,7 +125,7 @@ build_app() {
     -DQT_ANDROID_DEPLOYMENT_TYPE="$deployment" \
     -DSPOOL_WEBOS=OFF \
     -DANDROID_ABI="$ABI" \
-    -DANDROID_PLATFORM=android-28 \
+    -DANDROID_PLATFORM="android-$(toolchain_field "$ROOT" android.minimumSdk)" \
     -DANDROID_DEPS_PREFIX="$DEPS_PREFIX" \
     -DQT_ANDROID_SIGN_APK=ON
   # androiddeployqt scans SOURCE_DIR recursively and does not forward

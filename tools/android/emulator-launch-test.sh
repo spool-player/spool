@@ -38,14 +38,14 @@ done
 host_build="${SPOOL_DEVICE_HOST_BUILD_DIR:-$ROOT/build/linux-release/app}"
 if [[ -z "${SPOOL_DEVICE_HOST_E2E:-}" ]]; then
   [[ -f "$host_build/native-spool-e2e-path.txt" ]] || {
-    echo 'error: build the native host journey controller with tools/build-linux-release.sh first' >&2
+    echo "error: missing native journey controller path in $host_build" >&2
     exit 1
   }
   read -r SPOOL_DEVICE_HOST_E2E <"$host_build/native-spool-e2e-path.txt"
 fi
 if [[ -z "${SPOOL_E2E_SPOOLET:-}" ]]; then
   [[ -f "$host_build/native-spoolet-path.txt" ]] || {
-    echo 'error: build the matching native spoolet with tools/build-linux-release.sh first' >&2
+    echo "error: missing native spoolet path in $host_build" >&2
     exit 1
   }
   read -r SPOOL_E2E_SPOOLET <"$host_build/native-spoolet-path.txt"
@@ -262,9 +262,9 @@ adb_retry install -r "$E2E_APK"
 status=0
 # The shared driver finishes every traditional native selector before starting
 # real GUI selectors and retains both phase failures.
-# The native shell supplies real host Qt, FFmpeg CLI and English OCR; the
+# The journey shell supplies the host FFmpeg CLI and English OCR; the
 # controller renders nothing on the host and observes the private emulator.
-nix develop "$ROOT#native" -c python "$ROOT/tools/run-tests.py" \
+nix develop "$ROOT#android-journey" -c python "$ROOT/tools/run-tests.py" \
   --build-dir "$BUILD_DIR" --workers 1 || status=1
 # Replace the developer application with the exact signed release artifact.
 # Uninstall only from this owned emulator to avoid signature/version conflicts

@@ -10,10 +10,11 @@ source "$ROOT/tools/android/gradle-mirror.sh"
 PHASE="${1:-all}"
 ABI="${ANDROID_ABI:-x86_64}"
 MANIFEST="${QT_ANDROID_MANIFEST:-$ROOT/tools/manifests/qt-android.json}"
-QT_VERSION="$(manifest_qt_field "$MANIFEST" qtVersion)"
-QT_BASE_URL="$(manifest_qt_field "$MANIFEST" baseUrl)"
+QT_VERSION="$(toolchain_field "$ROOT" qt.version)"
+QT_BASE_URL="$(toolchain_qt_sources_url "$ROOT" qt.fauArchiveBaseUrl)"
 QT_HOST_PATH="${SPOOL_ANDROID_QT_HOST:-}"
-ANDROID_API="${ANDROID_API:-28}"
+ANDROID_API="${ANDROID_API:-$(toolchain_field "$ROOT" android.minimumSdk)}"
+ANDROID_COMPILE_SDK="$(toolchain_field "$ROOT" android.compileSdk)"
 JOBS="$(recommended_parallel_jobs "${QT_ANDROID_MEMORY_PER_JOB_MIB:-1536}" "${QT_ANDROID_MEMORY_RESERVE_MIB:-2048}")"
 # The Nix setup hooks publish every host build input through these, the same way
 # build-dependencies.sh and build-apks.sh guard against. Qt's own find modules
@@ -62,8 +63,8 @@ unset PKG_CONFIG_SYSROOT_DIR
 require_environment() {
   : "${ANDROID_HOME:?run through nix develop .#android}"
   : "${ANDROID_NDK_ROOT:?run through nix develop .#android}"
-  [[ -d "$ANDROID_HOME/platforms/android-36" ]] || {
-    echo "error: Android platform 36 missing" >&2
+  [[ -d "$ANDROID_HOME/platforms/android-$ANDROID_COMPILE_SDK" ]] || {
+    echo "error: Android platform $ANDROID_COMPILE_SDK missing" >&2
     exit 1
   }
   [[ -f "$ANDROID_DEPS_PREFIX/lib/libssl.so" ]] || {
@@ -94,21 +95,17 @@ apply_qt_patches() {
   done
 }
 
-module_names() {
-  python3 -c 'import json,sys; print("\n".join(x["name"] for x in json.load(open(sys.argv[1]))["modules"]))' "$MANIFEST"
-}
-
 fetch_sources() {
   mkdir -p "$SOURCE_ROOT" "$DOWNLOAD_ROOT"
   local module sha archive source
   while IFS= read -r module; do
     [[ -n "$module" ]] || continue
-    sha="$(manifest_qt_module_sha256 "$MANIFEST" "$module")"
+    sha="$(toolchain_field "$ROOT" "qt.sources.$module")"
     archive="$DOWNLOAD_ROOT/$module-everywhere-src-$QT_VERSION.tar.xz"
     source="$SOURCE_ROOT/$module"
     download_verified "$QT_BASE_URL/$module-everywhere-src-$QT_VERSION.tar.xz" "$sha" "$archive"
     extract_verified_source "$archive" "$sha" "$source"
-  done < <(module_names)
+  done < <(manifest_json_array "$MANIFEST" modules)
   apply_qt_patches
 }
 
