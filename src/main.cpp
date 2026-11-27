@@ -1305,10 +1305,6 @@ int main(int argc, char **argv)
         return 1;
     }
 #if defined(SPOOL_ANDROID)
-    if (!window.prepareForUiSurface()) {
-        logLine("failed to initialize the native UI surface");
-        return 1;
-    }
     // Hand the launch screen over the moment Qt has actually drawn one. The
     // shell's first frame is the same picture the system frame is showing --
     // same mark, same size, same black -- so this swaps one for the other with
@@ -1318,6 +1314,10 @@ int main(int argc, char **argv)
     QObject::connect(
         &window, &QQuickWindow::frameSwapped, &app, [] { QNativeInterface::QAndroidApplication::hideSplashScreen(); },
         Qt::SingleShotConnection);
+    if (!window.prepareForUiSurface()) {
+        logLine("failed to initialize the native UI surface");
+        return 1;
+    }
 #endif
     logLine("startup: QML source loaded in %lld ms", static_cast<long long>(startupTimer.elapsed()));
 

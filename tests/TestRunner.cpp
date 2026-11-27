@@ -731,6 +731,7 @@ int main(int argc, char **argv)
     }
     if (!receiptPath.isEmpty()) {
         receipt.insert(QStringLiteral("selector"), QString::fromStdString(selected->first));
+        receipt.insert(QStringLiteral("pid"), QCoreApplication::applicationPid());
         QJsonObject started = receipt;
         started.insert(QStringLiteral("status"), QStringLiteral("running"));
         if (!save(receiptPath, started))

@@ -79,6 +79,7 @@ namespace {
         {
             disconnectWindow();
             releaseContext();
+            completeHandoff();
         }
 
         RenderLifecycle(const RenderLifecycle&) = delete;
