@@ -257,6 +257,16 @@ jobs:
         with:
           nix_conf: |
             experimental-features = nix-command flakes
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.1
+        with:
+          primary-key: nix-native-shell-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.nix', 'flake.lock', 'tools/manifests/toolchain.json', 'tools/manifests/ffmpeg-capabilities.json', 'tools/manifests/streaming-third-party.json', 'tools/patches/**', 'tools/webos-native/patches/qtdeclarative-*-qmlimportscanner-exclude-subtrees.patch') }}
+          restore-prefixes-first-match: nix-native-shell-${{ runner.os }}-${{ runner.arch }}-
+          gc-max-store-size: 5G
+          save: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release }}
+          purge: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release }}
+          purge-prefixes: nix-native-shell-${{ runner.os }}-${{ runner.arch }}-
+          purge-created: P7D
+          purge-primary-key: never
       - uses: cachix/cachix-action@3ba601ff5bbb07c7220846facfa2cd81eeee15a1 # v16
         with:
           name: spool
@@ -267,7 +277,7 @@ jobs:
           BUILD_ROOT: ${{ github.workspace }}/build/linux-sanitizers
           SPOOL_CMAKE_EXTRA_ARGS: -DSPOOL_SANITIZERS=ON
           SPOOL_BUILD_MEMORY_PER_JOB_MIB: 3072
-        run: nix develop .#native -c bash tools/build-linux-release.sh
+        run: nix develop .#native --profile "$RUNNER_TEMP/native-shell" -c bash tools/build-linux-release.sh
       - name: Exercise actual bounded decoder and provider-package consumer
         run: |
           nix develop .#native -c env \
@@ -310,20 +320,14 @@ jobs:
         with:
           nix_conf: |
             experimental-features = nix-command flakes
-      - name: Resolve tailored Qt cache key
-        id: qt-cache-inputs
-        run: |
-          qt_derivation="$(nix eval --raw .#native-qt-cache.drvPath)"
-          echo "key=${qt_derivation##*/}" >>"$GITHUB_OUTPUT"
       - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.1
         with:
-          primary-key: nix-native-${{ runner.os }}-${{ steps.qt-cache-inputs.outputs.key }}
-          restore-prefixes-first-match: nix-native-${{ runner.os }}-
-          gc-max-store-size-linux: 4G
-          # Cache hygiene: see the lint job above.
+          primary-key: nix-native-shell-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.nix', 'flake.lock', 'tools/manifests/toolchain.json', 'tools/manifests/ffmpeg-capabilities.json', 'tools/manifests/streaming-third-party.json', 'tools/patches/**', 'tools/webos-native/patches/qtdeclarative-*-qmlimportscanner-exclude-subtrees.patch') }}
+          restore-prefixes-first-match: nix-native-shell-${{ runner.os }}-${{ runner.arch }}-
+          gc-max-store-size: 5G
           save: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release }}
           purge: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release }}
-          purge-prefixes: nix-native-${{ runner.os }}-
+          purge-prefixes: nix-native-shell-${{ runner.os }}-${{ runner.arch }}-
           purge-created: P7D
           purge-primary-key: never
       - uses: cachix/cachix-action@3ba601ff5bbb07c7220846facfa2cd81eeee15a1 # v16
@@ -331,6 +335,7 @@ jobs:
           name: spool
           skipPush: true
       - name: Build tailored Qt
+        if: ${{ env.SPOOL_TRUSTED_BUILD == 'true' }}
         run: |
           nix build --accept-flake-config .#native-qt-cache \
             --out-link "$RUNNER_TEMP/spool-native-qt" --print-build-logs
@@ -358,7 +363,7 @@ jobs:
       # The default dev shell has no Qt on purpose (it is the hermetic Qt-source
       # build shell). The native app build needs nixpkgs Qt, so use .#native.
       - name: Build host app
-        run: nix develop .#native -c bash tools/build-linux-release.sh
+        run: nix develop .#native --profile "$RUNNER_TEMP/native-shell" -c bash tools/build-linux-release.sh
 
       - name: Save Linux build cache
         if: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release && steps.linux-build-cache.outputs.cache-hit != 'true' }}
@@ -599,21 +604,14 @@ jobs:
             connect-timeout = 30
             download-attempts = 5
 
-      - name: Resolve tailored Qt cache key
-        id: qt-cache-inputs
-        run: |
-          qt_derivation="$(nix eval --raw .#native-qt-cache.drvPath)"
-          echo "key=${qt_derivation##*/}" >>"$GITHUB_OUTPUT"
-
       - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.1
         with:
-          primary-key: nix-native-${{ runner.os }}-${{ matrix.arch }}-${{ steps.qt-cache-inputs.outputs.key }}
-          restore-prefixes-first-match: nix-native-${{ runner.os }}-${{ matrix.arch }}-
-          gc-max-store-size-macos: 8G
-          # Cache hygiene: see the lint job above.
+          primary-key: nix-native-shell-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.nix', 'flake.lock', 'tools/manifests/toolchain.json', 'tools/manifests/ffmpeg-capabilities.json', 'tools/manifests/streaming-third-party.json', 'tools/patches/**', 'tools/webos-native/patches/qtdeclarative-*-qmlimportscanner-exclude-subtrees.patch') }}
+          restore-prefixes-first-match: nix-native-shell-${{ runner.os }}-${{ runner.arch }}-
+          gc-max-store-size: 5G
           save: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release }}
           purge: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release }}
-          purge-prefixes: nix-native-${{ runner.os }}-${{ matrix.arch }}-
+          purge-prefixes: nix-native-shell-${{ runner.os }}-${{ runner.arch }}-
           purge-created: P7D
           purge-primary-key: never
       - name: Install Cachix from the Intel macOS pin
@@ -624,6 +622,7 @@ jobs:
           name: spool
           skipPush: true
       - name: Build tailored Qt
+        if: ${{ env.SPOOL_TRUSTED_BUILD == 'true' }}
         run: |
           nix build --accept-flake-config .#native-qt-cache \
             --out-link "$RUNNER_TEMP/spool-native-qt" --print-build-logs
@@ -693,7 +692,7 @@ jobs:
           DEPLOY_APP: '0'
           SPOOL_MACOS_CREDENTIAL_SERVICE: ${{ inputs.enable_macos_signing && 'com.sachk.spool' || '' }}
           SPOOL_TEST_RENDER_BACKEND: opengl
-        run: nix develop .#native --no-write-lock-file -c bash tools/build-macos.sh
+        run: nix develop .#native --profile "$RUNNER_TEMP/native-shell" --no-write-lock-file -c bash tools/build-macos.sh
 
 
       - name: Save macOS build cache
@@ -862,7 +861,7 @@ jobs:
           persist-credentials: false
           submodules: recursive
       - name: Install native source-build tools
-        run: brew install cmake ninja meson pkg-config bash python imagemagick gpatch
+        run: brew install cmake ninja meson pkg-config bash python imagemagick gpatch ffmpeg tesseract
       - name: Identify the exact Apple source toolchain
         id: apple-toolchain
         run: |
@@ -906,25 +905,12 @@ jobs:
             -m qtshadertools qttasktree qtwebsockets qtimageformats
       - name: Build actual source Qt, media closure, and tvOS app
         run: bash tools/build-tvos.sh
-      # The journeys drive the simulator from a native macOS controller,
-      # which builds in the Nix shell like the macOS job.
-      - uses: ./.github/actions/install-nix
-        if: matrix.sdk == 'appletvsimulator'
-        with:
-          nix_conf: |
-            experimental-features = nix-command flakes
-            connect-timeout = 30
-            download-attempts = 5
-      - uses: cachix/cachix-action@3ba601ff5bbb07c7220846facfa2cd81eeee15a1 # v16
-        if: matrix.sdk == 'appletvsimulator'
-        with:
-          name: spool
-          skipPush: true
       - name: Build native host controller for tvOS application journeys
         if: matrix.sdk == 'appletvsimulator'
         run: |
-          nix develop .#native -c cmake -S tests/e2e/host -B build/apple/device-journey-host -G Ninja -DCMAKE_BUILD_TYPE=Release
-          nix develop .#native -c cmake --build build/apple/device-journey-host
+          cmake -S tests/e2e/host -B build/apple/device-journey-host -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$QT_HOST_PATH"
+          cmake --build build/apple/device-journey-host
 
       - name: Run tvOS traditional and real GPU GUI e2e tests
         if: matrix.sdk == 'appletvsimulator'
@@ -1305,36 +1291,14 @@ jobs:
           key: ${{ steps.android-cache.outputs.cache-primary-key }}
 
 
-      - name: Fetch pinned libplacebo for Android host controller
-        if: matrix.abi == 'x86_64'
-        timeout-minutes: 10
-        shell: bash
-        run: |
-          set -euo pipefail
-          source_url="$(jq -er '.nodes["libplacebo-src"].locked
-            | select(.type == "git" and .submodules == true)
-            | "git+\(.url)?rev=\(.rev)&submodules=1"' flake.lock)"
-          expected_hash="$(jq -er '.nodes["libplacebo-src"].locked.narHash' flake.lock)"
-          log="$RUNNER_TEMP/android-libplacebo-fetch.log"
-          for attempt in 1 2 3; do
-            if result="$(nix flake prefetch --json "$source_url" 2>"$log")"; then
-              test "$(jq -er .hash <<<"$result")" = "$expected_hash"
-              exit
-            fi
-            cat "$log" >&2
-            if ! grep -Eiq 'Failed to connect|Could not resolve host|Connection (timed out|reset)|HTTP error (502|503|504)' "$log"; then
-              exit 1
-            fi
-            if (( attempt == 3 )); then
-              echo 'Pinned libplacebo fetch exhausted retries after a transient connection failure.'
-              exit 1
-            fi
-            sleep "$((attempt * 10))"
-          done
-
       - name: Build native host controller for Android application journeys
         if: matrix.abi == 'x86_64'
-        run: nix develop .#native -c bash tools/build-linux-release.sh
+        run: |
+          nix develop .#android-journey -c bash -euc '
+            cmake -S tests/e2e/host -B build/android/device-journey-host -G Ninja -DCMAKE_BUILD_TYPE=Release
+            cmake --build build/android/device-journey-host
+          '
+          echo "SPOOL_DEVICE_HOST_BUILD_DIR=$GITHUB_WORKSPACE/build/android/device-journey-host" >>"$GITHUB_ENV"
 
       - name: Run Android phone traditional and real GPU GUI e2e tests
         id: android-phone-tests

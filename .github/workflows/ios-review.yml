@@ -19,16 +19,23 @@ permissions:
 jobs:
   native:
     name: iOS (${{ matrix.sdk }} ${{ matrix.arch }})
-    runs-on: macos-15-intel
+    runs-on: macos-15
     timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
         include:
           - sdk: iphonesimulator
-            arch: x86_64
+            arch: arm64
+            qt_kit: ios_simulator_arm64
           - sdk: iphoneos
             arch: arm64
+            qt_kit: ios_device
+    env:
+      APPLE_SDK: ${{ matrix.sdk }}
+      APPLE_ARCH: ${{ matrix.arch }}
+      APPLE_BUILD: build/apple/${{ matrix.sdk }}-${{ matrix.arch }}
+      SPOOL_CACHE_WRITE: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && !inputs.release }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
         with:
@@ -47,22 +54,64 @@ jobs:
           fi
           echo "Building source $GITHUB_SHA with bundle/package version $version"
       - name: Install native build tools
-        run: brew install cmake ninja meson pkg-config bash python imagemagick nasm gpatch
+        run: brew install cmake ninja meson pkg-config bash python imagemagick nasm gpatch ffmpeg tesseract
+      - name: Resolve Qt kits and Apple SDK
+        id: apple-toolchain
+        shell: bash
+        run: |
+          version="$(bash tools/toolchain-versions.sh qt.version)"
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          echo "QT_HOST_PATH=$RUNNER_TEMP/Qt/$version/macos" >>"$GITHUB_ENV"
+          echo "QT_TARGET_PREFIX=$RUNNER_TEMP/Qt/$version/${{ matrix.qt_kit }}" >>"$GITHUB_ENV"
+          identity="$(
+            {
+              xcodebuild -version
+              xcrun --sdk "$APPLE_SDK" --show-sdk-build-version
+              xcrun --sdk "$APPLE_SDK" --show-sdk-path
+            } | shasum -a 256
+          )"
+          echo "key=${identity%% *}" >>"$GITHUB_OUTPUT"
+      - name: Restore Qt host and iOS kits
+        id: qt-cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
+        with:
+          path: ${{ runner.temp }}/Qt
+          key: ios-kits-${{ runner.arch }}-${{ matrix.qt_kit }}-${{ steps.apple-toolchain.outputs.version }}-${{ hashFiles('tools/apple/aqt-ios.py', '.github/workflows/ios-review.yml') }}
       - name: Install pinned Qt host and iOS kits
+        if: steps.qt-cache.outputs.cache-hit != 'true'
+        env:
+          QT_VERSION: ${{ steps.apple-toolchain.outputs.version }}
+          QT_IOS_KIT: ${{ matrix.qt_kit }}
         shell: bash
         run: |
           python3 -m venv "$RUNNER_TEMP/aqt"
           "$RUNNER_TEMP/aqt/bin/pip" install aqtinstall==3.3.0
-          qt_version="$(python3 -c 'import json; print(json.load(open("tools/manifests/toolchain.json"))["qt"]["version"])')"
-          "$RUNNER_TEMP/aqt/bin/aqt" install-qt mac desktop "$qt_version" clang_64 -O "$RUNNER_TEMP/Qt" -m qtshadertools qtwebsockets qtimageformats qttasktree
-          "$RUNNER_TEMP/aqt/bin/aqt" install-qt mac ios "$qt_version" ios -O "$RUNNER_TEMP/Qt" -m qtshadertools qtwebsockets qtimageformats qttasktree
-          echo "QT_HOST_PATH=$RUNNER_TEMP/Qt/$qt_version/macos" >> "$GITHUB_ENV"
-          echo "QT_TARGET_PREFIX=$RUNNER_TEMP/Qt/$qt_version/ios" >> "$GITHUB_ENV"
+          modules=(qtshadertools qtwebsockets qtimageformats qttasktree)
+          "$RUNNER_TEMP/aqt/bin/aqt" install-qt mac desktop "$QT_VERSION" clang_64 \
+            -O "$RUNNER_TEMP/Qt" -m "${modules[@]}"
+          "$RUNNER_TEMP/aqt/bin/python" tools/apple/aqt-ios.py install-qt mac ios "$QT_VERSION" "$QT_IOS_KIT" \
+            -O "$RUNNER_TEMP/Qt" -m "${modules[@]}"
+      - name: Save Qt host and iOS kits
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && steps.qt-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
+        with:
+          path: ${{ runner.temp }}/Qt
+          key: ${{ steps.qt-cache.outputs.cache-primary-key }}
+      - name: Read mpv revision
+        id: mpv-revision
+        run: echo "revision=$(git rev-parse HEAD:mpv)" >>"$GITHUB_OUTPUT"
+      - name: Restore iOS build
+        id: ios-build-cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
+        with:
+          path: |
+            ${{ env.APPLE_BUILD }}/prefix
+            ${{ env.APPLE_BUILD }}/app
+          key: ios-build-${{ matrix.sdk }}-${{ matrix.arch }}-${{ steps.apple-toolchain.outputs.key }}-${{ steps.mpv-revision.outputs.revision }}-${{ hashFiles('tools/apple/build-dependencies.sh', 'tools/manifests/*.json', 'tools/build-ios.sh', 'tools/lib/*.sh', 'tools/patches/**') }}
       - name: Build native iOS application
         shell: bash
         env:
-          APPLE_SDK: ${{ matrix.sdk }}
-          APPLE_ARCH: ${{ matrix.arch }}
+          BUILD_DEPENDENCIES: ${{ steps.ios-build-cache.outputs.cache-hit == 'true' && '0' || '1' }}
           APPLE_CODE_SIGNING_ALLOWED: 'NO'
           # The published IPA is unsigned, for sideloading, so it is the open
           # build (all providers, provider downloads); the simulator smoke
@@ -70,40 +119,30 @@ jobs:
           SPOOL_APPLE_APP_STORE: 'OFF'
           BUILD_JOBS: '4'
         run: bash tools/build-ios.sh
-      - uses: ./.github/actions/install-nix
-        if: matrix.sdk == 'iphonesimulator'
+      - name: Save iOS build
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && steps.ios-build-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
         with:
-          nix_conf: |
-            experimental-features = nix-command flakes
-      - name: Install Cachix from the Intel macOS pin
-        if: matrix.sdk == 'iphonesimulator'
-        run: bash tools/install-intel-darwin-cachix.sh
-      - uses: cachix/cachix-action@3ba601ff5bbb07c7220846facfa2cd81eeee15a1
-        if: matrix.sdk == 'iphonesimulator'
-        with:
-          name: spool
-          skipPush: true
-      - name: Select supported Intel macOS native package channel
-        if: matrix.sdk == 'iphonesimulator'
-        shell: bash
-        run: |
-          url="$(python3 -c 'import json; p=json.load(open("flake.lock"))["nodes"]["nixpkgs-x86-darwin"]["locked"]; print("github:"+p["owner"]+"/"+p["repo"]+"/"+p["rev"])')"
-          nix flake lock --override-input nixpkgs "$url"
+          path: |
+            ${{ env.APPLE_BUILD }}/prefix
+            ${{ env.APPLE_BUILD }}/app
+          key: ${{ steps.ios-build-cache.outputs.cache-primary-key }}
       - name: Build native host controller for iOS application journeys
         if: matrix.sdk == 'iphonesimulator'
         run: |
-          nix develop .#native -c cmake -S tests/e2e/host -B build/apple/device-journey-host -G Ninja -DCMAKE_BUILD_TYPE=Release
-          nix develop .#native -c cmake --build build/apple/device-journey-host
+          cmake -S tests/e2e/host -B build/apple/device-journey-host -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$QT_HOST_PATH"
+          cmake --build build/apple/device-journey-host
       - name: Run iOS traditional and real GPU GUI e2e tests
         if: matrix.sdk == 'iphonesimulator'
         env:
-          SPOOL_TVOS_TEST_BUILD_DIR: build/apple/iphonesimulator-x86_64/app
+          SPOOL_TVOS_TEST_BUILD_DIR: ${{ env.APPLE_BUILD }}/app
           SPOOL_DEVICE_HOST_BUILD_DIR: build/apple/device-journey-host
-        run: bash tools/apple/smoke-ios.sh build/apple/iphonesimulator-x86_64/install/Spool.app
+        run: bash tools/apple/smoke-ios.sh "$APPLE_BUILD/install/Spool.app"
       - name: Package audited unsigned device IPA
         if: matrix.sdk == 'iphoneos'
         shell: bash
-        run: bash tools/package-ios.sh build/apple/iphoneos-arm64/app/Release-iphoneos/Spool.app dist/ios
+        run: bash tools/package-ios.sh "$APPLE_BUILD/app/Release-$APPLE_SDK/Spool.app" dist/ios
       - name: Upload only the unsigned device release package
         if: matrix.sdk == 'iphoneos'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
@@ -116,21 +155,21 @@ jobs:
         if: matrix.sdk == 'iphonesimulator'
         shell: bash
         run: |
-          tar -czf "$RUNNER_TEMP/ios-simulator-x86_64.tar.gz" \
-            -C build/apple/iphonesimulator-x86_64/app/Release-iphonesimulator Spool.app
+          tar -czf "$RUNNER_TEMP/ios-simulator-$APPLE_ARCH.tar.gz" \
+            -C "$APPLE_BUILD/app/Release-$APPLE_SDK" Spool.app
       - name: Keep simulator build internal
         if: matrix.sdk == 'iphonesimulator'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
         with:
-          name: internal-ios-simulator-x86_64
-          path: ${{ runner.temp }}/ios-simulator-x86_64.tar.gz
+          name: internal-ios-simulator-${{ matrix.arch }}
+          path: ${{ runner.temp }}/ios-simulator-${{ matrix.arch }}.tar.gz
           if-no-files-found: error
           retention-days: 7
       - name: Keep simulator test diagnostics internal
         if: always() && matrix.sdk == 'iphonesimulator'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
         with:
-          name: internal-ios-simulator-x86_64-tests
+          name: internal-ios-simulator-${{ matrix.arch }}-tests
           path: |
             build/ios/smoke/safe-export
             build/ios/smoke/launch-result.json

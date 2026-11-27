@@ -879,6 +879,13 @@
           shellHook = gitHooksShellHook;
         };
       } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+        android-journey = pkgs.mkShell {
+          packages = with pkgs; [
+            cmake ninja python3 spoolQt6.qtbase spoolQt6.qtwebsockets
+            (lib.getBin (spoolFfmpegFor pkgs)) tesseract
+          ];
+        };
+
         windows-proton = pkgs.mkShell {
           packages = with pkgs; [
             umu-launcher vulkan-tools python3 msitools gcab p7zip
