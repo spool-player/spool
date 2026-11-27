@@ -319,13 +319,14 @@ SPOOL_TEST_MAIN("script-runtime-network")
     int requests = 0;
     int dripActive = 0;
     int dripMaximum = 0;
+    QEventLoop *dripDrain = nullptr;
     std::function<void()> onDrip;
     QObject::connect(&server, &QTcpServer::newConnection, &app, [&] {
         while (auto *socket = server.nextPendingConnection()) {
             QObject::connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
             QObject::connect(socket, &QTcpSocket::disconnected, &app, [&, socket] {
-                if (socket->property("drip").toBool())
-                    --dripActive;
+                if (socket->property("drip").toBool() && --dripActive == 0 && dripDrain)
+                    dripDrain->quit();
             });
             QObject::connect(socket, &QTcpSocket::readyRead, socket, [&, socket] {
                 QByteArray request = socket->property("request").toByteArray() + socket->readAll();
@@ -498,9 +499,13 @@ SPOOL_TEST_MAIN("script-runtime-network")
         "wall deadline aborts incomplete drip feeds and retains unstarted targets for continuation");
     require(dripMaximum == 4, "at most four local HTTP requests run concurrently");
     const auto drained = [&] {
-        QEventLoop loop;
-        QTimer::singleShot(100, &loop, &QEventLoop::quit);
-        loop.exec();
+        if (dripActive > 0) {
+            QEventLoop loop;
+            dripDrain = &loop;
+            QTimer::singleShot(5000, &loop, &QEventLoop::quit);
+            loop.exec();
+            dripDrain = nullptr;
+        }
         require(dripActive == 0, "deadline and cancellation close every incomplete reply");
     };
     drained();
