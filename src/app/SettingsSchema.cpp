@@ -503,8 +503,8 @@ const QVector<SettingSpec>& settingSpecs()
                 .advanced()
                 .whenSetTo("playback/threadedStreaming", "true"),
             sliderSpec("playback/maxExtraStreamingMemoryMiB", "Streaming", "Extra streaming memory limit",
-                "Zero chooses a device-appropriate limit. Memory pressure reduces this automatically", "0", 0, 128, 8,
-                "MB", SettingTarget::MaxExtraStreamingMemory)
+                "Shared by automatic cache growth and network buffers. Zero chooses a device-appropriate limit", "0", 0,
+                128, 8, "MB", SettingTarget::MaxExtraStreamingMemory)
                 .perServer()
                 .advanced()
                 .whenSetTo("playback/threadedStreaming", "true"),

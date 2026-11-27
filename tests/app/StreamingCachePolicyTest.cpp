@@ -143,6 +143,34 @@ SPOOL_TEST_MAIN("streaming-cache-policy")
         require(scaler.update(low) == low, "memory pressure must shrink immediately on a single sample");
     }
 
+    // An explicit allowance covers demuxer growth and curl together, while
+    // allocations still draining under pressure block further borrowing.
+    {
+        const StreamingCacheTarget baseline { 32 * kMiB, 16 * kMiB };
+        const StreamingCacheTarget desired { 512 * kMiB, 128 * kMiB };
+        for (qint64 limit : { 8 * kMiB, 32 * kMiB, 128 * kMiB }) {
+            for (qint64 committedCurl : { qint64(0), 4 * kMiB, 64 * kMiB }) {
+                const auto result = allocateStreamingMemory(baseline, desired, limit, 0, committedCurl, 64 * kMiB);
+                const qint64 cacheExtra = result.cache.forwardBytes + result.cache.backBytes - 48 * kMiB;
+                require(cacheExtra + result.curlGrantBytes <= limit,
+                    "new cache and curl admissions stay within one explicit allowance");
+                require(cacheExtra + committedCurl <= limit || cacheExtra == 0,
+                    "existing curl commitments cannot be loaned to the cache again");
+            }
+        }
+        const auto pressure = allocateStreamingMemory(baseline, desired, 8 * kMiB, 80 * kMiB, 20 * kMiB, 64 * kMiB);
+        require(
+            pressure.cache == baseline && pressure.curlGrantBytes == 0 && pressure.committedExcessBytes == 92 * kMiB,
+            "pressure reports draining commitments and admits no new extras");
+        const auto unknown = allocateStreamingMemory(baseline, desired, 0, 0, 0, 64 * kMiB);
+        require(unknown.cache == baseline && unknown.curlGrantBytes == 0,
+            "unknown headroom admits only the configured floor");
+        const StreamingCacheTarget manual { 1024 * kMiB, 128 * kMiB };
+        const auto floor = allocateStreamingMemory(manual, manual, 8 * kMiB, 0, 0, 64 * kMiB);
+        require(floor.cache == manual && floor.curlGrantBytes == 8 * kMiB,
+            "a manual floor is separate from the automatic extra allowance");
+    }
+
     // 6. Live libmpv runtime property test: demuxer-max-bytes and demuxer-max-back-bytes
     //    must accept dynamic int64 updates on an initialized headless handle.
     {

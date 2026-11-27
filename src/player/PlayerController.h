@@ -3,6 +3,7 @@
 #include "../app/StreamingCachePolicy.h"
 #include "../media/MediaTypes.h"
 #include "../platform/MpvConfigPolicy.h"
+#include "../platform/PlatformSystemProbes.h"
 #include "MpvLifecycle.h"
 #include "MpvOptionProfile.h"
 #include "PlaybackPositionTracker.h"
@@ -29,6 +30,7 @@
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -44,6 +46,7 @@ class PlatformPerformanceSampler;
 
 class PlayerController final : public QObject {
     Q_OBJECT
+    friend struct PlayerControllerTestAccess;
     Q_PROPERTY(bool visible READ visible NOTIFY visibleChanged)
     Q_PROPERTY(QVariantMap transportCapabilities READ transportCapabilities NOTIFY transportCapabilitiesChanged)
     Q_PROPERTY(bool sessionActive READ sessionActive NOTIFY sessionActiveChanged)
@@ -116,6 +119,18 @@ public:
     {
         return m_pauseCommandState;
     }
+    qint64 positionSampleAgeMs() const
+    {
+        return m_positionTracker.sampleAgeMs();
+    }
+    qint64 mpvEventAgeMs() const
+    {
+        return m_mpvEventClock.isValid() ? m_mpvEventClock.elapsed() : -1;
+    }
+    qint64 pauseRequestAgeMs() const
+    {
+        return m_pauseRequestClock.isValid() ? m_pauseRequestClock.elapsed() : -1;
+    }
     int bufferingPercent() const;
     bool seeking() const;
     bool debugOsdVisible() const;
@@ -141,6 +156,8 @@ public:
     QVariantMap networkMetrics() const
     {
         QVariantMap metrics = m_networkMetrics;
+        metrics.insert(QStringLiteral("memory-extra-allowance-bytes"), m_extraMemoryAllowanceBytes);
+        metrics.insert(QStringLiteral("memory-committed-excess-bytes"), m_committedMemoryExcessBytes);
         for (auto it = m_streamingPerformanceMetrics.cbegin(); it != m_streamingPerformanceMetrics.cend(); ++it)
             metrics.insert(it.key(), it.value());
         return metrics;
@@ -386,8 +403,10 @@ private:
     template <typename Callback> void postMpvEvent(quint64 generation, Callback callback)
     {
         QMetaObject::invokeMethod(this, [this, generation, callback = std::move(callback)]() mutable {
-            if (generation == m_mpvEventGeneration && m_sessionActive)
+            if (generation == m_mpvEventGeneration && m_sessionActive) {
+                m_mpvEventClock.restart();
                 callback();
+            }
         });
     }
     void startProgressReporting();
@@ -501,6 +520,8 @@ private:
     bool m_pauseCommandTarget = false;
     bool m_pauseCommandRetried = false;
     QString m_pauseCommandState;
+    QElapsedTimer m_mpvEventClock;
+    QElapsedTimer m_pauseRequestClock;
     bool m_buffering = false;
     int m_bufferingPercent = 0;
     bool m_seeking = false;
@@ -528,11 +549,26 @@ private:
     MpvOptionProfile::StreamingOptions m_sessionStreamingOptions;
     qint64 m_jointExtraGrantBytes = 0;
     qint64 m_previousMemoryCandidate = 0;
+    qint64 m_extraMemoryAllowanceBytes = 0;
+    qint64 m_committedMemoryExcessBytes = 0;
     StreamingCacheScaler m_demuxerCacheScaler;
     StreamingCacheTarget m_activeDemuxerTarget {};
-    QElapsedTimer m_streamingMemoryTimer;
+    QTimer m_streamingMemoryTimer;
+    std::optional<StreamingCacheTarget> m_appliedDemuxerTarget;
+    StreamingCacheTarget m_pendingDemuxerTarget;
+    quint64 m_demuxerCacheSerial = 0;
+    int m_demuxerCacheReplies = 0;
+    bool m_demuxerCacheFailed = false;
+    qint64 m_committedDemuxerBytes = 0;
+    bool m_demuxerUsageKnown = false;
+    bool m_demuxerUsagePending = false;
+    std::function<PlatformStreamingMemoryState()> m_memoryProbe = platformStreamingMemoryState;
+    std::function<int(mpv_handle *, quint64, const char *, qint64, bool)> m_cachePropertyWriter;
     void updateStreamingMemoryGrant();
     void applyDemuxerCacheTarget(const StreamingCacheTarget& target, bool applyLive);
+    int writeDemuxerCacheProperty(mpv_handle *handle, quint64 reply, const char *name, qint64 bytes, bool async);
+    bool applyInitialDemuxerCacheTarget(mpv_handle *handle);
+    void completeDemuxerCacheWrite(quint64 serial, int error);
     // The opening seconds are where a device that cannot keep up says so:
     // the picture is being scaled and tone-mapped from the first frame, and
     // nothing has warmed a cache yet.
