@@ -1172,6 +1172,11 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
     add_test(NAME streaming-candidates
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/StreamingCandidatesTest.py")
 
+    foreach(policy_test IN ITEMS ArtifactWorkflowPolicy ProviderCompatibilityRunner)
+        add_test(NAME ${policy_test} COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/${policy_test}Test.py")
+        set_tests_properties(${policy_test} PROPERTIES LABELS traditional TIMEOUT 30)
+    endforeach()
     add_test(NAME network-shaper
         COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/NetworkShaperTest.py"

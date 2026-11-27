@@ -182,6 +182,26 @@ TestCase {
         verify(keyRouter.dispatch(event, "release"))
     }
 
+    function test_unflaggedBackPressRetainsOwnershipAfterTargetDisappears() {
+        let dismissals = 0
+        keyRouter.activeTarget = {
+            back: function () {
+                ++dismissals
+                keyRouter.activeTarget = target
+                return true
+            }
+        }
+        routeResult = false
+        verify(keyRouter.routeBack("press", false))
+        verify(keyRouter.routeBack("press", false))
+        compare(dismissals, 1)
+        compare(backCalls, 0)
+        verify(keyRouter.routeBack("release", false))
+        verify(keyRouter.routeBack("press", false))
+        compare(backCalls, 1)
+        verify(keyRouter.routeBack("release", false))
+    }
+
     function test_directionUsesRouterHelper() {
         verify(keyRouter.deliver(target, Qt.Key_Right, "press", false))
         compare(routeCalls, 1)

@@ -101,7 +101,7 @@ jobs:
     name: Toolchain versions
     runs-on: ubuntu-24.04
     # Every PR and release path gets the artifact matrix. Other pushes run lint.
-    if: ${{ github.event_name != 'push' || github.ref_name == 'master' || startsWith(github.ref_name, 'release/') }}
+    if: ${{ inputs.release == true || github.event_name != 'push' || github.ref_name == 'master' || startsWith(github.ref_name, 'release/') }}
     outputs:
       qt_version: ${{ steps.versions.outputs.qt_version }}
       qt_series: ${{ steps.versions.outputs.qt_series }}

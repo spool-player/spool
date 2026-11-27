@@ -23,6 +23,7 @@ public:
     void updateNowPlaying();
 
 private:
+    friend struct AppleMediaControlsTestAccess;
     void syncPreference();
     void disable();
     void installCommand(MPRemoteCommand *command, std::function<void(MPRemoteCommandEvent *)> action);

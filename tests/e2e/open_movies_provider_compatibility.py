@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Check the packaged Open Movies provider with synthetic HTTPS directory listings."""
 
+from compatibility_receipt import compatibility_runner, fixture_failure, receipt_results, set_phase
+
 import argparse
 from contextlib import contextmanager
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -143,12 +145,14 @@ http {{
                     server.kill()
 
 
+@compatibility_runner('open-movies')
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--spool-tests', type=Path, required=True)
     parser.add_argument('--report', type=Path, required=True)
     args = parser.parse_args()
-    results = {}
+    results = receipt_results()
+    set_phase("synthetic-media")
     with tempfile.TemporaryDirectory(prefix='spool-open-movies-') as path:
         root = Path(path)
         certificate, key = root / 'ca.pem', root / 'key.pem'
@@ -167,7 +171,9 @@ def main():
             os.link(clip, held / MOVIE)
             (held / 'README.txt').write_text('Synthetic media fixture.\n')
             try:
+                set_phase("server-startup")
                 with run_archive(files) as archive_port, connect_proxy(archive_port, certificate, key) as proxy_port:
+                    set_phase("selector")
                     process = subprocess.run([str(args.spool_tests.resolve()), '--child', 'open-movies-provider'], timeout=75,
                                              env=os.environ | {'SPOOL_TEST_OPEN_MOVIES_PROXY': str(proxy_port),
                                                                'SPOOL_TEST_OPEN_MOVIES_CA': str(certificate),
@@ -178,8 +184,10 @@ def main():
                             print(f'{name}: {line}')
                     results[name] = {'selectorExitCode': process.returncode, 'passed': process.returncode == 0}
             except (OSError, RuntimeError, subprocess.SubprocessError) as error:
-                results[name] = {'passed': False, 'errorType': type(error).__name__}
+                fixture_failure(results, name, error)
             print(f"Open Movies {name}: {'passed' if results[name]['passed'] else 'failed'}")
+            set_phase("cleanup")
+    set_phase("cleanup")
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps({'provider': 'open-movies', 'fixtures': results}, indent=2) + '\n', encoding='utf-8')
     return 0 if all(result['passed'] for result in results.values()) else 1

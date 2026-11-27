@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Exercise the packaged Plex provider against fake and unclaimed local PMS instances."""
 
+from compatibility_receipt import compatibility_runner, fixture_failure, receipt_results, set_phase
+
 import argparse
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -168,6 +170,7 @@ def upstream_server(root, version, image_digest, engine):
         subprocess.run([engine, 'volume', 'rm', volume], check=True, timeout=15, **quiet)
 
 
+@compatibility_runner('plex')
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--spool-tests', type=Path, required=True)
@@ -178,7 +181,8 @@ def main():
     args = parser.parse_args()
     if not re.fullmatch(r'[0-9]+(?:\.[0-9]+){3}-[0-9a-f]{9}', args.version) or not re.fullmatch(r'sha256:[0-9a-f]{64}', args.image_digest):
         parser.error('configure a stable PMS build version and an immutable sha256 digest')
-    results = {}
+    results = receipt_results()
+    set_phase("synthetic-media")
     with tempfile.TemporaryDirectory(prefix='spool-plex-compat-') as data:
         root = Path(data)
         media = root / 'movies' / 'Synthetic Film (2026).mkv'
@@ -190,7 +194,9 @@ def main():
                     'upstream': upstream_server(root, args.version, args.image_digest, args.container_engine)}
         for name, fixture in fixtures.items():
             try:
+                set_phase("server-startup")
                 with fixture as (origin, counts):
+                    set_phase("selector")
                     process = subprocess.run([str(args.spool_tests.resolve()), '--child', 'plex-provider-compatibility'], timeout=100,
                                              stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
                                              env=os.environ | {'SPOOL_TEST_PLEX_ORIGIN': origin,
@@ -204,8 +210,10 @@ def main():
                         results[name]['wireCounts'] = {key: counts[key] for key in ('starts', 'stops', 'mediaReads')}
                         results[name]['passed'] = passed and all(counts[key] > 0 for key in ('starts', 'stops', 'mediaReads'))
             except (OSError, RuntimeError, KeyError, ValueError, subprocess.SubprocessError) as error:
-                results[name] = {'passed': False, 'errorType': type(error).__name__}
+                fixture_failure(results, name, error)
             print(f"Plex {name}: {'passed' if results[name]['passed'] else 'failed'}")
+            set_phase("cleanup")
+    set_phase("cleanup")
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps({'version': args.version, 'imageDigest': args.image_digest,
                                       'fixtures': results}, indent=2) + '\n', encoding='utf-8')

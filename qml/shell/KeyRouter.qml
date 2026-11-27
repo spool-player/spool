@@ -99,6 +99,13 @@ FocusScope {
                               stopSustaining()
                               pressedDirectionKey = 0
                           }
+    Connections {
+        target: router.Window.window
+        function onActiveChanged() {
+            if (!router.Window.window || !router.Window.window.active)
+                router.backClaimed = null
+        }
+    }
     Keys.priority: Keys.BeforeItem
 
     function stopSustaining() {
@@ -322,6 +329,8 @@ FocusScope {
 
     function routeBack(phase, repeat) {
         if (repeat)
+            return backClaimed === true
+        if (phase === "press" && backClaimed !== null)
             return backClaimed === true
         if (phase === "release" && backClaimed !== null) {
             const claimed = backClaimed

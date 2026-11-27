@@ -35,9 +35,16 @@ void AppleSystemMediaControls::updateNowPlaying()
         return;
     const auto *player = m_hooks.player;
     if (!player->sessionActive()) {
+#if defined(Q_OS_MACOS)
+        MPNowPlayingInfoCenter.defaultCenter.playbackState = MPNowPlayingPlaybackStateStopped;
+#endif
         MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo = nil;
         return;
     }
+#if defined(Q_OS_MACOS)
+    MPNowPlayingInfoCenter.defaultCenter.playbackState
+        = player->paused() ? MPNowPlayingPlaybackStatePaused : MPNowPlayingPlaybackStatePlaying;
+#endif
     MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo = @{
         MPMediaItemPropertyTitle : [NSString stringWithUTF8String:player->title().toUtf8().constData()],
         MPMediaItemPropertyPlaybackDuration : @(player->durationSeconds()),
@@ -52,7 +59,7 @@ void AppleSystemMediaControls::installCommand(
 {
     QPointer<AppleSystemMediaControls> receiver(this);
     const auto registration = m_registration;
-    id token = [command addTargetWithHandler:^MPRemoteCommandHandlerStatus(MPRemoteCommandEvent *event) {
+    auto handler = ^MPRemoteCommandHandlerStatus(MPRemoteCommandEvent *event) {
         if (!registration->load(std::memory_order_acquire))
             return MPRemoteCommandHandlerStatusCommandFailed;
         QMetaObject::invokeMethod(
@@ -63,8 +70,9 @@ void AppleSystemMediaControls::installCommand(
             },
             Qt::QueuedConnection);
         return MPRemoteCommandHandlerStatusSuccess;
-    }];
-    [m_commands addObject:@[ command, token ]];
+    };
+    id token = [command addTargetWithHandler:handler];
+    [m_commands addObject:@[ command, token, [handler copy] ]];
     command.enabled = YES;
 }
 
@@ -82,6 +90,9 @@ void AppleSystemMediaControls::disable()
     }
     [m_commands removeAllObjects];
     m_registration.reset();
+#if defined(Q_OS_MACOS)
+    MPNowPlayingInfoCenter.defaultCenter.playbackState = MPNowPlayingPlaybackStateStopped;
+#endif
     MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo = nil;
 }
 

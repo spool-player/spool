@@ -11,6 +11,8 @@ The bundled provider archives are pinned in `providers/lock.json`. Provider prot
 | Stremio | `stremio-addon-provider` covers manifest rejection, setup, catalogue, search, capability rejection, picker cancellation, HTTP decoding, and original download negotiation. The shipped 0.1.4 package fails activation because Qt does not implement its `Object.fromEntries` call. CI records the failure without blocking artifact assembly. | The [official add-on SDK](https://github.com/Stremio/stremio-addon-sdk) is locked to 1.1.4 with integrity-pinned dependencies. A separate minimal HTTP fixture runs the same assertions. Both serve synthetic media. Coverage is limited to HTTP streams and leaves torrent-engine behavior untested. |
 | Open Movies | `open-movies-provider` exercises credential-free setup, browsing, search, retry after a missing directory, media-file filtering, HTTPS playback, and original download negotiation. | The [Blender download mirror](https://download.blender.org/) exposes static directory listings. The fake HTTP fixture and the pinned Nix nginx autoindex exercise that protocol with synthetic files. A private CONNECT proxy accepts only the mirror hostname and sends traffic to the private fixture using a trust anchor scoped to the child process. |
 
+The Stremio result remains a known failing check, not evidence of compatibility. Removing its temporary artifact-assembly exemption is blocked on a published, digest-verifiable fix from the provider repository; a locally repacked archive is not a provider release.
+
 Run the pinned Jellyfin check after `nix run .#build` on Linux.
 
 ```sh
@@ -22,7 +24,7 @@ nix develop .#native -c env PYTHONDONTWRITEBYTECODE=1 \
   --spool-tests build/linux-release/app/spool-tests --report /tmp/jellyfin-compatibility.json
 ```
 
-The receipt contains versions, phase, and exit status. Test account credentials, authenticated URLs, and process logs remain private. The Linux private display can exercise the shared QML, keyboard navigation, and the actual Linux video pipeline. Apple and Android simulator checks require their dedicated runners. Physical remote gestures, platform media controls, and device video output require device validation.
+The receipt contains versions, phase, and exit status. The Emby, Plex, Stremio and Open Movies wrappers retain sanitized receipts for ordinary prerequisite, media-generation, startup, selector and cleanup failures; a cleanup error preserves any earlier selector exit code. Forced process termination cannot guarantee a final receipt. Test account credentials, authenticated URLs, and process logs remain private. The Linux private display can exercise the shared QML, keyboard navigation, and the actual Linux video pipeline. Apple and Android simulator checks require their dedicated runners. Physical remote gestures, platform media controls, and device video output require device validation.
 
 Run both Stremio fixtures against the built Linux host.
 
