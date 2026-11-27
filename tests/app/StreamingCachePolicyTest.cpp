@@ -4,6 +4,7 @@
 #include "TestRequire.h"
 
 #include <QCoreApplication>
+#include <QElapsedTimer>
 
 #include <clocale>
 
@@ -183,26 +184,32 @@ SPOOL_TEST_MAIN("streaming-cache-policy")
                 && mpv_set_option_string(handle, "demuxer-max-back-bytes", "16M") >= 0 && mpv_initialize(handle) >= 0,
             "headless mpv initializes with baseline demuxer budgets");
 
-        int64_t fwd = 512 * kMiB;
-        int64_t back = 128 * kMiB;
-        require(mpv_set_property(handle, "demuxer-max-bytes", MPV_FORMAT_INT64, &fwd) >= 0
-                && mpv_set_property(handle, "demuxer-max-back-bytes", MPV_FORMAT_INT64, &back) >= 0,
-            "mpv accepts live scaling to 512 MiB forward / 128 MiB behind");
-        int64_t readFwd = 0, readBack = 0;
-        require(mpv_get_property(handle, "demuxer-max-bytes", MPV_FORMAT_INT64, &readFwd) >= 0
-                && mpv_get_property(handle, "demuxer-max-back-bytes", MPV_FORMAT_INT64, &readBack) >= 0
-                && readFwd == fwd && readBack == back,
-            "mpv reports updated 512 MiB forward / 128 MiB behind budgets");
-
-        fwd = 64 * kMiB;
-        back = 32 * kMiB;
-        require(mpv_set_property(handle, "demuxer-max-bytes", MPV_FORMAT_INT64, &fwd) >= 0
-                && mpv_set_property(handle, "demuxer-max-back-bytes", MPV_FORMAT_INT64, &back) >= 0,
-            "mpv accepts live shrinking under memory pressure");
-        require(mpv_get_property(handle, "demuxer-max-bytes", MPV_FORMAT_INT64, &readFwd) >= 0
-                && mpv_get_property(handle, "demuxer-max-back-bytes", MPV_FORMAT_INT64, &readBack) >= 0
-                && readFwd == fwd && readBack == back,
-            "mpv reports shrunken budgets immediately");
+        const auto apply = [&](int64_t forward, int64_t backward) {
+            require(mpv_set_property_async(handle, 1, "demuxer-max-bytes", MPV_FORMAT_INT64, &forward) >= 0
+                    && mpv_set_property_async(handle, 2, "demuxer-max-back-bytes", MPV_FORMAT_INT64, &backward) >= 0,
+                "mpv queues both live demuxer budget updates");
+            bool forwardApplied = false;
+            bool backwardApplied = false;
+            QElapsedTimer timeout;
+            timeout.start();
+            while (!(forwardApplied && backwardApplied) && timeout.elapsed() < 15000) {
+                const auto *event = mpv_wait_event(handle, 0.1);
+                if (event->event_id != MPV_EVENT_SET_PROPERTY_REPLY)
+                    continue;
+                require(event->error >= 0, "mpv acknowledges the live demuxer budget update");
+                forwardApplied |= event->reply_userdata == 1;
+                backwardApplied |= event->reply_userdata == 2;
+            }
+            require(forwardApplied && backwardApplied, "mpv acknowledges both live demuxer budget updates");
+            int64_t readForward = 0;
+            int64_t readBackward = 0;
+            require(mpv_get_property(handle, "demuxer-max-bytes", MPV_FORMAT_INT64, &readForward) >= 0
+                    && mpv_get_property(handle, "demuxer-max-back-bytes", MPV_FORMAT_INT64, &readBackward) >= 0
+                    && readForward == forward && readBackward == backward,
+                "mpv reports both acknowledged budgets");
+        };
+        apply(512 * kMiB, 128 * kMiB);
+        apply(64 * kMiB, 32 * kMiB);
 
         mpv_terminate_destroy(handle);
     }

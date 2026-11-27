@@ -91,6 +91,21 @@ class Android:
     def stop(self):
         self.call("shell", "am", "force-stop", self.bundle, check=False)
 
+    def selector_exit(self, pid, started):
+        error = SelectorCrash("native Android selector exited without a final receipt")
+        if pid is None:
+            return error
+        try:
+            report = self.call("logcat", "-d", "-b", "crash", "-b", "main", "--pid", str(pid),
+                               "-t", "100", "-v", "epoch", check=False, timeout=5)
+        except (OSError, subprocess.SubprocessError):
+            return error
+        for line in report.stdout.splitlines():
+            match = re.match(r"^\s*([0-9]+(?:\.[0-9]+)?)\s+([0-9]+)\s+.*?\bFatal signal ([1-9][0-9]?)\b", line)
+            if match and float(match[1]) >= started and int(match[2]) == pid and int(match[3]) <= 64:
+                error.signal = int(match[3])
+                break
+        return error
 
     def execute(self, arguments, timeout):
         self.call("shell", "am", "force-stop", self.bundle)
@@ -101,6 +116,7 @@ class Android:
         # alone. No generic host environment forwarding or production flag.
         debug_extra = (["--es", "extraenvvars_SPOOL_TEST_MPV_LOG", "1"]
                        if mpv_log_requested(arguments) else [])
+        started = int(self.call("shell", "date", "+%s").stdout.strip())
         result = self.call("shell", "am", "start", "-W", "-n",
                            f"{self.bundle}/org.qtproject.qt.android.bindings.QtActivity",
                            "--es", "applicationArguments", extra, *debug_extra, check=False)
@@ -110,7 +126,8 @@ class Android:
         # am start -W has already waited for the activity launch. A process
         # that dies before the first pid/receipt observation is still a crash,
         # not a reason to wait for the entire selector deadline.
-        seen_process = True
+        missing_process = False
+        pid = None
         try:
             while time.monotonic() < deadline:
                 try:
@@ -120,22 +137,20 @@ class Android:
                         raise RuntimeError("Android native receipt has invalid nonce/schema")
                     if report.get("status") != "running":
                         return None, ""
-                    seen_process = True
+                    if type(report.get("pid")) is int and report["pid"] > 0:
+                        pid = report["pid"]
                 except FileNotFoundError:
                     pass
-                running = bool(self.call("shell", "pidof", self.bundle, check=False).stdout.strip())
-                seen_process |= running
-                if seen_process and not running:
-                    # The process may have published its final receipt between
-                    # our read and pidof. Re-read once; never relaunch the test.
-                    try:
-                        final = json.loads(self.read(self.receipt))
-                    except FileNotFoundError as error:
-                        raise SelectorCrash("native Android selector exited without a final receipt") from error
-                    if (isinstance(final, dict) and final.get("nonce") == arguments[-1]
-                            and final.get("status") != "running"):
-                        return None, ""
-                    raise SelectorCrash("native Android selector crashed without a final receipt")
+                process = self.call("shell", "-T", "pidof", "-s", self.bundle, check=False)
+                observation = process.stdout.strip()
+                if process.returncode == 0 and re.fullmatch(r"[1-9][0-9]*", observation):
+                    pid = int(observation)
+                # An ADB transport error also returns nonzero, but reports a
+                # message rather than a successful shell invocation of pidof.
+                absent = process.returncode == 1 and not observation
+                if missing_process and absent:
+                    raise self.selector_exit(pid, started)
+                missing_process = absent
                 time.sleep(0.2)
             raise TimeoutError("native Android selector exceeded its deadline")
         finally:

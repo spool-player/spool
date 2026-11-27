@@ -603,15 +603,6 @@ void PlayerController::teardownMpv(bool async)
     releaseMpvKeys();
     const quint64 generation = ++m_mpvTeardownGeneration;
     Diagnostics::Phase phase(QStringLiteral("shutdown"), QStringLiteral("player_teardown_mpv"));
-    ++m_mpvEventGeneration;
-    ++m_demuxerCacheSerial;
-    m_demuxerCacheReplies = 0;
-    m_appliedDemuxerTarget.reset();
-    m_demuxerUsageKnown = false;
-    m_demuxerUsagePending = false;
-    m_committedDemuxerBytes = 0;
-    m_streamingMemoryTimer.stop();
-    m_pendingTransportLoads.clear();
     m_idleMpvPreparationEnabled = false;
     m_idleMpvPreparationScheduled = false;
     m_mpvPreparationContinuation = {};
@@ -624,6 +615,17 @@ void PlayerController::teardownMpv(bool async)
         qCritical() << "player: timed out releasing the mpv render context; preserving the mpv core";
         return;
     }
+    // A failed handoff leaves the current player in service. Retire its
+    // callbacks only once the platform has released the surface.
+    ++m_mpvEventGeneration;
+    ++m_demuxerCacheSerial;
+    m_demuxerCacheReplies = 0;
+    m_appliedDemuxerTarget.reset();
+    m_demuxerUsageKnown = false;
+    m_demuxerUsagePending = false;
+    m_committedDemuxerBytes = 0;
+    m_streamingMemoryTimer.stop();
+    m_pendingTransportLoads.clear();
     // The deferred post-stop teardown must not stall the GUI thread; shutdown
     // and the stale-core path before a new play() stay synchronous so the new
     // pipeline never races the old core for media resources.
@@ -2129,6 +2131,17 @@ void PlayerController::setPaused(bool paused)
     m_pauseCommandTarget = paused;
     m_pauseCommandRetried = false;
     sendMpvPauseRequest();
+    QTimer::singleShot(2000, this, [this, serial = m_pauseCommandSerial, generation = m_mpvEventGeneration] {
+        if (generation != m_mpvEventGeneration || serial != m_pauseCommandSerial || !m_sessionActive
+            || m_pauseCommandRetried || m_paused == m_pauseCommandTarget
+            || (m_pauseCommandState != QStringLiteral("queued") && m_pauseCommandState != QStringLiteral("reading")))
+            return;
+        // Reassert the latest idempotent intent if neither observation nor
+        // the asynchronous reply settled it. Ignore replies to the old write.
+        m_pauseCommandSerial = (m_pauseCommandSerial + 1) & kMpvReplySerialMask;
+        m_pauseCommandRetried = true;
+        sendMpvPauseRequest();
+    });
 }
 
 void PlayerController::sendMpvPauseRequest()

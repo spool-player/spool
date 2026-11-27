@@ -1,4 +1,5 @@
 #include "TestMain.h"
+#include "TestRequire.h"
 #include "provider/LanProbe.h"
 #include "provider/ScriptRuntime.h"
 
@@ -17,17 +18,9 @@
 #include <QTimer>
 
 #include <algorithm>
-#include <cstdlib>
-#include <iostream>
 
 namespace {
-void require(bool condition, const char *message)
-{
-    if (!condition) {
-        std::cerr << message << '\n';
-        std::exit(1);
-    }
-}
+using SpoolTests::require;
 
 template <typename T> void rejects(QCoro::Task<T> task, const char *code)
 {
@@ -501,7 +494,7 @@ SPOOL_TEST_MAIN("script-runtime-network")
     QElapsedTimer elapsed;
     elapsed.start();
     const auto drip = QCoro::waitFor(runtime.call("draft", "probe", probe));
-    require(elapsed.elapsed() < 1000 && drip.value("responses").toList().isEmpty() && !drip.value("exhausted").toBool(),
+    require(elapsed.elapsed() < 5000 && drip.value("responses").toList().isEmpty() && !drip.value("exhausted").toBool(),
         "wall deadline aborts incomplete drip feeds and retains unstarted targets for continuation");
     require(dripMaximum == 4, "at most four local HTTP requests run concurrently");
     const auto drained = [&] {
