@@ -15,6 +15,10 @@ namespace Spool {
 // when a seek was issued and when mpv reported it finished.
 class PlaybackPositionTracker final {
 public:
+    qint64 sampleAgeMs() const
+    {
+        return m_positionClock.isValid() ? m_positionClock.elapsed() : -1;
+    }
     // Seeded with where playback is about to resume from, so a restart shows
     // the position it is starting at rather than zero until mpv reports in.
     void reset(double startSeconds = 0.0);

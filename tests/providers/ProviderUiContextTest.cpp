@@ -22,6 +22,7 @@
 #include <functional>
 #include <iostream>
 #include <memory>
+#include <source_location>
 
 namespace {
 void require(bool condition, const char *message)
@@ -31,7 +32,7 @@ void require(bool condition, const char *message)
         std::exit(1);
     }
 }
-void waitFor(const std::function<bool()>& condition)
+void waitFor(const std::function<bool()>& condition, std::source_location where = std::source_location::current())
 {
     QElapsedTimer timeout;
     timeout.start();
@@ -39,7 +40,10 @@ void waitFor(const std::function<bool()>& condition)
         QCoreApplication::processEvents();
         QThread::msleep(1);
     }
-    require(condition(), "provider UI action completes asynchronously");
+    if (!condition()) {
+        std::cerr << "provider UI action did not complete at test line " << where.line() << '\n';
+        std::exit(1);
+    }
 }
 }
 

@@ -456,8 +456,17 @@ SPOOL_TEST_MAIN("mpv-video-item")
         std::fprintf(stderr, "rendered SDR target: RHI=%d mpv=%s\n", textureFormat.load(),
             actualFormat.isEmpty() ? "(legacy renderer)" : actualFormat.constData());
 #endif
+        int pauseForOsd = 1;
+        if (mpv_set_property(handle, "pause", MPV_FORMAT_FLAG, &pauseForOsd) < 0) {
+            std::fprintf(stderr, "failed to pause the OSD fixture\n");
+            videoItem.releaseMpvHandle();
+            mpv_terminate_destroy(handle);
+            return 1;
+        }
+        // Hold the decoded frame: slow software simulators must exercise
+        // paused OSD redraw, not race the fixture's 30s EOF.
         const QImage beforeOsd = captureItem();
-        const char *osdCommand[] = { "show-text", "SDR white", "20000", nullptr };
+        const char *osdCommand[] = { "show-text", "SDR white", "3600000", nullptr };
         double beforeOsdPosition = -1;
         const int beforeOsdPositionStatus = mpv_get_property(handle, "time-pos", MPV_FORMAT_DOUBLE, &beforeOsdPosition);
         const int osdCommandStatus = mpv_command(handle, osdCommand);
@@ -519,6 +528,7 @@ SPOOL_TEST_MAIN("mpv-video-item")
             if (frame.save(capturePath))
                 std::fprintf(stderr, "native failure frame: %s\n", qPrintable(capturePath));
         }
+        const QImage lastPresented = captureItem();
         bool nestedRelease = false;
         QTimer nestedReleaseTimer;
         nestedReleaseTimer.setSingleShot(true);
@@ -536,7 +546,7 @@ SPOOL_TEST_MAIN("mpv-video-item")
         ) {
             std::fprintf(stderr, "video result: rendered=%d upright=%d released=%d nestedRelease=%d neutralOSD=%d\n",
                 rendered, upright, released, nestedRelease, neutralOsd);
-            const QImage failedFrame = captureItem();
+            const QImage failedFrame = lastPresented;
             const QColor upper = failedFrame.pixelColor(failedFrame.width() / 2, failedFrame.height() / 4);
             const QColor lower = failedFrame.pixelColor(failedFrame.width() / 2, 3 * failedFrame.height() / 4);
             std::fprintf(stderr,
