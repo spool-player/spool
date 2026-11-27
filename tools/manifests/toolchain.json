@@ -9,7 +9,8 @@
     "version": "6.12.0",
     "series": "6.12",
     "windowsKit": "msvc2022_64",
-    "baseUrl": "https://download.qt.io/official_releases/qt/6.12/6.12.0/submodules",
+    "archiveBaseUrl": "https://download.qt.io/official_releases/qt",
+    "fauArchiveBaseUrl": "https://ftp.fau.de/qtproject/archive/qt",
     "sources": {
       "qt3d": "d16f7489945c6c9e971cedd4362202a2681f3c10393461e1f5e74425f7fef59a",
       "qt5compat": "78cf1c283795312a7fa31c73eb7f7f556b48374adc484f10ad5a3c0bcb59264e",
@@ -95,5 +96,36 @@
       "url": "https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/vulkan-sdk-1.4.357.0.tar.gz",
       "sha256": "e87dce08116151f6b6d7de6b6faf41498e87e6cf848ff16fa3bd5402190ad4a3"
     }
+  },
+  "apple": {
+    "iosDeploymentTarget": "17.0",
+    "tvosDeploymentTarget": "16.0",
+    "aqtinstall": "3.3.0",
+    "qtModules": [
+      "qtshadertools",
+      "qttasktree",
+      "qtwebsockets",
+      "qtimageformats"
+    ],
+    "tvosQtSourceModules": [
+      "qtbase",
+      "qtshadertools",
+      "qttasktree",
+      "qtdeclarative",
+      "qtsvg",
+      "qtimageformats",
+      "qtwebsockets",
+      "qttools"
+    ]
+  },
+  "nix": {
+    "version": "2.29.2",
+    "quickInstallRelease": "v34"
+  },
+  "android": {
+    "compileSdk": "36",
+    "buildTools": "36.0.0",
+    "ndkVersion": "27.2.12479018",
+    "minimumSdk": "28"
   }
 }

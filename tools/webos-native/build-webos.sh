@@ -65,7 +65,11 @@ run_phase() {
 }
 
 if [[ "$PHASE" == "all" ]]; then
-  for phase in fetch qt-host qt-target dependencies app stage package; do
+  phases=(app stage package)
+  if [[ "${SPOOL_WEBOS_DEPENDENCIES_READY:-0}" != 1 ]]; then
+    phases=(fetch qt-host qt-target dependencies "${phases[@]}")
+  fi
+  for phase in "${phases[@]}"; do
     echo
     echo ">>> webOS phase: $phase"
     run_phase "$phase"

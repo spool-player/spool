@@ -29,39 +29,6 @@ print(value)
 ' "$manifest" "$source_name" "$field"
 }
 
-manifest_qt_field() {
-  local manifest="$1"
-  local field="$2"
-  "$MANIFEST_PYTHON" -c '
-import json
-import sys
-sys.stdout.reconfigure(newline="\n")
-
-with open(sys.argv[1], encoding="utf-8") as handle:
-    data = json.load(handle)
-print(data[sys.argv[2]])
-' "$manifest" "$field"
-}
-
-manifest_qt_module_sha256() {
-  local manifest="$1"
-  local module="$2"
-  "$MANIFEST_PYTHON" -c '
-import json
-import sys
-sys.stdout.reconfigure(newline="\n")
-
-with open(sys.argv[1], encoding="utf-8") as handle:
-    data = json.load(handle)
-for module in data["modules"]:
-    if module["name"] == sys.argv[2]:
-        print(module["sha256"])
-        break
-else:
-    raise SystemExit(f"module not found in manifest: {sys.argv[2]}")
-' "$manifest" "$module"
-}
-
 manifest_tool_field() {
   local manifest="$1"
   local tool_name="$2"
@@ -86,8 +53,10 @@ import sys
 sys.stdout.reconfigure(newline="\n")
 
 with open(sys.argv[1], encoding="utf-8") as handle:
-    data = json.load(handle)
-for value in data[sys.argv[2]]:
+    values = json.load(handle)
+for key in sys.argv[2].split("."):
+    values = values[key]
+for value in values:
     print(value)
 ' "$manifest" "$key"
 }
@@ -206,8 +175,17 @@ with open(sys.argv[1] + "/tools/manifests/toolchain.json", encoding="utf-8") as 
     value = json.load(handle)
 for key in sys.argv[2].split("."):
     value = value[key]
-print(value)
+print(" ".join(value) if isinstance(value, list) else value)
 ' "$root" "$path"
+}
+
+toolchain_qt_sources_url() {
+  local root="$1"
+  local archive_field="${2:-qt.archiveBaseUrl}"
+  printf '%s/%s/%s/submodules\n' \
+    "$(toolchain_field "$root" "$archive_field")" \
+    "$(toolchain_field "$root" qt.series)" \
+    "$(toolchain_field "$root" qt.version)"
 }
 
 # FFmpeg is pinned centrally rather than repeated per platform, so the cross
