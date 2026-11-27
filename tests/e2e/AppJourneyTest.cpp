@@ -117,33 +117,57 @@ QString sampleBlockedProcess(qint64 pid, const QString& directory, const QProces
         return QStringLiteral("unavailable");
     }
     QStringList symbols;
+    int thread = 0;
+    QStringList threadSymbols;
+    const auto finishThread = [&] {
+        for (const auto& symbol : threadSymbols)
+            symbols.append(QStringLiteral("T%1:%2").arg(thread).arg(symbol));
+        threadSymbols.clear();
+    };
     if (file.open(QIODevice::ReadOnly)) {
         // A sample includes process paths and other metadata. Export only
         // known stack symbols, never its header, addresses or arbitrary text.
         const QStringList lines = QString::fromUtf8(file.readAll()).split('\n');
         for (const QString& line : lines) {
+            if (line.contains("Thread_")) {
+                finishThread();
+                ++thread;
+            }
             const QStringList words = line.simplified().split(' ');
             for (const QString& word : words) {
                 const QString symbol = word.section('(', 0, 0);
                 if (!symbol.startsWith("mpv_") && !symbol.startsWith("mp_") && !symbol.startsWith("vo_")
                     && !symbol.startsWith("Spool::") && !symbol.startsWith("QQuick") && !symbol.startsWith("QSG")
                     && !symbol.startsWith("QEvent") && !symbol.startsWith("QCoreApplication::")
-                    && !symbol.startsWith("__psynch_") && !symbol.startsWith("pthread_")
+                    && !symbol.startsWith("QIOS") && !symbol.startsWith("QRhi") && !symbol.startsWith("QOpenGL")
+                    && !symbol.startsWith("CA::") && !symbol.startsWith("EAGL")
+                    && !symbol.startsWith("presentRenderbuffer") && !symbol.startsWith("gl_")
+                    && !symbol.startsWith("setproperty_fn") && !symbol.startsWith("set_pause_state")
+                    && !symbol.startsWith("flip_page") && !symbol.startsWith("render_frame")
+                    && !symbol.startsWith("draw_frame") && !symbol.startsWith("wait_until")
+                    && !symbol.startsWith("lock_core") && !symbol.startsWith("run_locked")
+                    && !symbol.startsWith("play_current_file") && !symbol.startsWith("write_video")
+                    && !symbol.startsWith("grabWindow") && !symbol.startsWith("fill_audio_out_buffers")
+                    && !symbol.startsWith("run_playloop") && !symbol.startsWith("AudioOutputUnit")
+                    && !symbol.startsWith("AudioUnit") && !symbol.startsWith("AURemoteIO")
+                    && !symbol.startsWith("AUIOClient") && !symbol.startsWith("ao_") && !symbol.startsWith("ca_")
+                    && !symbol.startsWith("pl_") && !symbol.startsWith("__psynch_") && !symbol.startsWith("pthread_")
                     && !symbol.startsWith("_pthread_") && !symbol.startsWith("mach_msg"))
                     continue;
                 if (symbol.size() > 160 || !std::all_of(symbol.cbegin(), symbol.cend(), [](QChar c) {
                         return c.isLetterOrNumber() || c == '_' || c == ':' || c == '~';
                     }))
                     continue;
-                if (!symbols.contains(symbol))
-                    symbols.append(symbol);
-                if (symbols.size() >= 48)
-                    break;
+                // sample prints root first. Retain the leaf-side waits, not
+                // only the entry frames that explain nothing about the stall.
+                threadSymbols.removeAll(symbol);
+                threadSymbols.append(symbol);
+                if (threadSymbols.size() > 12)
+                    threadSymbols.removeFirst();
             }
-            if (symbols.size() >= 48)
-                break;
         }
     }
+    finishThread();
     file.close();
     QFile::remove(path);
     return symbols.isEmpty() ? QStringLiteral("unavailable") : symbols.join(',');
@@ -853,12 +877,25 @@ public:
         int scale = mode == 7                                                                       ? 4
             : mode == 6 || smoothInverse || neutralAdaptive || positiveContrast || adaptiveContrast ? 2
                                                                                                     : 1;
-        QImage image;
-        if (scale > 1 || needsPreprocess) {
-            image = QImage(imagePath);
-            require(!image.isNull(), "captured OCR image could not be read");
-            if (std::max(image.width(), image.height()) >= 2000)
-                scale = 1;
+        QImage image(imagePath);
+        require(!image.isNull(), "captured OCR image could not be read");
+        qreal sourceScale = 1.0;
+        if (device && std::max(image.width(), image.height()) >= 2000) {
+            // DPR-3 simulator captures contain far more pixels than OCR needs.
+            // Keep the full-resolution visual evidence and map recognized
+            // bounds back to it after a single 2x downsample.
+            image
+                = image.scaled(image.width() / 2, image.height() / 2, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+            sourceScale = 0.5;
+            scale = 1;
+            inputPath = imagePath + QStringLiteral(".ocr-base.png");
+            QSaveFile base(inputPath);
+            require(base.open(QIODevice::WriteOnly)
+                    && base.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner) && image.save(&base, "PNG")
+                    && base.commit(),
+                "captured OCR image could not be downsampled");
+        } else if (std::max(image.width(), image.height()) >= 2000) {
+            scale = 1;
         }
         if (scale > 1 || needsPreprocess) {
             // Small captions beside a focus outline can be omitted even by
@@ -1213,9 +1250,10 @@ public:
             if (fields.size() < 12 || fields[0] != "5" || fields[11].trimmed().isEmpty())
                 continue;
             const QString key = QString::fromLatin1(fields[1] + ':' + fields[2] + ':' + fields[3] + ':' + fields[4]);
-            const QRect bounds = QRectF((fields[6].toDouble() - linePadding) / scale + origin.x(),
-                (fields[7].toDouble() - linePadding) / scale + origin.y(), fields[8].toDouble() / scale,
-                fields[9].toDouble() / scale)
+            const qreal combinedScale = scale * sourceScale;
+            const QRect bounds = QRectF((fields[6].toDouble() - linePadding) / combinedScale + origin.x(),
+                (fields[7].toDouble() - linePadding) / combinedScale + origin.y(), fields[8].toDouble() / combinedScale,
+                fields[9].toDouble() / combinedScale)
                                      .toAlignedRect();
             if (key != previous) {
                 lines.append(Words {});
@@ -1475,13 +1513,13 @@ public:
     {
         await([&] { return state(true)["playback"].toObject()["ready"].toBool(); },
             "playback did not complete its first renderer restart before pause");
-        command({ "pause" });
         QJsonObject playback;
         int observations = 0;
         int timeouts = 0;
         QElapsedTimer lastObservation;
         lastObservation.start();
         try {
+            playback = command({ "pause" })["playback"].toObject();
             await(
                 [&] {
                     const auto observed = state(true)["playback"].toObject();
@@ -1496,13 +1534,18 @@ public:
                 },
                 message);
         } catch (const std::exception& error) {
-            const QString sample = timeouts > 0 ? (device ? device->blockedProcessSample()
-                                                          : sampleBlockedProcess(app.processId(),
-                                                                QFileInfo(screenshotPath).absolutePath(), environment))
-                                                : QStringLiteral("not-needed");
+            const QString sample = device
+                ? device->blockedProcessSample()
+                : sampleBlockedProcess(app.processId(), QFileInfo(screenshotPath).absolutePath(), environment);
+            std::cerr << "app-journey-stack: " << sample.toStdString() << '\n';
+            std::cerr << "app-journey-pause: observations=" << observations << ", timeouts=" << timeouts
+                      << ", position_sample_age_ms=" << playback["positionSampleAgeMs"].toInteger(-1)
+                      << ", mpv_event_age_ms=" << playback["mpvEventAgeMs"].toInteger(-1)
+                      << ", pause_request_age_ms=" << playback["pauseRequestAgeMs"].toInteger(-1) << '\n';
             throw std::runtime_error(QStringLiteral(
                 "%1 (active=%2, loaded=%3, ready=%4, paused=%5, failed=%6, position=%7, duration=%8, pause=%9, "
-                "observations=%10, timeouts=%11, last_observation_ms=%12, stack_symbols=%13)")
+                "observations=%10, timeouts=%11, last_observation_ms=%12, stack_symbols=%13, "
+                "position_sample_age_ms=%14, mpv_event_age_ms=%15, pause_request_age_ms=%16)")
                     .arg(QString::fromUtf8(error.what()))
                     .arg(playback["active"].toBool())
                     .arg(playback["loaded"].toBool())
@@ -1516,6 +1559,9 @@ public:
                     .arg(timeouts)
                     .arg(lastObservation.elapsed())
                     .arg(sample)
+                    .arg(playback["positionSampleAgeMs"].toInteger(-1))
+                    .arg(playback["mpvEventAgeMs"].toInteger(-1))
+                    .arg(playback["pauseRequestAgeMs"].toInteger(-1))
                     .toStdString());
         }
     }

@@ -332,6 +332,29 @@ jobs:
           nix develop .#native -c python tools/run-tests.py \
             --build-dir build/linux-release/app --workers "$(nproc)"
 
+      - name: Verify required real-server playback over HTTP and HTTPS
+        run: |
+          set -euo pipefail
+          server="$(nix build --no-link --print-out-paths \
+            'github:NixOS/nixpkgs/0bb8272318b4ca41bf0edc6224df3e3e3046b70d#jellyfin')"
+          nix develop .#native -c python tests/e2e/jellyfin_latency_e2e.py \
+            --required --jellyfin-bin "$server/bin/jellyfin" \
+            --libmpv build/linux-release/mpv-prefix/lib/libmpv.so \
+            --transport-helper mpv/test/curl_transport.py --shaper-script tools/network-shaper.py \
+            --spool-tests build/linux-release/app/spool-tests \
+            --app-revision "$(git rev-parse HEAD)" --mpv-revision "$(git rev-parse HEAD:mpv)" \
+            --harness-revision "$(git rev-parse HEAD)" \
+            --output build/linux-release/app/required-jellyfin-playback.json
+
+      - name: Retain real-server playback receipt
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: internal-required-jellyfin-playback
+          path: build/linux-release/app/required-jellyfin-playback.json
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Check the bundled provider against pinned Jellyfin 12.4
         if: ${{ !cancelled() && steps.host-build.outcome == 'success' }}
         run: |

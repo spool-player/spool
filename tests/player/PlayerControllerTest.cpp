@@ -28,6 +28,113 @@
 #include <optional>
 #include <utility>
 
+extern "C" {
+#include <mpv/client.h>
+}
+
+namespace Spool {
+struct PlayerControllerTestAccess {
+    static void runCacheContract(NativeAppWindow& window)
+    {
+        using SpoolTests::require;
+        constexpr qint64 mib = 1024LL * 1024;
+        PlayerController player(&window, nullptr, nullptr, {});
+        player.m_idleStreamingMemoryTimer.stop();
+        player.m_idleMpvPreparationEnabled = false;
+        player.m_forwardCacheSizeMiB = 32;
+        player.m_memoryProbe = [] { return PlatformStreamingMemoryState {}; };
+        const auto waitPrepared = [&] {
+            QElapsedTimer deadline;
+            deadline.start();
+            while (!player.m_idleMpvHandle && deadline.elapsed() < 10000) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+                QThread::msleep(1);
+            }
+            require(player.m_idleMpvHandle, "preparation hands off its owned idle core");
+        };
+        const auto readPair = [&](StreamingCacheTarget expected) {
+            int64_t forward = 0, back = 0;
+            auto *core = player.m_mpvLifecycle.handle();
+            require(core && mpv_get_property(core, "demuxer-max-bytes", MPV_FORMAT_INT64, &forward) >= 0
+                    && mpv_get_property(core, "demuxer-max-back-bytes", MPV_FORMAT_INT64, &back) >= 0
+                    && forward == expected.forwardBytes && back == expected.backBytes,
+                "actual adopted core limits match the latest pair before media load");
+        };
+        player.applyDemuxerCacheTarget({ 512 * mib, 128 * mib }, false);
+        player.prepareMpvAsync(false, false);
+        player.applyDemuxerCacheTarget({ 32 * mib, 16 * mib }, false);
+        waitPrepared();
+        require(player.ensureMpv(false, false), "a pressure change during preparation survives adoption");
+        readPair({ 32 * mib, 16 * mib });
+        player.teardownMpv();
+        player.prepareMpvAsync(false, false);
+        waitPrepared();
+        auto *readyCore = player.m_idleMpvHandle;
+        player.applyDemuxerCacheTarget({ 64 * mib, 32 * mib }, false);
+        require(player.ensureMpv(false, false) && player.m_mpvLifecycle.handle() == readyCore,
+            "a changed floor refreshes the same ready speculative core without reinitialization");
+        readPair({ 64 * mib, 32 * mib });
+        player.teardownMpv();
+        player.prepareMpvAsync(false, false);
+        player.destroyIdleMpv("test cancellation");
+        QElapsedTimer cancellation;
+        cancellation.start();
+        while (cancellation.elapsed() < 100) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+            QThread::msleep(1);
+        }
+        require(!player.m_idleMpvHandle && !player.m_mpvPreparation,
+            "cancelled preparation cannot publish an abandoned idle core");
+        auto *handle = mpv_create();
+        require(handle && mpv_set_option_string(handle, "config", "no") >= 0
+                && mpv_set_option_string(handle, "vo", "null") >= 0 && mpv_set_option_string(handle, "ao", "null") >= 0
+                && mpv_initialize(handle) >= 0,
+            "cache application fixture initializes an idle core");
+        player.applyDemuxerCacheTarget({ 512 * mib, 128 * mib }, false);
+        require(player.applyInitialDemuxerCacheTarget(handle), "initial limits apply before core adoption");
+        player.applyDemuxerCacheTarget({ 32 * mib, 16 * mib }, false);
+        require(player.applyInitialDemuxerCacheTarget(handle), "adoption refreshes both limits after idle pressure");
+        int64_t forward = 0, back = 0;
+        require(mpv_get_property(handle, "demuxer-max-bytes", MPV_FORMAT_INT64, &forward) >= 0
+                && mpv_get_property(handle, "demuxer-max-back-bytes", MPV_FORMAT_INT64, &back) >= 0
+                && forward == 32 * mib && back == 16 * mib,
+            "the adopted core reports the current pair without a later memory sample");
+        require(player.m_mpvLifecycle.adopt(handle, [](mpv_event *) { }), "test adopts cache core");
+        int writes = 0;
+        bool rejectBack = true;
+        player.m_cachePropertyWriter = [&](mpv_handle *, quint64, const char *name, qint64, bool async) {
+            ++writes;
+            require(async, "live cache writes stay asynchronous");
+            return rejectBack && QByteArray(name) == "demuxer-max-back-bytes" ? MPV_ERROR_PROPERTY_ERROR : 0;
+        };
+        player.applyDemuxerCacheTarget({ 64 * mib, 32 * mib }, true);
+        const quint64 failedSerial = player.m_demuxerCacheSerial;
+        player.completeDemuxerCacheWrite(failedSerial, 0);
+        require(!player.m_appliedDemuxerTarget && player.m_demuxerCacheReplies == 0,
+            "one failed property leaves the entire pair dirty");
+        rejectBack = false;
+        player.applyDemuxerCacheTarget({ 64 * mib, 32 * mib }, true);
+        require(
+            writes == 4 && player.m_demuxerCacheReplies == 2, "an unchanged target retries after an enqueue failure");
+        player.completeDemuxerCacheWrite(failedSerial, 0);
+        require(player.m_demuxerCacheReplies == 2, "stale completions cannot acknowledge a replacement update");
+        player.completeDemuxerCacheWrite(player.m_demuxerCacheSerial, 0);
+        require(!player.m_appliedDemuxerTarget, "one completion cannot acknowledge both cache limits");
+        player.completeDemuxerCacheWrite(player.m_demuxerCacheSerial, MPV_ERROR_PROPERTY_ERROR);
+        require(!player.m_appliedDemuxerTarget, "a completion error stays dirty");
+        player.applyDemuxerCacheTarget({ 64 * mib, 32 * mib }, true);
+        player.completeDemuxerCacheWrite(player.m_demuxerCacheSerial, 0);
+        player.completeDemuxerCacheWrite(player.m_demuxerCacheSerial, 0);
+        require(player.m_appliedDemuxerTarget == player.m_activeDemuxerTarget,
+            "only both successful completions acknowledge the current pair");
+        player.m_cachePropertyWriter = {};
+        player.teardownMpv();
+        require(!player.m_streamingMemoryTimer.isActive() && !player.m_appliedDemuxerTarget,
+            "teardown retires pressure polling and per-core applied state");
+    }
+};
+}
+
 using namespace Spool;
 
 namespace {
@@ -433,6 +540,7 @@ SPOOL_TEST_MAIN("player-controller")
     config.close();
 
     NativeAppWindow window(QStringLiteral("player-controller-test"));
+    PlayerControllerTestAccess::runCacheContract(window);
 #if !defined(Q_OS_ANDROID) && !defined(SPOOL_APPLE_MOBILE)
     window.resize(320, 180);
     MpvVideoItem video(window.contentItem());

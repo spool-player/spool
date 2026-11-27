@@ -1279,6 +1279,16 @@ def export_attempt(private, destination, result):
         with log.open(encoding="utf-8", errors="replace") as stream:
             for line in stream:
                 stripped = line.rstrip("\r\n")
+                if re.fullmatch(r"app-journey-stack: [A-Za-z0-9_:,~.-]{1,12000}", stripped):
+                    lines.append(stripped)
+                    print(stripped, flush=True)
+                    continue
+                if re.fullmatch(r"app-journey-pause: observations=[0-9]+, timeouts=[0-9]+, "
+                                r"position_sample_age_ms=-?[0-9]+, mpv_event_age_ms=-?[0-9]+, "
+                                r"pause_request_age_ms=-?[0-9]+", stripped):
+                    lines.append(stripped)
+                    print(stripped, flush=True)
+                    continue
                 match = pattern.match(stripped)
                 if match:
                     operation, code, error, elapsed, origin = match.groups()

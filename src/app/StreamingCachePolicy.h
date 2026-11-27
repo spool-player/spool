@@ -27,6 +27,17 @@ struct StreamingCacheInput {
 // keeping generous OS/application headroom reserved.
 StreamingCacheTarget computeStreamingCacheTarget(const StreamingCacheInput& input);
 
+struct StreamingMemoryAllocation {
+    StreamingCacheTarget cache;
+    qint64 curlGrantBytes = 0;
+    qint64 committedExcessBytes = 0;
+};
+
+// Existing commitments remain charged while a smaller limit drains. The user
+// floor is separate from this shared allowance for automatic cache/curl growth.
+StreamingMemoryAllocation allocateStreamingMemory(StreamingCacheTarget baseline, StreamingCacheTarget desired,
+    qint64 allowanceBytes, qint64 committedCacheExtraBytes, qint64 committedCurlExtraBytes, qint64 desiredCurlBytes);
+
 // Applies pressure-safe hysteresis to live cache budget updates:
 // memory pressure shrinks immediately; growth requires two consecutive samples.
 class StreamingCacheScaler final {

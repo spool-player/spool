@@ -79,6 +79,24 @@ StreamingCacheTarget StreamingCacheScaler::update(const StreamingCacheTarget& ca
     return m_current;
 }
 
+StreamingMemoryAllocation allocateStreamingMemory(StreamingCacheTarget baseline, StreamingCacheTarget desired,
+    qint64 allowanceBytes, qint64 committedCacheExtraBytes, qint64 committedCurlExtraBytes, qint64 desiredCurlBytes)
+{
+    const qint64 allowance = std::max<qint64>(0, allowanceBytes);
+    const qint64 cacheCommitted = std::max<qint64>(0, committedCacheExtraBytes);
+    const qint64 curlCommitted = std::max<qint64>(0, committedCurlExtraBytes);
+    const qint64 excess = std::max<qint64>(0, cacheCommitted + curlCommitted - allowance);
+    const qint64 cacheBudget = excess > 0 ? 0 : std::max<qint64>(0, allowance - curlCommitted);
+    const qint64 forwardExtra = std::max<qint64>(0, desired.forwardBytes - baseline.forwardBytes);
+    const qint64 backExtra = std::max<qint64>(0, desired.backBytes - baseline.backBytes);
+    const qint64 desiredExtra = forwardExtra + backExtra;
+    const qint64 extra = std::min(cacheBudget, desiredExtra);
+    const qint64 back = desiredExtra > 0 ? extra * backExtra / desiredExtra : 0;
+    const StreamingCacheTarget target { baseline.forwardBytes + extra - back, baseline.backBytes + back };
+    const qint64 remaining = std::max<qint64>(0, allowance - std::max(extra, cacheCommitted));
+    return { target, excess > 0 ? 0 : std::clamp(desiredCurlBytes, qint64(0), remaining), excess };
+}
+
 void StreamingCacheScaler::reset(const StreamingCacheTarget& initial)
 {
     m_initialized = true;

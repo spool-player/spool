@@ -1183,6 +1183,10 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
             "${CMAKE_CURRENT_SOURCE_DIR}/tools/network-shaper.py"
     )
 
+    add_test(NAME jellyfin-latency-harness
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/JellyfinLatencyHarnessTest.py")
+    set_tests_properties(jellyfin-latency-harness PROPERTIES LABELS traditional)
+
     add_test(NAME render-benchmark-report
         COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/RenderBenchmarkReportTest.py"
