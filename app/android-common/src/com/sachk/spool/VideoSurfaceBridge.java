@@ -3,6 +3,7 @@ package com.sachk.spool;
 import android.app.Activity;
 import android.media.MediaCodecInfo;
 import android.media.MediaCodecList;
+import android.media.MediaFormat;
 import android.os.Build;
 import android.view.Gravity;
 import android.view.SurfaceHolder;
@@ -34,34 +35,68 @@ public final class VideoSurfaceBridge {
     }
 
     /**
-     * Whether a hardware decoder exists for this video MIME type. Direct
-     * output can only show what MediaCodec decodes in hardware: a format the
-     * device lacks (AV1 on every Shield TV) would play as a black picture.
-     * When the platform cannot be asked, the answer is yes, which keeps the
-     * direct path the viewer chose.
+     * Whether hardware supports this delivered stream, including its size,
+     * profile/bit depth and known frame rate. Unknown/error answers stay on the
+     * rendered path, where MediaCodec copy-back can fall back to software.
      */
-    public static boolean hasHardwareDecoder(String mime)
+    public static boolean hasHardwareDecoder(String mime, int width, int height, String profile, int bitDepth, double frameRate)
     {
         try {
+            int codecProfile = codecProfile(mime, profile, bitDepth);
+            if (width <= 0 || height <= 0 || codecProfile < 0)
+                return false;
+            MediaFormat format = MediaFormat.createVideoFormat(mime, width, height);
+            format.setInteger(MediaFormat.KEY_PROFILE, codecProfile);
+            if (frameRate > 0 && Build.VERSION.SDK_INT >= 22)
+                format.setFloat(MediaFormat.KEY_FRAME_RATE, (float) frameRate);
             MediaCodecList list = new MediaCodecList(MediaCodecList.REGULAR_CODECS);
             for (MediaCodecInfo info : list.getCodecInfos()) {
                 if (info.isEncoder() || !supportsType(info, mime))
                     continue;
+                boolean hardware;
                 if (Build.VERSION.SDK_INT >= 29) {
-                    if (info.isHardwareAccelerated())
-                        return true;
-                    continue;
+                    hardware = info.isHardwareAccelerated();
+                } else {
+                    String name = info.getName().toLowerCase(Locale.ROOT);
+                    hardware = !name.startsWith("omx.google.") && !name.startsWith("c2.android.")
+                        && !name.contains(".sw.");
                 }
-                // Before Android 10 the software decoders are known by name.
-                String name = info.getName().toLowerCase(Locale.ROOT);
-                if (!name.startsWith("omx.google.") && !name.startsWith("c2.android.")
-                    && !name.contains(".sw."))
+                if (hardware && info.getCapabilitiesForType(mime).isFormatSupported(format))
                     return true;
             }
             return false;
         } catch (RuntimeException e) {
-            return true;
+            return false;
         }
+    }
+
+    private static int codecProfile(String mime, String value, int bitDepth)
+    {
+        String profile = value.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]", "");
+        if (mime.equals("video/avc")) {
+            if (profile.equals("baseline") || profile.equals("constrainedbaseline"))
+                return bitDepth <= 8 ? MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline : -1;
+            if (profile.equals("main"))
+                return bitDepth <= 8 ? MediaCodecInfo.CodecProfileLevel.AVCProfileMain : -1;
+            if (profile.equals("high"))
+                return bitDepth <= 8 ? MediaCodecInfo.CodecProfileLevel.AVCProfileHigh : -1;
+            if (profile.equals("high10"))
+                return MediaCodecInfo.CodecProfileLevel.AVCProfileHigh10;
+        } else if (mime.equals("video/hevc")) {
+            if (profile.equals("main") && bitDepth <= 8)
+                return MediaCodecInfo.CodecProfileLevel.HEVCProfileMain;
+            if ((profile.equals("main10") || profile.equals("main")) && bitDepth <= 10)
+                return MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10;
+        } else if (mime.equals("video/x-vnd.on2.vp9")) {
+            if (profile.equals("profile0") && bitDepth <= 8)
+                return MediaCodecInfo.CodecProfileLevel.VP9Profile0;
+            if (profile.equals("profile2") && bitDepth <= 10)
+                return MediaCodecInfo.CodecProfileLevel.VP9Profile2;
+        } else if (mime.equals("video/av01") && (profile.equals("main") || profile.equals("main10"))) {
+            return bitDepth > 0 && bitDepth <= 8 ? MediaCodecInfo.CodecProfileLevel.AV1ProfileMain8
+                : bitDepth <= 10 && bitDepth > 0 ? MediaCodecInfo.CodecProfileLevel.AV1ProfileMain10 : -1;
+        }
+        return -1;
     }
 
     private static boolean supportsType(MediaCodecInfo info, String mime)
