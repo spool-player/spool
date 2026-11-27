@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import ctypes
 import importlib.util
+import hashlib
 import json
 import math
 import os
@@ -46,6 +47,30 @@ def find_jellyfin_binary(explicit: str | None) -> str | None:
     if env_bin and os.path.isfile(env_bin):
         return env_bin
     return shutil.which("jellyfin")
+
+
+def prerequisites(jellyfin_bin, ffmpeg_bin, *, required=False, spool_tests=None):
+    missing = []
+    if not jellyfin_bin:
+        missing.append("jellyfin")
+    if not ffmpeg_bin:
+        missing.append("ffmpeg")
+    if required:
+        missing.extend(tool for tool in ("nginx", "openssl") if not shutil.which(tool))
+        if not spool_tests or not Path(spool_tests).is_file():
+            missing.append("spool-tests")
+    return missing
+
+
+def file_sha256(path):
+    with open(path, "rb") as source:
+        return hashlib.file_digest(source, "sha256").hexdigest()
+
+
+def save_report(report, destination):
+    if destination:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
 
 
 def generate_high_bitrate_movie(ffmpeg_bin: str, target_path: Path, *, duration_s: int, video_mbps: int) -> dict:
@@ -194,8 +219,7 @@ class JellyfinTestServer:
         while time.monotonic() < deadline:
             if self.proc.poll() is not None:
                 self._log_file.flush()
-                stderr_tail = self.log_path.read_text(errors="replace")[-1500:]
-                raise RuntimeError(f"Jellyfin exited prematurely (code {self.proc.returncode}): {stderr_tail}")
+                raise RuntimeError(f"Jellyfin exited prematurely (code {self.proc.returncode})")
             try:
                 status, info = self._request("GET", "/System/Info/Public")
                 if status == 200 and isinstance(info, dict) and info.get("Version"):
@@ -284,8 +308,7 @@ class JellyfinTestServer:
                     break
             time.sleep(0.25)
         else:
-            tail = self.log_path.read_text(errors="replace")[-1500:] if getattr(self, "log_path", None) and self.log_path.exists() else ""
-            raise RuntimeError(f"Jellyfin failed to scan benchmark movie: {tail}")
+            raise RuntimeError("Jellyfin failed to scan benchmark movie")
 
         return {
             "version": self.server_version,
@@ -780,17 +803,22 @@ def main() -> int:
     parser.add_argument("--max-request-size", type=int, default=1 << 20, help="curl-max-request-size in bytes")
     parser.add_argument("--output", type=Path, default=None, help="Write benchmark JSON report to this path")
     parser.add_argument("--benchmark-only", action="store_true", help="Record metrics without failing performance thresholds")
+    parser.add_argument("--required", action="store_true", help="Require provider, HTTP and HTTPS scenarios; missing tools fail")
+    parser.add_argument("--app-revision")
+    parser.add_argument("--mpv-revision")
+    parser.add_argument("--harness-revision")
     args = parser.parse_args()
 
     jellyfin_bin = find_jellyfin_binary(args.jellyfin_bin)
-    if not jellyfin_bin:
-        print("SKIP: jellyfin binary not found (set --jellyfin-bin or SPOOL_JELLYFIN_BIN)", file=sys.stderr)
-        return 77
-
     ffmpeg_bin = args.ffmpeg_bin or shutil.which("ffmpeg")
-    if not ffmpeg_bin:
-        print("SKIP: ffmpeg binary not found", file=sys.stderr)
-        return 77
+    missing = prerequisites(jellyfin_bin, ffmpeg_bin, required=args.required, spool_tests=args.spool_tests)
+    if missing:
+        receipt = {"format": 1, "status": "failed" if args.required else "skipped", "missing": missing, "scenarios": {}}
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(json.dumps(receipt) + "\n")
+        print(json.dumps(receipt), flush=True)
+        return 1 if args.required else 77
 
     spec = importlib.util.spec_from_file_location("curl_transport", args.transport_helper)
     assert spec and spec.loader
@@ -798,6 +826,10 @@ def main() -> int:
     spec.loader.exec_module(helper)
 
     report: dict = {
+        "format": 1,
+        "identity": {"app_revision": args.app_revision, "mpv_revision": args.mpv_revision,
+                     "harness_revision": args.harness_revision,
+                     "libmpv_sha256": file_sha256(args.libmpv)},
         "config": {
             "duration_s": args.duration_s,
             "video_mbps": args.video_mbps,
@@ -809,6 +841,7 @@ def main() -> int:
         },
         "scenarios": {},
     }
+    save_report(report, args.output)
 
     with tempfile.TemporaryDirectory(prefix="spool-jellyfin-e2e-") as tmp:
         root = Path(tmp)
@@ -856,8 +889,10 @@ def main() -> int:
                         "seconds": round(time.monotonic() - t0, 3),
                         "proxy": live_proxy.stop(),
                     }
+                    save_report(report, args.output)
                     if res.returncode != 0:
-                        print("live-jellyfin failed:\n" + res.stdout + "\n" + res.stderr, file=sys.stderr)
+                        print(json.dumps({"scenario": "live_jellyfin_provider", "status": "failed",
+                                          "exitCode": res.returncode}), file=sys.stderr)
                 finally:
                     live_proxy.stop()
 
@@ -896,6 +931,7 @@ def main() -> int:
                     proxy_stats = proxy.stop()
                 result["proxy"] = proxy_stats
                 report["scenarios"][name] = result
+                save_report(report, args.output)
 
             # 3. HTTPS (nginx HTTP/1.1 + HTTP/2 + HTTP/3 Alt-Svc) over WAN TCP slow-start proxy:
             #    Compare forced HTTP/2 (`tcp`) vs production default (`auto`)
@@ -957,6 +993,7 @@ def main() -> int:
                         result["proxy"] = proxy_stats
                         result["nginx_protocols"] = nginx.protocol_counts()
                         report["scenarios"][name] = result
+                        save_report(report, args.output)
                 finally:
                     nginx.stop()
         finally:
@@ -968,10 +1005,14 @@ def main() -> int:
         args.output.write_text(rendered + "\n")
     print(rendered, flush=True)
 
-    if args.benchmark_only:
+    if args.benchmark_only and not args.required:
         return 0
 
     failures: list[str] = []
+    if args.required:
+        for name in ("live_jellyfin_provider", "http_auto_adaptive", "https_auto_adaptive"):
+            if name not in report["scenarios"]:
+                failures.append(name + " did not execute")
     live = report["scenarios"].get("live_jellyfin_provider")
     if live is not None and not live.get("passed"):
         failures.append("live_jellyfin_provider failed")
@@ -1001,4 +1042,19 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except Exception as error:
+        # Exceptions can contain fixture headers, tokens, URLs or subprocess
+        # output. Only controlled failure metadata leaves this private harness.
+        failure = {"format": 1, "status": "failed", "errorType": type(error).__name__, "scenarios": {}}
+        if "--output" in sys.argv:
+            position = sys.argv.index("--output") + 1
+            if position < len(sys.argv):
+                destination = Path(sys.argv[position])
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if destination.exists():
+                    failure = {**json.loads(destination.read_text()), **{k: v for k, v in failure.items() if k != "scenarios"}}
+                destination.write_text(json.dumps(failure) + "\n")
+        print(json.dumps(failure), file=sys.stderr)
+        raise SystemExit(1)
