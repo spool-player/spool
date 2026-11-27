@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT/tools/lib/manifest-sources.sh"
 if [[ "$(uname -s)" != Darwin ]]; then
   echo 'error: tvOS builds require macOS and Xcode with the Apple TV SDK' >&2
   exit 1
@@ -8,7 +9,7 @@ fi
 export APPLE_SYSTEM=tvOS
 export APPLE_SDK="${APPLE_SDK:-appletvsimulator}"
 export APPLE_ARCH="${APPLE_ARCH:-arm64}"
-export APPLE_DEPLOYMENT_TARGET="${APPLE_DEPLOYMENT_TARGET:-16.0}"
+export APPLE_DEPLOYMENT_TARGET="${APPLE_DEPLOYMENT_TARGET:-$(toolchain_field "$ROOT" apple.tvosDeploymentTarget)}"
 export QT_TARGET_PREFIX="${QT_TARGET_PREFIX:-$ROOT/build/apple/$APPLE_SDK-$APPLE_ARCH/qt}"
 export APPLE_DEPS_PREFIX="${APPLE_DEPS_PREFIX:-$ROOT/build/apple/$APPLE_SDK-$APPLE_ARCH/prefix}"
 : "${QT_HOST_PATH:?Set QT_HOST_PATH to the pinned macOS Qt host-tools prefix}"
@@ -25,9 +26,14 @@ xcrun --sdk "$APPLE_SDK" --show-sdk-path >/dev/null
 if [[ "$APPLE_SDK" == appletvsimulator ]]; then
   xcrun --find derq >/dev/null
 fi
-bash "$ROOT/tools/apple/build-qt-tvos.sh"
-bash "$ROOT/tools/apple/build-dependencies.sh"
-export PKG_CONFIG_LIBDIR="$APPLE_DEPS_PREFIX/lib/pkgconfig"
+if [[ "${BUILD_QT:-1}" == 1 ]]; then bash "$ROOT/tools/apple/build-qt-tvos.sh"; fi
+case "${BUILD_DEPENDENCIES:-1}" in
+  1) bash "$ROOT/tools/apple/build-dependencies.sh" ;;
+  mpv) bash "$ROOT/tools/apple/build-dependencies.sh" mpv ;;
+  0) ;;
+  *) echo 'error: BUILD_DEPENDENCIES must be 0, 1, or mpv' >&2; exit 2 ;;
+esac
+export PKG_CONFIG_LIBDIR="${APPLE_MPV_PREFIX:+$APPLE_MPV_PREFIX/lib/pkgconfig:}$APPLE_DEPS_PREFIX/lib/pkgconfig"
 export PKG_CONFIG_PATH="$PKG_CONFIG_LIBDIR"
 app_build="$ROOT/build/tvos/$APPLE_SDK-$APPLE_ARCH/app"
 assets="$ROOT/build/tvos/$APPLE_SDK-$APPLE_ARCH/Assets.xcassets"

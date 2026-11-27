@@ -8,7 +8,7 @@ MPV_SRC="${MPV_SRC:-$ROOT/mpv}"
 
 PHASE="${1:-all}"
 ABI="${ANDROID_ABI:-x86_64}"
-API="${ANDROID_API:-28}"
+API="${ANDROID_API:-$(toolchain_field "$ROOT" android.minimumSdk)}"
 MANIFEST="${ANDROID_THIRD_PARTY_MANIFEST:-$ROOT/tools/manifests/android-third-party.json}"
 JOBS="$(recommended_parallel_jobs "${ANDROID_DEPS_MEMORY_PER_JOB_MIB:-1024}" "${ANDROID_DEPS_MEMORY_RESERVE_MIB:-2048}")"
 
@@ -72,7 +72,7 @@ unset PKG_CONFIG_SYSROOT_DIR
 fetch_sources() {
   mkdir -p "$SOURCE_ROOT" "$BUILD_ROOT"
   local source
-  for source in freetype lua qcoro fribidi harfbuzz libass libplacebo dav1d; do
+  for source in freetype lua fribidi harfbuzz libass libplacebo dav1d; do
     prepare_manifest_source "$ROOT" "$MANIFEST" "$source" "$SOURCE_ROOT/$source"
   done
   bash "$ROOT/tools/prepare-streaming-sources.sh" --root "$ROOT" --output "$SOURCE_ROOT"
@@ -313,8 +313,8 @@ build_mpv() {
   )"
   pin="$(
     printf '%s\n' "$source_pin" "$ABI" "$API" "$ANDROID_NDK_ROOT"
-    sha256sum "${BASH_SOURCE[0]}" "$ROOT/tools/manifests/toolchain.json" \
-      "$ROOT/tools/manifests/mpv-native.json" "$ANDROID_NDK_ROOT/source.properties" || exit
+    sha256sum "${BASH_SOURCE[0]}" "$ROOT/tools/manifests/mpv-native.json" \
+      "$ANDROID_NDK_ROOT/source.properties" || exit
     cat "$PREFIX/lib/pkgconfig/.spool-ffmpeg-source" "$PREFIX/lib/.spool-curl-configuration"
   )"
   [[ -f "$PREFIX/lib/libmpv.so" && -f "$stamp" && "$(<"$stamp")" == "$pin" ]] && return

@@ -1,4 +1,6 @@
 /build/
+/.ccache/
+/.sccache/
 /build-linux-dev/
 /test-artifacts/
 /build-arm/

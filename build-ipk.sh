@@ -65,8 +65,7 @@ MPV_SRC="${MPV_SRC:-$ROOT/mpv}"
 MPV_BUILD="${MPV_BUILD:-$MPV_SRC/build/webos-libmpv}"
 WEBOS_CROSS_FILE="${WEBOS_CROSS_FILE:-$ROOT/build/webos-thirdparty-build/webos.cross.ini}"
 FFMPEG_CAPABILITY_MANIFEST="${FFMPEG_CAPABILITY_MANIFEST:-$ROOT/tools/manifests/ffmpeg-capabilities.json}"
-QT_MANIFEST="${QT_MANIFEST:-$ROOT/tools/manifests/qt-webos.json}"
-QT_VERSION="$(manifest_qt_field "$QT_MANIFEST" qtVersion)"
+QT_VERSION="$(toolchain_field "$ROOT" qt.version)"
 QT_BUILD_TAG="${QT_VERSION%.*}"
 QT_BUILD_TAG="${QT_BUILD_TAG//./}"
 QT6_HOST_PREFIX="${QT6_HOST_PREFIX:-$ROOT/build/qt6-$QT_BUILD_TAG-host-install}"
@@ -136,6 +135,7 @@ if (( DO_BUILD || DO_STAGE )); then
 fi
 
 if (( DO_BUILD )); then
+setup_native_ccache "$ROOT"
 describe_parallel_jobs "$WEBOS_BUILD_JOBS" "webOS app" "$WEBOS_BUILD_MEMORY_PER_JOB_MIB" "$WEBOS_BUILD_MEMORY_RESERVE_MIB"
 
 DOVI_TOOL_ROOT="${DOVI_TOOL_ROOT:-$ROOT/build/third_party/dovi_tool}"
