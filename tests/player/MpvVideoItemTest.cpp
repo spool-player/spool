@@ -394,6 +394,7 @@ SPOOL_TEST_MAIN("mpv-video-item")
             mpv_request_log_messages(handle, "warn");
         if (!handle || mpv_set_option_string(handle, "terminal", verbose ? "yes" : "no") < 0
             || mpv_set_option_string(handle, "vo", "libmpv") < 0 || mpv_set_option_string(handle, "hwdec", "no") < 0
+            || mpv_set_option_string(handle, "pause", "yes") < 0
             || mpv_set_option_string(handle, "keep-open", "yes") < 0
             || mpv_set_option_string(handle, "osd-color", "#FFFFFFFF") < 0
             || mpv_set_option_string(handle, "osd-font-size", "48") < 0
@@ -456,15 +457,8 @@ SPOOL_TEST_MAIN("mpv-video-item")
         std::fprintf(stderr, "rendered SDR target: RHI=%d mpv=%s\n", textureFormat.load(),
             actualFormat.isEmpty() ? "(legacy renderer)" : actualFormat.constData());
 #endif
-        int pauseForOsd = 1;
-        if (mpv_set_property(handle, "pause", MPV_FORMAT_FLAG, &pauseForOsd) < 0) {
-            std::fprintf(stderr, "failed to pause the OSD fixture\n");
-            videoItem.releaseMpvHandle();
-            mpv_terminate_destroy(handle);
-            return 1;
-        }
-        // Hold the decoded frame: slow software simulators must exercise
-        // paused OSD redraw, not race the fixture's 30s EOF.
+        // The fixture begins paused so capture and OSD checks share the same
+        // decoded frame, even on a heavily loaded simulator.
         const QImage beforeOsd = captureItem();
         const char *osdCommand[] = { "show-text", "SDR white", "3600000", nullptr };
         double beforeOsdPosition = -1;

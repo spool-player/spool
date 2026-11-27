@@ -89,7 +89,7 @@ QByteArray runOcr(const QString& executable, const QStringList& arguments, QProc
     // workers than reading the frame. Each OCR call owns a single worker.
     environment.insert("OMP_THREAD_LIMIT", "1");
     try {
-        return run(executable, arguments, environment);
+        return run(executable, arguments, environment, {}, 30000);
     } catch (const std::runtime_error& error) {
         throw std::runtime_error(std::string("frame OCR: ") + error.what());
     }
@@ -210,7 +210,7 @@ public:
             remoteScreenshot = container + "/Library/Caches/journey-frame.png";
             ownership("prepare");
         }
-        assertDefaultAutomationOff(origin, instance + "-default", ocr);
+        assertDefaultAutomationOff(instance + "-default", ocr);
         launchProduct({ "--automation-port=0", "--instance=" + instance, "--provider-store=" + origin + '/' });
         QElapsedTimer deadline;
         deadline.start();
@@ -489,9 +489,9 @@ private:
             return false;
         }
     }
-    void assertDefaultAutomationOff(const QString& origin, const QString& instance, const QString& ocr)
+    void assertDefaultAutomationOff(const QString& instance, const QString& ocr)
     {
-        launchProduct({ "--instance=" + instance, "--provider-store=" + origin + '/' });
+        launchProduct({ "--instance=" + instance });
         const QString screenshot = QFileInfo(hostDescriptor).dir().filePath("mobile-default-startup.png");
         QElapsedTimer deadline;
         deadline.start();
@@ -1520,6 +1520,7 @@ public:
         lastObservation.start();
         try {
             playback = command({ "pause" })["playback"].toObject();
+            require(!playback["failed"].toBool(), "playback had already failed before pause could settle");
             await(
                 [&] {
                     const auto observed = state(true)["playback"].toObject();
@@ -1530,6 +1531,7 @@ public:
                     ++observations;
                     lastObservation.restart();
                     playback = observed;
+                    require(!playback["failed"].toBool(), "playback failed while waiting for pause");
                     return playback["paused"].toBool();
                 },
                 message);

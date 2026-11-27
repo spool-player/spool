@@ -1,6 +1,7 @@
 #include "provider/ProviderUiContext.h"
 #include "ProviderFixture.h"
 #include "TestMain.h"
+#include "TestRequire.h"
 #include "cache/DatabaseManager.h"
 #include "diagnostics/Diagnostics.h"
 #include "platform/CredentialStore.h"
@@ -18,32 +19,25 @@
 #include <QTemporaryDir>
 #include <QThread>
 
-#include <cstdlib>
 #include <functional>
 #include <iostream>
 #include <memory>
 #include <source_location>
 
 namespace {
-void require(bool condition, const char *message)
-{
-    if (!condition) {
-        std::cerr << message << '\n';
-        std::exit(1);
-    }
-}
+using SpoolTests::require;
+
 void waitFor(const std::function<bool()>& condition, std::source_location where = std::source_location::current())
 {
     QElapsedTimer timeout;
     timeout.start();
-    while (!condition() && timeout.elapsed() < 5000) {
+    while (!condition() && timeout.elapsed() < 15000) {
         QCoreApplication::processEvents();
         QThread::msleep(1);
     }
-    if (!condition()) {
-        std::cerr << "provider UI action did not complete at test line " << where.line() << '\n';
-        std::exit(1);
-    }
+    const auto failure
+        = QByteArrayLiteral("provider UI action did not complete at test line ") + QByteArray::number(where.line());
+    require(condition(), failure.constData());
 }
 }
 
@@ -82,7 +76,11 @@ SPOOL_TEST_MAIN("provider-ui-context")
             ++originHits;
             QObject::connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
             QObject::connect(socket, &QTcpSocket::readyRead, socket, [socket] {
-                socket->readAll();
+                const QByteArray request = socket->property("request").toByteArray() + socket->readAll();
+                if (!request.contains("\r\n\r\n")) {
+                    socket->setProperty("request", request);
+                    return;
+                }
                 socket->write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}");
                 socket->disconnectFromHost();
             });

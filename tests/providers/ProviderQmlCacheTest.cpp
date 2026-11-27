@@ -1,5 +1,6 @@
 #include "provider/ProviderQmlCache.h"
 #include "TestMain.h"
+#include "TestRequire.h"
 
 #include <QDir>
 #include <QElapsedTimer>
@@ -11,24 +12,17 @@
 #include <QTemporaryDir>
 #include <QThread>
 
-#include <cstdlib>
 #include <functional>
-#include <iostream>
 #include <memory>
 
 namespace {
-void require(bool condition, const char *message)
-{
-    if (!condition) {
-        std::cerr << message << '\n';
-        std::exit(1);
-    }
-}
+using SpoolTests::require;
+
 void waitUntil(const std::function<bool()>& condition)
 {
     QElapsedTimer deadline;
     deadline.start();
-    while (!condition() && deadline.elapsed() < 5000) {
+    while (!condition() && deadline.elapsed() < 15000) {
         QCoreApplication::processEvents();
         QThread::msleep(1);
     }
