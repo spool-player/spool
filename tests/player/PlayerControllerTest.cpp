@@ -632,6 +632,11 @@ SPOOL_TEST_MAIN("player-controller")
     require(player.paused() && player.positionSeconds() < 0.2, "paused startup waits for explicit unpause");
     player.setPaused(false);
     waitUntil([&] { return !player.paused() && player.positionSeconds() > 0.2; }, "explicit unpause advances playback");
+    player.setPaused(true);
+    require(!player.paused(), "the current core has a pause request in flight before the restart");
+    player.play(second, false, true);
+    waitUntil([&] { return player.fileLoaded(); }, "same-item renderer restart loads its replacement");
+    require(player.paused(), "same-item renderer restart carries a pause that the previous core had not acknowledged");
     player.stop();
     player.teardownMpv();
     watchedStopPolicy(directory.path(), window);

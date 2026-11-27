@@ -194,7 +194,7 @@ public:
     // Tell the transport that the host is fetching other network data.
     void setBackgroundNetwork(bool active);
 
-    Q_INVOKABLE void play(const Spool::PlaybackSession& session, bool startPaused = false);
+    Q_INVOKABLE void play(const Spool::PlaybackSession& session, bool startPaused = false, bool restartActive = false);
     void playLocalFiles(const QList<QUrl>& urls);
     bool appendLocalFiles(const QList<QUrl>& urls);
     bool localPlaylist() const
@@ -351,7 +351,8 @@ public:
 
 private:
     QHash<int, QByteArray> m_mpvKeys;
-    void playSession(const PlaybackSession& session, bool startPaused, const QList<QUrl>& localFiles);
+    void playSession(
+        const PlaybackSession& session, bool startPaused, const QList<QUrl>& localFiles, bool restartActive);
     void finishPlaySession(
         const PlaybackSession& session, bool startPaused, const QList<QUrl>& localFiles, quint64 generation);
     void refreshLocalPlaylist();
@@ -398,6 +399,7 @@ private:
     void synchronizeWindowFullscreen(mpv_handle *handle);
     void scheduleMpvTeardown();
     void handleMpvEvent(mpv_event *event, quint64 generation, mpv_handle *handle);
+    bool mpvPauseRequestPending() const;
     void sendMpvPauseRequest();
     void applyMpvPauseState(bool paused);
     template <typename Callback> void postMpvEvent(quint64 generation, Callback callback)

@@ -1534,9 +1534,9 @@ void PlayerController::handleVideoRenderError(const QString& message)
     emit playbackStateChanged();
 }
 
-void PlayerController::play(const PlaybackSession& session, bool startPaused)
+void PlayerController::play(const PlaybackSession& session, bool startPaused, bool restartActive)
 {
-    playSession(session, startPaused, {});
+    playSession(session, startPaused, {}, restartActive);
 }
 
 void PlayerController::playLocalFiles(const QList<QUrl>& urls)
@@ -1547,10 +1547,11 @@ void PlayerController::playLocalFiles(const QList<QUrl>& urls)
     session.url = urls.first().toString(QUrl::FullyEncoded);
     session.title = urls.first().fileName();
     session.playMethod = QStringLiteral("DirectPlay");
-    playSession(session, false, urls);
+    playSession(session, false, urls, false);
 }
 
-void PlayerController::playSession(const PlaybackSession& session, bool startPaused, const QList<QUrl>& localFiles)
+void PlayerController::playSession(
+    const PlaybackSession& session, bool startPaused, const QList<QUrl>& localFiles, bool restartActive)
 {
     const quint64 generation = ++m_playGeneration;
     m_pendingTransportLoads.clear();
@@ -1595,6 +1596,13 @@ void PlayerController::playSession(const PlaybackSession& session, bool startPau
             return;
         }
     }
+    if (restartActive && m_sessionActive && m_session.itemId == session.itemId) {
+        // A pause can arrive while the old render context is being released.
+        // Carry the latest intent into the replacement's initial property.
+        startPaused = mpvPauseRequestPending() ? m_pauseCommandTarget : m_paused;
+    }
+    m_pauseCommandSerial = (m_pauseCommandSerial + 1) & kMpvReplySerialMask;
+    m_pauseCommandState.clear();
     resetRenderStrain();
 
     const bool hadFileAudioDelay = m_fileAudioDelayMs.exchange(0) != 0;
@@ -2118,30 +2126,38 @@ void PlayerController::togglePause()
 
 void PlayerController::setPaused(bool paused)
 {
+    if (!m_sessionActive)
+        return;
     m_pauseRequestClock.restart();
     qInfo() << "player: pause requested" << paused;
-    if (!m_mpvLifecycle.handle()) {
-        if (m_sessionActive && m_paused != paused) {
-            m_paused = paused;
-            notifyPlaybackStateChanged();
-        }
-        return;
-    }
     m_pauseCommandSerial = (m_pauseCommandSerial + 1) & kMpvReplySerialMask;
     m_pauseCommandTarget = paused;
     m_pauseCommandRetried = false;
-    sendMpvPauseRequest();
-    QTimer::singleShot(2000, this, [this, serial = m_pauseCommandSerial, generation = m_mpvEventGeneration] {
-        if (generation != m_mpvEventGeneration || serial != m_pauseCommandSerial || !m_sessionActive
-            || m_pauseCommandRetried || m_paused == m_pauseCommandTarget
-            || (m_pauseCommandState != QStringLiteral("queued") && m_pauseCommandState != QStringLiteral("reading")))
-            return;
-        // Reassert the latest idempotent intent if neither observation nor
-        // the asynchronous reply settled it. Ignore replies to the old write.
-        m_pauseCommandSerial = (m_pauseCommandSerial + 1) & kMpvReplySerialMask;
-        m_pauseCommandRetried = true;
+    m_pauseCommandState.clear();
+    if (m_mpvLifecycle.handle()) {
         sendMpvPauseRequest();
-    });
+        QTimer::singleShot(2000, this, [this, serial = m_pauseCommandSerial, generation = m_mpvEventGeneration] {
+            if (generation != m_mpvEventGeneration || serial != m_pauseCommandSerial || !m_sessionActive
+                || m_pauseCommandRetried || m_paused == m_pauseCommandTarget || !mpvPauseRequestPending())
+                return;
+            // Reassert the latest idempotent intent if neither observation nor
+            // the asynchronous reply settled it. Ignore replies to the old write.
+            m_pauseCommandSerial = (m_pauseCommandSerial + 1) & kMpvReplySerialMask;
+            m_pauseCommandRetried = true;
+            sendMpvPauseRequest();
+        });
+    }
+    // File loading applies the current initial pause on the adopted core.
+    if (!m_fileLoaded && m_paused != paused) {
+        m_paused = paused;
+        notifyPlaybackStateChanged();
+    }
+}
+
+bool PlayerController::mpvPauseRequestPending() const
+{
+    return m_pauseCommandState == QStringLiteral("queued") || m_pauseCommandState == QStringLiteral("reading")
+        || m_pauseCommandState == QStringLiteral("requeued");
 }
 
 void PlayerController::sendMpvPauseRequest()
