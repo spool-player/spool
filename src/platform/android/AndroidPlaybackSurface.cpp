@@ -2,6 +2,7 @@
 
 #include "media/MediaTypes.h"
 #include "platform/NativeAppWindow.h"
+#include "player/AndroidVideoPolicy.h"
 #include "player/MpvVideoItem.h"
 
 #include <QCoreApplication>
@@ -110,20 +111,15 @@ namespace {
         return {};
     }
 
-    bool hasHardwareDecoder(const QString& mime)
+    bool hasHardwareDecoder(const MediaStreamInfo& stream)
     {
-        // Enumerating codecs costs tens of milliseconds and the answer never
-        // changes while the app runs.
-        static QHash<QString, bool> known;
-        static QMutex mutex;
-        const QMutexLocker locker(&mutex);
-        const auto found = known.constFind(mime);
-        if (found != known.constEnd())
-            return *found;
-        const bool hardware = QJniObject::callStaticMethod<jboolean>(
-            kBridge, "hasHardwareDecoder", "(Ljava/lang/String;)Z", QJniObject::fromString(mime).object<jstring>());
-        known.insert(mime, hardware);
-        return hardware;
+        const QString mime = mediaCodecMime(stream.codec);
+        if (mime.isEmpty())
+            return false;
+        return QJniObject::callStaticMethod<jboolean>(kBridge, "hasHardwareDecoder",
+            "(Ljava/lang/String;IILjava/lang/String;ID)Z", QJniObject::fromString(mime).object<jstring>(),
+            jint(stream.width), jint(stream.height), QJniObject::fromString(stream.profile).object<jstring>(),
+            jint(stream.bitDepth), jdouble(stream.frameRate));
     }
 }
 
@@ -133,21 +129,7 @@ bool platformUsesEmbeddedVideo(const PlaybackSession& session, bool directReques
     // it and what the viewer asked for, unless the device cannot decode this
     // video in hardware: direct output would then show nothing, while the
     // rendered path decodes in software (dav1d for AV1).
-    if (!directRequested)
-        return true;
-    for (const MediaStreamInfo& stream : session.mediaStreams) {
-        if (stream.type.compare(QLatin1String("video"), Qt::CaseInsensitive) != 0)
-            continue;
-        const QString mime = mediaCodecMime(stream.codec);
-        if (!mime.isEmpty() && hasHardwareDecoder(mime))
-            return false;
-        qInfo() << "playback surface: no supported hardware decoder; rendering through the GPU path";
-        return true;
-    }
-    // Local and downloaded files can lack stream metadata. The rendered path
-    // still tries MediaCodec copy-back and can fall back to a software decoder.
-    const QUrl source(session.url);
-    return source.isLocalFile() || source.scheme() == QLatin1String("content");
+    return androidUsesEmbeddedVideo(session, directRequested, hasHardwareDecoder);
 }
 
 QString platformPlaybackBackendName(bool embeddedVideo)

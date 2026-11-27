@@ -21,9 +21,18 @@ import time
 
 
 def free_port(host):
-    with socket.socket() as listener:
-        listener.bind((host, 0))
-        return listener.getsockname()[1]
+    # nginx/QUIC and silent-UDP fixtures need the same number free for both
+    # transports; a free TCP port says nothing about an existing UDP listener.
+    for _ in range(64):
+        with socket.socket() as listener, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
+            listener.bind((host, 0))
+            port = listener.getsockname()[1]
+            try:
+                udp.bind((host, port))
+            except OSError:
+                continue
+            return port
+    raise RuntimeError("could not reserve a TCP/UDP fixture port pair")
 
 
 def main():
@@ -32,6 +41,9 @@ def main():
     parser.add_argument('--transport-helper', type=Path, required=True)
     parser.add_argument('--performance', action='store_true')
     parser.add_argument('--output', type=Path)
+    parser.add_argument('--app-revision')
+    parser.add_argument('--mpv-revision')
+    parser.add_argument('--harness-revision')
     args = parser.parse_args()
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -42,6 +54,12 @@ def main():
     transport = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(transport)
     rows = []
+    with open(args.libmpv, 'rb') as library:
+        library_sha256 = hashlib.file_digest(library, 'sha256').hexdigest()
+
+    def record(row):
+        rows.append(row)
+        print(json.dumps(row), flush=True)
     with (tempfile.TemporaryDirectory(prefix='spool-protocols-') as directory,
           socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as blocked_udp):
         root = Path(directory)
@@ -131,6 +149,7 @@ http {{
             for mode, version, port in [('http1', 11, tls), ('tcp', 20, tls),
                                          ('prefer-h3', 30, tls), ('prefer-h3', 20, tcp)]:
                 for count in counts:
+                    log_start = (root / 'access.log').stat().st_size if (root / 'access.log').exists() else 0
                     output = root / 'actual.pcm'
                     options = {'tls-ca-file': root / 'cert.pem', 'ao': 'pcm',
                                'ao-pcm-file': output, 'ao-pcm-waveheader': 'no',
@@ -168,12 +187,12 @@ http {{
                     # trusting a request preference reported as effective.
                     server_protocol = {11: 'HTTP/1.1', 20: 'HTTP/2.0', 30: 'HTTP/3.0'}[version]
                     time.sleep(.05)
-                    log = (root / 'access.log').read_text()
+                    log = (root / 'access.log').read_bytes()[log_start:].decode()
                     if f'{port} {server_protocol} 206 bytes=' not in log:
                         raise AssertionError(f'{mode}: nginx did not serve ranges over {server_protocol}')
-                    rows.append({'mode': mode, 'fixed-requests': count, 'effective-http-version': version,
+                    row = {'mode': mode, 'fixed-requests': count, 'effective-http-version': version,
                                  'seconds': result['seconds'], 'first-progress-seconds': result['first-progress-seconds'],
-                                 'pcm-bytes': len(expected), 'bytes-per-second': len(expected) / result['seconds']})
+                                 'pcm-bytes': len(expected), 'bytes-per-second': len(expected) / result['seconds']}
                     if port == tcp and not args.performance:
                         packets = 0
                         while True:
@@ -184,8 +203,8 @@ http {{
                             packets += 1
                         if not packets:
                             raise AssertionError('stale HTTP3 advertisement did not exercise the blocked UDP path')
-                        rows[-1].update({'scenario': 'stale-alt-svc-blocked-udp', 'observed-udp-packets': packets})
-                    print(json.dumps(rows[-1]), flush=True)
+                        row.update({'scenario': 'stale-alt-svc-blocked-udp', 'observed-udp-packets': packets})
+                    record(row)
             if not args.performance:
                 from reset_origin import ResetOrigin
                 header = (b'RIFF' + struct.pack('<I', len(expected) + 36) + b'WAVEfmt ' +
@@ -223,9 +242,9 @@ http {{
                         second.close()
                     if reset.protocols.count('h2') != h2_connections:
                         raise AssertionError('new playback core retried cooled-down failed HTTP2 origin')
-                    print(json.dumps({'scenario': 'h2-reset-with-zero-retry-budget',
+                    record({'scenario': 'h2-reset-with-zero-retry-budget',
                                       'http-fallbacks': fallback_count, 'cooldown-reused': True,
-                                      'pcm-bytes': len(expected)}), flush=True)
+                                      'pcm-bytes': len(expected)})
                 from quic_origin import QuicFailureOrigin
                 # Both protocol paths identify the same representation. Obtain the
                 # fixture's real validator before serving it over a second stack.
@@ -261,7 +280,7 @@ http {{
                                                  if left != right), min(len(actual), len(expected)))
                         metric_keys = ['effective-http-version', 'http-fallbacks', 'last-reason',
                                        'state', 'retained-bytes', 'readable-bytes']
-                        print(json.dumps({'scenario': 'h3-failure-diagnostic', 'actual-bytes': len(actual),
+                        record({'scenario': 'h3-failure-diagnostic', 'actual-bytes': len(actual),
                             'expected-bytes': len(expected), 'first-difference': first_difference,
                             'actual-sha256': hashlib.sha256(actual).hexdigest(),
                             'expected-sha256': hashlib.sha256(expected).hexdigest(),
@@ -269,7 +288,7 @@ http {{
                             'stream-samples': [{key: row.get(key) for key in metric_keys}
                                 for _, sample in result['samples'] for row in sample.get('streams', [])][-64:],
                             'fixture-requests': [line for line in (root / 'access.log').read_text().splitlines()
-                                                 if line.startswith(f'{broken_quic} ')][-64:]}), flush=True)
+                                                 if line.startswith(f'{broken_quic} ')][-64:]})
                         artifact = args.output.parent / 'quic-reset-failure.pcm' if args.output else None
                         if artifact:
                             artifact.write_bytes(actual)
@@ -291,9 +310,9 @@ http {{
                         second.close()
                     if len(broken.requests) != before:
                         raise AssertionError('new playback core retried cooled-down failed HTTP3 origin')
-                    print(json.dumps({'scenario': 'h3-connection-failure-with-zero-retry-budget',
+                    record({'scenario': 'h3-connection-failure-with-zero-retry-budget',
                                       'http-fallbacks': fallback_count, 'cooldown-reused': True,
-                                      'pcm-bytes': len(expected)}), flush=True)
+                                      'pcm-bytes': len(expected)})
                 # Verify curl-http-mode=auto escapes a window-capped high-RTT
                 # HTTPS HTTP/2 single-socket bottleneck onto multiple HTTP/1.1
                 # connections while preserving bit-exact decoded PCM.
@@ -347,15 +366,15 @@ http {{
                     auto_protocols.update(row.get('http-version', 0) for sample in snapshots
                                           for row in sample.get('connections', []))
                     peak_physical = max((sample.get('physical-connections', 0) for sample in snapshots), default=0)
-                    if 11 not in auto_protocols or peak_physical < 2:
+                    if 11 not in auto_protocols or 30 in auto_protocols or peak_physical < 2:
                         raise AssertionError(
                             f'auto HTTPS did not escape to multi-socket HTTP/1.1: '
                             f'protocols={sorted(auto_protocols)} peak_physical={peak_physical}')
-                    print(json.dumps({'scenario': 'auto-https-multisocket-h1-escape',
+                    record({'scenario': 'auto-https-multisocket-h1-escape',
                                       'protocols': sorted(auto_protocols),
                                       'peak-physical-connections': peak_physical,
                                       'seconds': round(result['seconds'], 3),
-                                      'pcm-bytes': len(expected)}), flush=True)
+                                      'pcm-bytes': len(expected)})
                 finally:
                     shaper.terminate()
                     try:
@@ -371,7 +390,9 @@ http {{
                 nginx.kill()
                 nginx.wait()
     if args.output:
-        args.output.write_text(json.dumps(rows, indent=2) + '\n')
+        args.output.write_text(json.dumps({'format': 1, 'identity': {'libmpv_sha256': library_sha256,
+            'app_revision': args.app_revision, 'mpv_revision': args.mpv_revision,
+            'harness_revision': args.harness_revision}, 'performance': args.performance, 'scenarios': rows}, indent=2) + '\n')
 
 
 if __name__ == '__main__':

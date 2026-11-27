@@ -1,4 +1,5 @@
 #include "player/MpvOptionProfile.h"
+#include "player/AndroidVideoPolicy.h"
 
 #include "TestMain.h"
 #include "TestRequire.h"
@@ -58,6 +59,36 @@ using SpoolTests::require;
 SPOOL_TEST_MAIN("mpv-option-profile")
 {
     QCoreApplication app(argc, argv);
+    {
+        PlaybackSession session;
+        MediaStreamInfo video;
+        video.type = QStringLiteral("Video");
+        video.codec = QStringLiteral("hevc");
+        video.profile = QStringLiteral("Main 10");
+        video.width = 3840;
+        video.height = 2160;
+        session.mediaStreams = { video };
+        require(!androidUsesEmbeddedVideo(session, true, [](const auto&) { return true; }),
+            "known supported delivered video can use a direct surface");
+        require(androidUsesEmbeddedVideo(session, true, [](const auto&) { return false; }),
+            "unsupported profile or size uses rendered software fallback");
+        session.mediaStreams[0].width = 0;
+        bool queried = false;
+        require(androidUsesEmbeddedVideo(session, true,
+                    [&](const auto&) {
+                        queried = true;
+                        return true;
+                    })
+                && !queried,
+            "unknown dimensions cannot be approved from MIME support alone");
+        session.mediaStreams[0] = video;
+        session.playMethod = QStringLiteral("Transcode");
+        require(androidUsesEmbeddedVideo(session, true, [](const auto&) { return true; }),
+            "source metadata cannot approve the different transcoded representation");
+        session.mediaStreams.clear();
+        require(androidUsesEmbeddedVideo(session, true, [](const auto&) { return true; }),
+            "missing delivered metadata uses the rendered path");
+    }
     setlocale(LC_NUMERIC, "C");
     {
         mpv_handle *handle = mpv_create();

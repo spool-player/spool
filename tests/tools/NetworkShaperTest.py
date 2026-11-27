@@ -164,6 +164,27 @@ class NetworkShaperTest(unittest.IsolatedAsyncioTestCase):
 
 
 class PacerTest(unittest.IsolatedAsyncioTestCase):
+    async def test_independent_pacers_do_not_reserve_a_shared_timeline(self) -> None:
+        now = 100.0
+        deadlines = []
+
+        async def sleep(delay):
+            deadlines.append(now + delay)
+
+        timers = SimpleNamespace(get_running_loop=lambda: SimpleNamespace(time=lambda: now), sleep=sleep)
+        with patch.object(network_shaper, "asyncio", timers):
+            first, second = network_shaper.Pacer(1000), network_shaper.Pacer(1000)
+            await first.wait(500)
+            await second.wait(500)
+            await first.wait(500)
+            await second.wait(500)
+            self.assertEqual(deadlines, [100.5, 100.5])
+            deadlines.clear()
+            shared = network_shaper.Pacer(1000)
+            for _ in range(4):
+                await shared.wait(500)
+            self.assertEqual(deadlines, [100.5, 101.0, 101.5])
+
     async def test_reserves_bandwidth_before_waiting(self) -> None:
         now = 100.0
         sleepers: list[tuple[float, asyncio.Future[None]]] = []

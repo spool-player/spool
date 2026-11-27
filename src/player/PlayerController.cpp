@@ -172,6 +172,8 @@ namespace {
     constexpr uint64_t kPauseSetReply = 0x7073000000000000ULL;
     constexpr uint64_t kPauseReadReply = 0x7072000000000000ULL;
     constexpr uint64_t kInitialPauseReply = 0x7069000000000000ULL;
+    constexpr uint64_t kDemuxerCacheReply = 0x6463000000000000ULL;
+    constexpr uint64_t kDemuxerUsageReply = 0x6475000000000000ULL;
     constexpr uint64_t kColorDiagnosticReply = 0x636f000000000000ULL;
     constexpr uint64_t kFullscreenSetReply = 0x6673000000000000ULL;
     constexpr uint64_t kFullscreenObservation = 0x666f000000000000ULL;
@@ -386,14 +388,6 @@ namespace {
         }
     }
 
-    void applyMpvDemuxerCacheTarget(mpv_handle *handle, const StreamingCacheTarget& target)
-    {
-        int64_t forwardBytes = target.forwardBytes;
-        int64_t backBytes = target.backBytes;
-        mpv_set_property_async(handle, 0, "demuxer-max-bytes", MPV_FORMAT_INT64, &forwardBytes);
-        mpv_set_property_async(handle, 0, "demuxer-max-back-bytes", MPV_FORMAT_INT64, &backBytes);
-    }
-
     void logMemoryStats()
     {
         const QString diagnostics = platformProcessMemoryDiagnostics();
@@ -470,6 +464,8 @@ PlayerController::PlayerController(NativeAppWindow *window, PlaybackSource *api,
     m_backgroundTeardownTimer.setInterval(750);
     m_networkTimer.setInterval(1000);
     connect(&m_networkTimer, &QTimer::timeout, this, &PlayerController::updateNetworkTransport);
+    m_streamingMemoryTimer.setInterval(5000);
+    connect(&m_streamingMemoryTimer, &QTimer::timeout, this, &PlayerController::updateStreamingMemoryGrant);
     // Measure spare headroom before playback as well: the startup sample can
     // confirm an idle observation before any fixed socket profile connects.
     m_idleStreamingMemoryTimer.setInterval(5000);
@@ -608,6 +604,13 @@ void PlayerController::teardownMpv(bool async)
     const quint64 generation = ++m_mpvTeardownGeneration;
     Diagnostics::Phase phase(QStringLiteral("shutdown"), QStringLiteral("player_teardown_mpv"));
     ++m_mpvEventGeneration;
+    ++m_demuxerCacheSerial;
+    m_demuxerCacheReplies = 0;
+    m_appliedDemuxerTarget.reset();
+    m_demuxerUsageKnown = false;
+    m_demuxerUsagePending = false;
+    m_committedDemuxerBytes = 0;
+    m_streamingMemoryTimer.stop();
     m_pendingTransportLoads.clear();
     m_idleMpvPreparationEnabled = false;
     m_idleMpvPreparationScheduled = false;
@@ -727,7 +730,7 @@ void PlayerController::prepareMpvAsync(bool needsVideoSurface, bool embeddedVide
     connect(worker, &QThread::finished, worker, &QObject::deleteLater);
     connect(
         worker, &QThread::finished, this,
-        [this, preparation, cacheTarget] {
+        [this, preparation] {
             if (m_mpvPreparation != preparation)
                 return; // The snapshot owns and disposes of stale cores off-thread.
             m_mpvPreparation.reset();
@@ -742,10 +745,6 @@ void PlayerController::prepareMpvAsync(bool needsVideoSurface, bool embeddedVide
                 return;
             }
             m_idleMpvHandle = std::exchange(preparation->handle, nullptr);
-            // The main thread can resample memory while the worker initializes
-            // its snapshot. Apply the current limit before the core can load.
-            if (cacheTarget != m_activeDemuxerTarget)
-                applyMpvDemuxerCacheTarget(m_idleMpvHandle, m_activeDemuxerTarget);
             refreshTransportCapabilities(m_idleMpvHandle);
             m_idleMpvNeedsVideoSurface = preparation->needsVideoSurface;
             m_idleMpvEmbeddedVideo = preparation->embeddedVideo;
@@ -1462,6 +1461,15 @@ bool PlayerController::ensureMpv(bool needsVideoSurface, bool embeddedVideo)
         return false;
     const bool idlePrepared = true;
 
+    // The preparation worker owns its snapshot until this handoff. Apply the
+    // current pair synchronously while idle, before any surface or load uses it.
+    if (!usesUserMpvConfig() && !applyInitialDemuxerCacheTarget(handle)) {
+        destroyMpvOffThread(handle);
+        m_errorText = QStringLiteral("libmpv rejected the cache limits.");
+        emit playbackStateChanged();
+        return false;
+    }
+
     if (((m_volumeKnown || !usesUserMpvConfig())
             && !setRequiredMpvProperty(handle, "volume", QByteArray::number(m_volume.load()).constData()))
         || ((m_muteKnown || !usesUserMpvConfig())
@@ -1637,7 +1645,7 @@ void PlayerController::playSession(const PlaybackSession& session, bool startPau
     m_sessionThreadedStreaming = m_streamingOptions.enabled;
     m_sessionStreamingOptions = m_streamingOptions;
     m_jointExtraGrantBytes = 0;
-    m_streamingMemoryTimer.invalidate();
+    m_streamingMemoryTimer.stop();
     updateStreamingMemoryGrant();
     m_streamingMemoryTimer.start();
     m_streamingPerformanceSampler.reset();
@@ -2108,6 +2116,7 @@ void PlayerController::togglePause()
 
 void PlayerController::setPaused(bool paused)
 {
+    m_pauseRequestClock.restart();
     qInfo() << "player: pause requested" << paused;
     if (!m_mpvLifecycle.handle()) {
         if (m_sessionActive && m_paused != paused) {
@@ -2894,10 +2903,6 @@ double PlayerController::networkMediaBitrate() const
 
 void PlayerController::updateNetworkTransport()
 {
-    if (!m_streamingMemoryTimer.isValid() || m_streamingMemoryTimer.elapsed() >= 5000) {
-        updateStreamingMemoryGrant();
-        m_streamingMemoryTimer.restart();
-    }
     auto *handle = m_mpvLifecycle.handle();
     if (!handle || !m_sessionActive)
         return;
@@ -2994,6 +2999,7 @@ void PlayerController::stopProgressReporting(bool failed, bool reachedEnd, bool 
     m_uiPositionTimer.stop();
     m_seekWatchdogTimer.stop();
     m_networkTimer.stop();
+    m_streamingMemoryTimer.stop();
 
     const auto session = m_session;
     reachedEnd = reachedEnd && !failed && m_fileLoaded;
@@ -3270,6 +3276,12 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_
         });
         break;
     case MPV_EVENT_SET_PROPERTY_REPLY: {
+        if ((event->reply_userdata & kMpvReplyKindMask) == kDemuxerCacheReply) {
+            const auto serial = event->reply_userdata & kMpvReplySerialMask;
+            const int error = event->error;
+            postMpvEvent(generation, [this, serial, error] { completeDemuxerCacheWrite(serial, error); });
+            break;
+        }
         if ((event->reply_userdata & kMpvReplyKindMask) == kPauseSetReply) {
             const auto serial = event->reply_userdata & kMpvReplySerialMask;
             const int error = event->error;
@@ -3344,6 +3356,25 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_
         break;
     }
     case MPV_EVENT_GET_PROPERTY_REPLY: {
+        if (event->reply_userdata == kDemuxerUsageReply) {
+            const auto *property = static_cast<mpv_event_property *>(event->data);
+            qint64 bytes = -1;
+            if (event->error >= 0 && property && property->data && property->format == MPV_FORMAT_NODE) {
+                const auto& node = *static_cast<const mpv_node *>(property->data);
+                if (node.format == MPV_FORMAT_NODE_MAP && node.u.list)
+                    for (int i = 0; i < node.u.list->num; ++i)
+                        if (strcmp(node.u.list->keys[i], "total-bytes") == 0
+                            && node.u.list->values[i].format == MPV_FORMAT_INT64)
+                            bytes = node.u.list->values[i].u.int64;
+            }
+            postMpvEvent(generation, [this, bytes] {
+                m_demuxerUsagePending = false;
+                m_demuxerUsageKnown = bytes >= 0;
+                if (m_demuxerUsageKnown)
+                    m_committedDemuxerBytes = bytes;
+            });
+            break;
+        }
         if (event->reply_userdata == kColorDiagnosticReply) {
             const auto *property = static_cast<mpv_event_property *>(event->data);
             if (event->error >= 0 && property && property->data && property->format == MPV_FORMAT_STRING) {
@@ -3891,55 +3922,128 @@ void PlayerController::skipActiveSegment()
 
 void PlayerController::applyDemuxerCacheTarget(const StreamingCacheTarget& target, bool applyLive)
 {
-    if (target == m_activeDemuxerTarget)
-        return;
-
+    const bool changed = target != m_activeDemuxerTarget;
     m_activeDemuxerTarget = target;
-    qInfo("player: demuxer cache target forward=%lldMiB back=%lldMiB",
-        static_cast<long long>(target.forwardBytes / (1024LL * 1024)),
-        static_cast<long long>(target.backBytes / (1024LL * 1024)));
+    if (changed)
+        qInfo("player: demuxer cache target forward=%lldMiB back=%lldMiB",
+            static_cast<long long>(target.forwardBytes / (1024LL * 1024)),
+            static_cast<long long>(target.backBytes / (1024LL * 1024)));
 
-    if (!applyLive)
+    if (!applyLive || m_activeUserMpvConfig || m_demuxerCacheReplies > 0 || m_appliedDemuxerTarget == target)
         return;
-    auto *handle = m_mpvLifecycle.handle();
-    if (handle || m_idleMpvHandle)
-        applyMpvDemuxerCacheTarget(handle ? handle : m_idleMpvHandle, target);
+    if (auto *handle = m_mpvLifecycle.handle()) {
+        m_demuxerCacheSerial = (m_demuxerCacheSerial + 1) & kMpvReplySerialMask;
+        m_pendingDemuxerTarget = target;
+        m_demuxerCacheReplies = 2;
+        m_demuxerCacheFailed = false;
+        for (const auto& property : { std::pair { "demuxer-max-bytes", target.forwardBytes },
+                 std::pair { "demuxer-max-back-bytes", target.backBytes } }) {
+            const int error = writeDemuxerCacheProperty(
+                handle, kDemuxerCacheReply | m_demuxerCacheSerial, property.first, property.second, true);
+            if (error < 0)
+                completeDemuxerCacheWrite(m_demuxerCacheSerial, error);
+        }
+    }
+}
+
+int PlayerController::writeDemuxerCacheProperty(
+    mpv_handle *handle, quint64 reply, const char *name, qint64 bytes, bool async)
+{
+    if (m_cachePropertyWriter)
+        return m_cachePropertyWriter(handle, reply, name, bytes, async);
+    int64_t value = bytes;
+    return async ? mpv_set_property_async(handle, reply, name, MPV_FORMAT_INT64, &value)
+                 : mpv_set_property(handle, name, MPV_FORMAT_INT64, &value);
+}
+
+bool PlayerController::applyInitialDemuxerCacheTarget(mpv_handle *handle)
+{
+    ++m_demuxerCacheSerial;
+    m_demuxerCacheReplies = 0;
+    m_appliedDemuxerTarget.reset();
+    for (const auto& property : { std::pair { "demuxer-max-bytes", m_activeDemuxerTarget.forwardBytes },
+             std::pair { "demuxer-max-back-bytes", m_activeDemuxerTarget.backBytes } }) {
+        const int error = writeDemuxerCacheProperty(handle, 0, property.first, property.second, false);
+        if (error < 0) {
+            qWarning() << "player: cache property rejected" << property.first << "error=" << error;
+            return false;
+        }
+    }
+    m_appliedDemuxerTarget = m_activeDemuxerTarget;
+    return true;
+}
+
+void PlayerController::completeDemuxerCacheWrite(quint64 serial, int error)
+{
+    if (serial != m_demuxerCacheSerial || m_demuxerCacheReplies <= 0)
+        return;
+    if (error < 0) {
+        m_demuxerCacheFailed = true;
+        m_appliedDemuxerTarget.reset();
+        qWarning() << "player: cache property update failed error=" << error;
+    }
+    if (--m_demuxerCacheReplies == 0 && !m_demuxerCacheFailed)
+        m_appliedDemuxerTarget = m_pendingDemuxerTarget;
 }
 
 void PlayerController::updateStreamingMemoryGrant()
 {
     constexpr qint64 mib = 1024LL * 1024;
-    const auto memory = platformStreamingMemoryState();
+    const auto memory = m_memoryProbe();
     const auto policy = platformMemoryPolicy();
     const bool constrained = platformMpvOptionProfile() == MpvOptionProfile::Platform::WebOS
         || (policy.totalBytes > 0 && policy.totalBytes < policy.lowMemoryBytes);
-    const qint64 reserve = (constrained ? 64 : 128) * mib;
     const auto& options = m_sessionActive ? m_sessionStreamingOptions : m_streamingOptions;
-    const qint64 cap = options.maxExtraBytes > 0 ? options.maxExtraBytes : (constrained ? 32 : 64) * mib;
-    const qint64 candidate
-        = memory.available ? std::min(cap, std::max(qint64(0), memory.availableBytes - reserve) / 4) : 0;
-    const qint64 desired = options.allowExtraMemory ? candidate : 0;
-    // Pressure shrinks admission immediately; growth needs two independent samples.
-    const qint64 grant = desired <= m_jointExtraGrantBytes ? desired : std::min(desired, m_previousMemoryCandidate);
-    m_previousMemoryCandidate = candidate;
-    if (grant != m_jointExtraGrantBytes) {
-        m_jointExtraGrantBytes = grant;
-        updateBackgroundNetwork();
-    }
-
     // Automatically scale demuxer readahead and behind cache up to
     // 128 MiB behind / 512 MiB forward at a 1:2 growth ratio based on free RAM.
     const qint64 effectiveTotal = policy.totalBytes > 0 ? policy.totalBytes : policy.fallbackBytes;
-    const StreamingCacheTarget cacheCandidate = computeStreamingCacheTarget({
+    StreamingCacheInput input {
         .totalMemoryBytes = effectiveTotal,
         .availableMemoryBytes = memory.availableBytes,
         .availableMemoryKnown = memory.available,
         .constrainedDevice = constrained,
         .autoScaleEnabled = options.allowExtraMemory,
         .configuredForwardBytes = m_forwardCacheSizeMiB > 0 ? qint64(m_forwardCacheSizeMiB) * mib : 0,
-    });
-    const StreamingCacheTarget target = m_demuxerCacheScaler.update(cacheCandidate);
+    };
+    const StreamingCacheTarget desiredCache = computeStreamingCacheTarget(input);
+    input.autoScaleEnabled = false;
+    const StreamingCacheTarget baseline = computeStreamingCacheTarget(input);
+    const qint64 reserve = constrained ? std::clamp(effectiveTotal / 4, 256 * mib, 512 * mib)
+                                       : std::clamp(effectiveTotal / 8, 512 * mib, 2048 * mib);
+    const qint64 headroom
+        = memory.available ? std::max<qint64>(0, memory.availableBytes - reserve) / (constrained ? 5 : 4) : 0;
+    const qint64 allowance = options.allowExtraMemory
+        ? std::min(headroom, options.maxExtraBytes > 0 ? options.maxExtraBytes : 704 * mib)
+        : 0;
+    const qint64 baselineBytes = baseline.forwardBytes + baseline.backBytes;
+    qint64 committedCache = m_demuxerUsageKnown
+        ? m_committedDemuxerBytes
+        : (m_appliedDemuxerTarget ? m_appliedDemuxerTarget->forwardBytes + m_appliedDemuxerTarget->backBytes
+                                  : baselineBytes);
+    if (m_demuxerCacheReplies > 0)
+        committedCache
+            = std::max(committedCache, m_pendingDemuxerTarget.forwardBytes + m_pendingDemuxerTarget.backBytes);
+    const qint64 committedCurl = m_sessionThreadedStreaming
+        ? std::max(m_jointExtraGrantBytes,
+              m_networkMetrics.value(QStringLiteral("committed-joint-extra-grant-bytes")).toLongLong())
+        : 0;
+    const auto allocation = allocateStreamingMemory(baseline, desiredCache, allowance,
+        std::max<qint64>(0, committedCache - baselineBytes), committedCurl, (constrained ? 32 : 64) * mib);
+    const StreamingCacheTarget target = m_demuxerCacheScaler.update(allocation.cache);
     applyDemuxerCacheTarget(target, true);
+    const qint64 desiredGrant = m_sessionThreadedStreaming ? allocation.curlGrantBytes : 0;
+    const qint64 grant
+        = desiredGrant <= m_jointExtraGrantBytes ? desiredGrant : std::min(desiredGrant, m_previousMemoryCandidate);
+    m_previousMemoryCandidate = desiredGrant;
+    if (grant != m_jointExtraGrantBytes) {
+        m_jointExtraGrantBytes = grant;
+        updateBackgroundNetwork();
+    }
+    m_extraMemoryAllowanceBytes = allowance;
+    m_committedMemoryExcessBytes = allocation.committedExcessBytes;
+    if (auto *handle = m_mpvLifecycle.handle(); handle && m_fileLoaded && !m_demuxerUsagePending)
+        m_demuxerUsagePending
+            = mpv_get_property_async(handle, kDemuxerUsageReply, "demuxer-cache-state", MPV_FORMAT_NODE) >= 0;
 }
 
 void PlayerController::setBackgroundNetwork(bool active)
