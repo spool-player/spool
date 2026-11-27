@@ -35,6 +35,15 @@ extern "C" {
 
 namespace Spool {
 struct PlayerControllerTestAccess {
+    static int64_t forwardCacheBytes(const PlayerController& player)
+    {
+        int64_t bytes = 0;
+        auto *handle = player.m_mpvLifecycle.handle();
+        SpoolTests::require(handle && mpv_get_property(handle, "demuxer-max-bytes", MPV_FORMAT_INT64, &bytes) >= 0,
+            "the active core reports its forward cache limit");
+        return bytes;
+    }
+
     static void runCacheContract(NativeAppWindow& window)
     {
         using SpoolTests::require;
@@ -484,35 +493,25 @@ void transportLoadLifecycle(const QString& directory, NativeAppWindow& window)
 }
 
 #if defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID) && !defined(SPOOL_WEBOS)
-void cacheBudgetDuringPreparation(const QString& directory, NativeAppWindow& window)
+void customCacheBudgetDuringPreparation(const QString& directory, NativeAppWindow& window)
 {
     const QDir config(QDir(directory).filePath(QStringLiteral("cache-budget")));
-    require(config.mkpath(QStringLiteral("scripts")), "cache probe script directory opens");
+    require(QDir().mkpath(config.absolutePath()), "cache probe directory opens");
     QFile mpvConfig(config.filePath(QStringLiteral("mpv.conf")));
-    require(mpvConfig.open(QIODevice::WriteOnly) && mpvConfig.write("ao=null\n") == 8, "cache probe config writes");
+    const QByteArray options = QByteArrayLiteral("ao=null\ndemuxer-max-bytes=96MiB\n");
+    require(mpvConfig.open(QIODevice::WriteOnly) && mpvConfig.write(options) == options.size(),
+        "cache probe config writes");
     mpvConfig.close();
-    QFile script(config.filePath(QStringLiteral("scripts/cache-budget.lua")));
-    const QByteArray source = R"lua(
-        mp.register_event('file-loaded', function()
-            local path = mp.command_native({'expand-path', '~~/cache-budget.txt'})
-            local file = assert(io.open(path, 'w'))
-            file:write(mp.get_property_number('demuxer-max-bytes'), '\n')
-            file:close()
-        end)
-    )lua";
-    require(script.open(QIODevice::WriteOnly) && script.write(source) == source.size(), "cache probe writes");
-    script.close();
 
     PlayerController player(&window, nullptr, nullptr, {});
     player.setMpvConfigPolicy({ MpvConfigPolicy::Mode::Custom, config.absolutePath() });
     player.play(audioSession(directory, QStringLiteral("cache-budget"), 8));
-    // The preparation worker cannot hand off its original snapshot until the
-    // next UI event. Change the target before it attaches and loads the file.
+    // While preparation is pending, change the app-managed floor. The custom
+    // configuration owns its limit and must not be overwritten on adoption.
     player.setForwardCacheSizeMiB(1024);
-    QFile result(config.filePath(QStringLiteral("cache-budget.txt")));
-    waitUntil([&] { return player.fileLoaded() && result.size() > 0; }, "mpv reports its cache limit on file load");
-    require(result.open(QIODevice::ReadOnly) && result.readAll().trimmed().toLongLong() == 1024LL * 1024 * 1024,
-        "playback applies the cache target set while mpv was preparing");
+    waitUntil([&] { return player.fileLoaded(); }, "mpv loads the custom cache fixture");
+    require(PlayerControllerTestAccess::forwardCacheBytes(player) == 96LL * 1024 * 1024,
+        "playback preserves the custom cache limit when the app floor changes during preparation");
     player.teardownMpv();
 }
 #endif
@@ -642,7 +641,7 @@ SPOOL_TEST_MAIN("player-controller")
     watchedStopPolicy(directory.path(), window);
     transportLoadLifecycle(directory.path(), window);
 #if defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID) && !defined(SPOOL_WEBOS)
-    cacheBudgetDuringPreparation(directory.path(), window);
+    customCacheBudgetDuringPreparation(directory.path(), window);
 #endif
 #if !defined(Q_OS_ANDROID) && !defined(SPOOL_APPLE_MOBILE)
     localPlaylistLifecycle(directory.path(), window);
