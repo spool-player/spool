@@ -2048,14 +2048,18 @@ SPOOL_TEST_MAIN("app-journey")
         journey.command({ "key", "back" });
         journey.command({ "key", "back" });
         journey.label("Appearance");
-        // Settings sync is independent of playback. Disable it through the
-        // real settings UI so its debounced or periodic requests cannot race
-        // the assertion that offline playback sends no authenticated traffic.
-        journey.click("Sources", true);
-        journey.click("Settings sync", true);
-        journey.click("Sync settings", true);
+        // Disable settings sync before checking that offline playback sends
+        // no authenticated traffic.
+        journey.command({ "settings", "set", "settingsSync/enabled", "false" });
+        journey.await(
+            [&] {
+                return journey.command({ "settings", "get", "settingsSync/status" })["values"]
+                           .toObject()["settingsSync/status"]
+                    == "off";
+            },
+            "settings sync did not turn off");
+        journey.command({ "navigate", "settingsSync" });
         journey.label("Turn on sync");
-        journey.command({ "key", "back" });
         journey.command({ "key", "back" });
         journey.label("Appearance");
         journey.click("Downloads", true);

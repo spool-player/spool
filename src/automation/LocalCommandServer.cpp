@@ -4,6 +4,7 @@
 #include "app/DownloadManager.h"
 #include "app/RouterController.h"
 #include "app/SettingsSchema.h"
+#include "app/SettingsSyncController.h"
 #include "common/AsyncTask.h"
 #include "platform/NativeAppWindow.h"
 #include "provider/SourceHub.h"
@@ -40,6 +41,8 @@
 
 namespace Spool {
 namespace {
+    const QString SyncEnabledKey = QStringLiteral("settingsSync/enabled");
+    const QString SyncStatusKey = QStringLiteral("settingsSync/status");
     const QStringList SettingKeys { QStringLiteral("playback/seekPreviews"),
         QStringLiteral("playback/accurateTrickplay"), QStringLiteral("playback/trickplayPreviewScalePercent"),
         QStringLiteral("appearance/uiScalePercent"), QStringLiteral("playback/renderQuality"),
@@ -817,11 +820,33 @@ void LocalCommandServer::dispatch(QIODevice *socket, const QJsonObject& request)
         done(state());
     } else if (command == QStringLiteral("settings-get") || command == QStringLiteral("settings-set")) {
         const QString key = args.value(QStringLiteral("key")).toString();
-        if (!key.isEmpty() && !SettingKeys.contains(key)) {
-            invalid(QStringLiteral("Only allowlisted playback and appearance settings are exposed"));
+        const bool reading = command == QStringLiteral("settings-get");
+        if (key == SyncEnabledKey || key == SyncStatusKey) {
+            auto *sync = m_app->settingsSync();
+            if (!sync) {
+                reject(socket, id, QStringLiteral("unavailable"), QStringLiteral("Settings sync is unavailable"));
+                return;
+            }
+            if (reading) {
+                const QJsonValue value
+                    = key == SyncEnabledKey ? QJsonValue(sync->enabled()) : QJsonValue(sync->status());
+                done({ { QStringLiteral("values"), QJsonObject { { key, value } } } });
+                return;
+            }
+            const QJsonValue value = args.value(QStringLiteral("value"));
+            if (key != SyncEnabledKey || !value.isBool()) {
+                invalid(QStringLiteral("Settings sync accepts a boolean value for settingsSync/enabled"));
+                return;
+            }
+            sync->setEnabled(value.toBool());
+            done({ { QStringLiteral("key"), key }, { QStringLiteral("value"), sync->enabled() } });
             return;
         }
-        if (command == QStringLiteral("settings-get")) {
+        if (!key.isEmpty() && !SettingKeys.contains(key)) {
+            invalid(QStringLiteral("Only allowlisted settings are exposed"));
+            return;
+        }
+        if (reading) {
             QJsonObject values;
             for (const QString& allowed : SettingKeys) {
                 if (key.isEmpty() || key == allowed)
@@ -941,9 +966,10 @@ void LocalCommandServer::dispatch(QIODevice *socket, const QJsonObject& request)
         const QString route = command == QStringLiteral("home") ? QStringLiteral("home")
                                                                 : args.value(QStringLiteral("route")).toString();
         if (!QStringList { QStringLiteral("home"), QStringLiteral("search"), QStringLiteral("settings"),
-                QStringLiteral("providerDetails"), QStringLiteral("subtitleSettings") }
+                QStringLiteral("settingsSync"), QStringLiteral("providerDetails"), QStringLiteral("subtitleSettings") }
                 .contains(route)) {
-            invalid(QStringLiteral("Navigation supports home, search, settings, providerDetails or subtitleSettings"));
+            invalid(QStringLiteral(
+                "Navigation supports home, search, settings, settingsSync, providerDetails or subtitleSettings"));
             return;
         }
         if (route == QStringLiteral("providerDetails")) {
@@ -963,6 +989,9 @@ void LocalCommandServer::dispatch(QIODevice *socket, const QJsonObject& request)
             }
             m_app->handleLocalControl({ { QStringLiteral("command"), QStringLiteral("stop") } });
             m_router->push(route, { { QStringLiteral("rowKey"), rowKey } });
+        } else if (route == QStringLiteral("settingsSync")) {
+            m_app->handleLocalControl({ { QStringLiteral("command"), QStringLiteral("stop") } });
+            m_router->push(route);
         } else {
             m_app->handleLocalControl(
                 { { QStringLiteral("command"), QStringLiteral("navigate") }, { QStringLiteral("to"), route } });
