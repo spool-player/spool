@@ -1,4 +1,5 @@
 #include "player/MpvOptionProfile.h"
+#include "player/AndroidVideoPolicy.h"
 
 #include "TestMain.h"
 #include "TestRequire.h"
@@ -43,8 +44,10 @@ std::vector<MpvOption> profileOptions(const MpvConfigPolicy& policy, MpvOptionPr
     bool embeddedVideo = false, const QByteArray& shaderCachePath = QByteArrayLiteral("/tmp/mpv-shaders"))
 {
     std::vector<MpvOption> options = MpvOptionProfile::preInitializeOptions(policy);
+    MpvOptionProfile::StreamingOptions streaming;
+    streaming.maxRequests = parallelRequests;
     std::vector<MpvOption> applicationOptions = MpvOptionProfile::applicationOptions(platform, true, audioOutputMode,
-        logPath, demuxerMaxBytes, demuxerMaxBackBytes, parallelRequests, embeddedVideo, shaderCachePath);
+        logPath, streaming, demuxerMaxBytes, demuxerMaxBackBytes, embeddedVideo, shaderCachePath);
     options.insert(options.end(), applicationOptions.cbegin(), applicationOptions.cend());
     return options;
 }
@@ -56,6 +59,36 @@ using SpoolTests::require;
 SPOOL_TEST_MAIN("mpv-option-profile")
 {
     QCoreApplication app(argc, argv);
+    {
+        PlaybackSession session;
+        MediaStreamInfo video;
+        video.type = QStringLiteral("Video");
+        video.codec = QStringLiteral("hevc");
+        video.profile = QStringLiteral("Main 10");
+        video.width = 3840;
+        video.height = 2160;
+        session.mediaStreams = { video };
+        require(!androidUsesEmbeddedVideo(session, true, [](const auto&) { return true; }),
+            "known supported delivered video can use a direct surface");
+        require(androidUsesEmbeddedVideo(session, true, [](const auto&) { return false; }),
+            "unsupported profile or size uses rendered software fallback");
+        session.mediaStreams[0].width = 0;
+        bool queried = false;
+        require(androidUsesEmbeddedVideo(session, true,
+                    [&](const auto&) {
+                        queried = true;
+                        return true;
+                    })
+                && !queried,
+            "unknown dimensions cannot be approved from MIME support alone");
+        session.mediaStreams[0] = video;
+        session.playMethod = QStringLiteral("Transcode");
+        require(androidUsesEmbeddedVideo(session, true, [](const auto&) { return true; }),
+            "source metadata cannot approve the different transcoded representation");
+        session.mediaStreams.clear();
+        require(androidUsesEmbeddedVideo(session, true, [](const auto&) { return true; }),
+            "missing delivered metadata uses the rendered path");
+    }
     setlocale(LC_NUMERIC, "C");
     {
         mpv_handle *handle = mpv_create();
@@ -133,8 +166,8 @@ SPOOL_TEST_MAIN("mpv-option-profile")
             "no candidate leaves the bundle unset rather than pointing at nothing");
 
         const std::vector<MpvOption> options = MpvOptionProfile::applicationOptions(MpvOptionProfile::Platform::Desktop,
-            true, QStringLiteral("auto"), QByteArrayLiteral("/tmp/mpv.log"), QByteArrayLiteral("64M"),
-            QByteArrayLiteral("32M"), 1, false, QByteArrayLiteral("/tmp/shaders"), QFile::encodeName(bundle));
+            true, QStringLiteral("auto"), QByteArrayLiteral("/tmp/mpv.log"), {}, QByteArrayLiteral("64M"),
+            QByteArrayLiteral("32M"), false, QByteArrayLiteral("/tmp/shaders"), QFile::encodeName(bundle));
         require(valueFor(options, "tls-ca-file") == QFile::encodeName(bundle),
             "a resolved certificate bundle must reach mpv as tls-ca-file");
         require(valueFor(profileOptions(MpvConfigPolicy {}, MpvOptionProfile::Platform::Desktop, QStringLiteral("auto"),
@@ -145,14 +178,16 @@ SPOOL_TEST_MAIN("mpv-option-profile")
     }
 
     const auto desktopNetwork = MpvOptionProfile::networkProfile(MpvOptionProfile::Platform::Desktop);
-    require(desktopNetwork.ringBytes == 4 * 1024 * 1024, "desktop curl ring profile changed");
-    require(desktopNetwork.rangeBytes == 1024 * 1024, "desktop curl range profile changed");
-    require(desktopNetwork.parallelRequests == 1, "desktop curl should default to one request");
+    require(desktopNetwork.ringBytes == 8 * 1024 * 1024, "desktop curl ring profile changed");
+    require(desktopNetwork.rangeBytes == 4 * 1024 * 1024, "desktop curl range profile changed");
 
     const auto desktop = profileOptions(MpvConfigPolicy {}, MpvOptionProfile::Platform::Desktop, QStringLiteral("alsa"),
         QByteArrayLiteral("/tmp/mpv.log"));
     require(valueFor(desktop, "vo") == "libmpv", "desktop should render through libmpv");
-#if defined(Q_OS_LINUX)
+#if defined(SPOOL_APPLE_MOBILE)
+    require(
+        valueFor(desktop, "hwdec") == "videotoolbox-copy", "Apple mobile should decode through VideoToolbox copy-back");
+#elif defined(Q_OS_LINUX)
     require(valueFor(desktop, "hwdec") == "auto-copy",
         "Linux desktop should copy decoded frames across the driver boundary");
 #else
@@ -162,14 +197,20 @@ SPOOL_TEST_MAIN("mpv-option-profile")
     require(valueFor(desktop, "gpu-shader-cache-dir") == "/tmp/mpv-shaders",
         "desktop should use the application-owned persistent shader cache");
     require(valueFor(desktop, "curl-enabled") == "yes", "desktop should use the libcurl stream backend");
-    require(valueFor(desktop, "curl-buffer-size") == "4194304", "desktop should use a 4 MiB network ring");
-    require(valueFor(desktop, "curl-max-request-size") == "1048576", "desktop should issue 1 MiB ranges");
+    require(valueFor(desktop, "curl-buffer-size") == "8388608", "desktop should use an 8 MiB network ring");
+    require(valueFor(desktop, "curl-max-request-size") == "4194304", "desktop should allow up to 4 MiB ranges");
+    require(valueFor(desktop, "curl-read-size") == "262144", "desktop should read 256 KiB per curl callback");
     require(valueFor(desktop, "curl-parallel-requests") == "1", "desktop should default to one range request");
     require(valueFor(desktop, "network-timeout") == "15", "a silent connection should be retried after 15 s");
     require(
         valueFor(desktop, "initial-audio-sync").isEmpty(), "desktop should retain mpv's initial audio sync default");
+#if defined(SPOOL_APPLE_MOBILE)
+    require(valueFor(desktop, "audio-fallback-to-null") == "no",
+        "Apple mobile should keep AudioUnit output without silently falling back to null");
+#else
     require(valueFor(desktop, "audio-fallback-to-null") == "yes",
         "desktop playback should continue silently when no audio output device is available");
+#endif
     require(valueFor(desktop, "config") == "no", "disabled user configuration should bypass mpv.conf");
     require(indexOf(desktop, "config") < indexOf(desktop, "input-default-bindings"),
         "application input invariants must be applied after user configuration policy");
@@ -211,7 +252,7 @@ SPOOL_TEST_MAIN("mpv-option-profile")
         require(!MpvOptionProfile::needsVideoSurface(music),
             "an audio item's attached picture must not request a video surface");
         const auto musicOptions = MpvOptionProfile::applicationOptions(MpvOptionProfile::Platform::Android,
-            MpvOptionProfile::needsVideoSurface(music), QStringLiteral("auto"), QByteArrayLiteral("/tmp/mpv.log"));
+            MpvOptionProfile::needsVideoSurface(music), QStringLiteral("auto"), QByteArrayLiteral("/tmp/mpv.log"), {});
         require(valueFor(musicOptions, "vo") == "null" && valueFor(musicOptions, "vid") == "no"
                 && valueFor(musicOptions, "audio-display") == "no",
             "audio playback must neither select cover art nor create a surface-dependent video output");
@@ -224,7 +265,7 @@ SPOOL_TEST_MAIN("mpv-option-profile")
         music.mediaStreams = { picture, audio };
         require(MpvOptionProfile::needsVideoSurface(music), "music videos must retain their video output");
         const auto videoOptions = MpvOptionProfile::applicationOptions(MpvOptionProfile::Platform::Android,
-            MpvOptionProfile::needsVideoSurface(music), QStringLiteral("auto"), QByteArrayLiteral("/tmp/mpv.log"));
+            MpvOptionProfile::needsVideoSurface(music), QStringLiteral("auto"), QByteArrayLiteral("/tmp/mpv.log"), {});
         require(valueFor(videoOptions, "vo") == "mediacodec_embed" && valueFor(videoOptions, "vid") != "no",
             "a video session after audio must restore direct output and video track selection");
     }
@@ -251,14 +292,21 @@ SPOOL_TEST_MAIN("mpv-option-profile")
     require(customConfigDirectory.isValid(), "temporary custom mpv directory was not created");
     const MpvConfigPolicy validatedCustom
         = validatedPlatformMpvConfigPolicy(QStringLiteral("custom"), customConfigDirectory.path());
+    const MpvConfigPolicy validatedFileUrl = validatedPlatformMpvConfigPolicy(
+        QStringLiteral("custom"), QUrl::fromLocalFile(customConfigDirectory.path()).toString());
+#if defined(SPOOL_APPLE_MOBILE)
+    require(!validatedCustom.valid && validatedCustom.mode == MpvConfigPolicy::Mode::Disabled,
+        "Apple mobile builds must reject external custom mpv configuration");
+    require(!validatedFileUrl.valid && validatedFileUrl.mode == MpvConfigPolicy::Mode::Disabled,
+        "Apple mobile builds must reject file-URL custom mpv configuration");
+#else
     require(validatedCustom.valid && validatedCustom.mode == MpvConfigPolicy::Mode::Custom,
         "existing custom mpv directory should validate");
     require(validatedCustom.directory == QFileInfo(customConfigDirectory.path()).canonicalFilePath(),
         "custom mpv directory should be canonicalized");
-    const MpvConfigPolicy validatedFileUrl = validatedPlatformMpvConfigPolicy(
-        QStringLiteral("custom"), QUrl::fromLocalFile(customConfigDirectory.path()).toString());
     require(validatedFileUrl.valid && validatedFileUrl.directory == validatedCustom.directory,
         "folder-dialog file URL should validate as a local directory");
+#endif
     const MpvConfigPolicy missingCustom
         = validatedPlatformMpvConfigPolicy(QStringLiteral("custom"), QStringLiteral("/path/that/does/not/exist"));
     require(!missingCustom.valid && missingCustom.mode == MpvConfigPolicy::Mode::Disabled,
@@ -318,7 +366,14 @@ SPOOL_TEST_MAIN("mpv-option-profile")
 
     const auto desktopAuto = profileOptions(MpvConfigPolicy {}, MpvOptionProfile::Platform::Desktop,
         QStringLiteral("auto"), QByteArrayLiteral("/tmp/mpv.log"));
+#if defined(SPOOL_APPLE_MOBILE)
+    require(
+        valueFor(desktopAuto, "ao") == "audiounit", "Apple mobile automatic audio should select RemoteIO AudioUnit");
+    require(valueFor(desktopAuto, "audio-exclusive") == "yes",
+        "Apple mobile audio should request exclusive AudioUnit session");
+#else
     require(valueFor(desktopAuto, "ao").isEmpty(), "automatic desktop audio should leave output probing to mpv");
+#endif
 #if defined(Q_OS_ANDROID)
     // Android is also Q_OS_LINUX, but its settings policy permits only auto.
     // Exercise the actual Android output profile instead of desktop devices.
@@ -350,9 +405,8 @@ SPOOL_TEST_MAIN("mpv-option-profile")
 #endif
 
     const auto webOSNetwork = MpvOptionProfile::networkProfile(MpvOptionProfile::Platform::WebOS);
-    require(webOSNetwork.ringBytes == 2 * 1024 * 1024, "webOS curl ring profile changed");
-    require(webOSNetwork.rangeBytes == 512 * 1024, "webOS curl range profile changed");
-    require(webOSNetwork.parallelRequests == 1, "webOS curl should default to one request");
+    require(webOSNetwork.ringBytes == 4 * 1024 * 1024, "webOS curl ring profile changed");
+    require(webOSNetwork.rangeBytes == 1024 * 1024, "webOS curl range profile changed");
 
     const auto webOSPcm = profileOptions(MpvConfigPolicy {}, MpvOptionProfile::Platform::WebOS,
         QStringLiteral("starfish-pcm"), QByteArrayLiteral("/tmp/mpv.log"));
@@ -362,8 +416,9 @@ SPOOL_TEST_MAIN("mpv-option-profile")
     require(valueFor(webOSPcm, "vo-starfish-audio-hint") == "yes", "Starfish PCM should advertise pipeline audio");
     require(valueFor(webOSPcm, "ao-starfish-feed-ahead") == "0.4", "Starfish PCM should use the measured feed window");
     require(valueFor(webOSPcm, "curl-enabled") == "yes", "webOS should use the libcurl stream backend");
-    require(valueFor(webOSPcm, "curl-buffer-size") == "2097152", "webOS should use a 2 MiB network ring");
-    require(valueFor(webOSPcm, "curl-max-request-size") == "524288", "webOS should issue 512 KiB ranges");
+    require(valueFor(webOSPcm, "curl-buffer-size") == "4194304", "webOS should use a 4 MiB network ring");
+    require(valueFor(webOSPcm, "curl-max-request-size") == "1048576", "webOS should allow up to 1 MiB ranges");
+    require(valueFor(webOSPcm, "curl-read-size") == "131072", "webOS should read 128 KiB per curl callback");
     require(valueFor(webOSPcm, "curl-parallel-requests") == "1", "webOS should default to one range request");
     require(
         valueFor(webOSPcm, "gpu-shader-cache-dir").isEmpty(), "webOS should not configure the desktop shader cache");
@@ -380,6 +435,22 @@ SPOOL_TEST_MAIN("mpv-option-profile")
         "split-clock playback should not advertise pipeline audio");
     require(valueFor(webOSAlsa, "alsa-no-hw-pause") == "yes", "webOS ALSA should avoid the broken hardware pause path");
     require(valueFor(webOSAlsa, "alsa-bounded-io") == "yes", "webOS ALSA should use bounded direct-device I/O");
+    require(
+        valueFor(webOSAlsa, "alsa-buffer-time") == "40000", "webOS should keep the existing ALSA buffer by default");
+    const auto webOSAlsaTuned = MpvOptionProfile::applicationOptions(MpvOptionProfile::Platform::WebOS, true,
+        QStringLiteral("alsa"), {}, {}, {}, {}, false, {}, {}, MpvOptionProfile::RenderQuality::Balanced, 120);
+    require(valueFor(webOSAlsaTuned, "alsa-buffer-time") == "120000", "ALSA buffer is specified in microseconds");
+
+    const auto webOSPulse = profileOptions(MpvConfigPolicy {}, MpvOptionProfile::Platform::WebOS,
+        QStringLiteral("pulse"), QByteArrayLiteral("/tmp/mpv.log"));
+    require(valueFor(webOSPulse, "ao") == "pulse,null", "webOS PulseAudio should use its native output");
+    require(valueFor(webOSPulse, "audio-device").isEmpty(), "PulseAudio should follow the system's default sink");
+    require(valueFor(webOSPulse, "alsa-buffer-time").isEmpty(), "PulseAudio should not use ALSA settings");
+    require(valueFor(webOSPulse, "video-sync") == "display-resample", "PulseAudio should follow the display clock");
+    require(valueFor(webOSPulse, "vo-starfish-audio-hint") == "no", "Starfish must not claim PulseAudio playback");
+    const auto webOSDefault = profileOptions(MpvConfigPolicy {}, MpvOptionProfile::Platform::WebOS,
+        QStringLiteral("auto"), QByteArrayLiteral("/tmp/mpv.log"));
+    require(valueFor(webOSDefault, "ao") == "pulse,null", "webOS should prewarm with PulseAudio by default");
 
     PlaybackSession softwareSession;
     softwareSession.playMethod = QStringLiteral("DirectPlay");

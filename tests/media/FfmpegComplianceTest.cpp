@@ -139,8 +139,13 @@ SPOOL_TEST_MAIN("ffmpeg-compliance")
     });
     requireNoUnexpected(FfmpegCapabilities::kBitstreamFilters, "bitstream filter", [](const auto& visit) {
         void *opaque = nullptr;
-        while (const AVBitStreamFilter *filter = av_bsf_iterate(&opaque))
-            visit(filter->name);
+        while (const AVBitStreamFilter *filter = av_bsf_iterate(&opaque)) {
+            // FFmpeg 9.1 always builds these endpoints of its bitstream filter
+            // graphs, like the buffer filters; configure cannot leave them out.
+            const std::string_view name = filter->name;
+            if (name != "source" && name != "sink")
+                visit(name);
+        }
     });
     requireNoUnexpected(FfmpegCapabilities::kProtocols, "input protocol", [](const auto& visit) {
         void *opaque = nullptr;

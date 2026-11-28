@@ -101,6 +101,7 @@ public:
     Q_INVOKABLE void exitToLauncher();
 #ifdef Q_OS_MACOS
     Q_INVOKABLE void setTitlebarVisible(bool visible);
+    void configureMacOSTitlebar();
 #endif
     void clearOverlay();
     QQuickImageProvider *createOverlayImageProvider();
@@ -117,11 +118,29 @@ public:
             const bool preview = name == QStringLiteral("playerTrickplayPreview");
             const bool texture = name == QStringLiteral("playerTrickplayTexture");
             const bool seekBar = name == QStringLiteral("playerSeekBar");
+            const bool playerSettings = name == QStringLiteral("playerSettingsButton");
+            const bool playerOptions = name == QStringLiteral("playerOptionMenu");
+            const bool playerDetail
+                = name == QStringLiteral("playerRepeatDetail") || name == QStringLiteral("playerSleepDetail");
+            const bool relatedRow = name == QStringLiteral("detailSimilarRow");
+            const bool detailPrimaryCaption = name == QStringLiteral("detailPrimaryCaption");
             const bool libraryRow = name == QStringLiteral("libraryMediaRow");
             const bool libraryMenu = name == QStringLiteral("libraryContextMenuPanel");
             const bool showHidden = name == QStringLiteral("showHiddenLibrariesButton");
-            if ((preview || texture || seekBar || libraryRow || libraryMenu || showHidden) && item->isVisible()) {
-                const QRectF geometry = item->mapRectToScene(item->boundingRect());
+            if ((preview || texture || seekBar || playerSettings || playerOptions || playerDetail || relatedRow
+                    || detailPrimaryCaption || libraryRow || libraryMenu || showHidden)
+                && item->isVisible()) {
+                QRectF geometry = item->mapRectToScene(item->boundingRect());
+                if (relatedRow) {
+                    auto *card = item->property("automationCurrentCard").value<QQuickItem *>();
+                    geometry = card && card->isVisible()
+                        ? card->mapRectToScene(card->boundingRect()).intersected(geometry)
+                        : QRectF {};
+                } else if (playerDetail) {
+                    const QRectF content(
+                        0, 0, item->property("contentWidth").toDouble(), item->property("contentHeight").toDouble());
+                    geometry = item->mapRectToScene(content.intersected(item->boundingRect()));
+                }
                 QVariantMap state { { QStringLiteral("x"), geometry.x() }, { QStringLiteral("y"), geometry.y() },
                     { QStringLiteral("width"), geometry.width() }, { QStringLiteral("height"), geometry.height() } };
                 if (preview) {
@@ -131,17 +150,23 @@ public:
                 }
                 if (texture)
                     state.insert(QStringLiteral("ready"), item->property("ready").toBool());
+                if (playerOptions)
+                    state.insert(QStringLiteral("repeatFocusIndex"), item->property("automationRepeatFocusIndex"));
                 if (libraryRow) {
                     state.insert(QStringLiteral("moveMode"), item->property("moveMode").toBool());
                     state.insert(QStringLiteral("currentIndex"), item->property("currentIndex").toInt());
                     state.insert(QStringLiteral("contentX"), item->property("contentX").toDouble());
                 }
-                const QString key = preview ? QStringLiteral("preview")
-                    : texture               ? QStringLiteral("previewTexture")
-                    : libraryRow            ? QStringLiteral("libraryRow")
-                    : libraryMenu           ? QStringLiteral("libraryMenu")
-                    : showHidden            ? QStringLiteral("showHiddenLibraries")
-                                            : QStringLiteral("seekBar");
+                const QString key = preview                ? QStringLiteral("preview")
+                    : texture                              ? QStringLiteral("previewTexture")
+                    : libraryRow                           ? QStringLiteral("libraryRow")
+                    : libraryMenu                          ? QStringLiteral("libraryMenu")
+                    : showHidden                           ? QStringLiteral("showHiddenLibraries")
+                    : playerSettings                       ? QStringLiteral("playerSettings")
+                    : playerOptions                        ? QStringLiteral("playerOptions")
+                    : playerDetail || detailPrimaryCaption ? name
+                    : relatedRow                           ? QStringLiteral("relatedCard")
+                                                           : QStringLiteral("seekBar");
                 result.insert(key, state);
             }
             const auto children = item->childItems();

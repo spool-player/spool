@@ -2,6 +2,11 @@ name: tvOS source build
 
 on:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      release:
+        type: boolean
+        default: false
   push:
     branches: [feature/tvos]
 
@@ -9,61 +14,130 @@ permissions:
   contents: read
 
 concurrency:
-  group: tvos-${{ github.ref }}
+  group: tvos-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  simulator:
-    name: Qt mpv tvOS ${{ matrix.sdk }} build (simulator tests; device artifact audit only)
+  tvos:
+    name: tvOS (${{ matrix.sdk }} arm64)
     runs-on: macos-15
-    timeout-minutes: 180
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
-        sdk: [appletvsimulator, appletvos]
+        sdk: [appletvos, appletvsimulator]
+    env:
+      APPLE_SDK: ${{ matrix.sdk }}
+      APPLE_ARCH: arm64
+      APPLE_SYSTEM: tvOS
+      APPLE_BUILD: build/apple/${{ matrix.sdk }}-arm64
+      APPLE_MPV_PREFIX: ${{ github.workspace }}/build/apple/${{ matrix.sdk }}-arm64/mpv-prefix
+      QT_TARGET_PREFIX: ${{ github.workspace }}/build/apple/${{ matrix.sdk }}-arm64/qt
+      SPOOL_CACHE_WRITE: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && !inputs.release }}
+      CODE_SIGNING_ALLOWED: "NO"
+      JOBS: "3"
+      BUILD_JOBS: "3"
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
         with:
-          submodules: recursive
           persist-credentials: false
-      - name: Install native build tools
-        run: brew install cmake ninja meson pkg-config bash python imagemagick gpatch
-      - name: Install pinned macOS Qt host tools
-        run: |
-          python3 -m venv "$RUNNER_TEMP/aqt"
-          "$RUNNER_TEMP/aqt/bin/pip" install aqtinstall
-          version="$(python3 -c 'import json;print(json.load(open("tools/manifests/toolchain.json"))["qt"]["version"])')"
-          "$RUNNER_TEMP/aqt/bin/aqt" install-qt mac desktop "$version" clang_64 \
-            -O "$RUNNER_TEMP/Qt" -m qtshadertools qtwebsockets qtimageformats qttasktree
-          echo "QT_HOST_PATH=$RUNNER_TEMP/Qt/$version/macos" >> "$GITHUB_ENV"
-      - name: Build Qt and media libraries for Apple TV
-        env:
-          APPLE_SDK: ${{ matrix.sdk }}
-          APPLE_ARCH: arm64
-          JOBS: 3
-          BUILD_JOBS: 3
-        run: bash tools/build-tvos.sh
-      - uses: ./.github/actions/install-nix
-        if: matrix.sdk == 'appletvsimulator'
+          submodules: recursive
+      - uses: ./.github/actions/apple-build-tools
+        id: apple
         with:
-          nix_conf: |
-            experimental-features = nix-command flakes
-      - uses: cachix/cachix-action@3ba601ff5bbb07c7220846facfa2cd81eeee15a1
-        if: matrix.sdk == 'appletvsimulator'
+          sdk: ${{ matrix.sdk }}
+          cache-write: ${{ env.SPOOL_CACHE_WRITE }}
+      - name: Restore source-built tvOS Qt
+        id: qt
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
         with:
-          name: spool
-          skipPush: true
-      - name: Build same-binary host controller for the actual mobile app journey
-        if: matrix.sdk == 'appletvsimulator'
-        run: nix develop .#native -c env DEPLOY_APP=0 bash tools/build-macos.sh
-      - name: Run traditional then real GPU GUI tests in isolated Apple TV simulator
-        if: matrix.sdk == 'appletvsimulator'
-        run: bash tools/apple/smoke-tvos.sh build/tvos/appletvsimulator-arm64/install/Spool.app
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: always()
-        with:
-          name: internal-tvos-${{ matrix.sdk }}-arm64
           path: |
-            build/tvos/${{ matrix.sdk }}-arm64/install
-            build/tvos/smoke/*.png
-            build/tvos/smoke/*.json
+            ${{ env.APPLE_BUILD }}/qt
+            build/apple/qmlimportscanner/spool-qmlimportscanner
+          key: tvos-qt-${{ runner.arch }}-${{ matrix.sdk }}-${{ steps.apple.outputs.sdk-key }}-${{ steps.apple.outputs.tvos-qt-key }}
+      - name: Build source Qt
+        if: steps.qt.outputs.cache-hit != 'true'
+        run: bash tools/apple/build-qt-tvos.sh
+      - name: Save source-built tvOS Qt
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && steps.qt.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
+        with:
+          path: |
+            ${{ env.APPLE_BUILD }}/qt
+            build/apple/qmlimportscanner/spool-qmlimportscanner
+          key: ${{ steps.qt.outputs.cache-primary-key }}
+      - name: Restore tvOS media dependencies
+        id: media
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
+        with:
+          path: ${{ env.APPLE_BUILD }}/prefix
+          key: apple-media-${{ matrix.sdk }}-${{ steps.qt.outputs.cache-primary-key }}-${{ steps.apple.outputs.apple-deps-key }}
+      - name: Build tvOS media dependencies
+        if: steps.media.outputs.cache-hit != 'true'
+        run: bash tools/apple/build-dependencies.sh media
+      - name: Save tvOS media dependencies
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && steps.media.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
+        with:
+          path: ${{ env.APPLE_BUILD }}/prefix
+          key: ${{ steps.media.outputs.cache-primary-key }}
+      - name: Restore tvOS mpv and app builds
+        id: app
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
+        with:
+          path: |
+            ${{ env.APPLE_MPV_PREFIX }}
+            build/tvos/${{ matrix.sdk }}-arm64/app
+          key: tvos-app-${{ steps.media.outputs.cache-primary-key }}-${{ steps.apple.outputs.mpv-key }}-${{ steps.apple.outputs.tvos-app-key }}
+      - name: Build tvOS app
+        env:
+          BUILD_QT: '0'
+          BUILD_DEPENDENCIES: ${{ steps.app.outputs.cache-hit == 'true' && '0' || 'mpv' }}
+        run: bash tools/build-tvos.sh
+      - name: Save tvOS mpv and app builds
+        if: ${{ env.SPOOL_CACHE_WRITE == 'true' && steps.app.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
+        with:
+          path: |
+            ${{ env.APPLE_MPV_PREFIX }}
+            build/tvos/${{ matrix.sdk }}-arm64/app
+          key: ${{ steps.app.outputs.cache-primary-key }}
+      - name: Build native host controller for tvOS application journeys
+        if: matrix.sdk == 'appletvsimulator'
+        run: |
+          cmake -S tests/e2e/host -B build/apple/device-journey-host -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$QT_HOST_PATH"
+          cmake --build build/apple/device-journey-host
+
+      - name: Run tvOS traditional and real GPU GUI e2e tests
+        if: matrix.sdk == 'appletvsimulator'
+        env:
+          SPOOL_DEVICE_HOST_BUILD_DIR: build/apple/device-journey-host
+        run: bash tools/apple/smoke-tvos.sh build/tvos/appletvsimulator-arm64/install/Spool.app
+
+      - name: Package artifact-audited unsigned device IPA (no device runtime claim)
+        if: ${{ matrix.sdk == 'appletvos' }}
+        run: bash tools/package-tvos.sh build/tvos/appletvos-arm64/install/Spool.app dist/tvos
+      - name: Upload only the device release package
+        if: ${{ matrix.sdk == 'appletvos' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: spool-tvos-device-arm64
+          path: dist/tvos/Spool-*-tvOS-arm64.ipa
+          if-no-files-found: error
+          retention-days: ${{ inputs.release && 1 || 7 }}
+      - name: Archive simulator build without losing executable permissions
+        if: ${{ matrix.sdk == 'appletvsimulator' }}
+        run: |
+          tar -czf "$RUNNER_TEMP/tvos-simulator-arm64.tar.gz" \
+            -C build/tvos/appletvsimulator-arm64 install
+      - name: Keep simulator artifacts internal
+        if: ${{ always() && matrix.sdk == 'appletvsimulator' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: internal-tvos-simulator-arm64
+          path: |
+            ${{ runner.temp }}/tvos-simulator-arm64.tar.gz
+            build/tvos/smoke/safe-export
+            build/tvos/smoke/launch-result.json
+          retention-days: ${{ inputs.release && 1 || 7 }}

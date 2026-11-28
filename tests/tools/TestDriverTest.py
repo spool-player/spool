@@ -147,6 +147,40 @@ class TestSimulatorCrashReport(unittest.TestCase):
         self.assertEqual(exported["lastExceptionFrames"], [{"imageIndex": 0, "imageOffset": 43}])
         self.assertNotIn(private, json.dumps(exported))
 
+    def test_android_product_crash_export_keeps_only_allowed_modules_and_offsets(self):
+        private = self.report.parent / "private"
+        journey = private / "app-journey-test"
+        journey.mkdir(parents=True)
+        frame = {"module": "libspool_x86_64.so", "offset": "a42", "symbol": "private value"}
+        evidence = {
+            "platform": "android", "pid": 1234, "signal": 6,
+            "abortKind": "destroyed-mutex",
+            "frames": [frame, {"module": "/private/libc.so", "offset": "10"},
+                       {"module": "libmpv.so", "offset": "21"},
+                       {"module": "libc.so", "offset": "private value"}],
+        }
+        (journey / "mobile-crash-evidence.json").write_text(json.dumps(evidence))
+        destination = self.report.parent / "public"
+        self.adapter["export_attempt"](private, destination, {"status": "crashed", "signal": 6})
+        exported = json.loads((destination / "mobile-crash-evidence.json").read_text())
+        self.assertEqual(exported, {"platform": "android", "pid": 1234, "signal": 6,
+                                    "abortKind": "destroyed-mutex",
+                                    "frames": [{"module": "libspool_x86_64.so", "offset": "a42"},
+                                               {"module": "libmpv.so", "offset": "21"}]})
+
+    def test_pause_failure_export_keeps_only_numeric_mpv_end_diagnostics(self):
+        private = self.report.parent / "private"
+        private.mkdir()
+        pause = ("app-journey-pause: observations=1, timeouts=0, position_sample_age_ms=-1, "
+                 "mpv_event_age_ms=768, pause_request_age_ms=4190, mpv_end_reason=4, mpv_end_error=-11")
+        (private / "host-controller-private.log").write_text(
+            f"{pause}\n{pause} extra=/private/path\n{pause.replace('=-11', '=private')}\n")
+        destination = self.report.parent / "public"
+        self.adapter["export_attempt"](private, destination, {"status": "failed", "exitCode": 1})
+        self.assertEqual((destination / "attempt.log").read_text().splitlines(), [
+            "status=failed", "exitCode=1", pause,
+        ])
+
 
 if __name__ == "__main__":
     unittest.main()

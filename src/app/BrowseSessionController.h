@@ -162,6 +162,7 @@ public:
     void clear();
     void reset();
     void resetPaging(const QString& cacheKey = {});
+    void beginRefresh();
     void setPage(const PagedMovieItems& page, const QString& cacheKey, bool append);
     void setLoadingMore(bool loading);
     // A requested block of a sparse listing arrived, or could not be had.

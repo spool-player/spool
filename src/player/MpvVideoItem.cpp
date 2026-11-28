@@ -79,6 +79,7 @@ namespace {
         {
             disconnectWindow();
             releaseContext();
+            completeHandoff();
         }
 
         RenderLifecycle(const RenderLifecycle&) = delete;
@@ -224,8 +225,7 @@ namespace {
 
         static void onMpvUpdate(void *ctx)
         {
-            auto *item = static_cast<MpvVideoItem *>(ctx);
-            QMetaObject::invokeMethod(item, "update", Qt::QueuedConnection);
+            static_cast<MpvVideoItem *>(ctx)->scheduleMpvUpdate();
         }
 
         QMetaObject::Connection m_frameSwappedConnection;
@@ -272,6 +272,7 @@ namespace {
             // Qt owns the external-command bracket and binds this item's FBO.
             // Nested begin/end calls enqueue RHI state inside that bracket.
             if (m_lifecycle.hasPendingHandle()) {
+                QQuickOpenGLUtils::resetOpenGLState();
                 m_lifecycle.releaseContext();
                 if (auto *next = m_lifecycle.nextHandle())
                     createRenderContext(next);
@@ -292,6 +293,20 @@ namespace {
             QOpenGLFramebufferObject *fbo = framebufferObject();
             if (!fbo)
                 return;
+
+            // Qt's QQuickFramebufferObject boundary does not restore all GL
+            // raster/VAO/blend/scissor state between frames; libmpv requires
+            // default OpenGL state before every render pass.
+            QQuickOpenGLUtils::resetOpenGLState();
+            fbo->bind();
+#ifdef Q_OS_ANDROID
+            // The emulator's GLES translator can leave error flags after Qt
+            // restores state. libplacebo checks the shared context's error
+            // queue at frame start and would discard that frame.
+            auto *functions = QOpenGLContext::currentContext()->functions();
+            for (int i = 0; i < 8 && functions->glGetError() != GL_NO_ERROR; ++i) {
+            }
+#endif
 
             mpv_opengl_fbo mpfbo {};
             mpfbo.fbo = static_cast<int>(fbo->handle());
@@ -914,6 +929,18 @@ void MpvVideoItem::setMpvHandle(mpv_handle *handle)
     update();
 }
 
+void MpvVideoItem::scheduleMpvUpdate()
+{
+    if (!m_updateScheduled.exchange(true, std::memory_order_acq_rel))
+        QMetaObject::invokeMethod(this, &MpvVideoItem::handleMpvUpdate, Qt::QueuedConnection);
+}
+
+void MpvVideoItem::handleMpvUpdate()
+{
+    m_updateScheduled.store(false, std::memory_order_release);
+    update();
+}
+
 void MpvVideoItem::setRenderBackend(const QByteArray& backend)
 {
     m_renderBackend = backend;
@@ -954,16 +981,20 @@ bool MpvVideoItem::waitForRenderContext(int timeoutMs)
 
 bool MpvVideoItem::releaseMpvHandle(int timeoutMs)
 {
-    const auto completed = std::make_shared<std::atomic_bool>(false);
+    std::shared_ptr<std::atomic_bool> completed;
     QEventLoop releaseLoop;
     {
         QMutexLocker locker(&m_handleMutex);
-        const bool needsRenderHandoff = m_renderCtxAtomic.load() || m_pendingHandle;
-        m_pendingHandle = nullptr;
-        m_handleDirty = true;
-        if (!needsRenderHandoff)
-            return true;
-        m_releaseCompleted = completed;
+        // A nested teardown can arrive while the render thread is freeing
+        // the context. The null context pointer alone cannot acknowledge it.
+        if (!m_releaseCompleted) {
+            if (!m_renderCtxAtomic.load() && !m_pendingHandle)
+                return true;
+            m_releaseCompleted = std::make_shared<std::atomic_bool>(false);
+            m_pendingHandle = nullptr;
+            m_handleDirty = true;
+        }
+        completed = m_releaseCompleted;
     }
 
     QTimer timeout;
@@ -975,7 +1006,8 @@ bool MpvVideoItem::releaseMpvHandle(int timeoutMs)
     });
     timeout.start(timeoutMs);
     update();
-    releaseLoop.exec(QEventLoop::ExcludeUserInputEvents);
+    if (!completed->load())
+        releaseLoop.exec(QEventLoop::ExcludeUserInputEvents);
     return completed->load();
 }
 
@@ -997,7 +1029,6 @@ MpvVideoItem::HandleSnapshot MpvVideoItem::takePendingHandle()
     HandleSnapshot snap { m_pendingHandle, m_handleDirty, m_releaseCompleted, m_attachCompleted,
         m_pendingRenderBackend };
     m_handleDirty = false;
-    m_releaseCompleted.reset();
     return snap;
 }
 

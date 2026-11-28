@@ -43,23 +43,34 @@ QString delayStorageKey(const QString& output)
     return QStringLiteral("settings/webosAudioDelayMs/") + normalizedOutputKey(output);
 }
 
-int automaticBaseDelayMs(const QString& output, int displayLatencyMs, int outputLatencyMs)
+RouteLatencies resolveRouteLatencies(const QString& output, int displayMs, int outputMs, int firmwareMediaMs)
 {
     const QString key = normalizedOutputKey(output);
+    // The controls can return zero-filled payloads before the route is ready.
+    // These fallbacks are the calibrated values from the webOS sync experiment.
+    int fallbackOutput = firmwareMediaMs >= 0 && firmwareMediaMs <= 2000 ? firmwareMediaMs : -1;
+    if (fallbackOutput < 0 && key == QStringLiteral("external_arc"))
+        fallbackOutput = 53;
+    else if (fallbackOutput < 0 && key == QStringLiteral("tv_speaker"))
+        fallbackOutput = 74;
+    if (displayMs <= 0 && (outputMs > 0 || fallbackOutput >= 0 || key == QStringLiteral("bt_soundbar")))
+        displayMs = 150;
+    if (outputMs <= 0 && fallbackOutput >= 0)
+        outputMs = fallbackOutput;
+    return { displayMs, outputMs };
+}
 
+int automaticBaseDelayMs(const QString& output, int displayLatencyMs, int outputLatencyMs)
+{
     // The TV's Audio Latency Time control excludes Bluetooth codec, link, and
     // receiver latency. The measured end-to-end correction is the useful
     // value for this route.
-    if (key == QStringLiteral("bt_soundbar"))
+    if (normalizedOutputKey(output) == QStringLiteral("bt_soundbar"))
         return 20;
 
-    if (displayLatencyMs >= 0 && outputLatencyMs >= 0)
-        return qBound(-2000, displayLatencyMs - outputLatencyMs, 2000);
-
-    if (key == QStringLiteral("external_arc"))
-        return 97;
-    if (key == QStringLiteral("tv_speaker"))
-        return 76;
+    const auto latency = resolveRouteLatencies(output, displayLatencyMs, outputLatencyMs);
+    if (latency.displayMs >= 0 && latency.outputMs >= 0)
+        return qBound(-2000, latency.displayMs - latency.outputMs, 2000);
     return 0;
 }
 

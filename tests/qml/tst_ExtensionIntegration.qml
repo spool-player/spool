@@ -95,6 +95,35 @@ TestCase {
         compare(Settings.uiScalePercent, 100)
         tryCompare(settingsPage, "contentReady", true)
 
+        // The same settings page edits a single account, with a remote-selectable
+        // Default/On/Off choice and a separate default action for numeric rows.
+        settingsPage.configureServer(Integration.first)
+        selectSetting("playback/threadedStreaming")
+        compare(settingsPage.rowOptions(settingsPage.currentRow())[0], "Default (On)")
+        settingsPage.activate()
+        tryCompare(settingsPage, "choiceDialogVisible", true)
+        settingsPage.routeKey(Qt.Key_Down, "press", false)
+        settingsPage.routeKey(Qt.Key_Down, "press", false)
+        settingsPage.activate()
+        tryCompare(settingsPage, "choiceDialogVisible", false)
+        compare(Settings.effectiveValue("playback/threadedStreaming", Integration.first), false)
+        compare(Settings.effectiveValue("playback/threadedStreaming", Integration.second), true)
+        verify(Settings.hasServerOverride("playback/threadedStreaming", Integration.first))
+        settingsPage.activate()
+        tryCompare(settingsPage, "choiceDialogVisible", true)
+        settingsPage.routeKey(Qt.Key_Up, "press", false)
+        settingsPage.routeKey(Qt.Key_Up, "press", false)
+        settingsPage.activate()
+        tryCompare(settingsPage, "choiceDialogVisible", false)
+        verify(!Settings.hasServerOverride("playback/threadedStreaming", Integration.first))
+        Settings.setServerValue("playback/forwardCacheSizeMiB", 64, Integration.first)
+        settingsPage.openCategory("streaming", "action/useDefault/playback/forwardCacheSizeMiB")
+        tryCompare(settingsPage, "selectedRowKey", "action/useDefault/playback/forwardCacheSizeMiB")
+        settingsPage.activate()
+        verify(!Settings.hasServerOverride("playback/forwardCacheSizeMiB", Integration.first))
+        compare(Settings.serverPlaybackSummary(Integration.first), "Using your defaults")
+        settingsPage.configureServer("")
+
         // Preserve the rendered search result, not just query/model state, when
         // the category's retained row moves the ListView content origin.
         Metrics.keyboardFocusActive = true
@@ -135,6 +164,10 @@ TestCase {
         selectSetting("theme/reducedMotion")
         settingsPage.activateRow(settingsPage.currentRow(), settingsPage.currentIndex)
         cycle()
+        // Local persistence can queue another sync while the first cycle is
+        // finishing. Wait for the writes this test made to reach the provider.
+        tryVerify(() => Integration.stats("first").native.audioMode === "Smart" && state("audio/trackMode").status
+                        === "synced" && state("theme/reducedMotion").status === "synced", 10000)
         compare(Integration.stats("first").native.audioMode, "Smart")
         compare(state("theme/reducedMotion").status, "synced", JSON.stringify(state("theme/reducedMotion")))
         compare(record("first", "theme/reducedMotion"), true)

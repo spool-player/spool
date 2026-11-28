@@ -58,10 +58,16 @@ set(MPV_WEBOS_BUILD_DIR "${MPV_SOURCE_DIR}/build/webos-libmpv" CACHE PATH "webOS
 if(SPOOL_DEV_BUILD)
     set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
     set(CMAKE_INTERPROCEDURAL_OPTIMIZATION OFF)
+endif()
+
+if(NOT MSVC AND (SPOOL_DEV_BUILD OR "$ENV{CI}" STREQUAL "true"))
     find_program(CCACHE_PROGRAM ccache)
     if(CCACHE_PROGRAM)
-        set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
-        set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+        foreach(language IN ITEMS C CXX)
+            if(NOT DEFINED CMAKE_${language}_COMPILER_LAUNCHER)
+                set(CMAKE_${language}_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+            endif()
+        endforeach()
     endif()
 endif()
 
@@ -185,6 +191,7 @@ set(SPOOL_PLATFORM_SOURCES
     src/platform/PlatformSettingsPolicy.h
     src/platform/PlatformStartup.h
     src/platform/PlatformSystemProbes.h
+    src/platform/PlatformStreamingMemory.cpp
     src/platform/ScreenSaverInhibitor.h
     src/platform/common/NativeAppWindowCommon.cpp
     src/platform/common/PlatformDisplayOutput.cpp
@@ -271,6 +278,8 @@ set(SPOOL_SHELL_SOURCES
     src/app/LibraryQuery.h
     src/app/MemoryBudget.cpp
     src/app/MemoryBudget.h
+    src/app/StreamingCachePolicy.cpp
+    src/app/StreamingCachePolicy.h
     src/app/PlaybackStopPolicy.h
     src/app/RouterController.cpp
     src/app/RouterController.h
@@ -393,22 +402,14 @@ qt_add_executable(spool
     src/app/GraphicsStartup.h
 )
 
-if(NOT SPOOL_WEBOS)
-    target_sources(spool PRIVATE
-        src/automation/LocalCommandServer.cpp
-        src/automation/LocalCommandServer.h
-        src/automation/LocalControlProtocol.cpp
-        src/automation/LocalControlProtocol.h
-    )
-endif()
+target_sources(spool PRIVATE
+    src/automation/LocalCommandServer.cpp
+    src/automation/LocalCommandServer.h
+    src/automation/LocalControlProtocol.cpp
+    src/automation/LocalControlProtocol.h
+)
 if(NOT ANDROID AND NOT SPOOL_WEBOS AND NOT SPOOL_APPLE_MOBILE)
-    add_executable(spoolet
-        src/automation/SpooletMain.cpp
-        src/automation/LocalControlProtocol.cpp
-        src/automation/LocalControlProtocol.h
-    )
-    target_link_libraries(spoolet PRIVATE Qt6::Core Qt6::Network)
-    target_include_directories(spoolet PRIVATE src)
+    include(tools/cmake/Spoolet.cmake)
     if(UNIX AND NOT APPLE)
         set_target_properties(spoolet PROPERTIES INSTALL_RPATH "$ORIGIN/../lib")
     endif()
@@ -876,6 +877,7 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
         artwork-concurrency tests/app/ArtworkConcurrencyTest.cpp
         settings-schema tests/app/SettingsSchemaTest.cpp
         settings-controller tests/app/SettingsControllerTest.cpp
+        streaming-cache-policy tests/app/StreamingCachePolicyTest.cpp
         settings-sync-controller tests/app/SettingsSyncControllerTest.cpp
         settings-sync-document tests/app/SettingsSyncDocumentTest.cpp
         router-controller tests/app/RouterControllerTest.cpp
@@ -1028,6 +1030,9 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
         if(ANDROID)
             set(SPOOL_TEST_DEVICE_PLATFORM android)
             set(SPOOL_TEST_DEVICE_ARTIFACTS "${CMAKE_CURRENT_SOURCE_DIR}/build/android/launch-test")
+        elseif(IOS)
+            set(SPOOL_TEST_DEVICE_PLATFORM ios)
+            set(SPOOL_TEST_DEVICE_ARTIFACTS "${CMAKE_CURRENT_SOURCE_DIR}/build/ios/smoke")
         else()
             set(SPOOL_TEST_DEVICE_PLATFORM tvos)
             set(SPOOL_TEST_DEVICE_ARTIFACTS "${CMAKE_CURRENT_SOURCE_DIR}/build/tvos/smoke")
@@ -1042,6 +1047,21 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
     else()
     find_package(Threads REQUIRED)
     find_package(Qt6 REQUIRED COMPONENTS QuickTest)
+    # Packaged libmpv disables Meson's test executables. Keep its standalone
+    # policy and accounting contracts in the native application's CI suite.
+    foreach(transport_module IN ITEMS budget controller policy)
+        set(transport_test "spool-curl-${transport_module}-tests")
+        add_executable(${transport_test}
+            "${MPV_ACTIVE_SOURCE_DIR}/stream/curl_${transport_module}.c"
+            "${MPV_ACTIVE_SOURCE_DIR}/test/curl_${transport_module}.c")
+        target_include_directories(${transport_test} PRIVATE "${MPV_ACTIVE_SOURCE_DIR}")
+        target_compile_features(${transport_test} PRIVATE c_std_11)
+        if(UNIX)
+            target_link_libraries(${transport_test} PRIVATE m)
+        endif()
+        add_test(NAME "curl-${transport_module}" COMMAND ${transport_test})
+        set_tests_properties("curl-${transport_module}" PROPERTIES LABELS traditional TIMEOUT 30)
+    endforeach()
     get_target_property(SPOOL_APP_SOURCES spool SOURCES)
     set(SPOOL_TEST_PLATFORM_SOURCES ${SPOOL_APP_SOURCES})
     list(FILTER SPOOL_TEST_PLATFORM_SOURCES INCLUDE REGEX "/[A-Za-z]+PlatformCapabilities\\.cpp$")
@@ -1055,6 +1075,8 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
         target_sources(spool-tests PRIVATE tests/automation/LocalControlProtocolTest.cpp
             tests/automation/LocalControlAdmissionTest.cpp src/automation/LocalControlProtocol.cpp
             src/automation/LocalCommandServer.cpp)
+        add_dependencies(spool-tests spoolet)
+        target_compile_definitions(spool-tests PRIVATE SPOOL_TEST_SPOOLET="$<TARGET_FILE:spoolet>")
     endif()
     add_test(NAME traditional-native COMMAND spool-tests --run-all --results "${CMAKE_CURRENT_BINARY_DIR}/traditional-results.json")
     set_tests_properties(traditional-native PROPERTIES LABELS traditional ENVIRONMENT "${SPOOL_TEST_ENV}" TIMEOUT 0)
@@ -1138,12 +1160,21 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
     add_test(NAME module-seam
         COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-module-seam.sh"
     )
+    add_test(NAME toolchain-versions
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/ToolchainVersionsTest.py")
+
+    add_test(NAME streaming-candidates
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/StreamingCandidatesTest.py")
 
     add_test(NAME network-shaper
         COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/NetworkShaperTest.py"
             "${CMAKE_CURRENT_SOURCE_DIR}/tools/network-shaper.py"
     )
+
+    add_test(NAME jellyfin-latency-harness
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/JellyfinLatencyHarnessTest.py")
+    set_tests_properties(jellyfin-latency-harness PROPERTIES LABELS traditional)
 
     add_test(NAME render-benchmark-report
         COMMAND "${Python3_EXECUTABLE}"
@@ -1250,6 +1281,7 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
             PREFIX "/qt/qml/Spool"
             FILES
                 tests/qml/tst_MediaRow.qml
+                tests/qml/tst_RowStackView.qml
                 tests/qml/tst_SubtitleSettingsPanel.qml
                 tests/qml/tst_RemoteControlPage.qml
                 tests/qml/tst_ProviderInstallDialog.qml
@@ -1271,7 +1303,7 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
             math(EXPR qml_source_index "${qml_index} + 1")
             list(GET SPOOL_QML_TESTS ${qml_index} qml_test_name)
             list(GET SPOOL_QML_TESTS ${qml_source_index} qml_test_source)
-            if(qml_test_name MATCHES "^(subtitle-settings-panel|remote-control-page|provider-install-dialog|provider-shell|player-seek-bar-hover|media-row|extension-integration|provider-forms|artwork-integration|library-scale-profile|option-picker-input)$")
+            if(qml_test_name MATCHES "^(subtitle-settings-panel|remote-control-page|provider-install-dialog|provider-shell|player-seek-bar-hover|media-row|row-stack-view|extension-integration|provider-forms|artwork-integration|library-scale-profile|option-picker-input)$")
                 set(qml_input ":/qt/qml/Spool/${qml_test_source}")
             else()
                 set(qml_input "${CMAKE_CURRENT_SOURCE_DIR}/${qml_test_source}")
@@ -1330,8 +1362,13 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
             set_target_properties(${test_target} PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF
                 INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL OFF)
         endforeach()
-        set_tests_properties(provider-sdk-tool local-provider-overrides ffmpeg-capability-generator module-seam
-            network-shaper render-benchmark-report altstore-source player-setup-report test-driver-ordering PROPERTIES LABELS traditional)
+        set_tests_properties(provider-sdk-tool local-provider-overrides ffmpeg-capability-generator module-seam toolchain-versions
+            network-shaper streaming-candidates render-benchmark-report altstore-source player-setup-report test-driver-ordering PROPERTIES LABELS traditional)
+        if(UNIX)
+            add_test(NAME streaming-dependencies COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/StreamingDependenciesTest.py")
+            set_tests_properties(streaming-dependencies PROPERTIES LABELS traditional TIMEOUT 120)
+        endif()
         if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
             set_tests_properties(package-audit webos-tooling PROPERTIES LABELS traditional)
             # Exercise the actual curl scheduler/counters, not just its exposed
@@ -1340,7 +1377,25 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
             add_test(NAME curl-transport
                 COMMAND "${Python3_EXECUTABLE}" "${MPV_ACTIVE_SOURCE_DIR}/test/curl_transport.py"
                     --libmpv "${SPOOL_CURL_TEST_MPV}" -v)
-            set_tests_properties(curl-transport PROPERTIES LABELS traditional TIMEOUT 180)
+            # The real-HTTP suite runs about 330 s of playback serially.
+            set_tests_properties(curl-transport PROPERTIES LABELS traditional TIMEOUT 600)
+            add_test(NAME transport-protocols COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/transport/protocols.py"
+                --transport-helper "${MPV_ACTIVE_SOURCE_DIR}/test/curl_transport.py"
+                --libmpv "${SPOOL_CURL_TEST_MPV}")
+            set_tests_properties(transport-protocols PROPERTIES LABELS traditional TIMEOUT 300)
+            add_test(NAME jellyfin-latency-e2e COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/jellyfin_latency_e2e.py"
+                --libmpv "${SPOOL_CURL_TEST_MPV}"
+                --transport-helper "${MPV_ACTIVE_SOURCE_DIR}/test/curl_transport.py"
+                --shaper-script "${CMAKE_CURRENT_SOURCE_DIR}/tools/network-shaper.py"
+                --spool-tests "$<TARGET_FILE:spool-tests>")
+            set_tests_properties(jellyfin-latency-e2e PROPERTIES LABELS e2e TIMEOUT 300 SKIP_RETURN_CODE 77)
+            add_test(NAME transport-packet-performance COMMAND bash
+                "${CMAKE_CURRENT_SOURCE_DIR}/tools/test-transport-netns.sh"
+                --libmpv "${SPOOL_CURL_TEST_MPV}")
+            set_tests_properties(transport-packet-performance PROPERTIES LABELS performance
+                RUN_SERIAL TRUE RESOURCE_LOCK transport-network TIMEOUT 2400 SKIP_RETURN_CODE 77)
         endif()
     endif()
     if(SPOOL_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")

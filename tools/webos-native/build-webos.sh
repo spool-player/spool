@@ -33,18 +33,19 @@ run_phase() {
   local phase="$1"
   case "$phase" in
     fetch)
-      "$TOOLS_ROOT/build-qt6-611.sh" fetch
+      "$TOOLS_ROOT/build-qt6.sh" fetch
       "$TOOLS_ROOT/build-third-party.sh" fetch
       "$TOOLS_ROOT/build-curl.sh" fetch
       "$TOOLS_ROOT/build-qcoro.sh" fetch
       fetch_toolchain_ffmpeg
       ;;
     qt-host)
-      "$TOOLS_ROOT/build-qt6-611.sh" host
+      "$TOOLS_ROOT/build-qt6.sh" host
       ;;
     qt-target)
       WEBOS_SDK_ROOT="$SDK_ROOT" "$TOOLS_ROOT/restore-toolchain.sh"
-      QT_STATIC="${QT_STATIC:-1}" "$TOOLS_ROOT/build-qt6-611.sh" target
+      "$TOOLS_ROOT/build-curl.sh" build
+      QT_STATIC="${QT_STATIC:-1}" "$TOOLS_ROOT/build-qt6.sh" target
       ;;
     dependencies)
       WEBOS_SDK_ROOT="$SDK_ROOT" "$TOOLS_ROOT/restore-toolchain.sh"
@@ -64,7 +65,11 @@ run_phase() {
 }
 
 if [[ "$PHASE" == "all" ]]; then
-  for phase in fetch qt-host qt-target dependencies app stage package; do
+  phases=(app stage package)
+  if [[ "${SPOOL_WEBOS_DEPENDENCIES_READY:-0}" != 1 ]]; then
+    phases=(fetch qt-host qt-target dependencies "${phases[@]}")
+  fi
+  for phase in "${phases[@]}"; do
     echo
     echo ">>> webOS phase: $phase"
     run_phase "$phase"

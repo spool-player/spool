@@ -18,6 +18,14 @@
 #include <QTemporaryDir>
 #include <QThread>
 
+#if defined(Q_OS_LINUX) || defined(Q_OS_MACOS)
+#include "platform/common/CredentialStoreFileBackend.h"
+
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
+
 #include <cstdlib>
 #include <functional>
 #include <iostream>
@@ -220,6 +228,76 @@ void credentialRecordRestore()
     }
 }
 
+void networkProfileCleanupDuringRestore()
+{
+    QTemporaryDir directory;
+    require(directory.isValid(), "network profile temporary directory");
+    qputenv("SPOOL_CREDENTIAL_STORE_DIR", directory.filePath(QStringLiteral("credentials")).toUtf8());
+    const QString installs = directory.filePath(QStringLiteral("providers"));
+    require(
+        ProviderPackage::install(ProviderFixture::package(), installs).has_value(), "network profile fixture installs");
+    DatabaseManager database;
+    require(database.initialize(directory.filePath(QStringLiteral("cache.sqlite"))), "network profile database opens");
+
+    const QString accountsKey = QStringLiteral("providers/accounts/2");
+    const QString accountId = QStringLiteral("ffeeddcc-aaaa-bbbb-cccc-0123456789ab");
+    const QJsonArray accounts { QJsonObject {
+        { "id", accountId }, { "module", "fixture.test" }, { "enabled", false } } };
+    const QJsonObject profiles { { "old", QJsonObject { { "format", 1 } } },
+        { "current", QJsonObject { { "format", 2 } } } };
+    const QString saved = QString::fromUtf8(
+        QJsonDocument(QJsonObject { { "format", 2 }, { "accounts", accounts }, { "networkProfiles", profiles } })
+            .toJson(QJsonDocument::Compact));
+    database.saveSetting(accountsKey, saved);
+    require(QCoro::waitFor(database.loadSettingAsync(accountsKey)) == saved, "saved account and profiles are seeded");
+    require(CredentialStore::save(accountId, QStringLiteral("{}")), "network profile fixture credential is seeded");
+
+#if defined(Q_OS_LINUX) || defined(Q_OS_MACOS)
+    // Keep the real file-backed credential load suspended until the registry is about to quit.
+    const QString credentialPath = CredentialStore::FileBackend::path(accountId);
+    const QByteArray fifoPath = QFile::encodeName(credentialPath);
+    require(QFile::remove(credentialPath) && ::mkfifo(fifoPath.constData(), 0600) == 0, "credential FIFO is created");
+    auto interrupted = std::make_unique<ProviderRegistry>(&database);
+    interrupted->setInstallDirectory(installs);
+    interrupted->loadModules();
+    auto restore = interrupted->restore();
+    int writer = -1;
+    waitUntil(
+        [&] {
+            if (writer == -1)
+                writer = ::open(fifoPath.constData(), O_WRONLY | O_NONBLOCK);
+            return writer != -1;
+        },
+        "restore reaches the pending credential read");
+    require(!interrupted->restored() && interrupted->accountList().empty(), "credential restore is suspended");
+    ::close(writer);
+    interrupted.reset();
+    QCoro::waitFor(std::move(restore));
+    require(QCoro::waitFor(database.loadSettingAsync(accountsKey)) == saved,
+        "quitting during credential restore must preserve the saved account envelope");
+    require(QFile::remove(credentialPath) && CredentialStore::save(accountId, QStringLiteral("{}")),
+        "credential becomes readable for the next startup");
+#endif
+
+    {
+        ProviderRegistry registry(&database);
+        registry.setInstallDirectory(installs);
+        registry.loadModules();
+        QCoro::waitFor(registry.restore());
+        require(registry.accountList().size() == 1 && registry.accountList().front().id == accountId,
+            "completed restore loads the saved account");
+    }
+    const auto cleaned
+        = QJsonDocument::fromJson(QCoro::waitFor(database.loadSettingAsync(accountsKey)).toUtf8()).object();
+    const auto cleanedAccounts = cleaned.value(QStringLiteral("accounts")).toArray();
+    const auto cleanedProfiles = cleaned.value(QStringLiteral("networkProfiles")).toObject();
+    require(cleanedAccounts.size() == 1 && cleanedAccounts.first().toObject().value(QStringLiteral("id")) == accountId,
+        "the cleanup save preserves the restored account");
+    require(
+        cleanedProfiles.size() == 1 && cleanedProfiles.value(QStringLiteral("current")) == profiles.value("current"),
+        "the cleanup save discards only the obsolete network profile");
+}
+
 QVariantMap row(const ProviderRegistry& registry, const QString& id)
 {
     for (const QVariant& value : registry.accounts()) {
@@ -358,6 +436,7 @@ SPOOL_TEST_MAIN("provider-registry")
 {
     QCoreApplication app(argc, argv);
     credentialRecordRestore();
+    networkProfileCleanupDuringRestore();
     profileStartupChoices();
     QTemporaryDir directory;
     require(directory.isValid(), "temporary directory");
@@ -461,6 +540,21 @@ SPOOL_TEST_MAIN("provider-registry")
 
         require(failure(registry.callSource(carol, QStringLiteral("throws"))) == QStringLiteral("provider_error"),
             "provider error text never reaches the app");
+        const int warningsBeforeFailure = problems.size();
+        require(failure(registry.callSource(carol, QStringLiteral("unreachable"))) == QStringLiteral("network_error"),
+            "a running provider delivers a connection failure");
+        require(row(registry, carol).value(QStringLiteral("connectionState")) == QStringLiteral("failed")
+                && row(registry, carol).value(QStringLiteral("running")).toBool()
+                && !row(registry, carol).value(QStringLiteral("errorText")).toString().isEmpty()
+                && problems.size() == warningsBeforeFailure + 1,
+            "a live runtime is not reported as a healthy account after a failed connection");
+        QCoro::waitFor(registry.callSource(carol, QStringLiteral("configuration")));
+        require(row(registry, carol).value(QStringLiteral("connectionState")) == QStringLiteral("failed"),
+            "local provider work cannot erase a connection failure");
+        QCoro::waitFor(registry.callSource(carol, QStringLiteral("libraries")));
+        require(row(registry, carol).value(QStringLiteral("connectionState")) == QStringLiteral("active")
+                && row(registry, carol).value(QStringLiteral("errorText")).toString().isEmpty(),
+            "a successful library request clears the connection failure");
         require(failure(registry.callSource(carol, QStringLiteral("expired"))) == QStringLiteral("http_401"),
             "stable error codes pass through");
         bool needsSignIn = false;

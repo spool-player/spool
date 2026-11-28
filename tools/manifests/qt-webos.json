@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "modules": ["qtbase", "qtshadertools", "qttools", "qtdeclarative", "qtwebsockets", "qtwayland", "qtimageformats", "qtsvg"],
+  "patches": [
+    "tools/webos-native/patches/qtbase-6.12-webos-qstorageinfo-linux.patch",
+    "tools/webos-native/patches/qtbase-6.12-webos-qelfparser.patch",
+    "tools/webos-native/patches/qtbase-6.12-webos-wayland-no-opengl-forward-decl.patch",
+    "tools/webos-native/patches/qtbase-6.12-webos-qplatformwindow-private-moc.patch",
+    "tools/webos-native/patches/qtbase-6.12-webos-mt-tool-palm.patch",
+    "tools/webos-native/patches/qtbase-6.12-webos-no-cursor-set.patch",
+    "tools/webos-native/patches/qtwayland-6.12-webos-wayland-version.patch"
+  ],
+  "toolchain": {
+    "triplet": "arm-webos-linux-gnueabi",
+    "sdkLayout": "arm-webos-linux-gnueabi_sdk-buildroot",
+    "archiveUrl": "https://github.com/openlgtv/buildroot-nc4/releases/download/webos-a38c582/arm-webos-linux-gnueabi_sdk-buildroot-x86_64.tar.gz",
+    "archiveSha256": "04ad3311b48b4557a7002aef56ae2e167478e8e129f37daac04649bddf813616",
+    "releaseTag": "webos-a38c582",
+    "buildrootVersion": "2025.02.1",
+    "gccVersion": "14.2.0"
+  },
+  "configure": {
+    "host": ["release", "examples=off", "tests=off", "opengl=off"],
+    "targetShared": ["release", "examples=off", "tests=off", "shared"],
+    "targetStatic": ["release", "examples=off", "tests=off", "static"]
+  }
+}

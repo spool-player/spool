@@ -401,18 +401,37 @@ void HomeModelController::saveCachedPayload(const QJsonObject& payload)
         m_database->saveHomePayload(key, kHomePayloadSchemaVersion, payload);
 }
 
+void HomeModelController::setLibrariesLoading(bool loading)
+{
+    if (m_librariesLoading == loading)
+        return;
+    m_librariesLoading = loading;
+    emit loadingChanged();
+}
+
 void HomeModelController::refresh(const std::vector<LibraryItem>& libraries)
 {
+    const bool inventoryChanged = libraries.size() != m_allLibraries.size()
+        || !std::equal(libraries.begin(), libraries.end(), m_allLibraries.begin(),
+            [](const LibraryItem& next, const LibraryItem& current) {
+                return next.id == current.id && next.name == current.name
+                    && next.collectionType == current.collectionType;
+            });
     m_allLibraries = libraries;
+    if (!m_api || !m_api->signedIn())
+        return;
+    if (m_loaded || m_refreshInFlight) {
+        if (!inventoryChanged)
+            return;
+        m_generation.invalidate();
+        m_refreshInFlight = false;
+        m_loaded = false;
+    }
     std::vector<LibraryItem> selectedLibraries;
     for (const LibraryItem& library : libraries) {
         if (includesItem(library.id))
             selectedLibraries.push_back(library);
     }
-    if (!m_api || !m_api->signedIn())
-        return;
-    if (m_loaded || m_refreshInFlight)
-        return;
 
     const RequestGeneration::Token generation = m_generation.next();
     m_refreshInFlight = true;
@@ -841,6 +860,7 @@ void HomeModelController::reset()
     m_locallyPlayed.clear();
     m_optimisticNextUp.clear();
     m_refreshInFlight = false;
+    m_librariesLoading = false;
     m_loaded = false;
     m_networkResultsPublished = false;
     m_cacheGeneration.invalidate();
@@ -885,14 +905,20 @@ bool HomeModelController::updateLatestLibraryRows(std::vector<PendingLatestLibra
         return metadataChanged;
     }
 
-    m_latestLibrarySections.clear();
-    m_latestLibrarySections.reserve(sections.size());
+    std::vector<LatestLibrarySection> nextSections;
+    nextSections.reserve(sections.size());
     for (PendingLatestLibrarySection& pending : sections) {
-        auto model = std::make_unique<MovieGridModel>();
-        QQmlEngine::setObjectOwnership(model.get(), QQmlEngine::CppOwnership);
+        const auto existing = std::find_if(m_latestLibrarySections.begin(), m_latestLibrarySections.end(),
+            [&pending](const LatestLibrarySection& current) { return current.library.id == pending.library.id; });
+        auto model = existing != m_latestLibrarySections.end() ? std::move(existing->model) : nullptr;
+        if (!model) {
+            model = std::make_unique<MovieGridModel>();
+            QQmlEngine::setObjectOwnership(model.get(), QQmlEngine::CppOwnership);
+        }
         model->setMovies(std::move(pending.items));
-        m_latestLibrarySections.push_back({ pending.order, std::move(pending.library), std::move(model) });
+        nextSections.push_back({ pending.order, std::move(pending.library), std::move(model) });
     }
+    m_latestLibrarySections = std::move(nextSections);
     return true;
 }
 

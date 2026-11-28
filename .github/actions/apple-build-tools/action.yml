@@ -1,0 +1,127 @@
+name: Apple build tools and Qt kits
+description: Install the host tools and exact Qt binary kits needed for an Apple SDK.
+inputs:
+  sdk:
+    description: Xcode SDK to build against.
+    required: true
+  ios-kit:
+    description: Optional aqt iOS binary kit.
+    default: ""
+  cache-write:
+    description: Whether to save a cache in the current GitHub ref scope.
+    default: "false"
+outputs:
+  sdk-key:
+    description: Xcode, compiler and SDK identity.
+    value: ${{ steps.pins.outputs.sdk_key }}
+  ios-kit-key:
+    description: iOS Qt binary kit fingerprint.
+    value: ${{ steps.pins.outputs.key_ios_kit }}
+  tvos-qt-key:
+    description: tvOS source Qt fingerprint.
+    value: ${{ steps.pins.outputs.key_tvos_qt }}
+  apple-deps-key:
+    description: Apple media prefix fingerprint.
+    value: ${{ steps.pins.outputs.key_apple_deps }}
+  ios-app-key:
+    description: iOS application build recipe fingerprint.
+    value: ${{ steps.pins.outputs.key_ios_app }}
+  tvos-app-key:
+    description: tvOS application build recipe fingerprint.
+    value: ${{ steps.pins.outputs.key_tvos_app }}
+  mpv-key:
+    description: mpv revision and build profile.
+    value: ${{ steps.pins.outputs.key_mpv }}
+  ios-deployment-target:
+    description: iOS deployment target.
+    value: ${{ steps.pins.outputs.ios_deployment_target }}
+  tvos-deployment-target:
+    description: tvOS deployment target.
+    value: ${{ steps.pins.outputs.tvos_deployment_target }}
+runs:
+  using: composite
+  steps:
+    - name: Read Apple build pins and SDK identity
+      id: pins
+      shell: bash
+      env:
+        APPLE_SDK: ${{ inputs.sdk }}
+        IOS_KIT: ${{ inputs.ios-kit }}
+      run: |
+        bash tools/toolchain-versions.sh >>"$GITHUB_OUTPUT"
+        version="$(bash tools/toolchain-versions.sh qt.version)"
+        kits="$GITHUB_WORKSPACE/build/apple/host-qt"
+        echo "kits=$kits" >>"$GITHUB_OUTPUT"
+        echo "QT_HOST_PATH=$kits/$version/macos" >>"$GITHUB_ENV"
+        if [[ -n "$IOS_KIT" ]]; then
+          echo "QT_TARGET_PREFIX=$kits/$version/$IOS_KIT" >>"$GITHUB_ENV"
+        fi
+        identity="$(
+          xcodebuild -version
+          for sdk in "$APPLE_SDK" macosx; do
+            xcrun --sdk "$sdk" --show-sdk-build-version
+            xcrun --sdk "$sdk" --show-sdk-path
+            xcrun --sdk "$sdk" clang --version
+          done
+        )"
+        key="$(printf '%s\n' "$identity" | shasum -a 256)"
+        echo "sdk_key=${key:0:24}" >>"$GITHUB_OUTPUT"
+    - name: Install native build tools
+      shell: bash
+      run: bash tools/apple/install-build-tools.sh
+    - name: Restore macOS Qt host kit
+      id: host
+      uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
+      with:
+        path: ${{ steps.pins.outputs.kits }}/${{ steps.pins.outputs.qt_version }}/macos
+        key: apple-host-qt-${{ runner.arch }}-${{ steps.pins.outputs.key_apple_host }}
+    - name: Restore iOS target kit
+      if: inputs.ios-kit != ''
+      id: ios
+      uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
+      with:
+        path: ${{ steps.pins.outputs.kits }}/${{ steps.pins.outputs.qt_version }}/${{ inputs.ios-kit }}
+        key: apple-ios-kit-${{ runner.arch }}-${{ inputs.ios-kit }}-${{ steps.pins.outputs.key_ios_kit }}
+    - name: Install the pinned aqt release
+      if: steps.host.outputs.cache-hit != 'true' || (inputs.ios-kit != '' && steps.ios.outputs.cache-hit != 'true')
+      shell: bash
+      env:
+        AQT_VERSION: ${{ steps.pins.outputs.aqt_version }}
+      run: |
+        python3 -m venv "$RUNNER_TEMP/aqt"
+        "$RUNNER_TEMP/aqt/bin/pip" install "aqtinstall==$AQT_VERSION"
+    - name: Install macOS Qt host kit
+      if: steps.host.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        QT_VERSION: ${{ steps.pins.outputs.qt_version }}
+        QT_MODULES: ${{ steps.pins.outputs.apple_qt_modules }}
+        QT_KITS: ${{ steps.pins.outputs.kits }}
+      run: |
+        read -r -a modules <<<"$QT_MODULES"
+        "$RUNNER_TEMP/aqt/bin/aqt" install-qt mac desktop "$QT_VERSION" clang_64 \
+          -O "$QT_KITS" -m "${modules[@]}"
+    - name: Install iOS Qt target kit
+      if: inputs.ios-kit != '' && steps.ios.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        QT_VERSION: ${{ steps.pins.outputs.qt_version }}
+        QT_MODULES: ${{ steps.pins.outputs.apple_qt_modules }}
+        QT_KITS: ${{ steps.pins.outputs.kits }}
+        IOS_KIT: ${{ inputs.ios-kit }}
+      run: |
+        read -r -a modules <<<"$QT_MODULES"
+        "$RUNNER_TEMP/aqt/bin/python" tools/apple/aqt-ios.py install-qt mac ios "$QT_VERSION" "$IOS_KIT" \
+          -O "$QT_KITS" --archives qtbase qttools qtdeclarative qtsvg -m "${modules[@]}"
+    - name: Save macOS Qt host kit
+      if: inputs.cache-write == 'true' && steps.host.outputs.cache-hit != 'true'
+      uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
+      with:
+        path: ${{ steps.pins.outputs.kits }}/${{ steps.pins.outputs.qt_version }}/macos
+        key: ${{ steps.host.outputs.cache-primary-key }}
+    - name: Save iOS Qt target kit
+      if: inputs.cache-write == 'true' && inputs.ios-kit != '' && steps.ios.outputs.cache-hit != 'true'
+      uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.0.3
+      with:
+        path: ${{ steps.pins.outputs.kits }}/${{ steps.pins.outputs.qt_version }}/${{ inputs.ios-kit }}
+        key: ${{ steps.ios.outputs.cache-primary-key }}

@@ -258,9 +258,8 @@ FocusScope {
                     Layout.fillWidth: true
                     spacing: Metrics.scaled(8)
                     function controls() {
-                        return [settingsButton, openButton, homeButton, cancelButton, removeAccountButton].filter(item
-                                                                                                                  => item.visible
-                                                                                                                     && item.enabled)
+                        return [settingsButton, playbackButton, openButton, homeButton, cancelButton,
+                                removeAccountButton].filter(item => item.visible && item.enabled)
                     }
                     AppText {
                         Layout.fillWidth: true
@@ -284,8 +283,10 @@ FocusScope {
                     }
                     SecondaryText {
                         Layout.fillWidth: true
-                        visible: !accountRow.modelData.hasSettings
-                        text: "No settings for this account."
+                        text: {
+                            const overrides = Settings.serverOverrides
+                            return Settings.serverPlaybackSummary(accountRow.modelData.id)
+                        }
                         wrapMode: Text.WordWrap
                     }
                     AppText {
@@ -299,6 +300,18 @@ FocusScope {
                     Flow {
                         Layout.fillWidth: true
                         spacing: Metrics.scaled(12)
+                        ActionButton {
+                            id: playbackButton
+                            readonly property string focusKey: "playback:" + accountRow.modelData.id
+                            text: "Playback settings"
+                            enabled: !accountRow.modelData.removing
+                            onClicked: {
+                                root.focusControl(playbackButton)
+                                root.shell.pushRoute("settings", {
+                                                         "sourceId": accountRow.modelData.id
+                                                     })
+                            }
+                        }
                         ActionButton {
                             id: settingsButton
                             readonly property string focusKey: "settings:" + accountRow.modelData.id

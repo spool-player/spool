@@ -8,6 +8,11 @@ if [ -z "$MANIFEST_PYTHON" ]; then
   exit 1
 fi
 
+# macOS ships a patch implementation with different fuzzy-hunk behavior.
+# The Apple build installs GNU patch explicitly; use it for the same pinned
+# source transformations that run on Linux, falling back elsewhere.
+MANIFEST_PATCH="${MANIFEST_PATCH:-$(command -v gpatch || command -v patch || true)}"
+
 manifest_source_field() {
   local manifest="$1"
   local source_name="$2"
@@ -15,43 +20,13 @@ manifest_source_field() {
   "$MANIFEST_PYTHON" -c '
 import json
 import sys
+sys.stdout.reconfigure(newline="\n")
 
 with open(sys.argv[1], encoding="utf-8") as handle:
     data = json.load(handle)
 value = data["sources"][sys.argv[2]][sys.argv[3]]
 print(value)
 ' "$manifest" "$source_name" "$field"
-}
-
-manifest_qt_field() {
-  local manifest="$1"
-  local field="$2"
-  "$MANIFEST_PYTHON" -c '
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as handle:
-    data = json.load(handle)
-print(data[sys.argv[2]])
-' "$manifest" "$field"
-}
-
-manifest_qt_module_sha256() {
-  local manifest="$1"
-  local module="$2"
-  "$MANIFEST_PYTHON" -c '
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as handle:
-    data = json.load(handle)
-for module in data["modules"]:
-    if module["name"] == sys.argv[2]:
-        print(module["sha256"])
-        break
-else:
-    raise SystemExit(f"module not found in manifest: {sys.argv[2]}")
-' "$manifest" "$module"
 }
 
 manifest_tool_field() {
@@ -61,6 +36,7 @@ manifest_tool_field() {
   "$MANIFEST_PYTHON" -c '
 import json
 import sys
+sys.stdout.reconfigure(newline="\n")
 
 with open(sys.argv[1], encoding="utf-8") as handle:
     data = json.load(handle)
@@ -74,10 +50,13 @@ manifest_json_array() {
   "$MANIFEST_PYTHON" -c '
 import json
 import sys
+sys.stdout.reconfigure(newline="\n")
 
 with open(sys.argv[1], encoding="utf-8") as handle:
-    data = json.load(handle)
-for value in data[sys.argv[2]]:
+    values = json.load(handle)
+for key in sys.argv[2].split("."):
+    values = values[key]
+for value in values:
     print(value)
 ' "$manifest" "$key"
 }
@@ -88,6 +67,7 @@ manifest_source_patches() {
   "$MANIFEST_PYTHON" -c '
 import json
 import sys
+sys.stdout.reconfigure(newline="\n")
 
 with open(sys.argv[1], encoding="utf-8") as handle:
     data = json.load(handle)
@@ -102,6 +82,7 @@ manifest_vendored_sources() {
   "$MANIFEST_PYTHON" -c '
 import json
 import sys
+sys.stdout.reconfigure(newline="\n")
 
 with open(sys.argv[1], encoding="utf-8") as handle:
     data = json.load(handle)
@@ -172,9 +153,9 @@ prepare_manifest_source() {
 
   while IFS= read -r patch; do
     [[ -n "$patch" ]] || continue
-    if ! patch -d "$destination" -p1 --dry-run --reverse --silent \
+    if ! "$MANIFEST_PATCH" -d "$destination" -p1 --dry-run --reverse --silent \
         <"$root/$patch" >/dev/null 2>&1; then
-      patch -d "$destination" -p1 <"$root/$patch"
+      "$MANIFEST_PATCH" -d "$destination" -p1 <"$root/$patch"
     fi
   done < <(manifest_source_patches "$manifest" "$source_name")
 }
@@ -188,13 +169,23 @@ toolchain_field() {
   "$MANIFEST_PYTHON" -c '
 import json
 import sys
+sys.stdout.reconfigure(newline="\n")
 
 with open(sys.argv[1] + "/tools/manifests/toolchain.json", encoding="utf-8") as handle:
     value = json.load(handle)
 for key in sys.argv[2].split("."):
     value = value[key]
-print(value)
+print(" ".join(value) if isinstance(value, list) else value)
 ' "$root" "$path"
+}
+
+toolchain_qt_sources_url() {
+  local root="$1"
+  local archive_field="${2:-qt.archiveBaseUrl}"
+  printf '%s/%s/%s/submodules\n' \
+    "$(toolchain_field "$root" "$archive_field")" \
+    "$(toolchain_field "$root" qt.series)" \
+    "$(toolchain_field "$root" qt.version)"
 }
 
 # FFmpeg is pinned centrally rather than repeated per platform, so the cross

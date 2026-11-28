@@ -65,8 +65,7 @@ MPV_SRC="${MPV_SRC:-$ROOT/mpv}"
 MPV_BUILD="${MPV_BUILD:-$MPV_SRC/build/webos-libmpv}"
 WEBOS_CROSS_FILE="${WEBOS_CROSS_FILE:-$ROOT/build/webos-thirdparty-build/webos.cross.ini}"
 FFMPEG_CAPABILITY_MANIFEST="${FFMPEG_CAPABILITY_MANIFEST:-$ROOT/tools/manifests/ffmpeg-capabilities.json}"
-QT_MANIFEST="${QT_MANIFEST:-$ROOT/tools/manifests/qt-webos-6.11.json}"
-QT_VERSION="$(manifest_qt_field "$QT_MANIFEST" qtVersion)"
+QT_VERSION="$(toolchain_field "$ROOT" qt.version)"
 QT_BUILD_TAG="${QT_VERSION%.*}"
 QT_BUILD_TAG="${QT_BUILD_TAG//./}"
 QT6_HOST_PREFIX="${QT6_HOST_PREFIX:-$ROOT/build/qt6-$QT_BUILD_TAG-host-install}"
@@ -103,7 +102,7 @@ if (( DO_BUILD || DO_STAGE )); then
 
   if [[ ! -f "$QT6_PREFIX/lib/libQt6Core.a" ]]; then
     echo "error: static Qt6 install not found at $QT6_PREFIX" >&2
-    echo "       Run: QT_STATIC=1 bash $WEBOS_TOOLS_ROOT/build-qt6-611.sh target" >&2
+    echo "       Run: QT_STATIC=1 bash $WEBOS_TOOLS_ROOT/build-qt6.sh target" >&2
     exit 1
   fi
   echo "Using static Qt6 build at $QT6_PREFIX"
@@ -123,7 +122,7 @@ if (( DO_BUILD || DO_STAGE )); then
   if ! grep -Fqx '#define QT_FEATURE_ssl 1' "$QT_NETWORK_CONFIG" 2>/dev/null \
       || ! grep -Fqx '#define QT_FEATURE_openssl_linked 1' "$QT_CORE_CONFIG" 2>/dev/null; then
     echo "error: Qt at $QT6_PREFIX was built without linked TLS support." >&2
-    echo "       Rerun: QT_STATIC=1 bash $WEBOS_TOOLS_ROOT/build-qt6-611.sh target" >&2
+    echo "       Rerun: QT_STATIC=1 bash $WEBOS_TOOLS_ROOT/build-qt6.sh target" >&2
     exit 1
   fi
 
@@ -136,6 +135,7 @@ if (( DO_BUILD || DO_STAGE )); then
 fi
 
 if (( DO_BUILD )); then
+setup_native_ccache "$ROOT"
 describe_parallel_jobs "$WEBOS_BUILD_JOBS" "webOS app" "$WEBOS_BUILD_MEMORY_PER_JOB_MIB" "$WEBOS_BUILD_MEMORY_RESERVE_MIB"
 
 DOVI_TOOL_ROOT="${DOVI_TOOL_ROOT:-$ROOT/build/third_party/dovi_tool}"
@@ -324,11 +324,15 @@ FFMPEG_STAGED_LIBRARY="$(stage_elf_shared_library \
 AVFORMAT_STAGED_LIBRARY="$(stage_elf_shared_library \
   "$PREFIX/lib/libavformat.so.*" "$STAGE_LIB" "$READELF_BIN")"
 OPENSSL_STAGED_LIBRARY="$(stage_elf_shared_library \
-  "$SYSROOT/usr/lib/libssl.so.*" "$STAGE_LIB" "$READELF_BIN")"
+  "$PREFIX/lib/libssl.so.*" "$STAGE_LIB" "$READELF_BIN")"
 OPENSSL_CRYPTO_STAGED_LIBRARY="$(stage_elf_shared_library \
-  "$SYSROOT/usr/lib/libcrypto.so.*" "$STAGE_LIB" "$READELF_BIN")"
+  "$PREFIX/lib/libcrypto.so.*" "$STAGE_LIB" "$READELF_BIN")"
 
 for pattern in \
+  "$PREFIX/lib/libnghttp2.so.*" \
+  "$PREFIX/lib/libnghttp3.so.*" \
+  "$PREFIX/lib/libngtcp2.so.*" \
+  "$PREFIX/lib/libngtcp2_crypto_ossl.so.*" \
   "$PREFIX/lib/libavfilter.so.*" \
   "$PREFIX/lib/libavutil.so.*" \
   "$PREFIX/lib/libswresample.so.*" \
@@ -359,7 +363,10 @@ if [[ "$MPV_DYNAMIC_SECTION" != *"[libcurl.so"* ]]; then
   echo "error: $(basename "$MPV_STAGED_LIBRARY") does not use packaged shared curl" >&2
   exit 1
 fi
-
+if [[ "$MPV_DYNAMIC_SECTION" != *"[libpulse.so.0]"* ]]; then
+  echo "error: $(basename "$MPV_STAGED_LIBRARY") does not use firmware PulseAudio" >&2
+  exit 1
+fi
 
 # Keep every private dependency rooted in the package instead of binding to
 # firmware libraries with the same SONAME.
@@ -410,7 +417,7 @@ for firmware_soname in \
   libatomic.so.1 libz.so.1 libfontconfig.so.1 libfreetype.so.6 \
   libEGL.so.1 libGLESv2.so.2 libwayland-client.so.0 libwayland-cursor.so.0 \
   libwayland-egl.so libwayland-egl.so.1 libwayland-webos-client.so.0 libwayland-webos-client.so.1 \
-  libxkbcommon.so.0 libasound.so.2 libglib-2.0.so.0 libpbnjson_c.so.2 libluna-service2.so.3 \
+  libxkbcommon.so.0 libasound.so.2 libpulse.so.0 libglib-2.0.so.0 libpbnjson_c.so.2 libluna-service2.so.3 \
   libpf-1.0.so.1 libplayerAPIs.so.1 libunwind.so.8 \
   libPmLogLib.so.3 libnyx.so.0 libudev.so.0 libhelpers.so.1 libhelpers.so.2
 do

@@ -7,6 +7,7 @@
 #include "common/AsyncTask.h"
 #include "platform/NativeAppWindow.h"
 #include "provider/SourceHub.h"
+#include <QRegularExpression>
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -29,6 +30,7 @@
 #include <QTcpSocket>
 #include <QTimer>
 #include <QUuid>
+#include <climits>
 #include <cmath>
 #ifdef Q_OS_UNIX
 #include <cerrno>
@@ -40,7 +42,12 @@ namespace Spool {
 namespace {
     const QStringList SettingKeys { QStringLiteral("playback/seekPreviews"),
         QStringLiteral("playback/accurateTrickplay"), QStringLiteral("playback/trickplayPreviewScalePercent"),
-        QStringLiteral("appearance/uiScalePercent"), QStringLiteral("playback/renderQuality") };
+        QStringLiteral("appearance/uiScalePercent"), QStringLiteral("playback/renderQuality"),
+        QStringLiteral("playback/threadedStreaming"), QStringLiteral("playback/maxStreamingThreads"),
+        QStringLiteral("playback/forceStreamingThreads"), QStringLiteral("playback/logStreamingPerformance"),
+        QStringLiteral("playback/streamingExplore"), QStringLiteral("playback/streamingMemoryLoan"),
+        QStringLiteral("playback/maxExtraStreamingMemoryMiB"), QStringLiteral("playback/streamingReceiveWindowMode"),
+        QStringLiteral("playback/streamingHttpVersion") };
     QCoro::Task<MovieItem> itemStateTask(SourceHub *sources, QString itemId, QString field, QJsonValue value)
     {
         if (field == QStringLiteral("played"))
@@ -54,9 +61,21 @@ namespace {
 
     QJsonObject itemJson(const MovieItem& item, int index)
     {
+        QJsonArray sources;
+        for (const auto& source : item.mediaSources) {
+            int width = 0;
+            int height = 0;
+            for (const auto& stream : source.streams) {
+                width = qMax(width, stream.width);
+                height = qMax(height, stream.height);
+            }
+            sources.append(QJsonObject { { QStringLiteral("bitrate"), source.bitRate },
+                { QStringLiteral("sizeBytes"), double(source.size) }, { QStringLiteral("width"), width },
+                { QStringLiteral("height"), height } });
+        }
         return { { QStringLiteral("index"), index }, { QStringLiteral("id"), item.id },
             { QStringLiteral("title"), item.title }, { QStringLiteral("type"), item.itemType },
-            { QStringLiteral("playable"), item.isPlayable() } };
+            { QStringLiteral("playable"), item.isPlayable() }, { QStringLiteral("sources"), sources } };
     }
     void closeSocket(QIODevice *socket, bool abort)
     {
@@ -331,6 +350,7 @@ QJsonObject LocalCommandServer::focusState() const
 QJsonObject LocalCommandServer::state() const
 {
     const auto player = m_app->player();
+    const auto sampledPosition = player->sampledPositionSeconds();
     // Deliberate allowlist: no URLs, provider properties, credentials, logs or arbitrary QML values.
     return { { QStringLiteral("instance"), m_instance }, { QStringLiteral("pid"), QCoreApplication::applicationPid() },
         { QStringLiteral("initialized"), m_app->initialized() }, { QStringLiteral("route"), m_router->route() },
@@ -345,7 +365,16 @@ QJsonObject LocalCommandServer::state() const
         { QStringLiteral("playback"),
             QJsonObject { { QStringLiteral("active"), player->sessionActive() },
                 { QStringLiteral("loaded"), player->fileLoaded() }, { QStringLiteral("paused"), player->paused() },
-                { QStringLiteral("title"), player->title() }, { QStringLiteral("position"), player->positionSeconds() },
+                { QStringLiteral("ready"), player->playbackReady() }, { QStringLiteral("title"), player->title() },
+                { QStringLiteral("pauseCommand"), player->pauseCommandState() },
+                { QStringLiteral("positionSampleAgeMs"), player->positionSampleAgeMs() },
+                { QStringLiteral("mpvEventAgeMs"), player->mpvEventAgeMs() },
+                { QStringLiteral("pauseRequestAgeMs"), player->pauseRequestAgeMs() },
+                { QStringLiteral("mpvEndReason"), player->mpvEndReason() },
+                { QStringLiteral("mpvEndError"), player->mpvEndError() },
+                { QStringLiteral("position"), player->positionSeconds() },
+                { QStringLiteral("sampledPosition"),
+                    sampledPosition ? QJsonValue(*sampledPosition) : QJsonValue(QJsonValue::Null) },
                 { QStringLiteral("duration"), player->durationSeconds() },
                 { QStringLiteral("failed"), !player->errorText().isEmpty() },
                 { QStringLiteral("embeddedVideo"), player->embeddedVideoOutput() },
@@ -381,6 +410,8 @@ QJsonObject LocalCommandServer::items(const QJsonObject& args) const
     }
     return { { QStringLiteral("kind"), kind }, { QStringLiteral("offset"), offset }, { QStringLiteral("count"), count },
         { QStringLiteral("items"), rows },
+        { QStringLiteral("sortBy"), m_app->browse()->query().value(QStringLiteral("sortBy")).toString() },
+        { QStringLiteral("sortOrder"), m_app->browse()->query().value(QStringLiteral("sortOrder")).toString() },
         { QStringLiteral("hasMore"), kind == QStringLiteral("browse") && m_app->browse()->hasMore() } };
 }
 
@@ -557,6 +588,47 @@ void LocalCommandServer::dispatch(QIODevice *socket, const QJsonObject& request)
             return;
         }
         done(items(args));
+    } else if (command == QStringLiteral("catalog")) {
+        const auto library = m_app->libraries()->libraryById(args.value(QStringLiteral("libraryId")).toString());
+        const auto offsetValue = args.value(QStringLiteral("offset"));
+        const auto limitValue = args.value(QStringLiteral("limit"));
+        const double offset = offsetValue.isUndefined() ? 0 : offsetValue.toDouble(-1);
+        const double limit = limitValue.isUndefined() ? 100 : limitValue.toDouble(-1);
+        if (library.id.isEmpty() || offset < 0 || offset > INT_MAX || std::floor(offset) != offset || limit < 1
+            || limit > 100 || std::floor(limit) != limit) {
+            invalid(QStringLiteral("Use a current library ID, integer offset >= 0 and limit 1..100"));
+            return;
+        }
+        auto *operation = new QObject(socket);
+        Async::runScoped(
+            operation,
+            m_sources->fetchBrowsePage(BrowseDescriptor::library(library.id, library.collectionType, library.name),
+                int(offset), int(limit),
+                { { QStringLiteral("sortBy"), QStringLiteral("SortName") },
+                    { QStringLiteral("sortOrder"), QStringLiteral("Ascending") } },
+                std::nullopt),
+            [done, operation, limit](const PagedMovieItems& page) {
+                QJsonArray rows;
+                for (size_t index = 0; index < page.items.size() && index < size_t(limit); ++index)
+                    rows.append(itemJson(page.items[index], page.startIndex + int(index)));
+                done({ { QStringLiteral("items"), rows }, { QStringLiteral("offset"), page.startIndex },
+                    { QStringLiteral("total"), page.totalRecordCount }, { QStringLiteral("exhausted"), page.exhausted },
+                    { QStringLiteral("seekable"), page.seekable } });
+                operation->deleteLater();
+            },
+            [this, socket, id, operation](const std::exception_ptr&) {
+                reject(socket, id, QStringLiteral("provider_failed"), QStringLiteral("Catalog page could not be read"));
+                operation->deleteLater();
+            },
+            "local control catalog");
+    } else if (command == QStringLiteral("speed-test")) {
+        if (args.contains(QStringLiteral("refresh")) && !args.value(QStringLiteral("refresh")).isBool()) {
+            invalid(QStringLiteral("refresh must be a boolean"));
+            return;
+        }
+        if (args.value(QStringLiteral("refresh")).toBool())
+            m_app->refreshConnectionSpeed();
+        done(QJsonObject::fromVariantMap(m_sources->speedTestStatus()));
     } else if (command == QStringLiteral("downloads")) {
         const QString action = args.value(QStringLiteral("action")).toString(QStringLiteral("list"));
         if ((action == QStringLiteral("start") || action == QStringLiteral("retry")) && !m_downloads->enabled()) {
@@ -751,8 +823,7 @@ void LocalCommandServer::dispatch(QIODevice *socket, const QJsonObject& request)
     } else if (command == QStringLiteral("settings-get") || command == QStringLiteral("settings-set")) {
         const QString key = args.value(QStringLiteral("key")).toString();
         if (!key.isEmpty() && !SettingKeys.contains(key)) {
-            invalid(QStringLiteral(
-                "Only seek preview enable/quality/scale, UI scale and render quality settings are exposed"));
+            invalid(QStringLiteral("Only allowlisted playback and appearance settings are exposed"));
             return;
         }
         if (command == QStringLiteral("settings-get")) {
@@ -856,6 +927,17 @@ void LocalCommandServer::dispatch(QIODevice *socket, const QJsonObject& request)
         }
         m_router->push(QStringLiteral("libraryGrid"),
             { { QStringLiteral("libraryId"), args.value(QStringLiteral("id")).toString() } });
+        done(state());
+    } else if (command == QStringLiteral("browse-sort")) {
+        const QString sortBy = args.value(QStringLiteral("sortBy")).toString();
+        const QString sortOrder = args.value(QStringLiteral("sortOrder")).toString();
+        if (m_app->browse()->libraryId().isEmpty()
+            || !QRegularExpression(QStringLiteral("^[A-Za-z][A-Za-z0-9]{0,63}$")).match(sortBy).hasMatch()
+            || (sortOrder != QStringLiteral("Ascending") && sortOrder != QStringLiteral("Descending"))) {
+            invalid(QStringLiteral("Open a library and supply a sort key with Ascending or Descending"));
+            return;
+        }
+        m_app->browse()->setSort(sortBy, sortOrder);
         done(state());
     } else if (command == QStringLiteral("load-more")) {
         m_app->browse()->prefetchNextPage();

@@ -1,34 +1,73 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-app="${1:?Pass the built tvOS Spool.app}"
+app="${1:?Pass the built Apple simulator Spool.app}"
+platform="${SPOOL_APPLE_TEST_PLATFORM:-tvos}"
+case "$platform" in
+  tvos) runtime_name=tvOS; device_name='Apple TV 4K' ;;
+  ios) runtime_name=iOS; device_name=iPhone ;;
+  *) echo 'error: SPOOL_APPLE_TEST_PLATFORM must be ios or tvos' >&2; exit 2 ;;
+esac
 [[ "$(uname -s)" == Darwin ]] || { echo 'error: Apple TV simulator requires macOS/Xcode' >&2; exit 1; }
 host_build="${SPOOL_DEVICE_HOST_BUILD_DIR:-$ROOT/build/macos/app}"
 if [[ -z "${SPOOL_DEVICE_HOST_E2E:-}" ]]; then
   [[ -f "$host_build/native-spool-e2e-path.txt" ]] || {
-    echo 'error: build the native host journey controller with tools/build-macos.sh first' >&2
+    echo "error: missing native journey controller path in $host_build" >&2
     exit 1
   }
   read -r SPOOL_DEVICE_HOST_E2E <"$host_build/native-spool-e2e-path.txt"
 fi
 if [[ -z "${SPOOL_E2E_SPOOLET:-}" ]]; then
   [[ -f "$host_build/native-spoolet-path.txt" ]] || {
-    echo 'error: build the matching native spoolet with tools/build-macos.sh first' >&2
+    echo "error: missing native spoolet path in $host_build" >&2
     exit 1
   }
   read -r SPOOL_E2E_SPOOLET <"$host_build/native-spoolet-path.txt"
 fi
 export SPOOL_DEVICE_HOST_E2E SPOOL_E2E_SPOOLET
 export SPOOL_E2E_ISOLATED_DEVICE=1
-result="$ROOT/build/tvos/smoke"
+result="$ROOT/build/$platform/smoke"
 mkdir -p "$result"
-runtime="$(xcrun simctl list runtimes --json | python3 -c 'import json,sys; r=[x for x in json.load(sys.stdin)["runtimes"] if x["isAvailable"] and x["identifier"].startswith("com.apple.CoreSimulator.SimRuntime.tvOS")]; print(sorted(r,key=lambda x:tuple(map(int,x["version"].split("."))))[-1]["identifier"])')"
-device_type="$(xcrun simctl list devicetypes --json | python3 -c 'import json,sys; print(next(x["identifier"] for x in json.load(sys.stdin)["devicetypes"] if x["name"].startswith("Apple TV 4K")))')"
-device="$(xcrun simctl create Spool-tvOS-tests "$device_type" "$runtime")"
-cleanup() { xcrun simctl shutdown "$device" >/dev/null 2>&1 || true; xcrun simctl delete "$device"; }
+runtime="$(xcrun simctl list runtimes --json | python3 -c 'import json,sys; r=[x for x in json.load(sys.stdin)["runtimes"] if x["isAvailable"] and x["identifier"].startswith("com.apple.CoreSimulator.SimRuntime."+sys.argv[1])]; print(sorted(r,key=lambda x:tuple(map(int,x["version"].split("."))))[-1]["identifier"])' "$runtime_name")"
+device_type="$(xcrun simctl list devicetypes --json | python3 -c 'import json,sys; print(next(x["identifier"] for x in json.load(sys.stdin)["devicetypes"] if x["name"].startswith(sys.argv[1])))' "$device_name")"
+device=
+cleanup() {
+  if [[ -n "$device" ]]; then
+    xcrun simctl shutdown "$device" >/dev/null 2>&1 || true
+    xcrun simctl delete "$device"
+  fi
+}
 trap cleanup EXIT
-xcrun simctl boot "$device"
-xcrun simctl bootstatus "$device" -b
+for attempt in 1 2; do
+  device="$(xcrun simctl create "Spool-$platform-tests" "$device_type" "$runtime")"
+  setup_log="$result/simulator-boot-$attempt.log"
+  if python3 - "$device" >"$setup_log" 2>&1 <<'PYTHON'
+import subprocess
+import sys
+
+device = sys.argv[1]
+try:
+    subprocess.run(["xcrun", "simctl", "boot", device], check=True, timeout=120)
+    subprocess.run(["xcrun", "simctl", "bootstatus", device, "-b"], check=True, timeout=480)
+except subprocess.TimeoutExpired:
+    print("Simulator boot timed out", flush=True)
+    sys.exit(75)
+except subprocess.CalledProcessError:
+    sys.exit(1)
+PYTHON
+  then
+    cat "$setup_log"
+    break
+  else
+    setup_status=$?
+    cat "$setup_log" >&2
+    if [[ "$setup_status" != 75 || "$attempt" == 2 ]]; then
+      exit "$setup_status"
+    fi
+    cleanup
+    device=
+  fi
+done
 export SPOOL_TVOS_DEVICE="$device"
 # Install the real product and both unified native selector bundles. Application
 # and Keychain entitlements stay embedded by the simulator linker; the local
@@ -59,7 +98,7 @@ status=0
 # CTest traditional and e2e phases use run-device-tests.py, requiring fresh native
 # nonce receipts and preserving the extra Keychain/sandbox consumer receipt.
 # Both phases finish even when a selector fails, crashes, or exceeds its deadline.
-nix develop "$ROOT#native" -c python "$ROOT/tools/run-tests.py" \
+python3 "$ROOT/tools/run-tests.py" \
   --build-dir "$build_dir" --config Release --workers 1 || status=1
 # Keep the product bundle's UI launch contract in addition to native GPU/QML
 # selectors. This is not substituted for a provider/playback app journey.

@@ -1,7 +1,9 @@
 #pragma once
 
+#include "../app/StreamingCachePolicy.h"
 #include "../media/MediaTypes.h"
 #include "../platform/MpvConfigPolicy.h"
+#include "../platform/PlatformSystemProbes.h"
 #include "MpvLifecycle.h"
 #include "MpvOptionProfile.h"
 #include "PlaybackPositionTracker.h"
@@ -12,6 +14,7 @@
 
 #include <QByteArray>
 #include <QByteArrayList>
+#include <QElapsedTimer>
 #include <QHash>
 #include <QObject>
 #include <QSslCertificate>
@@ -27,6 +30,7 @@
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -38,10 +42,13 @@ class NativeAppWindow;
 class PlaybackSource;
 class TlsTrustController;
 class TrickplayService;
+class PlatformPerformanceSampler;
 
 class PlayerController final : public QObject {
     Q_OBJECT
+    friend struct PlayerControllerTestAccess;
     Q_PROPERTY(bool visible READ visible NOTIFY visibleChanged)
+    Q_PROPERTY(QVariantMap transportCapabilities READ transportCapabilities NOTIFY transportCapabilitiesChanged)
     Q_PROPERTY(bool sessionActive READ sessionActive NOTIFY sessionActiveChanged)
     Q_PROPERTY(bool fileLoaded READ fileLoaded NOTIFY playbackStateChanged)
     Q_PROPERTY(bool hdrPlayback READ hdrPlayback NOTIFY hdrPlaybackChanged)
@@ -104,6 +111,40 @@ public:
     QString statusText() const;
     QString errorText() const;
     bool buffering() const;
+    bool playbackReady() const
+    {
+        return m_seekDispatchReady;
+    }
+    QString pauseCommandState() const
+    {
+        return m_pauseCommandState;
+    }
+    std::optional<double> sampledPositionSeconds() const
+    {
+        if (!m_fileLoaded || m_pendingSeek || m_seeking || !m_positionTracker.hasPlaybackPosition())
+            return std::nullopt;
+        return m_positionTracker.position();
+    }
+    qint64 positionSampleAgeMs() const
+    {
+        return m_positionTracker.sampleAgeMs();
+    }
+    qint64 mpvEventAgeMs() const
+    {
+        return m_mpvEventClock.isValid() ? m_mpvEventClock.elapsed() : -1;
+    }
+    int mpvEndReason() const
+    {
+        return m_mpvEndReason;
+    }
+    int mpvEndError() const
+    {
+        return m_mpvEndError;
+    }
+    qint64 pauseRequestAgeMs() const
+    {
+        return m_pauseRequestClock.isValid() ? m_pauseRequestClock.elapsed() : -1;
+    }
     int bufferingPercent() const;
     bool seeking() const;
     bool debugOsdVisible() const;
@@ -122,9 +163,18 @@ public:
     {
         return m_containerFps;
     }
+    QVariantMap transportCapabilities() const
+    {
+        return m_transportCapabilities;
+    }
     QVariantMap networkMetrics() const
     {
-        return m_networkMetrics;
+        QVariantMap metrics = m_networkMetrics;
+        metrics.insert(QStringLiteral("memory-extra-allowance-bytes"), m_extraMemoryAllowanceBytes);
+        metrics.insert(QStringLiteral("memory-committed-excess-bytes"), m_committedMemoryExcessBytes);
+        for (auto it = m_streamingPerformanceMetrics.cbegin(); it != m_streamingPerformanceMetrics.cend(); ++it)
+            metrics.insert(it.key(), it.value());
+        return metrics;
     }
     bool subtitlesEnabled() const;
     QStringList subtitleTracks() const;
@@ -155,8 +205,10 @@ public:
     Q_INVOKABLE void skipActiveSegment();
     Q_INVOKABLE QVariantMap trickplayForSeconds(double seconds) const;
     void setTrickplayService(TrickplayService *service);
+    // Tell the transport that the host is fetching other network data.
+    void setBackgroundNetwork(bool active);
 
-    Q_INVOKABLE void play(const Spool::PlaybackSession& session, bool startPaused = false);
+    Q_INVOKABLE void play(const Spool::PlaybackSession& session, bool startPaused = false, bool restartActive = false);
     void playLocalFiles(const QList<QUrl>& urls);
     bool appendLocalFiles(const QList<QUrl>& urls);
     bool localPlaylist() const
@@ -211,6 +263,8 @@ public:
     Q_INVOKABLE void setFileAudioDelayMs(int delayMs);
     Q_INVOKABLE void setSubtitleDelayMs(int delayMs);
     Q_INVOKABLE void setAudioOutputMode(const QString& mode);
+    void setAlsaBufferMs(int milliseconds);
+    void setAudioPassthrough(const QString& mode);
     // Applies to the next thing that plays: the render options are set on a
     // fresh mpv core, and every play request builds one.
     void setRenderQuality(MpvOptionProfile::RenderQuality quality);
@@ -247,6 +301,15 @@ public:
     void previewSubtitlePreferences(const Spool::SubtitlePreferences& preferences);
     void setDemuxerBudget(const QByteArray& maxBytes, const QByteArray& maxBackBytes);
     void setForwardCacheSizeMiB(int sizeMiB);
+    void setThreadedStreaming(bool enabled);
+    void setMaxStreamingThreads(int threads);
+    void setForceStreamingThreads(bool force);
+    void setLogStreamingPerformance(bool enabled);
+    void setStreamingExplore(bool enabled);
+    void setStreamingMemoryLoan(bool enabled);
+    void setMaxExtraStreamingMemoryMiB(int size);
+    void setStreamingReceiveWindowMode(const QString& mode);
+    void setStreamingHttpVersion(const QString& mode);
     void setMpvConfigPolicy(const MpvConfigPolicy& policy);
 
 signals:
@@ -276,6 +339,7 @@ signals:
         bool retryableCodecFailure, int audioStreamIndex, int subtitleStreamIndex);
     void streamSelectionChanged(int audioStreamIndex, int subtitleStreamIndex);
     void nightModeEnabledChanged();
+    void transportCapabilitiesChanged();
     void toneMappingVisualizationEnabledChanged();
     void audioDelayMsChanged();
     void fileAudioDelayMsChanged();
@@ -301,7 +365,8 @@ public:
 
 private:
     QHash<int, QByteArray> m_mpvKeys;
-    void playSession(const PlaybackSession& session, bool startPaused, const QList<QUrl>& localFiles);
+    void playSession(
+        const PlaybackSession& session, bool startPaused, const QList<QUrl>& localFiles, bool restartActive);
     void finishPlaySession(
         const PlaybackSession& session, bool startPaused, const QList<QUrl>& localFiles, quint64 generation);
     void refreshLocalPlaylist();
@@ -338,16 +403,26 @@ private:
     void prepareMpvAsync(bool needsVideoSurface, bool embeddedVideo);
     static bool configureAndInitializeMpv(mpv_handle *handle, const MpvPreparation& preparation);
     void observeMpvProperties(mpv_handle *handle);
+    void configureTransportForLoad(QByteArrayList loadCommand);
+    void submitTransportLoad(quint64 serial);
+    void failTransportLoad(bool configuration);
+    void updateBackgroundNetwork();
     void updateNetworkTransport();
     double networkMediaBitrate() const;
+    void logStreamingPerformance(qint64 inputBytesPerSecond);
     void synchronizeWindowFullscreen(mpv_handle *handle);
     void scheduleMpvTeardown();
     void handleMpvEvent(mpv_event *event, quint64 generation, mpv_handle *handle);
+    bool mpvPauseRequestPending() const;
+    void sendMpvPauseRequest();
+    void applyMpvPauseState(bool paused);
     template <typename Callback> void postMpvEvent(quint64 generation, Callback callback)
     {
         QMetaObject::invokeMethod(this, [this, generation, callback = std::move(callback)]() mutable {
-            if (generation == m_mpvEventGeneration && m_sessionActive)
+            if (generation == m_mpvEventGeneration && m_sessionActive) {
+                m_mpvEventClock.restart();
                 callback();
+            }
         });
     }
     void startProgressReporting();
@@ -416,15 +491,37 @@ private:
     std::function<void()> m_mpvPreparationContinuation;
     QTimer m_progressTimer;
     QTimer m_networkTimer;
+    QTimer m_idleStreamingMemoryTimer;
     QVariantMap m_networkMetrics;
+    QVariantMap m_transportCapabilities;
+    void refreshTransportCapabilities(mpv_handle *handle);
+    QVariantMap m_streamingPerformanceMetrics;
     QUrl m_networkOrigin;
     QByteArray m_sessionRequestHeaders;
     QVariantMap m_sessionNetworkProfile;
     QSslCertificate m_sessionTrustCertificate;
     bool m_networkQueryPending = false;
     double m_networkBufferSeconds = 0;
+    qint64 m_transportEpoch = 0; // curl-transport-control playback epoch, per load
+    struct PendingTransportLoad {
+        quint64 coreGeneration;
+        quint64 playGeneration;
+        qint64 epoch;
+        QByteArrayList command;
+    };
+    QHash<quint64, PendingTransportLoad> m_pendingTransportLoads;
+    quint64 m_transportReplySerial = 0;
     double m_networkVideoBitrate = 0;
+    bool m_backgroundNetwork = false;
+    bool m_trickplayNetwork = false;
     double m_networkAudioBitrate = 0;
+    bool m_cacheSpeedQueryPending = false;
+    bool m_sessionThreadedStreaming = true;
+    std::unique_ptr<PlatformPerformanceSampler> m_streamingPerformanceSampler;
+    double m_previousCurlCpuSeconds = -1;
+    double m_previousCurlWallSeconds = -1;
+    double m_previousRingWaitSeconds = 0;
+    double m_previousConsumerWaitSeconds = 0;
     QTimer m_backGuardTimer;
     QTimer m_uiPositionTimer;
     QTimer m_seekWatchdogTimer;
@@ -435,6 +532,12 @@ private:
     int m_watchedThresholdPercent = 90;
     bool m_seekDispatchReady = false;
     bool m_paused = false;
+    quint64 m_pauseCommandSerial = 0;
+    bool m_pauseCommandTarget = false;
+    bool m_pauseCommandRetried = false;
+    QString m_pauseCommandState;
+    QElapsedTimer m_mpvEventClock;
+    QElapsedTimer m_pauseRequestClock;
     bool m_buffering = false;
     int m_bufferingPercent = 0;
     bool m_seeking = false;
@@ -456,6 +559,32 @@ private:
     bool m_directVideoOutput = false;
     bool m_hardwareDecoding = true;
     QByteArray m_softwareRenderer;
+    QByteArray m_audioSpdifCodecs;
+    bool m_logStreamingPerformance = false;
+    MpvOptionProfile::StreamingOptions m_streamingOptions;
+    MpvOptionProfile::StreamingOptions m_sessionStreamingOptions;
+    qint64 m_jointExtraGrantBytes = 0;
+    qint64 m_previousMemoryCandidate = 0;
+    qint64 m_extraMemoryAllowanceBytes = 0;
+    qint64 m_committedMemoryExcessBytes = 0;
+    StreamingCacheScaler m_demuxerCacheScaler;
+    StreamingCacheTarget m_activeDemuxerTarget {};
+    QTimer m_streamingMemoryTimer;
+    std::optional<StreamingCacheTarget> m_appliedDemuxerTarget;
+    StreamingCacheTarget m_pendingDemuxerTarget;
+    quint64 m_demuxerCacheSerial = 0;
+    int m_demuxerCacheReplies = 0;
+    bool m_demuxerCacheFailed = false;
+    qint64 m_committedDemuxerBytes = 0;
+    bool m_demuxerUsageKnown = false;
+    bool m_demuxerUsagePending = false;
+    std::function<PlatformStreamingMemoryState()> m_memoryProbe = platformStreamingMemoryState;
+    std::function<int(mpv_handle *, quint64, const char *, qint64, bool)> m_cachePropertyWriter;
+    void updateStreamingMemoryGrant();
+    void applyDemuxerCacheTarget(const StreamingCacheTarget& target, bool applyLive);
+    int writeDemuxerCacheProperty(mpv_handle *handle, quint64 reply, const char *name, qint64 bytes, bool async);
+    bool applyInitialDemuxerCacheTarget(mpv_handle *handle);
+    void completeDemuxerCacheWrite(quint64 serial, int error);
     // The opening seconds are where a device that cannot keep up says so:
     // the picture is being scaled and tone-mapped from the first frame, and
     // nothing has warmed a cache yet.
@@ -468,6 +597,8 @@ private:
     QString m_title;
     QString m_statusText = QStringLiteral("Ready");
     QString m_errorText;
+    int m_mpvEndReason = -1;
+    int m_mpvEndError = 0;
     QString m_mediaKind = QStringLiteral("none");
     std::atomic_bool m_nightModeEnabled = false;
     std::atomic_bool m_toneMappingVisualizationEnabled = false;
@@ -482,7 +613,7 @@ private:
     double m_syncPlaybackSpeed = 1.0;
     bool m_syncPlaybackSpeedActive = false;
     QString m_audioOutputMode = QStringLiteral("auto");
-    QByteArray m_automaticDemuxerMaxBytes = QByteArrayLiteral("64M");
+    int m_alsaBufferMs = 40;
     QByteArray m_demuxerMaxBytes = QByteArrayLiteral("64M");
     QByteArray m_demuxerMaxBackBytes = QByteArrayLiteral("32M");
     MpvConfigPolicy m_mpvConfigPolicy;

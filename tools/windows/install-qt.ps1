@@ -6,9 +6,10 @@ param(
 
 . (Join-Path $PSScriptRoot 'common.ps1')
 $root = Get-RepositoryRoot
-$manifestPath = Join-Path $root 'tools\manifests\qt-windows-6.11.json'
+$manifestPath = Join-Path $root 'tools\manifests\qt-windows.json'
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-$qtRoot = Join-Path ([IO.Path]::GetFullPath($OutputDirectory)) "$($manifest.version)\$($manifest.architecture)"
+$qt = (Get-ToolchainManifest).qt
+$qtRoot = Join-Path ([IO.Path]::GetFullPath($OutputDirectory)) "$($qt.version)\$($qt.windowsKit)"
 $downloads = if ($DownloadDirectory) { [IO.Path]::GetFullPath($DownloadDirectory) } elseif ($env:RUNNER_TEMP) {
     Join-Path $env:RUNNER_TEMP 'spool-qt-downloads'
 } else {
@@ -25,7 +26,7 @@ function Test-QtInstallation {
 }
 
 if ((Test-QtInstallation) -and -not $Force) {
-    Write-Host "Qt $($manifest.version) is already installed at $qtRoot"
+    Write-Host "Qt $($qt.version) is already installed at $qtRoot"
     return
 }
 
@@ -74,4 +75,4 @@ $qtConf = "[Paths]`r`nPrefix=..`r`n"
 if (-not (Test-QtInstallation)) {
     throw "The extracted Qt installation is incomplete: $qtRoot"
 }
-Write-Host "Installed Qt $($manifest.version) at $qtRoot"
+Write-Host "Installed Qt $($qt.version) at $qtRoot"

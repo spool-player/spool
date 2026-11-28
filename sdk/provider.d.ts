@@ -133,8 +133,8 @@ export interface OperationHost extends ProviderHost {
      * Same origin/TLS policy as http; no redirects or cookies. Cancelled with
      * this operation. Generated endpoints return exactly the requested bytes;
      * range endpoints must honor the native Range header and Content-Range.
-     * Warms 512 KiB, then compares 4 MiB totals over one, two and optionally
-     * four connections. Result reserves 25% headroom and is bounded to 1–1000 Mbps.
+     * Warms 512 KiB, then measures one, two and four connections with bounded
+     * repeated batches. Result reserves 25% headroom from peak capacity.
      */
     speedTest(endpoint: SpeedTestEndpoint): Promise<SpeedTestResult>;
 }
@@ -225,8 +225,8 @@ export interface PlaybackContext {
     videoCodecs: string[]; restrictVideoCodecs: boolean;
     /** This account's measured conservative ceiling; zero until a successful idle probe. */
     measuredBitrate: number;
-    /** Native playback range-request budget selected by the probe; two before measurement. */
-    parallelRequests: 1 | 2 | 4;
+    /** Learned starting range-request count, integer 1–16; one before measurement. The native player applies its own cap. */
+    parallelRequests: number;
     /** Global seek-preview preference, default true. When false, omit preview descriptors and skip preview-only metadata requests/prefetch. */
     videoPreviews: boolean;
 }
@@ -239,7 +239,14 @@ export interface Resolved {
      */
     timelineOriginTicks?: string;
     /** Fresh original-edition analysis, never the negotiated output or an automatic ceiling. */
-    source?: { bitrate: number; width: number; height: number };
+    source?: { bitrate: number; width: number; height: number;
+               /** Selected edition's file size, when known; positive integer or unsigned decimal string. */
+               sizeBytes?: number | string;
+               /** Selected edition's duration in 100 ns ticks, when known. */
+               runtimeTicks?: number | string };
+    /** The representation actually resolved (not a quality ceiling). DirectPlay may repeat source;
+     * remux/transcode must not assume the original's size. Omit what is unknown; bitrate 0 is unknown. */
+    delivery?: { bitrate?: number; sizeBytes?: number | string; runtimeTicks?: number | string };
     streams?: Stream[]; segments?: Segment[];
     /** Native preview loader fetches/caches sheets or one BIF sequence using this account's headers. */
     trickplay?: { width: number; height: number; columns: number; rows: number; count: number; intervalMs: number;

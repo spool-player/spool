@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build a private Qt 6.11 tree for native webOS development.
+# Build a private Qt tree for native webOS development.
 #
 # Design goals:
 #   - never accidentally link against nixpkgs' Qt while building Qt from source;
@@ -17,12 +17,12 @@ source "$ROOT/tools/lib/build-common.sh"
 source "$ROOT/tools/lib/manifest-sources.sh"
 # shellcheck source=tools/webos-native/nixos-sdk-compat.sh
 source "$ROOT/tools/webos-native/nixos-sdk-compat.sh"
-QT_MANIFEST="${QT_MANIFEST:-$ROOT/tools/manifests/qt-webos-6.11.json}"
+QT_MANIFEST="${QT_MANIFEST:-$ROOT/tools/manifests/qt-webos.json}"
 SDK_ROOT="${WEBOS_SDK_ROOT:-$ROOT/build/webos-sdk/arm-webos-linux-gnueabi_sdk-buildroot}"
 SYSROOT="$SDK_ROOT/arm-webos-linux-gnueabi/sysroot"
-QT_VERSION="${QT_VERSION:-$(manifest_qt_field "$QT_MANIFEST" qtVersion)}"
+QT_VERSION="${QT_VERSION:-$(toolchain_field "$ROOT" qt.version)}"
 QT_SERIES="${QT_VERSION%.*}"
-QT_BASE_URL="${QT_BASE_URL:-$(manifest_qt_field "$QT_MANIFEST" baseUrl)}"
+QT_BASE_URL="${QT_BASE_URL:-$(toolchain_qt_sources_url "$ROOT" qt.fauArchiveBaseUrl)}"
 QT_STATIC="${QT_STATIC:-0}"
 PHASE="${1:-all}"
 QT_BUILD_CLEAN_POISONED="${QT_BUILD_CLEAN_POISONED:-1}"
@@ -39,14 +39,6 @@ JOBS="$(recommended_parallel_jobs "$QT_BUILD_MEMORY_PER_JOB_MIB" "$QT_BUILD_MEMO
 QT_TARGET_TUNE_CFLAGS="$(webos_tune_cflags)"
 
 SRC_DIR="$ROOT/build/qt6-src"
-QTBASE_TARBALL="$SRC_DIR/qtbase-everywhere-src-$QT_VERSION.tar.xz"
-QTSHADERTOOLS_TARBALL="$SRC_DIR/qtshadertools-everywhere-src-$QT_VERSION.tar.xz"
-QTTOOLS_TARBALL="$SRC_DIR/qttools-everywhere-src-$QT_VERSION.tar.xz"
-QTDECLARATIVE_TARBALL="$SRC_DIR/qtdeclarative-everywhere-src-$QT_VERSION.tar.xz"
-QTWEBSOCKETS_TARBALL="$SRC_DIR/qtwebsockets-everywhere-src-$QT_VERSION.tar.xz"
-QTWAYLAND_TARBALL="$SRC_DIR/qtwayland-everywhere-src-$QT_VERSION.tar.xz"
-QTIMAGEFORMATS_TARBALL="$SRC_DIR/qtimageformats-everywhere-src-$QT_VERSION.tar.xz"
-QTSVG_TARBALL="$SRC_DIR/qtsvg-everywhere-src-$QT_VERSION.tar.xz"
 
 QTBASE_SRC="$SRC_DIR/qtbase-everywhere-src-$QT_VERSION"
 QTSHADERTOOLS_SRC="$SRC_DIR/qtshadertools-everywhere-src-$QT_VERSION"
@@ -215,7 +207,7 @@ download_submodule() {
   local module="$1"
   local tarball="$2"
   local expected
-  expected="$(manifest_qt_module_sha256 "$QT_MANIFEST" "$module")"
+  expected="$(toolchain_field "$ROOT" "qt.sources.$module")"
 
   log "Downloading $module $QT_VERSION"
   download_verified \
@@ -237,7 +229,7 @@ extract_if_needed() {
   local src_dir="$2"
   local module expected
   module="$(basename "$tarball" "-everywhere-src-$QT_VERSION.tar.xz")"
-  expected="$(manifest_qt_module_sha256 "$QT_MANIFEST" "$module")"
+  expected="$(toolchain_field "$ROOT" "qt.sources.$module")"
   # Patches may change without a Qt version bump. Start from pristine source
   # rather than applying a renamed/revised patch on top of its old contents.
   local patch_hash patch_marker
@@ -271,11 +263,12 @@ apply_local_patches() {
   apply_patch_if_needed "$QTBASE_SRC" "$PATCH_DIR/qtbase-$QT_SERIES-webos-qelfparser.patch"
   apply_patch_if_needed "$QTBASE_SRC" "$PATCH_DIR/qtbase-$QT_SERIES-webos-wayland-no-opengl-forward-decl.patch"
   apply_patch_if_needed "$QTBASE_SRC" "$PATCH_DIR/qtbase-$QT_SERIES-webos-qplatformwindow-private-moc.patch"
+  apply_patch_if_needed "$QTBASE_SRC" "$PATCH_DIR/qtbase-$QT_SERIES-webos-mt-tool-palm.patch"
   apply_patch_if_needed "$QTDECLARATIVE_SRC" \
     "$PATCH_DIR/qtdeclarative-$QT_SERIES-qmlimportscanner-exclude-subtrees.patch"
   apply_patch_if_needed "$QTWAYLAND_SRC" "$PATCH_DIR/qtwayland-$QT_SERIES-webos-wayland-version.patch"
 
-  # In Qt 6.11 the client-side wayland platform plugin code is in qtbase, not
+  # Since Qt 6.11 the client-side wayland platform plugin code is in qtbase, not
   # qtwayland. This keeps the webOS magic-remote cursor opt-out built in.
   apply_patch_if_needed "$QTBASE_SRC" "$PATCH_DIR/qtbase-$QT_SERIES-webos-no-cursor-set.patch"
 }
@@ -304,33 +297,22 @@ fetch_sources() {
   require_base_tools
   mkdir -p "$SRC_DIR"
 
-  download_submodule qtbase "$QTBASE_TARBALL"
-  download_submodule qtshadertools "$QTSHADERTOOLS_TARBALL"
-  download_submodule qttools "$QTTOOLS_TARBALL"
-  download_submodule qtdeclarative "$QTDECLARATIVE_TARBALL"
-  download_submodule qtwebsockets "$QTWEBSOCKETS_TARBALL"
-  download_submodule qtwayland "$QTWAYLAND_TARBALL"
-  download_submodule qtimageformats "$QTIMAGEFORMATS_TARBALL"
-  download_submodule qtsvg "$QTSVG_TARBALL"
-
-  extract_if_needed "$QTBASE_TARBALL" "$QTBASE_SRC"
-  extract_if_needed "$QTSHADERTOOLS_TARBALL" "$QTSHADERTOOLS_SRC"
-  extract_if_needed "$QTTOOLS_TARBALL" "$QTTOOLS_SRC"
-  extract_if_needed "$QTDECLARATIVE_TARBALL" "$QTDECLARATIVE_SRC"
-  extract_if_needed "$QTWEBSOCKETS_TARBALL" "$QTWEBSOCKETS_SRC"
-  extract_if_needed "$QTWAYLAND_TARBALL" "$QTWAYLAND_SRC"
-  extract_if_needed "$QTIMAGEFORMATS_TARBALL" "$QTIMAGEFORMATS_SRC"
-  extract_if_needed "$QTSVG_TARBALL" "$QTSVG_SRC"
+  local module src archive
+  local modules
+  modules="$(manifest_json_array "$QT_MANIFEST" modules)"
+  while IFS= read -r module; do
+    src="$SRC_DIR/$module-everywhere-src-$QT_VERSION"
+    archive="$src.tar.xz"
+    download_submodule "$module" "$archive"
+    extract_if_needed "$archive" "$src"
+  done <<<"$modules"
 
   apply_local_patches
-  local src module patch_hash
-  for src in "$QTBASE_SRC" "$QTSHADERTOOLS_SRC" "$QTTOOLS_SRC" \
-      "$QTDECLARATIVE_SRC" "$QTWEBSOCKETS_SRC" "$QTWAYLAND_SRC" \
-      "$QTIMAGEFORMATS_SRC" "$QTSVG_SRC"; do
-    module="$(basename "$src" "-everywhere-src-$QT_VERSION")"
-    patch_hash="$(qt_module_patch_hash "$module")"
-    printf '%s\n' "$patch_hash" >"$src/.spool-patches-sha256"
-  done
+  while IFS= read -r module; do
+    src="$SRC_DIR/$module-everywhere-src-$QT_VERSION"
+    qt_module_patch_hash "$module" >"$src/.spool-patches-sha256"
+  done <<<"$modules"
+
 }
 
 host_qtbase_up_to_date() {
@@ -530,8 +512,8 @@ configure_target_qtbase() {
   sdk_glesv2_lib="$(sdk_sysroot_library GLESv2)"
   sdk_egl_lib="$(sdk_sysroot_library EGL)"
   sdk_xkb_lib="$(sdk_sysroot_library xkbcommon)"
-  sdk_ssl_lib="$(sdk_sysroot_library ssl)"
-  sdk_crypto_lib="$(sdk_sysroot_library crypto)"
+  sdk_ssl_lib="$SYSROOT/usr/local/webos-native/lib/libssl.so"
+  sdk_crypto_lib="$SYSROOT/usr/local/webos-native/lib/libcrypto.so"
   sdk_wayland_client_lib="$(sdk_sysroot_library wayland-client)"
   sdk_wayland_server_lib="$(sdk_sysroot_library wayland-server)"
   sdk_wayland_cursor_lib="$(sdk_sysroot_library wayland-cursor)"
@@ -618,8 +600,8 @@ configure_target_qtbase() {
     -DINPUT_openssl=linked \
     -DFEATURE_ssl=ON \
     -DOPENSSL_USE_STATIC_LIBS=OFF \
-    -DOPENSSL_ROOT_DIR="$SYSROOT/usr" \
-    -DOPENSSL_INCLUDE_DIR="$SYSROOT/usr/include" \
+    -DOPENSSL_ROOT_DIR="$SYSROOT/usr/local/webos-native" \
+    -DOPENSSL_INCLUDE_DIR="$SYSROOT/usr/local/webos-native/include" \
     -DOPENSSL_SSL_LIBRARY="$sdk_ssl_lib" \
     -DOPENSSL_CRYPTO_LIBRARY="$sdk_crypto_lib" \
     -DWaylandScanner_EXECUTABLE="$target_wayland_scanner"
@@ -628,6 +610,7 @@ configure_target_qtbase() {
 target_qtbase_up_to_date() {
   [[ "${QT_BUILD_FORCE:-0}" != "1" ]] || return 1
   qt_prefix_matches_version "$TARGET_STAGING" || return 1
+  [[ -f "$TARGET_STAGING/.spool-private-tls-v1" ]] || return 1
   [[ -f "$TARGET_STAGING/.jellyfin-openssl-shared" ]] || return 1
   [[ -f "$TARGET_STAGING/.spool-no-testlib-v1" ]] || return 1
   if [[ "$QT_STATIC" == "1" ]]; then
@@ -662,6 +645,7 @@ build_target_qtbase() {
   cmake_build "$TARGET_BUILD_ROOT/qtbase" --parallel "$JOBS"
   cmake_install "$TARGET_BUILD_ROOT/qtbase"
   printf 'shared\n' >"$TARGET_STAGING/.jellyfin-openssl-shared"
+  printf '1\n' >"$TARGET_STAGING/.spool-private-tls-v1"
   prune_completed_build_dir "$TARGET_BUILD_ROOT/qtbase"
   printf '1\n' >"$TARGET_STAGING/.spool-no-testlib-v1"
 }

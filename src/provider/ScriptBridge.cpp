@@ -23,6 +23,7 @@
 #include <limits>
 #include <optional>
 #include <stdexcept>
+#include <utility>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -307,8 +308,11 @@ namespace {
         while (iterator.hasNext()) {
             iterator.next();
             bytes += iterator.name().size() * sizeof(QChar);
-            map.insert(
-                iterator.name(), own(iterator.value(), nodes, bytes, maximumNodes, maximumBytes, depth + 1, jsonData));
+            // Omit undefined object properties, but still charge their traversal
+            // against the node/byte limits. Null remains a present value.
+            QVariant property = own(iterator.value(), nodes, bytes, maximumNodes, maximumBytes, depth + 1, jsonData);
+            if (property.isValid())
+                map.insert(iterator.name(), std::move(property));
         }
         return map;
     }

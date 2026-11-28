@@ -60,6 +60,23 @@ function Get-Msys2Root {
     return $root
 }
 
+# OpenSSL's VC targets require a native Windows Perl. MSYS Perl can see a
+# Windows Configure path yet resolve FindBin against the build directory.
+function Get-NativeWindowsPerl {
+    $candidates = @()
+    if ($env:SPOOL_WINDOWS_PERL) { $candidates += $env:SPOOL_WINDOWS_PERL }
+    $candidates += Join-Path $env:SystemDrive 'Strawberry\perl\bin\perl.exe'
+    $candidates += @(Get-Command perl.exe -All -ErrorAction SilentlyContinue | ForEach-Object { $_.Source })
+    foreach ($candidate in ($candidates | Select-Object -Unique)) {
+        if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }
+        $flavor = & $candidate -e 'print $^O' 2>$null
+        if ($LASTEXITCODE -eq 0 -and (($flavor -join '').Trim() -eq 'MSWin32')) {
+            return [IO.Path]::GetFullPath($candidate)
+        }
+    }
+    return $null
+}
+
 function Expand-WindowsSourceArchive {
     param(
         [Parameter(Mandatory)] [string] $Archive,
@@ -140,12 +157,19 @@ function Get-MpvSourceRevision {
         'tools/windows/build-mpv.ps1', 'tools/windows/common.ps1',
         'tools/windows/build-ffmpeg.ps1', 'tools/windows/build-ffmpeg.sh',
         'tools/windows/check-ffmpeg.py', 'tools/windows/build-shader-tools.ps1',
-        'tools/windows/extract-archive.py',
+        'tools/windows/extract-archive.py', 'tools/windows/build-streaming-dependencies.ps1',
+        'tools/manifests/streaming-third-party.json', 'tools/cmake/StreamingDependencies.cmake',
+        'tools/cmake/QuicBatchingProbe/CMakeLists.txt',
+        'tools/prepare-streaming-sources.sh', 'tools/streaming-fingerprint.py',
+        'tools/patches/curl-apple-mobile-sectrust.patch', 'tools/lib/manifest-sources.sh',
         'tools/manifests/mpv-native.json', 'tools/manifests/ffmpeg-capabilities.json',
-        'tools/manifests/toolchain.json', 'tools/ffmpeg-capabilities.py'
+        'tools/ffmpeg-capabilities.py'
     )) {
         $inputs.Add("$file=$((Get-FileHash -LiteralPath (Join-Path $root $file) -Algorithm SHA256).Hash)")
     }
+    $toolchain = Get-ToolchainManifest
+    $inputs.Add(($toolchain.ffmpeg | ConvertTo-Json -Compress))
+    $inputs.Add(($toolchain.shaderTools | ConvertTo-Json -Depth 5 -Compress))
     $preferredLlvm = Get-PreferredWindowsLlvmBin
     foreach ($name in @('cl.exe', 'clang.exe', 'lld-link.exe')) {
         $toolPath = if ($preferredLlvm -and $name -ne 'cl.exe' -and (Test-Path -LiteralPath (Join-Path $preferredLlvm $name) -PathType Leaf)) {
@@ -255,6 +279,33 @@ function Initialize-WindowsMpvBuildEnvironment {
     $env:CC_LD = 'lld-link'
     $env:CXX_LD = 'lld-link'
     $env:WINDRES = 'llvm-rc'
+}
+
+function Get-MpvMirrorVersion {
+    param([Parameter(Mandatory)] [string] $Source)
+
+    # Peeled upstream v0.42.0 tag.
+    $releaseVersion = '0.42.0'
+    $releaseCommit = 'b0841e8c4d156b8403dc1876c4cbd9011eb583f3'
+    $version = (Get-Content -LiteralPath (Join-Path $Source 'MPV_VERSION') -Raw).Trim()
+    if ($version -ne "$releaseVersion-UNKNOWN") {
+        return $version
+    }
+    # Only use an upstream release as the version base when it is in the
+    # source history. A shallow or divergent checkout keeps its source version.
+    & git -C $Source merge-base --is-ancestor $releaseCommit HEAD 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        return $version
+    }
+    & git -C $Source diff --quiet HEAD --
+    if ($LASTEXITCODE -ne 0) {
+        return $version
+    }
+    $revision = & git -C $Source rev-parse --short=12 HEAD
+    if ($LASTEXITCODE -ne 0 -or $revision -notmatch '^[0-9a-f]{12,40}$') {
+        throw 'Cannot read the revision for the libmpv version resource.'
+    }
+    return "$releaseVersion+spool.$revision"
 }
 
 function Get-MpvFeatureArguments {

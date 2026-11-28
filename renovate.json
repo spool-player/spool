@@ -38,6 +38,11 @@
       "automerge": false
     },
     {
+      "description": "Update the Nix installer digest, archive release and Nix version together by hand after checking all runner archives",
+      "matchPackageNames": ["nixbuild/nix-quick-install-action"],
+      "enabled": false
+    },
+    {
       "description": "Preserve readable action versions beside immutable digests",
       "matchManagers": ["github-actions"],
       "pinDigests": true,
@@ -47,7 +52,7 @@
   "customManagers": [
     {
       "customType": "regex",
-      "managerFilePatterns": ["/\\.github/workflows/.*\\.ya?ml$/"],
+      "managerFilePatterns": ["/^\\.github/(?:workflows|actions)/.*\\.ya?ml$/"],
       "matchStrings": ["(?<depName>[A-Za-z0-9_.-]+)_VERSION:\\s*(?<currentValue>[^\\s#]+)\\s*#\\s*renovate: datasource=(?<datasource>\\S+)(?: depName=(?<packageName>\\S+))?"],
       "versioningTemplate": "loose"
     },

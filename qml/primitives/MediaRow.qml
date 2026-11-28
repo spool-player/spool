@@ -21,6 +21,7 @@ FocusScope {
     property int cardWidth: Metrics.scaled(156)
     property int cardGap: Metrics.scaled(16)
     property int currentIndex: 0
+    readonly property Item automationCurrentCard: currentCard()
     property bool enabledRow: true
     property bool reserveWhenEmpty: false
     property bool loading: false
@@ -92,15 +93,24 @@ FocusScope {
         return Array.isArray(value) ? "list" : value.rowCount !== undefined ? "item" : "other"
     }
     function bindModel() {
+        const selected = ModelAccess.at(listView.model, currentIndex)
+        const selectedLibraryId = cardKind === "library" ? String(selected.libraryId || "") : ""
         const kind = modelKind(root.model)
         if (kind === boundModelKind) {
             listView.model = root.model
-            return
+        } else {
+            boundModelKind = kind
+            listView.reuseItems = false
+            listView.model = root.model
+            listView.reuseItems = true
         }
-        boundModelKind = kind
-        listView.reuseItems = false
-        listView.model = root.model
-        listView.reuseItems = true
+        if (!publishingMove && selectedLibraryId.length > 0) {
+            const selectedIndex = libraryIndex(selectedLibraryId)
+            if (selectedIndex >= 0)
+                currentIndex = selectedIndex
+        }
+        syncViewCurrentIndex()
+        Qt.callLater(syncViewCurrentIndex)
     }
 
     Component.onCompleted: {
@@ -176,6 +186,7 @@ FocusScope {
     }
 
     function topLeftVisibleCandidate(outerViewport) {
+        listView.forceLayout()
         return InputKeys.topLeftVisibleCandidate(listView, outerViewport)
     }
 
@@ -689,8 +700,22 @@ FocusScope {
                 gesturePolicy: TapHandler.DragThreshold
                 longPressThreshold: 0.52
                 property int pressedIndex: -1
+                property string pressedIdentity: ""
                 property bool pressedWhileMoving: false
                 property bool held: false
+
+                // A live row can be refreshed while a finger rests on it. The
+                // gesture belongs to the card that was pressed, not its slot.
+                function identityAt(index) {
+                    const card = index >= 0 ? listView.itemAtIndex(index) : null
+                    const item = card && card.cardItem
+                    return item ? String(item.id || item.libraryId || item.name || "") : ""
+                }
+                function stillPressedCard() {
+                    return pressedIndex >= 0 && pressedIndex < root.count && identityAt(pressedIndex)
+                            === pressedIdentity
+
+                }
 
                 onPressedChanged: {
                     if (pressed) {
@@ -698,12 +723,13 @@ FocusScope {
                         pressedWhileMoving = listView.moving
                         pressedIndex = listView.indexAt(point.position.x + listView.contentX, point.position.y
                                                         + listView.contentY)
+                        pressedIdentity = identityAt(pressedIndex)
                     } else if (held && root.shell) {
                         root.shell.finishItemMenuOpeningGesture()
                     }
                 }
                 onTapped: (eventPoint, button) => {
-                    if (held || pressedWhileMoving || listView.moving || pressedIndex < 0)
+                    if (held || pressedWhileMoving || listView.moving || !stillPressedCard())
                         return
                     root.pointerSelected()
                     root.currentIndex = pressedIndex
@@ -713,7 +739,7 @@ FocusScope {
                         root.activateIndex(pressedIndex)
                 }
                 onLongPressed: {
-                    if (pressedWhileMoving || listView.moving || pressedIndex < 0)
+                    if (pressedWhileMoving || listView.moving || !stillPressedCard())
                         return
                     root.pointerSelected()
                     root.currentIndex = pressedIndex

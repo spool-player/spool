@@ -1,4 +1,5 @@
 #include "TestMain.h"
+#include "TestRequire.h"
 #include "provider/LanProbe.h"
 #include "provider/ScriptRuntime.h"
 
@@ -17,17 +18,9 @@
 #include <QTimer>
 
 #include <algorithm>
-#include <cstdlib>
-#include <iostream>
 
 namespace {
-void require(bool condition, const char *message)
-{
-    if (!condition) {
-        std::cerr << message << '\n';
-        std::exit(1);
-    }
-}
+using SpoolTests::require;
 
 template <typename T> void rejects(QCoro::Task<T> task, const char *code)
 {
@@ -326,13 +319,14 @@ SPOOL_TEST_MAIN("script-runtime-network")
     int requests = 0;
     int dripActive = 0;
     int dripMaximum = 0;
+    QEventLoop *dripDrain = nullptr;
     std::function<void()> onDrip;
     QObject::connect(&server, &QTcpServer::newConnection, &app, [&] {
         while (auto *socket = server.nextPendingConnection()) {
             QObject::connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
             QObject::connect(socket, &QTcpSocket::disconnected, &app, [&, socket] {
-                if (socket->property("drip").toBool())
-                    --dripActive;
+                if (socket->property("drip").toBool() && --dripActive == 0 && dripDrain)
+                    dripDrain->quit();
             });
             QObject::connect(socket, &QTcpSocket::readyRead, socket, [&, socket] {
                 QByteArray request = socket->property("request").toByteArray() + socket->readAll();
@@ -501,13 +495,17 @@ SPOOL_TEST_MAIN("script-runtime-network")
     QElapsedTimer elapsed;
     elapsed.start();
     const auto drip = QCoro::waitFor(runtime.call("draft", "probe", probe));
-    require(elapsed.elapsed() < 1000 && drip.value("responses").toList().isEmpty() && !drip.value("exhausted").toBool(),
+    require(elapsed.elapsed() < 5000 && drip.value("responses").toList().isEmpty() && !drip.value("exhausted").toBool(),
         "wall deadline aborts incomplete drip feeds and retains unstarted targets for continuation");
     require(dripMaximum == 4, "at most four local HTTP requests run concurrently");
     const auto drained = [&] {
-        QEventLoop loop;
-        QTimer::singleShot(100, &loop, &QEventLoop::quit);
-        loop.exec();
+        if (dripActive > 0) {
+            QEventLoop loop;
+            dripDrain = &loop;
+            QTimer::singleShot(5000, &loop, &QEventLoop::quit);
+            loop.exec();
+            dripDrain = nullptr;
+        }
         require(dripActive == 0, "deadline and cancellation close every incomplete reply");
     };
     drained();

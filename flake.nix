@@ -12,7 +12,7 @@
     # 26.05 darwin branch, which is maintained to the end of 2026.
     nixpkgs-x86-darwin.url = "github:NixOS/nixpkgs/nixpkgs-26.05-darwin";
     libplacebo-src = {
-      url = "github:haasn/libplacebo/a7a18af88ff0a17c04840dcb3246047bb6b46df3?submodules=1";
+      url = "git+https://github.com/haasn/libplacebo?rev=275f7dea27924cdd34ab2e6c20e448b6bc4fab65&submodules=1";
       flake = false;
     };
     qcoro-src = {
@@ -29,13 +29,12 @@
     let
       systems = [ "x86_64-linux" "aarch64-darwin" "x86_64-darwin" ];
 
-      androidToolchain =
-        builtins.fromJSON (builtins.readFile ./tools/manifests/qt-android-6.11.json);
+      androidToolchain = toolchain.android;
       androidSdkArgs = {
-        platformVersions = [ androidToolchain.android.compileSdk ];
-        buildToolsVersions = [ androidToolchain.android.buildTools ];
+        platformVersions = [ androidToolchain.compileSdk ];
+        buildToolsVersions = [ androidToolchain.buildTools ];
         includeNDK = true;
-        ndkVersions = [ androidToolchain.android.ndkVersion ];
+        ndkVersions = [ androidToolchain.ndkVersion ];
       };
       androidEnvironment = pkgs:
         let
@@ -44,7 +43,7 @@
           composition = pkgs.androidenv.composeAndroidPackages androidSdkArgs;
           emulator = pkgs.androidenv.emulateApp {
             name = "spool-android-emulator";
-            platformVersion = "36";
+            platformVersion = androidToolchain.compileSdk;
             abiVersion = "x86_64";
             systemImageType = "google_apis";
             configOptions = {
@@ -61,7 +60,7 @@
             deviceName = "spool-android-tv";
             # The pinned SDK metadata contains this actual Android TV image,
             # including its x86_64 ABI; do not merely toggle the app's TV flag.
-            platformVersion = "36";
+            platformVersion = androidToolchain.compileSdk;
             abiVersion = "x86_64";
             systemImageType = "android-tv";
             configOptions = {
@@ -102,19 +101,24 @@
               # building the same bytes.
               source = pkgs.fetchurl { inherit (ffmpegPin) url; hash = ffmpegPin.sri; };
             }).overrideAttrs (old: {
-              # Keep the genuine HLS seek fixture/reference unchanged across
-              # CPU counts; the direct generator otherwise auto-slices video.
-              patches = (old.patches or []) ++ [
-                ./tools/patches/ffmpeg-fate-hls-fixed-slice-count.patch
-              ];
+              # The pinned release already carries the OpenAPV 1.1 fix that
+              # nixpkgs backports to older FFmpeg; applying it again fails.
+              patches = builtins.filter
+                (patch: !pkgs.lib.hasInfix "openapv-1.1-compat" (toString patch))
+                (old.patches or []);
+              # FFmpeg 9.1 removed the OpenGL output device and its switch.
+              configureFlags = builtins.filter
+                (flag: flag != "--enable-opengl" && flag != "--disable-opengl")
+                (old.configureFlags or []);
             });
         in
         if pkgs ? ffmpeg_9-full
         then pinned pkgs.ffmpeg_9-full
         # The x86_64-darwin maintenance branch predates FFmpeg 9. Its generic
         # derivation supports newer upstream versions; discard its two obsolete
-        # FFmpeg 8 configure switches when building the newer source.
-        else (pinned (pkgs.ffmpeg-full.override { withCelt = false; })).overrideAttrs (old: {
+        # FFmpeg 8 configure switches when building the newer source, and
+        # disable lcevcdec because 26.05 ships 4.1.0 while FFmpeg 9.1 needs >= 4.2.
+        else (pinned (pkgs.ffmpeg-full.override { withCelt = false; withLcevcdec = false; })).overrideAttrs (old: {
           configureFlags = builtins.filter (flag:
             !builtins.elem flag [ "--disable-libcelt" "--disable-libshaderc" ])
             old.configureFlags;
@@ -123,7 +127,7 @@
 
       libplaceboOverlay = final: prev: {
         spoolLibplacebo = prev.libplacebo.overrideAttrs (_: {
-          version = "master-a7a18af";
+          version = "7.387.0";
           src = libplacebo-src;
           patches = [];
         });
@@ -184,8 +188,14 @@
             !(nixpkgs.lib.hasPrefix "--enable-" flag)
             || builtins.elem flag structuralEnableFlags;
         in {
-        spoolFfmpeg = ((spoolFfmpegFor prev).override
-          (nixpkgs.lib.genAttrs ffmpegCapabilities.disabledNixFeatures (_: false))).overrideAttrs (old: {
+        # A feature nixpkgs no longer offers is off already; passing its
+        # switch anyway would fail evaluation.
+        spoolFfmpeg = (let
+            base = spoolFfmpegFor prev;
+            offered = nixpkgs.lib.functionArgs base.override;
+          in base.override (nixpkgs.lib.genAttrs
+            (builtins.filter (feature: offered ? ${feature}) ffmpegCapabilities.disabledNixFeatures)
+            (_: false))).overrideAttrs (old: {
             doCheck = false;
             configureFlags =
               builtins.filter keepInheritedFlag old.configureFlags
@@ -201,10 +211,17 @@
       };
       pinnedQtOverlay = final: prev:
         let
+          # Intel macOS workflows override the root `nixpkgs` input to
+          # `nixpkgs-x86-darwin` (26.05-darwin, Qt 6.11) so `nix develop` can
+          # resolve `bashInteractive`. Keep the two Qt 6.12 nixpkgs patches
+          # that diverge from 26.05-darwin in-tree so Intel builds never depend
+          # on the unstable `nixpkgs` tree remaining unoverridden and always
+          # hash identically before and after `--override-input nixpkgs`.
+          isOlderQtChannel = prev.qt6.qtbase.version != toolchain.qt.version;
           srcs = builtins.mapAttrs (name: sha256: {
             version = toolchain.qt.version;
             src = final.fetchurl {
-              url = "${toolchain.qt.baseUrl}/${name}-everywhere-src-${toolchain.qt.version}.tar.xz";
+              url = "${toolchain.qt.archiveBaseUrl}/${toolchain.qt.series}/${toolchain.qt.version}/submodules/${name}-everywhere-src-${toolchain.qt.version}.tar.xz";
               inherit sha256;
             };
           }) toolchain.qt.sources;
@@ -212,14 +229,36 @@
           qt6 = (prev.qt6.overrideScope (_qtFinal: qtPrev: {
             inherit srcs;
             # qtbase takes its source directly; the other modules use qtModule.
-            qtbase = qtPrev.qtbase.override { inherit (srcs.qtbase) src version; };
+            # nixpkgs-26.05-darwin carries its 6.11 qmlimportscanner and
+            # macdeployqt patches, which do not apply to the pinned release;
+            # take the consolidated replacement the 6.12 channel ships.
+            qtbase = (qtPrev.qtbase.override { inherit (srcs.qtbase) src version; }).overrideAttrs (old: {
+              patches = let
+                superseded = [ "find-qmlimportscanner.patch" "qmlimportscanner-import-path.patch"
+                  "skip-missing-qml-directory.patch" "515cbbacfba9f4259c9c3b0714a31222c2b4c879.diff" ];
+                stale = patch: builtins.any (s: final.lib.hasSuffix s (baseNameOf (toString patch))) superseded;
+                inherited = old.patches or [];
+              in if isOlderQtChannel && builtins.any stale inherited
+                then builtins.filter (patch: !stale patch) inherited
+                  ++ [ ./tools/patches/qt6-nixpkgs/macdeployqt-fixes.patch ]
+                else inherited;
+            });
             qtModule = qtPrev.qtModule.override { inherit srcs; };
             qtdeclarative = qtPrev.qtdeclarative.overrideAttrs (old: {
-              # The Intel maintenance channel backports this TableView fix.
-              # It is already in the pinned Qt release; applying it again fails.
-              patches = builtins.filter (patch:
-                !final.lib.hasSuffix "8a2c82be6ad90e3f2a0760d8bab1e3a8cdb2473a.diff" (toString patch))
-                (old.patches or []);
+              # The Intel maintenance channel ships 6.11 patches (and may
+              # backport fixes already in 6.12). Swap the 6.11
+              # use-versioned-import-path patch for the 6.12 version so
+              # qqmltypeloader.cpp patches cleanly on x86_64-darwin.
+              patches = let
+                inherited = builtins.filter (patch:
+                  !final.lib.hasSuffix "8a2c82be6ad90e3f2a0760d8bab1e3a8cdb2473a.diff" (toString patch))
+                  (old.patches or []);
+              in if isOlderQtChannel
+                then map (patch:
+                  if final.lib.hasSuffix "use-versioned-import-path.patch" (baseNameOf (toString patch))
+                  then ./tools/patches/qt6-nixpkgs/use-versioned-import-path.patch
+                  else patch) inherited
+                else inherited;
             });
           })) // {
             override = prev.qt6.override;
@@ -507,7 +546,7 @@
             --prefix QML2_IMPORT_PATH : "$qml_import_path"
         '';
 
-      # Shell used by tools/webos-native/build-qt6-611.sh. No nixpkgs Qt here.
+      # Shell used by tools/webos-native/build-qt6.sh. No nixpkgs Qt here.
       sourceBuildPackages = pkgs:
         basePackages pkgs
         ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux (sourceLinuxPackages pkgs)
@@ -608,7 +647,7 @@
       nativeShellHook = pkgs: commonShellHook pkgs + ''
         # This shell intentionally includes Spool's tailored nixpkgs Qt
         # (spoolQt6) for native Linux/macOS development. Do not use it for
-        # tools/webos-native/build-qt6-611.sh.
+        # tools/webos-native/build-qt6.sh.
         export SPOOL_QT_CMAKE_DIR="${pkgs.spoolQt6.qtbase}/lib/cmake/Qt6"
         native_qt_cmake_path="${pkgs.spoolQt6.qtbase}:${pkgs.spoolQt6.qtdeclarative}:${pkgs.spoolQt6.qtsvg}:${pkgs.spoolQt6.qttools}:${pkgs.spoolQt6.qtwebsockets}:${pkgs.spoolQt6.qtshadertools}"
         export CMAKE_PREFIX_PATH="$native_qt_cmake_path''${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
@@ -652,7 +691,7 @@
               # scanner exclusions. Upstream -exclude alone skips only the
               # named directory's direct files, not its vendored descendants.
               patches = (old.patches or []) ++ [
-                ./tools/webos-native/patches/qtdeclarative-6.11-qmlimportscanner-exclude-subtrees.patch
+                ./tools/webos-native/patches/qtdeclarative-6.12-qmlimportscanner-exclude-subtrees.patch
               ];
               # Match the webOS host-tools profile: without an imported qsb,
               # qtdeclarative skips Quick, Controls and styles, not QML tools.
@@ -789,7 +828,8 @@
         };
 
         native = pkgs.mkShell {
-          packages = nativePackages pkgs;
+          packages = nativePackages pkgs ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux
+            (with pkgs; [ nginxStable iproute2 util-linux ethtool iputils python3Packages.h2 python3Packages.aioquic ]);
           shellHook = nativeShellHook pkgs;
         };
 
@@ -818,7 +858,7 @@
           ] ++ lib.optionals stdenv.hostPlatform.isLinux [ util-linux ];
           ANDROID_HOME = "${android.sdk}/libexec/android-sdk";
           ANDROID_SDK_ROOT = "${android.sdk}/libexec/android-sdk";
-          ANDROID_NDK_ROOT = "${android.sdk}/libexec/android-sdk/ndk/${androidToolchain.android.ndkVersion}";
+          ANDROID_NDK_ROOT = "${android.sdk}/libexec/android-sdk/ndk/${androidToolchain.ndkVersion}";
           JAVA_HOME = pkgs.jdk17_headless.home;
           SPOOL_ANDROID_QT_HOST = "${androidQtHost}";
           shellHook = gitHooksShellHook;
@@ -838,6 +878,13 @@
           shellHook = gitHooksShellHook;
         };
       } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+        android-journey = pkgs.mkShell {
+          packages = with pkgs; [
+            cmake ninja python3 spoolQt6.qtbase spoolQt6.qtwebsockets
+            (lib.getBin (spoolFfmpegFor pkgs)) tesseract
+          ];
+        };
+
         windows-proton = pkgs.mkShell {
           packages = with pkgs; [
             umu-launcher vulkan-tools python3 msitools gcab p7zip

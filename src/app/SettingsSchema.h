@@ -45,9 +45,20 @@ enum class SettingTarget {
     UnlimitedLocalBitrate,
     PreferRemux,
     ForwardCacheSize,
+    ThreadedStreaming,
+    MaxStreamingThreads,
+    ForceStreamingThreads,
+    LogStreamingPerformance,
+    StreamingExplore,
+    StreamingMemoryLoan,
+    MaxExtraStreamingMemory,
+    StreamingReceiveWindowMode,
+    StreamingHttpVersion,
     PlayerVolumeSlider,
     AudioDelay,
     AudioOutput,
+    AlsaBuffer,
+    AudioPassthrough,
     UiScale,
     ArtworkFormat,
     ArtworkWebpQuality,
@@ -146,8 +157,11 @@ struct SettingSpec {
     const char *destinationKey = "";
     const char *destination = "category";
 
+    bool serverOverridable = false;
+
     // Declaration modifiers. Each returns a copy so specs read as one
     // expression: slider(...).advanced().onDesktop().
+    SettingSpec perServer() const;
     SettingSpec advanced() const;
     SettingSpec expert() const;
     SettingSpec onDesktop() const;

@@ -1,7 +1,6 @@
 #include "common/RangedDownload.h"
 
 #include "TestMain.h"
-#include "TestRequire.h"
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
@@ -13,12 +12,19 @@
 #include <QTcpSocket>
 #include <QTemporaryDir>
 
+#include <iostream>
 #include <optional>
+#include <stdexcept>
 
 using Spool::RangedDownload;
-using SpoolTests::require;
 
 namespace {
+
+void require(bool condition, const char *message)
+{
+    if (!condition)
+        throw std::runtime_error(message);
+}
 
 // HTTP/1.1, one response per connection. Honours "bytes=a-b" and "bytes=a-"
 // unless told to ignore ranges, and records what it was asked for.
@@ -31,6 +37,8 @@ public:
             while (QTcpSocket *socket = nextPendingConnection()) {
                 connect(socket, &QTcpSocket::readyRead, socket, [this, socket] { respond(socket); });
                 connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
+                if (socket->bytesAvailable() > 0)
+                    respond(socket);
             }
         });
         require(listen(QHostAddress::LocalHost), "server could not listen");
@@ -110,6 +118,8 @@ Outcome fetch(FileServer& server, const QString& path, int lanes, qint64 expecte
     while (!result && timer.elapsed() < 10000)
         QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
     require(result.has_value(), "download never finished");
+    if (!result->isEmpty())
+        return { *result, {} };
     QFile file(path);
     require(file.open(QIODevice::ReadOnly), "downloaded file could not be read");
     return { *result, file.readAll() };
@@ -118,7 +128,7 @@ Outcome fetch(FileServer& server, const QString& path, int lanes, qint64 expecte
 } // namespace
 
 SPOOL_TEST_MAIN("ranged-download")
-{
+try {
     QCoreApplication app(argc, argv);
     QTemporaryDir directory;
     require(directory.isValid(), "temporary directory");
@@ -150,7 +160,11 @@ SPOOL_TEST_MAIN("ranged-download")
         const Outcome outcome = fetch(server, path, 3, body.size());
         require(outcome.error.isEmpty(), "a server without ranges failed the download");
         require(outcome.file == body, "a server without ranges produced the wrong bytes");
-        require(server.ranges.last().isEmpty(), "the fallback still asked for a range");
+        // Concurrent initial lanes can deliver their already-written Range
+        // request to the loopback server after restartWhole() opens the plain
+        // fallback socket; assert the fallback ran once without a Range header.
+        require(
+            server.ranges.count(QByteArray()) == 1, "the fallback did not fetch the file whole once without a range");
     }
     // A file that is not the size it was promised to be is refused.
     {
@@ -159,4 +173,7 @@ SPOOL_TEST_MAIN("ranged-download")
         require(!outcome.error.isEmpty(), "a file of the wrong size was accepted");
     }
     return 0;
+} catch (const std::runtime_error& error) {
+    std::cerr << "ranged-download: " << error.what() << '\n';
+    return 1;
 }

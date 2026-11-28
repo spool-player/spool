@@ -150,21 +150,25 @@ requests bypass HTTP caches. The measurement includes media-server storage
 and transport overhead, without starting playback or a transcoding session.
 Providers cannot supply their own `Range` or compression headers.
 
-The worker warms 512 KiB, measures one/two connections with 4 MiB totals, and
-tries four if warmup time-to-first-byte is at least 20 ms or two improve the
-rate by at least 10%. It chooses the fewest lanes within 85% of the fastest,
-returns that lane count's rate with 25% headroom, and clamps to 1–1000 Mbps.
-The result is `{bitrate, parallelRequests}`. Bodies never reach JS; the probe
-reserves the operation's HTTP slots and shares its 15-second deadline and
-cancellation. `speedTest` exists only on the operation host, not the source host.
+The worker warms 512 KiB and always measures one, two and four connections.
+Generated endpoints use power-of-two 4/8/16/32 MiB batches; Range endpoints use 4 MiB.
+Each point repeats until 400 ms or 64 MiB, capped at 2.5 seconds within the shared
+15-second operation deadline. Rates use actual bytes and elapsed wall time.
+The result includes `{bitrate, parallelRequests}` plus the measured concurrency
+curve. `bitrate` reserves 25% headroom from peak capacity; the lane count is the
+minimum within 15% of that peak, or sufficient for 1.75× known media demand.
+Bodies never reach JS. The probe reserves the operation's HTTP slots and shares
+its cancellation. `speedTest` exists only on the operation host, not the source host.
 
-Spool schedules probes while idle and passes each account's result back in
-`PlaybackContext.measuredBitrate` (zero before measurement) and
-`parallelRequests` (two before measurement). Use the measured ceiling only
-when the viewer has not chosen a session or settings limit. Spool shows the
-result under Quality → Auto and in Streaming settings.
-An in-flight bounded probe finishes even if playback starts. New automatic
-probes wait for idle; an explicit refresh may measure during playback.
+Spool schedules probes while idle and passes each account's conservative ceiling
+in `PlaybackContext.measuredBitrate` (zero before measurement), and the learned
+starting count in `parallelRequests` (one before measurement, integer 1–16).
+Fresh actual playback evidence overrides probe evidence at matching concurrency.
+The native player reselects for the current media demand and user request cap.
+Use the measured ceiling only when the viewer has not chosen a session or settings
+limit. Spool shows it under Quality → Auto and in Streaming settings.
+Foreground playback cancels in-flight probes; pending probes and explicit
+refreshes wait for idle.
 
 
 ## Quality policy
@@ -189,6 +193,16 @@ Preserve an explicitly selected edition rather than silently substituting one.
 `Resolved.source` can supply fresh selected-edition bitrate and pixel dimensions
 from playback negotiation. Quality menus use this original analysis rather than
 a stale catalogue summary, a measured automatic limit, or transcoded output.
+It may also carry the selected edition's `sizeBytes` and `runtimeTicks` (100 ns
+units). `Resolved.delivery` describes the representation actually returned:
+`bitrate` (bits/s, 0 unknown), `sizeBytes` and `runtimeTicks`. Direct play may
+repeat the source values; remux and transcode must not assume the original
+file's size, and a multipart item reports the resolved part, never one part's
+bytes over the whole film's duration. Sizes and durations are positive integers
+or unsigned decimal strings (for values beyond 2^53); omit what is unknown.
+Spool rejects the resolve result if any of these is a boolean, fraction,
+negative, null or malformed; a `pick` answer is checked on its follow-up resolve.
+The player uses these facts as streaming demand priors only.
 
 
 `Resolved.timelineOriginTicks` identifies the source position represented by

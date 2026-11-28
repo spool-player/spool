@@ -8,7 +8,7 @@ MPV_SRC="${MPV_SRC:-$ROOT/mpv}"
 
 PHASE="${1:-all}"
 ABI="${ANDROID_ABI:-x86_64}"
-API="${ANDROID_API:-28}"
+API="${ANDROID_API:-$(toolchain_field "$ROOT" android.minimumSdk)}"
 MANIFEST="${ANDROID_THIRD_PARTY_MANIFEST:-$ROOT/tools/manifests/android-third-party.json}"
 JOBS="$(recommended_parallel_jobs "${ANDROID_DEPS_MEMORY_PER_JOB_MIB:-1024}" "${ANDROID_DEPS_MEMORY_RESERVE_MIB:-2048}")"
 
@@ -72,9 +72,10 @@ unset PKG_CONFIG_SYSROOT_DIR
 fetch_sources() {
   mkdir -p "$SOURCE_ROOT" "$BUILD_ROOT"
   local source
-  for source in openssl curl freetype lua qcoro fribidi harfbuzz libass libplacebo; do
+  for source in freetype lua fribidi harfbuzz libass libplacebo dav1d; do
     prepare_manifest_source "$ROOT" "$MANIFEST" "$source" "$SOURCE_ROOT/$source"
   done
+  bash "$ROOT/tools/prepare-streaming-sources.sh" --root "$ROOT" --output "$SOURCE_ROOT"
   prepare_toolchain_ffmpeg "$ROOT" "$SOURCE_ROOT/ffmpeg"
   local path url sha archive
   while IFS=$'\t' read -r path url sha; do
@@ -119,7 +120,9 @@ EOF
 }
 
 build_openssl() {
-  [[ -f "$PREFIX/lib/libssl.so" && -f "$PREFIX/lib/libcrypto.so" ]] && return
+  local pin stamp="$PREFIX/lib/.spool-openssl-configuration"
+  pin="$(python3 "$ROOT/tools/streaming-fingerprint.py" --root "$ROOT" --target "$ABI:$API:$($CC --version):shared-tls" --wrapper "${BASH_SOURCE[0]}")"
+  [[ -f "$PREFIX/lib/libssl.so" && -f "$PREFIX/lib/libcrypto.so" && -f "$stamp" && "$(<"$stamp")" == "$pin" ]] && return
   local build="$BUILD_ROOT/openssl"
   rm -rf "$build"
   cp -R "$SOURCE_ROOT/openssl" "$build"
@@ -128,10 +131,11 @@ build_openssl() {
     cd "$build"
     ./Configure "$OPENSSL_TARGET" -D__ANDROID_API__="$API" \
       --prefix="$PREFIX" --openssldir="$PREFIX/ssl" \
-      shared no-tests no-ui-console
+      shared no-apps no-docs no-tests no-comp no-dtls no-srp no-ssl3 no-weak-ssl-ciphers no-ui-console
     make -j"$JOBS"
     make install_sw
   )
+  printf '%s\n' "$pin" >"$stamp"
 }
 
 build_freetype() {
@@ -192,73 +196,20 @@ EOF
 # of FFmpeg, which cannot link OpenSSL 3 without the version3 licence flag the
 # capability manifest forbids.
 build_curl() {
-  # curl carries the trust store playback depends on, so its configuration is
-  # part of the stamp: a tree built before the CA path was named must not be
-  # mistaken for a current one.
-  local stamp="$PREFIX/lib/.spool-curl-configuration"
-  local pin
-  pin="$(sha256sum "${BASH_SOURCE[0]}" | cut -d" " -f1)"
+  local stamp="$PREFIX/lib/.spool-curl-configuration" pin
+  pin="$(python3 "$ROOT/tools/streaming-fingerprint.py" --root "$ROOT" --target "$ABI:$API:$($CC --version):static-http" --wrapper "${BASH_SOURCE[0]}" --wrapper "$ROOT/tools/lib/streaming-build.sh")"
   [[ -f "$PREFIX/lib/libcurl.a" && -f "$stamp" && "$(<"$stamp")" == "$pin" ]] && return
-  local build="$BUILD_ROOT/curl"
-  rm -rf "$build"
-  cmake -S "$SOURCE_ROOT/curl" -B "$build" -GNinja \
+  rm -rf "$BUILD_ROOT/streaming"
+  source "$ROOT/tools/lib/streaming-build.sh"
+  build_streaming_http "$SOURCE_ROOT" "$BUILD_ROOT/streaming" "$PREFIX" OFF \
     -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_ROOT/build/cmake/android.toolchain.cmake" \
-    -DANDROID_ABI="$ABI" \
-    -DANDROID_PLATFORM="android-$API" \
-    -DCMAKE_BUILD_TYPE=MinSizeRel \
-    -DCMAKE_INSTALL_PREFIX="$PREFIX" \
-    -DCMAKE_PREFIX_PATH="$PREFIX" \
-    -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-    -DOPENSSL_ROOT_DIR="$PREFIX" \
-    -DOPENSSL_INCLUDE_DIR="$PREFIX/include" \
-    -DOPENSSL_CRYPTO_LIBRARY="$PREFIX/lib/libcrypto.so" \
-    -DOPENSSL_SSL_LIBRARY="$PREFIX/lib/libssl.so" \
-    -DOPENSSL_USE_STATIC_LIBS=OFF \
-    -DBUILD_CURL_EXE=OFF \
-    -DBUILD_LIBCURL_DOCS=OFF \
-    -DBUILD_MISC_DOCS=OFF \
-    -DBUILD_EXAMPLES=OFF \
-    -DBUILD_SHARED_LIBS=OFF \
-    -DBUILD_STATIC_LIBS=ON \
-    -DBUILD_TESTING=OFF \
-    -DCURL_BROTLI=OFF \
-    -DCURL_DISABLE_ALTSVC=ON \
-    -DCURL_DISABLE_DICT=ON \
-    -DCURL_DISABLE_DOH=ON \
-    -DCURL_DISABLE_FILE=ON \
-    -DCURL_DISABLE_FTP=ON \
-    -DCURL_DISABLE_GOPHER=ON \
-    -DCURL_DISABLE_HSTS=ON \
-    -DCURL_DISABLE_IMAP=ON \
-    -DCURL_DISABLE_IPFS=ON \
-    -DCURL_DISABLE_LDAP=ON \
-    -DCURL_DISABLE_LDAPS=ON \
-    -DCURL_DISABLE_MQTT=ON \
-    -DCURL_DISABLE_NETRC=ON \
-    -DCURL_DISABLE_POP3=ON \
-    -DCURL_DISABLE_RTSP=ON \
-    -DCURL_DISABLE_SMB=ON \
-    -DCURL_DISABLE_SMTP=ON \
-    -DCURL_DISABLE_TELNET=ON \
-    -DCURL_DISABLE_TFTP=ON \
-    -DCURL_DISABLE_WEBSOCKETS=ON \
-    -DCURL_USE_GSSAPI=OFF \
-    -DCURL_USE_LIBPSL=OFF \
-    -DCURL_USE_LIBSSH2=OFF \
-    -DCURL_USE_OPENSSL=ON \
-    -DCURL_CA_FALLBACK=ON \
-    -DCURL_CA_PATH=/system/etc/security/cacerts \
-    -DCURL_ZLIB=OFF \
-    -DENABLE_ARES=OFF \
-    -DENABLE_THREADED_RESOLVER=ON \
-    -DENABLE_CURL_MANUAL=OFF \
-    -DUSE_LIBIDN2=OFF \
-    -DUSE_NGHTTP2=OFF \
-    -DUSE_NGTCP2=OFF \
-    -DUSE_NGHTTP3=OFF
-  cmake --build "$build" --parallel "$JOBS"
-  cmake --install "$build"
-  printf '%s' "$pin" >"$stamp"
+    -DANDROID_ABI="$ABI" -DANDROID_PLATFORM="android-$API" \
+    -DCMAKE_PREFIX_PATH="$PREFIX" -DOPENSSL_ROOT_DIR="$PREFIX" \
+    -DOPENSSL_INCLUDE_DIR="$PREFIX/include" -DOPENSSL_CRYPTO_LIBRARY="$PREFIX/lib/libcrypto.so" \
+    -DOPENSSL_SSL_LIBRARY="$PREFIX/lib/libssl.so" -DOPENSSL_USE_STATIC_LIBS=OFF \
+    -DCURL_CA_FALLBACK=ON -DCURL_CA_PATH=/system/etc/security/cacerts -DCURL_ZLIB=OFF
+  python3 "$ROOT/tools/check-streaming-dependencies.py" --prefix "$PREFIX" --manifest "$ROOT/tools/manifests/streaming-third-party.json"
+  printf '%s\n' "$pin" >"$stamp"
 }
 
 build_meson() {
@@ -288,6 +239,14 @@ build_text_and_gpu_deps() {
     -Dtest=disabled -Dcompare=disabled -Dprofile=disabled -Dfuzz=disabled \
     -Dcheckasm=disabled -Dfontconfig=disabled -Dlibunibreak=disabled \
     -Dasm=disabled --buildtype release
+  # Software AV1. No Shield and few TV boxes decode AV1 in hardware, and
+  # FFmpeg's own AV1 decoder only drives a hardware accelerator. The x86_64
+  # emulator build skips the assembly, which would need nasm.
+  local dav1d_asm=true
+  [[ "$ABI" == x86_64 ]] && dav1d_asm=false
+  build_meson dav1d \
+    -Denable_tools=false -Denable_examples=false -Denable_tests=false \
+    -Denable_docs=false -Denable_asm="$dav1d_asm" --buildtype release
   build_meson libplacebo \
     -Ddemos=false -Dtests=false -Dbench=false -Dfuzz=false \
     -Dvulkan=disabled -Dvk-proc-addr=disabled -Dd3d11=disabled \
@@ -354,8 +313,8 @@ build_mpv() {
   )"
   pin="$(
     printf '%s\n' "$source_pin" "$ABI" "$API" "$ANDROID_NDK_ROOT"
-    sha256sum "${BASH_SOURCE[0]}" "$ROOT/tools/manifests/toolchain.json" \
-      "$ROOT/tools/manifests/mpv-native.json" "$ANDROID_NDK_ROOT/source.properties" || exit
+    sha256sum "${BASH_SOURCE[0]}" "$ROOT/tools/manifests/mpv-native.json" \
+      "$ANDROID_NDK_ROOT/source.properties" || exit
     cat "$PREFIX/lib/pkgconfig/.spool-ffmpeg-source" "$PREFIX/lib/.spool-curl-configuration"
   )"
   [[ -f "$PREFIX/lib/libmpv.so" && -f "$stamp" && "$(<"$stamp")" == "$pin" ]] && return

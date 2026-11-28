@@ -1693,6 +1693,7 @@ FocusScope {
 
                         DetailAction {
                             id: primaryAction
+                            captionObjectName: root.routeActive ? "detailPrimaryCaption" : ""
                             iconName: "play_arrow"
                             label: root.primaryLabel()
                             primary: true
@@ -2013,6 +2014,7 @@ FocusScope {
 
                     MediaRow {
                         id: similarRowItem
+                        objectName: "detailSimilarRow"
                         anchors.left: parent.left
                         anchors.right: parent.right
                         anchors.leftMargin: root.contentMargin

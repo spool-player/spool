@@ -52,10 +52,10 @@ def command(arguments, *, check=True, timeout=30, input=None, env=None):
 
 def diagnostic(text):
     # Only controlled native test diagnostics. Never print provider/app payloads.
-    markers = ("video result:", "orientation:", "viewport:", "first video frame", "native presentation:",
+    markers = ("video result:", "orientation:", "viewport:", "first video frame", "native presentation:", "native OSD:",
                "render context handoff did not complete", "render context was not ready",
                "failed to initialize mpv", "tvOS audio smoke:", "tvOS credentials smoke:",
-               "An error was encountered processing the command", "dyld[")
+               "An error was encountered processing the command", "dyld[", "spool-test-require:")
     for line in text.splitlines():
         if any(marker in line for marker in markers):
             print(re.sub(r"https?://\S+", "[redacted-url]", line))
@@ -91,6 +91,21 @@ class Android:
     def stop(self):
         self.call("shell", "am", "force-stop", self.bundle, check=False)
 
+    def selector_exit(self, pid, started):
+        error = SelectorCrash("native Android selector exited without a final receipt")
+        if pid is None:
+            return error
+        try:
+            report = self.call("logcat", "-d", "-b", "crash", "-b", "main", "--pid", str(pid),
+                               "-t", "100", "-v", "epoch", check=False, timeout=5)
+        except (OSError, subprocess.SubprocessError):
+            return error
+        for line in report.stdout.splitlines():
+            match = re.match(r"^\s*([0-9]+(?:\.[0-9]+)?)\s+([0-9]+)\s+.*?\bFatal signal ([1-9][0-9]?)\b", line)
+            if match and float(match[1]) >= started and int(match[2]) == pid and int(match[3]) <= 64:
+                error.signal = int(match[3])
+                break
+        return error
 
     def execute(self, arguments, timeout):
         self.call("shell", "am", "force-stop", self.bundle)
@@ -101,6 +116,7 @@ class Android:
         # alone. No generic host environment forwarding or production flag.
         debug_extra = (["--es", "extraenvvars_SPOOL_TEST_MPV_LOG", "1"]
                        if mpv_log_requested(arguments) else [])
+        started = int(self.call("shell", "date", "+%s").stdout.strip())
         result = self.call("shell", "am", "start", "-W", "-n",
                            f"{self.bundle}/org.qtproject.qt.android.bindings.QtActivity",
                            "--es", "applicationArguments", extra, *debug_extra, check=False)
@@ -110,7 +126,8 @@ class Android:
         # am start -W has already waited for the activity launch. A process
         # that dies before the first pid/receipt observation is still a crash,
         # not a reason to wait for the entire selector deadline.
-        seen_process = True
+        missing_process = False
+        pid = None
         try:
             while time.monotonic() < deadline:
                 try:
@@ -120,22 +137,20 @@ class Android:
                         raise RuntimeError("Android native receipt has invalid nonce/schema")
                     if report.get("status") != "running":
                         return None, ""
-                    seen_process = True
+                    if type(report.get("pid")) is int and report["pid"] > 0:
+                        pid = report["pid"]
                 except FileNotFoundError:
                     pass
-                running = bool(self.call("shell", "pidof", self.bundle, check=False).stdout.strip())
-                seen_process |= running
-                if seen_process and not running:
-                    # The process may have published its final receipt between
-                    # our read and pidof. Re-read once; never relaunch the test.
-                    try:
-                        final = json.loads(self.read(self.receipt))
-                    except FileNotFoundError as error:
-                        raise SelectorCrash("native Android selector exited without a final receipt") from error
-                    if (isinstance(final, dict) and final.get("nonce") == arguments[-1]
-                            and final.get("status") != "running"):
-                        return None, ""
-                    raise SelectorCrash("native Android selector crashed without a final receipt")
+                process = self.call("shell", "-T", "pidof", "-s", self.bundle, check=False)
+                observation = process.stdout.strip()
+                if process.returncode == 0 and re.fullmatch(r"[1-9][0-9]*", observation):
+                    pid = int(observation)
+                # An ADB transport error also returns nonzero, but reports a
+                # message rather than a successful shell invocation of pidof.
+                absent = process.returncode == 1 and not observation
+                if missing_process and absent:
+                    raise self.selector_exit(pid, started)
+                missing_process = absent
                 time.sleep(0.2)
             raise TimeoutError("native Android selector exceeded its deadline")
         finally:
@@ -575,7 +590,7 @@ class JourneyOwner:
         self.regression = regression
         self.ready = threading.Event()
         self.bundle = (os.environ.get("SPOOL_E2E_TVOS_BUNDLE", "com.sachk.spool")
-                       if platform == "tvos" else "com.sachk.spool")
+                       if platform in ("tvos", "ios") else "com.sachk.spool")
         self.device = os.environ["ANDROID_SERIAL" if platform == "android" else "SPOOL_TVOS_DEVICE"]
         if platform == "android" and not self.device.startswith("emulator-"):
             raise RuntimeError("Android journey requires an isolated emulator serial")
@@ -587,7 +602,7 @@ class JourneyOwner:
         self.mappings = []
         self.app_path = None
         self.artifact_failure = False
-        if platform == "tvos":
+        if platform in ("tvos", "ios"):
             self.app_path = self.call("get_app_container", self.device, self.bundle, "app").stdout.strip()
             if not Path(self.app_path).is_dir():
                 raise RuntimeError("installed production simulator application is unavailable")
@@ -673,7 +688,7 @@ class JourneyOwner:
                     return
                 if self.platform == "android" and int(birth) < self.pending_launch["minimumBirth"]:
                     raise RuntimeError("refusing to own an Android process predating the launch")
-                if (self.platform == "tvos" and
+                if (self.platform in ("tvos", "ios") and
                         time.mktime(time.strptime(birth, "%a %b %d %H:%M:%S %Y")) <
                         self.pending_launch["started"] - 1):
                     raise RuntimeError("refusing to own a simulator process predating the launch")
@@ -968,6 +983,8 @@ def app_journey(platform, output, timeout, regression=None):
                               "port": service.server_address[1], "token": service.token})
     environment = dict(os.environ, SPOOL_E2E_DEVICE_JOURNEY_OWNER=str(capability),
                        SPOOL_E2E_ARTIFACT_DIR=str(output))
+    if platform == "android":
+        environment["SPOOL_E2E_ADB"] = owner.tool
     thread = threading.Thread(target=service.serve_forever, daemon=True)
     thread.start()
     process = None
@@ -1191,7 +1208,7 @@ def safe_result(value):
             result[key] = value[key]
     if isinstance(value.get("nonce"), str) and re.fullmatch("[a-f0-9]{32}", value["nonce"]):
         result["nonce"] = value["nonce"]
-    if value.get("platform") in ("android", "tvos"):
+    if value.get("platform") in ("android", "tvos", "ios"):
         result["platform"] = value["platform"]
     if isinstance(value.get("selector"), str) and re.fullmatch("[a-zA-Z0-9_-]+", value["selector"]):
         result["selector"] = value["selector"]
@@ -1226,6 +1243,33 @@ def export_attempt(private, destination, result):
     journeys = [*private.glob("app-journey-*"), *(private / "journey-images").glob("app-journey-*")]
     for journey in journeys:
         if journey.is_dir() and not journey.is_symlink():
+            # The native controller records this before propagating a signal
+            # observed from the separately owned product process.
+            crash = journey / "mobile-crash-evidence.json"
+            if (result.get("status") == "crashed" and crash.is_file() and not crash.is_symlink()
+                    and crash.stat().st_size <= 4096):
+                try:
+                    evidence = json.loads(crash.read_text())
+                except (OSError, ValueError):
+                    evidence = None
+                if (isinstance(evidence, dict) and type(evidence.get("signal")) is int
+                        and evidence["signal"] == result.get("signal")
+                        and type(evidence.get("pid")) is int and evidence["pid"] > 0
+                        and evidence.get("platform") in ("android", "tvos", "ios")):
+                    exported = {key: evidence[key] for key in ("platform", "pid", "signal")}
+                    if evidence["platform"] == "android" and evidence.get("abortKind") == "destroyed-mutex":
+                        exported["abortKind"] = "destroyed-mutex"
+                    frames = evidence.get("frames", [])
+                    if evidence["platform"] == "android" and isinstance(frames, list):
+                        exported["frames"] = [
+                            {"module": frame["module"], "offset": frame["offset"]}
+                            for frame in frames[:12]
+                            if isinstance(frame, dict) and isinstance(frame.get("module"), str)
+                            and re.fullmatch(r"lib(?:spool_x86_64|Qt6(?:Core|Gui|Quick|Qml|OpenGL)"
+                                             r"|mpv|c|EGL|GLESv2|art|android_runtime)\.so", frame["module"])
+                            and isinstance(frame.get("offset"), str)
+                            and re.fullmatch(r"[0-9a-f]{1,16}", frame["offset"])]
+                    write_journal(destination / "mobile-crash-evidence.json", exported)
             images.extend(journey / name for name in
                           ("frame.png", "library-text.png", "mobile-default-startup.png", "download-failure.png"))
     for image in images:
@@ -1246,18 +1290,39 @@ def export_attempt(private, destination, result):
             r"^app-journey: production spoolet rejected ([a-z_-]{1,32}) "
             r"\(exit=(-?[0-9]+), code=([a-z_]{1,64}), elapsed_ms=([0-9]+), "
             r"timeout_origin=(unknown|server|client_write|client_response)\)")
+        reason_pattern = re.compile(r'^app-journey: ([A-Za-z0-9 ,.:;()=_\x27"-]{1,400})$')
         with log.open(encoding="utf-8", errors="replace") as stream:
             for line in stream:
-                match = pattern.match(line)
+                stripped = line.rstrip("\r\n")
+                if re.fullmatch(r"app-journey-stack: [A-Za-z0-9_:,~.-]{1,12000}", stripped):
+                    lines.append(stripped)
+                    print(stripped, flush=True)
+                    continue
+                if re.fullmatch(r"app-journey-pause: observations=[0-9]+, timeouts=[0-9]+, "
+                                r"position_sample_age_ms=-?[0-9]+, mpv_event_age_ms=-?[0-9]+, "
+                                r"pause_request_age_ms=-?[0-9]+, mpv_end_reason=-?[0-9]{1,10}, "
+                                r"mpv_end_error=-?[0-9]{1,10}", stripped):
+                    lines.append(stripped)
+                    print(stripped, flush=True)
+                    continue
+                match = pattern.match(stripped)
                 if match:
                     operation, code, error, elapsed, origin = match.groups()
                     controlled = (f"spoolet command={operation} exitCode={int(code)} code={error} "
                                   f"elapsed_ms={int(elapsed)} timeoutOrigin={origin}")
                     lines.append(controlled)
                     print("app-journey: " + controlled, flush=True)
+                    continue
+                reason_match = reason_pattern.match(stripped)
+                if reason_match:
+                    reason = reason_match.group(1)[:240]
+                    if ("retained at" not in reason and "://" not in reason and
+                            "/" not in reason and not re.search(r"[a-fA-F0-9]{24,}", reason)):
+                        lines.append("reason=" + reason)
+                        print("app-journey: " + reason, flush=True)
     (destination / "attempt.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
     allowed = {"native-result.json", "controller-result.json", "attempt.log", "frame.png", "library-text.png",
-               "mobile-default-startup.png", NATIVE_DIAGNOSTIC_NAME}
+               "mobile-default-startup.png", "mobile-crash-evidence.json", NATIVE_DIAGNOSTIC_NAME}
     files = [path for path in destination.rglob("*") if path.is_file()]
     if any(path.is_symlink() or (path.name not in allowed and not path.name.endswith("-failure.png"))
            for path in files):
@@ -1280,9 +1345,21 @@ def write_journal(path, value):
     temporary.replace(path)
 
 
+def apple_selector_setup(phase):
+    for attempt in range(2):
+        try:
+            return TvOS(phase)
+        except subprocess.TimeoutExpired as error:
+            # Initial installed-bundle lookups can stall after a slow boot.
+            # No test selector has started, so a fresh lookup is safe.
+            if attempt or error.cmd[:3] != ["xcrun", "simctl", "get_app_container"]:
+                raise
+            print("Apple selector setup: simctl get_app_container timed out; retrying once", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--platform", choices=("android", "tvos"), required=True)
+    parser.add_argument("--platform", choices=("android", "tvos", "ios"), required=True)
     parser.add_argument("--phase", choices=("traditional", "e2e"), required=True)
     parser.add_argument("--artifact-dir", type=Path, required=True)
     parser.add_argument("--timeout", type=int, default=180)
@@ -1300,7 +1377,7 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     suffix = f"-cleanup-{args.cleanup_regression}" if args.cleanup_regression else ""
     state_path = output / f"{args.phase}{suffix}-result.json"
-    device = Android(args.phase) if args.platform == "android" else TvOS(args.phase)
+    device = Android(args.phase) if args.platform == "android" else apple_selector_setup(args.phase)
     if args.cleanup_regression:
         names = [f"app-journey-cleanup-{args.cleanup_regression}"]
     else:
@@ -1426,5 +1503,11 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
-        print(f"device test infrastructure failed: {type(error).__name__}", flush=True)
+        stage = ""
+        if isinstance(error, subprocess.TimeoutExpired) and isinstance(error.cmd, list):
+            if error.cmd[:3] in (["xcrun", "simctl", "launch"], ["xcrun", "simctl", "get_app_container"]):
+                stage = f" (simctl {error.cmd[2]})"
+            elif error.cmd[:2] == ["xcrun", "dwarfdump"]:
+                stage = " (selector binary identity)"
+        print(f"device test infrastructure failed: {type(error).__name__}{stage}", flush=True)
         raise SystemExit(1)

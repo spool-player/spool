@@ -3,27 +3,30 @@
     "libplacebo-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1783535157,
-        "narHash": "sha256-cA8+APhpu3m38z5hs2EhsNlLb/xHAy/Tcxi5loFS6j0=",
-        "owner": "haasn",
-        "repo": "libplacebo",
-        "rev": "a7a18af88ff0a17c04840dcb3246047bb6b46df3",
-        "type": "github"
+        "lastModified": 1792950923,
+        "narHash": "sha256-9CQhW/3CCUnjo0iDleKhcfZlMYVfHijqLE+oND4Wkeg=",
+        "ref": "refs/heads/master",
+        "rev": "275f7dea27924cdd34ab2e6c20e448b6bc4fab65",
+        "revCount": 4051,
+        "submodules": true,
+        "type": "git",
+        "url": "https://github.com/haasn/libplacebo"
       },
       "original": {
-        "owner": "haasn",
-        "repo": "libplacebo",
-        "rev": "a7a18af88ff0a17c04840dcb3246047bb6b46df3",
-        "type": "github"
+        "rev": "275f7dea27924cdd34ab2e6c20e448b6bc4fab65",
+        "submodules": true,
+        "type": "git",
+        "url": "https://github.com/haasn/libplacebo"
       }
     },
     "mpv-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1792661579,
-        "narHash": "sha256-9IwML0Hvvcy4q/Karfybb6UXCvfvAOQlAk5b9AyiweU=",
-        "rev": "95114ebccf43fd482aae620584f7fb6ace4d8095",
-        "revCount": 55868,
+        "lastModified": 1795681643,
+        "narHash": "sha256-71xK8qR/l3jf0+cLOkfV8KNpVwNno0Et801CEuKnYpc=",
+        "ref": "refs/heads/fix/paused-render-timeout-0.10.2",
+        "rev": "d3cc1b1caa397c82fdd5e3570f9bd701e6f9335e",
+        "revCount": 56251,
         "type": "git",
         "url": "file:./mpv"
       },
@@ -34,11 +37,11 @@
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1788881743,
-        "narHash": "sha256-2V9GZGvPfrNzxFozhI9dcqV+c3QdA8YZrvAAzqEB+dI=",
+        "lastModified": 1795085501,
+        "narHash": "sha256-S5keGWzaKpuXo9MNoIC2FfTIuTyTnx8P4NhYJMEsTLI=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "d6524aaca2ff07876657ae2b323f24be4874944b",
+        "rev": "0bb8272318b4ca41bf0edc6224df3e3e3046b70d",
         "type": "github"
       },
       "original": {
@@ -50,11 +53,11 @@
     },
     "nixpkgs-x86-darwin": {
       "locked": {
-        "lastModified": 1788966248,
-        "narHash": "sha256-F36C+08KdnP1gQ6bu9Ok+UKg50A5EVSZOeGqg+hjoO0=",
+        "lastModified": 1795147381,
+        "narHash": "sha256-8Zhru7g6o6N01kCIHIPXwt8gSp982cPzph/rXPVfzXc=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "104a7c61006cd22d11c0379663afee90c62273ab",
+        "rev": "ca9c2429e2d01d6e75541ba92ef4e62faad696e2",
         "type": "github"
       },
       "original": {

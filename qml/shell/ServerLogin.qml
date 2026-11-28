@@ -255,7 +255,11 @@ FocusScope {
                              step = "account"
                              usernameField.text = ""
                              password.text = ""
-                             Qt.callLater(() => usernameField.focusRow())
+                             Qt.callLater(() => {
+                                 if (step === "account" && !alternateActive && !closed && !password.activeFocus &&
+                                         !usernameField.activeFocus)
+                                     usernameField.focusRow()
+                             })
                          }, reason => {
                              if (current())
                                  fail(reason)
@@ -357,7 +361,10 @@ FocusScope {
         error = ""
         step = "server"
         password.text = ""
-        Qt.callLater(() => address.focusRow())
+        Qt.callLater(() => {
+            if (step === "server" && !alternateActive && !closed)
+                address.focusRow()
+        })
         return true
     }
     function activate() {
@@ -382,7 +389,10 @@ FocusScope {
             }, fail)
         } else {
             discoverServers()
-            Qt.callLater(() => address.focusRow())
+            Qt.callLater(() => {
+                if (step === "server" && !alternateActive && !closed && !address.activeFocus)
+                    address.focusRow()
+            })
         }
     }
     Component.onDestruction: {

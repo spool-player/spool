@@ -15,11 +15,9 @@ runs:
     - name: Fetch Nix archive
       id: fetch
       shell: bash
-      env:
-        # Must match the nix-quick-install-action pin below and its default Nix.
-        RELEASE: v34
-        NIX_VERSION: 2.29.2
       run: |
+        release="$(bash tools/toolchain-versions.sh nix.quickInstallRelease)"
+        nix_version="$(bash tools/toolchain-versions.sh nix.version)"
         case "$RUNNER_ARCH" in
           X64) arch=x86_64 ;;
           ARM64) arch=aarch64 ;;
@@ -31,13 +29,13 @@ runs:
           *) echo "::error::unsupported runner OS $RUNNER_OS"; exit 1 ;;
         esac
         dir="$RUNNER_TEMP/nix-archives"
-        name="nix-$NIX_VERSION-$arch-$os.tar.zstd"
-        url="https://github.com/nixbuild/nix-quick-install-action/releases/download/$RELEASE/$name"
+        name="nix-$nix_version-$arch-$os.tar.zstd"
+        url="https://github.com/nixbuild/nix-quick-install-action/releases/download/$release/$name"
         mkdir -p "$dir"
         for attempt in 1 2 3 4 5; do
           if curl -fsSL --retry 3 --retry-all-errors -o "$dir/$name" "$url" && zstd -tq "$dir/$name"; then
             echo "archives-url=file://$dir" >>"$GITHUB_OUTPUT"
-            echo "nix-version=$NIX_VERSION" >>"$GITHUB_OUTPUT"
+            echo "nix-version=$nix_version" >>"$GITHUB_OUTPUT"
             exit 0
           fi
           echo "::warning::Nix archive fetch attempt $attempt failed"
@@ -45,6 +43,7 @@ runs:
         done
         echo "::error::could not fetch a valid $url"
         exit 1
+    # Update this digest and both Nix pins in tools/manifests/toolchain.json in one commit.
     - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035 # v34
       with:
         nix_version: ${{ steps.fetch.outputs.nix-version }}

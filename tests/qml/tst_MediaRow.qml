@@ -125,6 +125,12 @@ TestCase {
         }
     }
 
+    SignalSpy {
+        id: activatedSpy
+        target: libraryRow
+        signalName: "activated"
+    }
+
     function initTestCase() {
         initialModel = libraryRow.model
     }
@@ -142,6 +148,7 @@ TestCase {
         openedContext = null
         moves = []
         headerActivations = 0
+        activatedSpy.clear()
     }
 
     function test_reorderRequiresExplicitMoveChoice() {
@@ -239,6 +246,23 @@ TestCase {
         }
     }
 
+    function test_libraryRefreshKeepsSelectedIdentityWhenOrderChanges() {
+        libraryRow.model = initialModel
+        tryCompare(libraryRow, "count", 2)
+        libraryRow.currentIndex = 0
+        libraryRow.focusList()
+        tryVerify(() => libraryRow.currentCard() !== null)
+        waitForRendering(libraryRow)
+        compare(libraryRow.currentCard().titleText(), "Movies")
+
+        libraryRow.model = initialModel.slice().reverse()
+        waitForRendering(libraryRow)
+        compare(libraryRow.currentCard().titleText(), "Movies")
+        libraryRow.activate()
+        compare(activatedSpy.count, 1)
+        compare(activatedSpy.signalArguments[0][1].libraryId, "aaaaaaaa:movies")
+    }
+
     function test_touchPressDoesNotMoveSelectionBeforeClick() {
         libraryRow.currentIndex = 0
         libraryRow.beginPointerSelection(1)
@@ -283,16 +307,19 @@ TestCase {
         const row = router.stack.rowAt(0)
         row.cardWidth = 156
         row.cardGap = 16
-        verify(router.stack.focusPreferred("libraries"))
-        row.currentIndex = 2
-        tryVerify(() => row.currentCard() !== null && row.activeFocus)
-        waitForRendering(row)
         const pointerSurface = findChild(row, "mediaRowPointerArea")
         verify(pointerSurface)
         const viewport = pointerSurface.parent
+        viewport.forceLayout()
+        verify(router.stack.focusPreferred("libraries"))
+        row.currentIndex = 2
+        tryVerify(() => row.currentCard() !== null && row.activeFocus)
+        viewport.forceLayout()
+        waitForRendering(row)
         // Real native ListView geometry after a horizontal scroll; there is no
         // synthetic pending flag or copied candidate/recovery implementation.
         viewport.contentX = viewport.originX + 6 * (row.cardWidth + row.cardGap)
+        viewport.forceLayout()
         waitForRendering(row)
         compare(row.currentIndex, 2)
         const scrollX = viewport.contentX
@@ -356,11 +383,14 @@ TestCase {
         const row = router.stack.rowAt(0)
         row.cardWidth = 156
         row.cardGap = 16
+        const viewport = findChild(row, "mediaRowPointerArea").parent
+        viewport.forceLayout()
         tryVerify(() => row.delegatesPresented)
         verify(router.stack.focusPreferred("libraries"))
         verify(row.beginMoveById("aaaaaaaa:library/7"))
-        const viewport = findChild(row, "mediaRowPointerArea").parent
+        viewport.forceLayout()
         viewport.contentX = viewport.originX + 6 * (row.cardWidth + row.cardGap)
+        viewport.forceLayout()
         waitForRendering(row)
         const scrollX = viewport.contentX - viewport.originX
         const scrollY = router.stack.contentY

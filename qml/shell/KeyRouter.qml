@@ -88,6 +88,7 @@ FocusScope {
     focus: true
     onActiveTargetChanged: {
         flushHeldRelease()
+        stopSustaining()
         pressedDirectionKey = 0
     }
     // A window that loses focus never sends the release for whatever was down
@@ -95,6 +96,7 @@ FocusScope {
     onActiveFocusChanged: if (!activeFocus) {
                               flushHeldRelease()
                               stopSustaining()
+                              pressedDirectionKey = 0
                           }
     Keys.priority: Keys.BeforeItem
 
@@ -105,7 +107,9 @@ FocusScope {
     }
 
     function beginSustaining(key, modifiers) {
-        if (platformSendsRepeats)
+        // webOS already supplies native repeats. A lost physical release must
+        // not turn a single click into a timer-driven hold.
+        if (webOsScanCodes || platformSendsRepeats)
             return
         sustainedKey = key
         sustainedModifiers = modifiers

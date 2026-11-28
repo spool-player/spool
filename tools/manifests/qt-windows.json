@@ -1,0 +1,41 @@
+{
+  "repository": "https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_6120/qt6_6120_msvc2022_64",
+  "packageVersion": "6.12.0-0-202609280346",
+  "archives": [
+    {
+      "package": "qt.qt6.6120.win64_msvc2022_64",
+      "file": "qtbase-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z",
+      "sha1": "bf35f8916164c6f313af8347dd0e91efe18178f0"
+    },
+    {
+      "package": "qt.qt6.6120.win64_msvc2022_64",
+      "file": "qtdeclarative-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z",
+      "sha1": "bfe26cb07fd8d497fa1384a53d82434ad45a9756"
+    },
+    {
+      "package": "qt.qt6.6120.win64_msvc2022_64",
+      "file": "qttools-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z",
+      "sha1": "879b647b61a1da35d50132e3a51ec5895b03fb95"
+    },
+    {
+      "package": "qt.qt6.6120.win64_msvc2022_64",
+      "file": "qtsvg-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z",
+      "sha1": "e1c5b24e2448539684ac59dfc1a1be4de01de1d1"
+    },
+    {
+      "package": "qt.qt6.6120.addons.qtshadertools.win64_msvc2022_64",
+      "file": "qtshadertools-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z",
+      "sha1": "800e54628c986596e60e46d526dc191c226b4c1b"
+    },
+    {
+      "package": "qt.qt6.6120.addons.qtimageformats.win64_msvc2022_64",
+      "file": "qtimageformats-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z",
+      "sha1": "5a06cd9d22d6d5e83a1ab9a1b697020e02154881"
+    },
+    {
+      "package": "qt.qt6.6120.addons.qtwebsockets.win64_msvc2022_64",
+      "file": "qtwebsockets-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z",
+      "sha1": "0c0d50ce7000289e96013cbf261ed567367044b9"
+    }
+  ]
+}

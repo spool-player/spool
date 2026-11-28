@@ -114,7 +114,6 @@ private:
     int m_scrollSteps = 0;
     int m_scrollPosition = 0;
     bool m_scrolling = false;
-    qint64 m_scrollStartNs = 0;
     qint64 m_scrollWorstGapNs = 0;
     qint64 m_scrollExpectedGapNs = 0;
     QElapsedTimer m_scrollClock;

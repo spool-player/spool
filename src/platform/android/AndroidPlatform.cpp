@@ -18,6 +18,7 @@
 #include <QJniEnvironment>
 #include <QJniObject>
 #include <QStandardPaths>
+#include <unistd.h>
 
 #include <algorithm>
 
@@ -273,7 +274,12 @@ PlatformCpuProbe platformCpuProbe(int logicalCpus)
 PlatformMemoryPolicy platformMemoryPolicy()
 {
     constexpr qint64 mib = 1024LL * 1024LL;
-    return { 0, 2048LL * mib, 128LL * mib, 128LL * mib, 32, 24LL * mib, 96LL * mib };
+    // Physical memory, so a 1 GB stick gets the low-memory budget rather
+    // than the 2 GB assumed when nothing is known.
+    const long pages = sysconf(_SC_PHYS_PAGES);
+    const long pageSize = sysconf(_SC_PAGESIZE);
+    const qint64 total = pages > 0 && pageSize > 0 ? qint64(pages) * pageSize : 0;
+    return { total, 2048LL * mib, 128LL * mib, 128LL * mib, 32, 24LL * mib, 96LL * mib };
 }
 
 qint64 effectiveLinuxMemoryBytes(const QByteArray&, const QByteArray&, const QByteArray&)

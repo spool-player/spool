@@ -8,6 +8,8 @@ import "SettingsNavigation.js" as SettingsNavigation
 FocusScope {
     id: root
 
+    property string sourceId: ""
+    readonly property bool serverSettings: sourceId.length > 0
     property var shell
     property var uiTransitionToken: 0
     property int currentIndex: -1
@@ -16,6 +18,7 @@ FocusScope {
     property var allSettingsRows: []
     property var expandedGroups: ({})
     property bool reconcilingSettingsRows: false
+    property int rowFocusRevision: 0
     readonly property bool directionRelease: true
     property var recoveryGesture: ({
                                        "key": 0
@@ -27,9 +30,9 @@ FocusScope {
     property var searchResultLocation: null
     property var categoryLocations: ({})
     property string revealedRowKey: ""
-    readonly property string pageTitle: pageMode === "search" ? "Search settings" : pageMode === "category"
-                                                                ? SettingsNavigation.categoryTitle(categoryId) :
-                                                                  "Settings"
+    readonly property string pageTitle: serverSettings ? "Playback settings" : pageMode === "search"
+                                                         ? "Search settings" : pageMode === "category"
+                                                           ? SettingsNavigation.categoryTitle(categoryId) : "Settings"
     readonly property bool modalVisible: certificateManagerVisible || choiceDialogVisible || diagnosticsExportVisible
                                          || mpvFolderDialogVisible || homeProvidersVisible
     property bool homeProvidersVisible: false
@@ -39,6 +42,22 @@ FocusScope {
                                Qt.callLater(function () {
                                    refreshSettingsFilter(false)
                                })
+
+    function configureServer(id) {
+        finishRowEdit()
+        const changed = sourceId !== id
+        sourceId = id
+        if (changed) {
+            ++rowFocusRevision
+            pageMode = id.length ? "category" : "index"
+            categoryId = id.length ? "streaming" : ""
+            searchQuery = ""
+            priorSearchLocation = null
+            searchResultLocation = null
+            expandedGroups = ({})
+            buildSettingsRowsSource()
+        }
+    }
 
     function inputCompositionActive() {
         const focused = root.Window.window ? root.Window.window.activeFocusItem : null
@@ -76,6 +95,7 @@ FocusScope {
     function openSearch() {
         if (modalVisible || editingKey.length || inputCompositionActive())
             return false
+        ++rowFocusRevision
         searchField.focusField()
         return true
     }
@@ -200,7 +220,8 @@ FocusScope {
         finishRowEdit()
         editingKey = row.key
         editingInitialValue = Settings.values[row.key]
-        SettingsSync.beginEdit(row.key)
+        if (!serverSettings)
+            SettingsSync.beginEdit(row.key)
     }
 
     function finishRowEdit() {
@@ -208,7 +229,8 @@ FocusScope {
             return
         const key = editingKey
         editingKey = ""
-        SettingsSync.endEdit(key, Settings.values[key] !== editingInitialValue)
+        if (!serverSettings)
+            SettingsSync.endEdit(key, Settings.values[key] !== editingInitialValue)
     }
 
     ListModel {
@@ -219,6 +241,8 @@ FocusScope {
     onDownloadsAvailableChanged: refreshSettingsFilter(false)
 
     function rowAvailable(row) {
+        if (row.resetKey)
+            return Settings.hasServerOverride(row.resetKey, sourceId)
         if (row.key === "providers/updates" && !Store.storeAvailable)
             return false
         if (row.key === "action/connectionSpeed" && !ProviderCapabilities.speedTest)
@@ -312,6 +336,8 @@ FocusScope {
         for (let index = 0; index < allSettingsRows.length; ++index) {
             const entry = allSettingsRows[index]
             const row = rowsByKey[entry.rowKey]
+            if (row.resetKey && !rowAvailable(row))
+                continue
             if (pageMode === "search") {
                 if (SettingsNavigation.matchesSearch(row, searchQuery, rowOptions(row)))
                     visibleRows.push(descriptor(row.key, entry.sourceIndex, false, false))
@@ -365,7 +391,14 @@ FocusScope {
             }
         }
         for (let index = 0; index < schema.length; ++index) {
-            const row = schema[index]
+            const original = schema[index]
+            if (serverSettings && !original.perServer)
+                continue
+            const row = serverSettings ? Object.assign({}, original) : original
+            if (serverSettings && row.type === "toggle") {
+                row.type = "select"
+                row.serverToggle = true
+            }
             rowMap[row.key] = row
             sourceRows.push({
                                 "rowKey": row.key,
@@ -373,6 +406,25 @@ FocusScope {
                                 "group": row.categoryId,
                                 "sourceIndex": index * 2
                             })
+            if (serverSettings && row.type === "slider") {
+                const resetKey = "action/useDefault/" + row.key
+                rowMap[resetKey] = {
+                    "key": resetKey,
+                    "resetKey": row.key,
+                    "title": "Use default",
+                    "description": row.title,
+                    "categoryId": row.categoryId,
+                    "group": row.group,
+                    "level": row.level,
+                    "type": "action"
+                }
+                sourceRows.push({
+                                    "rowKey": resetKey,
+                                    "detailLevel": SettingsNavigation.detailLevel(row),
+                                    "group": row.categoryId,
+                                    "sourceIndex": index * 2 + 1
+                                })
+            }
             if (row.key === "action/accounts")
                 sourceRows.push({
                                     "rowKey": "action/settingsSync",
@@ -491,6 +543,11 @@ FocusScope {
     }
 
     function settingsValue(row) {
+        if (serverSettings) {
+            const defaults = Settings.values
+            const overrides = Settings.serverOverrides
+            return Settings.effectiveValue(row.key, sourceId)
+        }
         switch (row.key) {
         case "subtitles/language":
             return Settings.subtitleLanguageIndex
@@ -503,6 +560,22 @@ FocusScope {
     }
 
     function rowDescription(row) {
+        let capability = ""
+        if (row.key === "playback/streamingHttpVersion") {
+            const capabilities = Player.transportCapabilities
+            if (String(settingsValue(row)) === "http3" && capabilities && (capabilities.http3 === false
+                                                                           || capabilities["quic-batching"] === false))
+                capability = " · This build uses HTTP/2 with HTTP/1.1 fallback"
+            if (capabilities && capabilities.http2 === false && String(settingsValue(row)) !== "http1")
+                capability = " · This build uses HTTP/1.1"
+        }
+        if (serverSettings && row.perServer) {
+            const overrides = Settings.serverOverrides
+            const reason = availabilityReason(row)
+            return (Settings.hasServerOverride(row.key, sourceId) ? "Custom" : "Default · Follows your settings") + (
+                        row.description ? " · " + row.description : "") + (reason.length ? " · " + reason : "")
+                    + capability
+        }
         if (pageMode === "search")
             return SettingsNavigation.categoryTitle(row.categoryId) + " · " + row.group + (availabilityReason(
                                                                                                row).length ? " · "
@@ -539,7 +612,7 @@ FocusScope {
             const labels = rowOptions(row)
             return index >= 0 && index < labels.length ? labels[index] : row.description
         }
-        return row.description || ""
+        return (row.description || "") + capability
     }
 
     // Choice labels may carry a "%1" placeholder for the user's preferred
@@ -604,6 +677,14 @@ FocusScope {
     }
 
     function rowOptions(row) {
+        if (serverSettings && row.perServer && row.type === "select") {
+            const defaults = Settings.values
+            const defaultValue = Settings.value(row.key)
+            const labels = row.serverToggle ? ["On", "Off"] : (row.choiceLabels || [])
+            const values = row.serverToggle ? [true, false] : (row.choiceValues || [])
+            const label = labels[valueIndex(values, defaultValue)] || String(defaultValue)
+            return ["Default (" + label + ")"].concat(labels)
+        }
         if (row.key === "i18n/locale") {
             const result = []
             for (let index = 0; index < I18n.availableLocales.length; ++index)
@@ -625,6 +706,8 @@ FocusScope {
     }
 
     function rowChoiceValues(row) {
+        if (serverSettings && row.perServer && row.type === "select")
+            return [null].concat(row.serverToggle ? [true, false] : (row.choiceValues || []))
         if (row.key === "i18n/locale")
             return I18n.availableLocales
         if (row.key === "subtitles/language" || row.key === "audio/language")
@@ -640,6 +723,11 @@ FocusScope {
     }
 
     function rowCurrentIndex(row) {
+        if (serverSettings && row.perServer && row.type === "select") {
+            const overrides = Settings.serverOverrides
+            return Settings.hasServerOverride(row.key, sourceId) ? valueIndex(rowChoiceValues(row), settingsValue(row)) :
+                                                                   0
+        }
         if (row.key === "subtitles/language")
             return Settings.subtitleLanguageIndex
         if (row.key === "audio/language")
@@ -648,6 +736,13 @@ FocusScope {
     }
 
     function setRowValue(row, value, index) {
+        if (serverSettings) {
+            if (value === null)
+                Settings.resetServerValue(row.key, sourceId)
+            else
+                Settings.setServerValue(row.key, value, sourceId)
+            return
+        }
         switch (row.key) {
         case "subtitles/language":
             Settings.setSubtitleLanguageIndex(index)
@@ -739,7 +834,9 @@ FocusScope {
             return
         }
         if (row.type === "action") {
-            if (row.key === "action/settingsSync" && shell)
+            if (row.resetKey)
+                Settings.resetServerValue(row.resetKey, sourceId)
+            else if (row.key === "action/settingsSync" && shell)
                 shell.pushRoute("settingsSync")
             else if (row.key === "action/accounts" && shell)
                 shell.pushRoute("accounts")
@@ -822,8 +919,12 @@ FocusScope {
         finishRowEdit()
         choiceDialogAnchor = null
         choiceDialogRow = null
+        const revision = rowFocusRevision
         Qt.callLater(function () {
-            selectRow(currentIndex, true)
+            // Closing a popup must not steal a newer search/edit or another
+            // route's focus while its deferred layout work finishes.
+            if (revision === rowFocusRevision && visible && activeFocus && !searchField.editing)
+                selectRow(currentIndex, true)
         })
     }
 
@@ -837,8 +938,12 @@ FocusScope {
     function closeHomeProviders() {
         homeProvidersVisible = false
         homeProvidersAnchor = null
+        const revision = rowFocusRevision
         Qt.callLater(function () {
-            selectRow(currentIndex, true)
+            // Closing a popup must not steal a newer search/edit or another
+            // route's focus while its deferred layout work finishes.
+            if (revision === rowFocusRevision && visible && activeFocus && !searchField.editing)
+                selectRow(currentIndex, true)
         })
     }
 
@@ -887,7 +992,7 @@ FocusScope {
             restoreLocation(saved)
             return true
         }
-        if (pageMode === "category") {
+        if (pageMode === "category" && !serverSettings) {
             categoryLocations[categoryId] = location()
             const previousCategory = categoryId
             pageMode = "index"
@@ -1112,6 +1217,9 @@ FocusScope {
     Connections {
         target: Settings
 
+        function onServerOverridesChanged() {
+            root.refreshSettingsFilter(false)
+        }
         function onSettingChanged(key) {
             // Value bindings update independently. Only availability changes
             // need to reconcile the rows and force another list layout.

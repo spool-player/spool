@@ -28,6 +28,113 @@
 #include <optional>
 #include <utility>
 
+extern "C" {
+#include <mpv/client.h>
+}
+
+namespace Spool {
+struct PlayerControllerTestAccess {
+    static void runCacheContract(NativeAppWindow& window)
+    {
+        using SpoolTests::require;
+        constexpr qint64 mib = 1024LL * 1024;
+        PlayerController player(&window, nullptr, nullptr, {});
+        player.m_idleStreamingMemoryTimer.stop();
+        player.m_idleMpvPreparationEnabled = false;
+        player.m_forwardCacheSizeMiB = 32;
+        player.m_memoryProbe = [] { return PlatformStreamingMemoryState {}; };
+        const auto waitPrepared = [&] {
+            QElapsedTimer deadline;
+            deadline.start();
+            while (!player.m_idleMpvHandle && deadline.elapsed() < 10000) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+                QThread::msleep(1);
+            }
+            require(player.m_idleMpvHandle, "preparation hands off its owned idle core");
+        };
+        const auto readPair = [&](StreamingCacheTarget expected) {
+            int64_t forward = 0, back = 0;
+            auto *core = player.m_mpvLifecycle.handle();
+            require(core && mpv_get_property(core, "demuxer-max-bytes", MPV_FORMAT_INT64, &forward) >= 0
+                    && mpv_get_property(core, "demuxer-max-back-bytes", MPV_FORMAT_INT64, &back) >= 0
+                    && forward == expected.forwardBytes && back == expected.backBytes,
+                "actual adopted core limits match the latest pair before media load");
+        };
+        player.applyDemuxerCacheTarget({ 512 * mib, 128 * mib }, false);
+        player.prepareMpvAsync(false, false);
+        player.applyDemuxerCacheTarget({ 32 * mib, 16 * mib }, false);
+        waitPrepared();
+        require(player.ensureMpv(false, false), "a pressure change during preparation survives adoption");
+        readPair({ 32 * mib, 16 * mib });
+        player.teardownMpv();
+        player.prepareMpvAsync(false, false);
+        waitPrepared();
+        auto *readyCore = player.m_idleMpvHandle;
+        player.applyDemuxerCacheTarget({ 64 * mib, 32 * mib }, false);
+        require(player.ensureMpv(false, false) && player.m_mpvLifecycle.handle() == readyCore,
+            "a changed floor refreshes the same ready speculative core without reinitialization");
+        readPair({ 64 * mib, 32 * mib });
+        player.teardownMpv();
+        player.prepareMpvAsync(false, false);
+        player.destroyIdleMpv("test cancellation");
+        QElapsedTimer cancellation;
+        cancellation.start();
+        while (cancellation.elapsed() < 100) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+            QThread::msleep(1);
+        }
+        require(!player.m_idleMpvHandle && !player.m_mpvPreparation,
+            "cancelled preparation cannot publish an abandoned idle core");
+        auto *handle = mpv_create();
+        require(handle && mpv_set_option_string(handle, "config", "no") >= 0
+                && mpv_set_option_string(handle, "vo", "null") >= 0 && mpv_set_option_string(handle, "ao", "null") >= 0
+                && mpv_initialize(handle) >= 0,
+            "cache application fixture initializes an idle core");
+        player.applyDemuxerCacheTarget({ 512 * mib, 128 * mib }, false);
+        require(player.applyInitialDemuxerCacheTarget(handle), "initial limits apply before core adoption");
+        player.applyDemuxerCacheTarget({ 32 * mib, 16 * mib }, false);
+        require(player.applyInitialDemuxerCacheTarget(handle), "adoption refreshes both limits after idle pressure");
+        int64_t forward = 0, back = 0;
+        require(mpv_get_property(handle, "demuxer-max-bytes", MPV_FORMAT_INT64, &forward) >= 0
+                && mpv_get_property(handle, "demuxer-max-back-bytes", MPV_FORMAT_INT64, &back) >= 0
+                && forward == 32 * mib && back == 16 * mib,
+            "the adopted core reports the current pair without a later memory sample");
+        require(player.m_mpvLifecycle.adopt(handle, [](mpv_event *) { }), "test adopts cache core");
+        int writes = 0;
+        bool rejectBack = true;
+        player.m_cachePropertyWriter = [&](mpv_handle *, quint64, const char *name, qint64, bool async) {
+            ++writes;
+            require(async, "live cache writes stay asynchronous");
+            return rejectBack && QByteArray(name) == "demuxer-max-back-bytes" ? MPV_ERROR_PROPERTY_ERROR : 0;
+        };
+        player.applyDemuxerCacheTarget({ 64 * mib, 32 * mib }, true);
+        const quint64 failedSerial = player.m_demuxerCacheSerial;
+        player.completeDemuxerCacheWrite(failedSerial, 0);
+        require(!player.m_appliedDemuxerTarget && player.m_demuxerCacheReplies == 0,
+            "one failed property leaves the entire pair dirty");
+        rejectBack = false;
+        player.applyDemuxerCacheTarget({ 64 * mib, 32 * mib }, true);
+        require(
+            writes == 4 && player.m_demuxerCacheReplies == 2, "an unchanged target retries after an enqueue failure");
+        player.completeDemuxerCacheWrite(failedSerial, 0);
+        require(player.m_demuxerCacheReplies == 2, "stale completions cannot acknowledge a replacement update");
+        player.completeDemuxerCacheWrite(player.m_demuxerCacheSerial, 0);
+        require(!player.m_appliedDemuxerTarget, "one completion cannot acknowledge both cache limits");
+        player.completeDemuxerCacheWrite(player.m_demuxerCacheSerial, MPV_ERROR_PROPERTY_ERROR);
+        require(!player.m_appliedDemuxerTarget, "a completion error stays dirty");
+        player.applyDemuxerCacheTarget({ 64 * mib, 32 * mib }, true);
+        player.completeDemuxerCacheWrite(player.m_demuxerCacheSerial, 0);
+        player.completeDemuxerCacheWrite(player.m_demuxerCacheSerial, 0);
+        require(player.m_appliedDemuxerTarget == player.m_activeDemuxerTarget,
+            "only both successful completions acknowledge the current pair");
+        player.m_cachePropertyWriter = {};
+        player.teardownMpv();
+        require(!player.m_streamingMemoryTimer.isActive() && !player.m_appliedDemuxerTarget,
+            "teardown retires pressure polling and per-core applied state");
+    }
+};
+}
+
 using namespace Spool;
 
 namespace {
@@ -105,10 +212,6 @@ public:
     QUrl mediaOrigin() const override
     {
         return m_source->mediaOrigin();
-    }
-    int playbackParallelRequests() const override
-    {
-        return m_source->playbackParallelRequests();
     }
     bool signedIn() const override
     {
@@ -350,6 +453,35 @@ void watchedStopPolicy(const QString& directory, NativeAppWindow& window)
     }
 }
 
+void transportLoadLifecycle(const QString& directory, NativeAppWindow& window)
+{
+    PlayerController player(&window, nullptr, nullptr, {});
+    player.setMpvConfigPolicy({ MpvConfigPolicy::Mode::Custom, directory });
+    PlaybackSession rejected = audioSession(directory, QStringLiteral("rejected-policy"), 8);
+    rejected.sourceBitrate = 1'000'000'000'001LL;
+    player.play(rejected);
+    waitUntil([&] { return !player.sessionActive() && !player.errorText().isEmpty(); },
+        "a rejected transport configure ends the pending load");
+    require(!player.fileLoaded() && player.errorText().contains(QStringLiteral("streaming policy")),
+        "failed policy installation cannot load a playable file");
+
+    const PlaybackSession replacement = audioSession(directory, QStringLiteral("replacement-policy"), 8);
+    player.play(rejected);
+    player.play(replacement);
+    waitUntil([&] { return player.fileLoaded() && player.positionSeconds() > 0.1; },
+        "a current successful configure releases the replacement load");
+    require(player.title() == replacement.title && player.errorText().isEmpty(),
+        "a superseded configure failure cannot reject a replacement playback");
+    player.stop();
+
+    player.play(replacement);
+    player.stop();
+    processFor(500);
+    require(!player.sessionActive() && !player.fileLoaded(),
+        "stopping a pending configure cannot be undone by its acknowledgement");
+    player.teardownMpv();
+}
+
 #if !defined(Q_OS_ANDROID) && !defined(SPOOL_APPLE_MOBILE)
 void localPlaylistLifecycle(const QString& directory, NativeAppWindow& window)
 {
@@ -408,6 +540,7 @@ SPOOL_TEST_MAIN("player-controller")
     config.close();
 
     NativeAppWindow window(QStringLiteral("player-controller-test"));
+    PlayerControllerTestAccess::runCacheContract(window);
 #if !defined(Q_OS_ANDROID) && !defined(SPOOL_APPLE_MOBILE)
     window.resize(320, 180);
     MpvVideoItem video(window.contentItem());
@@ -451,6 +584,10 @@ SPOOL_TEST_MAIN("player-controller")
     const double heldPosition = player.positionSeconds();
     processFor(400);
     require(player.paused() && player.positionSeconds() < heldPosition + 0.2, "intentional pause stays held");
+    player.setPaused(false);
+    player.setPaused(true);
+    waitUntil([&] { return player.paused() && player.pauseCommandState() == QStringLiteral("paused"); },
+        "readback of an older resume cannot replace the latest pause request");
     player.stopWithReason(QStringLiteral("test-manual-stop"), true);
     require(!player.sessionActive() && completions == 1 && manualStops == 1, "manual stop never advances");
 
@@ -460,9 +597,15 @@ SPOOL_TEST_MAIN("player-controller")
     require(player.paused() && player.positionSeconds() < 0.2, "paused startup waits for explicit unpause");
     player.setPaused(false);
     waitUntil([&] { return !player.paused() && player.positionSeconds() > 0.2; }, "explicit unpause advances playback");
+    player.setPaused(true);
+    require(!player.paused(), "the current core has a pause request in flight before the restart");
+    player.play(second, false, true);
+    waitUntil([&] { return player.fileLoaded(); }, "same-item renderer restart loads its replacement");
+    require(player.paused(), "same-item renderer restart carries a pause that the previous core had not acknowledged");
     player.stop();
     player.teardownMpv();
     watchedStopPolicy(directory.path(), window);
+    transportLoadLifecycle(directory.path(), window);
 #if !defined(Q_OS_ANDROID) && !defined(SPOOL_APPLE_MOBILE)
     localPlaylistLifecycle(directory.path(), window);
 #endif

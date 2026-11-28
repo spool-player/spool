@@ -179,6 +179,9 @@ export function createSource(config) {
         "preview URLs do not expose credentials to QML");
     ArtworkService artwork(directory.filePath("artwork"), 1024 * 1024, 1024 * 1024, 1, nullptr);
     artwork.setSource(&hub);
+    QList<bool> fetchingTransitions;
+    QObject::connect(
+        &artwork, &ArtworkService::fetchingChanged, &app, [&](bool active) { fetchingTransitions.append(active); });
     const auto fetch = [&](const QString& url, bool success) {
         std::unique_ptr<QQuickImageResponse> response(
             artwork.requestImageResponse(QString::fromLatin1(QUrl::toPercentEncoding(url)), {}));
@@ -203,6 +206,18 @@ export function createSource(config) {
     require(fetch(alice.second, true).pixelColor(8, 8) == QColor(Qt::green),
         "cached previews retain their account partition");
     require(requests == 2 && unauthorized == 0, "valid previews carry headers and reuse their own memory cache");
+    require(fetchingTransitions == QList<bool> { true, false, true, false } && !artwork.fetching(),
+        "network activity brackets real fetches but not a credential-partitioned memory-cache hit");
+    {
+        QTcpServer stalled;
+        require(stalled.listen(QHostAddress::LocalHost), "stalled artwork origin listens");
+        const QString root = QStringLiteral("http://127.0.0.1:%1/").arg(stalled.serverPort());
+        artwork.prefetch({ root + "first.png", root + "second.png" });
+        waitUntil([&] { return artwork.fetching() && stalled.hasPendingConnections(); },
+            "prefetch network traffic is visible while responses are pending");
+        artwork.cancelPrefetches();
+        waitUntil([&] { return !artwork.fetching(); }, "aborting every prefetch releases network activity");
+    }
     {
         std::unique_ptr<QQuickImageResponse> cancelled(
             artwork.requestImageResponse(QString::fromLatin1(QUrl::toPercentEncoding(alice.second)), {}));

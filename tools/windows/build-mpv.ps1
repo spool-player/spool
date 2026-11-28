@@ -52,6 +52,13 @@ if (-not (Test-Path -LiteralPath $buildSource)) {
         Copy-Item -Destination $buildSource -Recurse -Force
     Write-MpvRevisionStamp -Directory $buildSource -Revision $sourceRevision
 }
+# Meson falls back to MPV_VERSION in the mirror, which has no Git metadata.
+# Keep the proven upstream release base and identify the fork build explicitly.
+$mirrorVersion = Get-MpvMirrorVersion -Source $source
+$mirrorVersionPath = Join-Path $buildSource 'MPV_VERSION'
+if ((Get-Content -LiteralPath $mirrorVersionPath -Raw).Trim() -cne $mirrorVersion) {
+    [IO.File]::WriteAllText($mirrorVersionPath, "$mirrorVersion`n", [Text.UTF8Encoding]::new($false))
+}
 New-Item -ItemType Directory -Force $packageCache | Out-Null
 
 $env:MESON_PACKAGE_CACHE_DIR = $packageCache
@@ -65,29 +72,18 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Failed to update the Meson WrapDB catalog.' }
     }
 
-    foreach ($wrap in @('curl', 'expat', 'freetype2', 'fribidi', 'harfbuzz', 'libpng', 'luajit', 'zlib', 'xxhash')) {
+    foreach ($wrap in @('expat', 'freetype2', 'fribidi', 'harfbuzz', 'libpng', 'luajit', 'zlib', 'xxhash')) {
         if (-not (Test-Path (Join-Path $subprojects "$wrap.wrap"))) {
             meson wrap install $wrap
             if ($LASTEXITCODE -ne 0) { throw "Failed to install the Meson wrap: $wrap" }
         }
     }
 
-    meson subprojects download curl
-    if ($LASTEXITCODE -ne 0) { throw 'Failed to download the pinned curl source.' }
-    $curlRoot = Get-ChildItem -LiteralPath $subprojects -Directory -Filter 'curl-*' | Select-Object -First 1
-    if (-not $curlRoot) { throw 'The downloaded curl subproject was not found.' }
-    $curlProject = Join-Path $curlRoot.FullName 'meson.build'
-    $curlLibrary = Join-Path $curlRoot.FullName 'lib\meson.build'
-    $curlProjectText = (Get-Content -LiteralPath $curlProject -Raw).Replace(
-        "if get_option('default_library') == 'static'",
-        'if true')
-    $curlLibraryText = (Get-Content -LiteralPath $curlLibrary -Raw).Replace(
-        'curl_lib = library(',
-        'curl_lib = static_library(').Replace(
-        "  version: '4.8.0',`n",
-        '')
-    [IO.File]::WriteAllText($curlProject, $curlProjectText, [Text.UTF8Encoding]::new($false))
-    [IO.File]::WriteAllText($curlLibrary, $curlLibraryText, [Text.UTF8Encoding]::new($false))
+    & (Join-Path $PSScriptRoot 'build-streaming-dependencies.ps1') -Clean:$Clean
+    if ($LASTEXITCODE -ne 0) { throw 'Building the private streaming closure failed.' }
+    $streamingPrefix = Join-Path $dependencyRoot 'streaming-prefix'
+    $streamingPkgConfig = (& (Join-Path $msysRoot 'usr\bin\cygpath.exe') -u "$streamingPrefix/lib/pkgconfig").Trim()
+    Remove-Item (Join-Path $subprojects 'curl.wrap') -ErrorAction SilentlyContinue
 
     # FFmpeg is built from the same upstream source pin as every desktop.
     & (Join-Path $PSScriptRoot 'build-ffmpeg.ps1') -Clean:$Clean
@@ -102,7 +98,7 @@ try {
     $shaderTools = Join-Path $dependencyRoot 'shader-tools'
     $shaderPkgConfig = (& (Join-Path $msysRoot 'usr\bin\cygpath.exe') -u "$shaderTools/lib/pkgconfig").Trim()
     if ($LASTEXITCODE -ne 0) { throw 'Converting the shader tool pkg-config search path failed.' }
-    $env:PKG_CONFIG_PATH = "$($env:PKG_CONFIG_PATH):$shaderPkgConfig"
+    $env:PKG_CONFIG_PATH = "$($env:PKG_CONFIG_PATH):$shaderPkgConfig`:$streamingPkgConfig"
     # mpv's own sources include libplacebo/vulkan.h, so the Vulkan headers have
     # to be on mpv's include path too, not only on libplacebo's.
     $shaderInclude = Join-Path $shaderTools 'include'
@@ -127,7 +123,7 @@ depth = 1
     @'
 [wrap-git]
 url = https://code.videolan.org/videolan/libplacebo.git
-revision = a7a18af88ff0a17c04840dcb3246047bb6b46df3
+revision = 275f7dea27924cdd34ab2e6c20e448b6bc4fab65
 depth = 1
 clone-recursive = true
 '@ | Set-Content -LiteralPath (Join-Path $subprojects 'libplacebo.wrap') -Encoding ascii
@@ -179,7 +175,7 @@ clone-recursive = true
         '--libdir', 'lib',
         '--buildtype', 'release',
         '--default-library', 'shared',
-        '--force-fallback-for', 'curl,expat,freetype2,fribidi,harfbuzz,libpng,luajit,zlib,xxhash,libass,libplacebo',
+        '--force-fallback-for', 'expat,freetype2,fribidi,harfbuzz,libpng,luajit,zlib,xxhash,libass,libplacebo',
         # libplacebo looks for glslang under <vulkan-sdk>/lib and takes the
         # headers from the same prefix, so the shader tools are handed to it
         # as though they were an SDK. They are not one: the Vulkan headers it
@@ -207,7 +203,7 @@ clone-recursive = true
     # initial setup but may still instantiate that first fallback as shared.
     # Reapply these after the fallbacks exist so libmpv has no extra project
     # DLLs and installation does not expect import libraries for their tools.
-    meson configure $buildDirectory '-Dcurl:default_library=static' '-Dluajit:default_library=static'
+    meson configure $buildDirectory '-Dluajit:default_library=static'
     if ($LASTEXITCODE -ne 0) { throw 'Configuring static Windows libmpv dependencies failed.' }
 
     # Ninja's default process fan-out can exhaust Windows process creation
