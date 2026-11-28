@@ -11,6 +11,9 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFESTS = "tools/manifests"
+NIX_INSTALL_ACTION = ".github/actions/install-nix/action.yml"
+NIX_INSTALLER_REPO = "nixbuild/nix-quick-install-action"
+NIX_INSTALLER_PIN = re.compile(rf"uses: {NIX_INSTALLER_REPO}@([0-9a-f]{{40}})\s+# (v\d+)")
 
 
 def load(path):
@@ -47,7 +50,7 @@ def outputs(root, mpv_revision):
         f"{MANIFESTS}/ffmpeg-capabilities.json", "tools/ffmpeg-capabilities.py",
     ))
     native_shell = fingerprint(root, qt, qcoro, ffmpeg, streaming, pins["nix"], files=(
-        "flake.nix", "flake.lock", "tools/patches/**/*",
+        "flake.nix", "flake.lock", NIX_INSTALL_ACTION, "tools/patches/**/*",
         "tools/webos-native/patches/qtdeclarative-*-qmlimportscanner-exclude-subtrees.patch",
     ))
     mpv = fingerprint(root, mpv_revision, files=(f"{MANIFESTS}/mpv-native.json",))
@@ -101,7 +104,6 @@ def outputs(root, mpv_revision):
         "apple_qt_modules": " ".join(apple["qtModules"]),
         "aqt_version": apple["aqtinstall"],
         "android_build_tools": android["buildTools"],
-        "nix_version": pins["nix"]["version"],
         "key_qt": fingerprint(root, qt),
         "key_mpv": mpv,
         "key_streaming": streaming,
@@ -187,9 +189,9 @@ def version_errors(root):
         require("ffmpeg" not in load(manifests / name)["sources"],
                 f"{name} still pins FFmpeg; toolchain.json owns it")
 
-    installer = (root / ".github/actions/install-nix/action.yml").read_text(encoding="utf-8")
-    action = re.search(r"uses: nixbuild/nix-quick-install-action@[0-9a-f]{40}\s+# (v\d+)", installer)
-    require(action and action[1] == nix["quickInstallRelease"],
+    installer = (root / NIX_INSTALL_ACTION).read_text(encoding="utf-8")
+    action = NIX_INSTALLER_PIN.search(installer)
+    require(action and action[2] == nix["quickInstallRelease"],
             "nix-quick-install action version comment must match toolchain.json")
     for field in ("version", "quickInstallRelease"):
         require(f"tools/toolchain-versions.sh nix.{field}" in installer,
@@ -197,14 +199,9 @@ def version_errors(root):
     require(not re.search(r"(?m)^\s+RELEASE:\s*[\"']?v\d+", installer),
             "install-nix repeats the archive release pin")
     renovate = load(root / "renovate.json")
-    installer_name = "nixbuild/nix-quick-install-action"
-    require(any(manager.get("depNameTemplate") == installer_name and
-                "quickInstallRelease" in "".join(manager.get("matchStrings", []))
-                for manager in renovate["customManagers"]),
-            "Renovate must track the Nix archive release pin")
-    require(any(installer_name in rule.get("matchPackageNames", []) and rule.get("groupName")
+    require(any(NIX_INSTALLER_REPO in rule.get("matchPackageNames", []) and rule.get("enabled") is False
                 for rule in renovate["packageRules"]),
-            "Renovate must group the Nix archive release and installer action")
+            "Renovate must leave the Nix installer pins to atomic manual updates")
 
     literal_pin = re.compile(
         r"\b(?:APPLE_DEPLOYMENT_TARGET|QT_VERSION|FFMPEG_VERSION|NIX_VERSION)\s*[:=]\s*[\"']?\d+\.\d+"
@@ -231,14 +228,44 @@ def version_errors(root):
     return errors
 
 
+def nix_archive_errors(nix, asset_names):
+    # Keep these in sync with the Linux, Apple Silicon and Intel macOS runners.
+    platforms = ("x86_64-linux", "aarch64-darwin", "x86_64-darwin")
+    required = {f"nix-{nix['version']}-{platform}.tar.zstd" for platform in platforms}
+    missing = sorted(required.difference(asset_names))
+    if missing:
+        return [f"Nix installer {nix['quickInstallRelease']} is missing archives: {', '.join(missing)}"]
+    return []
+
+
+def check_nix_archives(root, nix):
+    revision, release = NIX_INSTALLER_PIN.search((root / NIX_INSTALL_ACTION).read_text(encoding="utf-8")).groups()
+    api = f"repos/{NIX_INSTALLER_REPO}"
+    try:
+        published_revision = subprocess.check_output(["gh", "api", f"{api}/commits/{release}", "--jq", ".sha"],
+                                                     text=True).strip()
+        asset_names = subprocess.check_output(["gh", "api", f"{api}/releases/tags/{release}",
+                                               "--jq", ".assets[].name"], text=True).splitlines()
+    except (OSError, subprocess.CalledProcessError) as error:
+        return [f"Could not check Nix installer {release}: {error}"]
+    if published_revision != revision:
+        return [f"Nix installer {release} points to {published_revision}, expected {revision}"]
+    return nix_archive_errors(nix, asset_names)
+
+
 def main():
-    if sys.argv[1:] == ["--check"]:
+    if sys.argv[1:] in (["--check"], ["--check-nix-archives"]):
+        pins = load(ROOT / MANIFESTS / "toolchain.json")
         errors = version_errors(ROOT)
+        if not errors and sys.argv[1:] == ["--check-nix-archives"]:
+            errors = check_nix_archives(ROOT, pins["nix"])
         if errors:
             print("\n".join(errors), file=sys.stderr)
             return 1
-        pins = load(ROOT / MANIFESTS / "toolchain.json")
-        print(f"toolchain: Qt {pins['qt']['version']}, FFmpeg {pins['ffmpeg']['version']}")
+        if sys.argv[1:] == ["--check-nix-archives"]:
+            print(f"Nix installer {pins['nix']['quickInstallRelease']} publishes all required Nix {pins['nix']['version']} archives")
+        else:
+            print(f"toolchain: Qt {pins['qt']['version']}, FFmpeg {pins['ffmpeg']['version']}")
         return 0
     mpv_revision = subprocess.check_output(["git", "rev-parse", "HEAD:mpv"], cwd=ROOT, text=True).strip()
     for key, value in outputs(ROOT, mpv_revision).items():

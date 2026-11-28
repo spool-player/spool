@@ -33,6 +33,14 @@ class ToolchainVersionsTest(unittest.TestCase):
         self.assertEqual(outputs["android_build_tools"], pins["android"]["buildTools"])
         self.assertEqual(outputs["qt_build_tag"], pins["qt"]["series"].replace(".", ""))
 
+    def test_nix_archives_must_exist_for_each_runner(self):
+        nix = {"version": "2.99.0", "quickInstallRelease": "v99"}
+        archives = ["nix-2.99.0-x86_64-linux.tar.zstd", "nix-2.99.0-aarch64-darwin.tar.zstd",
+                    "nix-2.99.0-x86_64-darwin.tar.zstd"]
+        self.assertEqual(toolchain.nix_archive_errors(nix, archives), [])
+        self.assertEqual(toolchain.nix_archive_errors(nix, archives[:-1] + ["nix-2.99.1-x86_64-darwin.tar.zstd"]),
+                         ["Nix installer v99 is missing archives: nix-2.99.0-x86_64-darwin.tar.zstd"])
+
     def test_windows_and_mpv_edits_leave_source_qt_caches_warm(self):
         before = toolchain.outputs(self.root, "a" * 40)
         windows = self.root / "tools/windows/install-qt.ps1"
