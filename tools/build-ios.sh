@@ -50,9 +50,9 @@ magick "$ROOT/app/icons/png/spool/1024.png" -background black -alpha remove -alp
 printf '%s\n' '{"images":[{"filename":"icon.png","idiom":"universal","platform":"ios","size":"1024x1024"}],"info":{"author":"xcode","version":1}}' >"$ASSETS/AppIcon.appiconset/Contents.json"
 cmake -S "$ROOT" -B "$BASE/app" -GXcode \
   -DCMAKE_TOOLCHAIN_FILE="$QT_TARGET_PREFIX/lib/cmake/Qt6/qt.toolchain.cmake" \
-  -DQT_HOST_PATH="$QT_HOST_PATH" -DCMAKE_PREFIX_PATH="$APPLE_DEPS_PREFIX;$QT_TARGET_PREFIX" \
+  -DQT_HOST_PATH="$QT_HOST_PATH" -DCMAKE_PREFIX_PATH="${APPLE_MPV_PREFIX:+$APPLE_MPV_PREFIX;}$APPLE_DEPS_PREFIX;$QT_TARGET_PREFIX" \
   -DQT_ADDITIONAL_PACKAGES_PREFIX_PATH="$APPLE_DEPS_PREFIX" \
-  -DCMAKE_FIND_ROOT_PATH="$APPLE_DEPS_PREFIX;$QT_TARGET_PREFIX" \
+  -DCMAKE_FIND_ROOT_PATH="${APPLE_MPV_PREFIX:+$APPLE_MPV_PREFIX;}$APPLE_DEPS_PREFIX;$QT_TARGET_PREFIX" \
   -DQCoro6_DIR="$APPLE_DEPS_PREFIX/lib/cmake/QCoro6" \
   -DCMAKE_OSX_SYSROOT="$APPLE_SDK" -DCMAKE_OSX_ARCHITECTURES="$APPLE_ARCH" \
   -DCMAKE_OSX_DEPLOYMENT_TARGET="$APPLE_DEPLOYMENT_TARGET" \
