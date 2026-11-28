@@ -72,7 +72,8 @@ def outputs(root, mpv_revision):
     # FFmpeg, mpv and QCoro builds in the same prefix.
     android_qt_key = fingerprint(root, android, streaming_sources["openssl"], android_sources["freetype"],
                                  qt_sources(android_qt["modules"], "fauArchiveBaseUrl"), files=(
-        "tools/android/build-qt6.sh", "tools/android/patches/qt-android-*.patch",
+        "tools/android/build-qt6.sh", "tools/android/build-dependencies.sh",
+        "tools/android/patches/qt-android-*.patch",
         "tools/lib/manifest-sources.sh",
     ))
     android_media_sources = {name: source for name, source in android_sources.items() if name != "qcoro"}

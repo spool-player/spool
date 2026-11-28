@@ -80,6 +80,16 @@ class ToolchainVersionsTest(unittest.TestCase):
             self.assertEqual(before[key], after[key], key)
         self.assertNotEqual(before["key_apple_deps"], after["key_apple_deps"])
 
+    def test_android_dependency_recipe_edit_invalidates_android_qt(self):
+        before = toolchain.outputs(self.root, "a" * 40)
+        recipe = self.root / "tools/android/build-dependencies.sh"
+        recipe.write_text(recipe.read_text(encoding="utf-8").replace("--with-brotli=no ", "--with-brotli=yes ", 1),
+                          encoding="utf-8")
+        after = toolchain.outputs(self.root, "a" * 40)
+        for key in ("key_android_qt", "key_android_deps"):
+            self.assertNotEqual(before[key], after[key], key)
+        self.assertEqual(before["key_tvos_qt"], after["key_tvos_qt"])
+
     def test_guard_rejects_duplicates_literal_versions_and_partial_caches(self):
         android = self.root / "tools/manifests/qt-android.json"
         data = toolchain.load(android)
