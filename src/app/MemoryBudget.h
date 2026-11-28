@@ -1,6 +1,7 @@
 #pragma once
 
-#include <QByteArray>
+#include "StreamingCachePolicy.h"
+
 #include <QtGlobal>
 
 namespace Spool {
@@ -10,8 +11,7 @@ struct MemoryBudget {
     qint64 networkDiskCacheBytes = 0;
     qint64 qmlImageDiskCacheBytes = 0;
     int artworkByteCacheBytes = 0;
-    QByteArray mpvDemuxerMaxBytes;
-    QByteArray mpvDemuxerMaxBackBytes;
+    StreamingCacheTarget demuxerCache;
 
     static MemoryBudget detect();
 };

@@ -70,28 +70,20 @@ if (-not $VerifyOnly) {
             $arguments += "--version=$($package.Version)"
         }
         Write-Host "Installing $($package.Name)"
-        if ($package.Name -eq 'nsis') {
-            $nsisLog = & choco @arguments 2>&1
-            $installExitCode = $LASTEXITCODE
-            $nsisLog | Out-Host
-            Add-ToolDirectoriesToPath
-            # The feed can return 504 while Chocolatey exits zero without an
-            # installer. Retry the same request once and keep the first log.
-            $feedTimeout = "Failed to fetch results from V2 feed at 'https://community\.chocolatey\.org/api/v2/Packages\(Id='nsis',Version='[^']+'\)'.*504 \(Gateway Timeout\)"
-            if (-not (Get-Command makensis.exe -ErrorAction SilentlyContinue) -and ($nsisLog -match $feedTimeout)) {
-                Write-Warning 'Chocolatey NSIS feed returned HTTP 504. Retrying once.'
-                Start-Sleep -Seconds 10
-                & choco @arguments
-                $installExitCode = $LASTEXITCODE
-            }
-        } else {
+        $installLog = & choco @arguments 2>&1
+        $installExitCode = $LASTEXITCODE
+        $installLog | Out-Host
+        # A feed outage can leave a pinned package uninstalled even when
+        # Chocolatey exits zero. Retry only a reported gateway/service error.
+        $feedUnavailable = 'Failed to fetch results from V2 feed at ''https://community\.chocolatey\.org/api/v2/Packages.*(?:503|504)\b'
+        if ($installLog -match $feedUnavailable) {
+            Write-Warning "Chocolatey feed unavailable while installing $($package.Name). Retrying once."
+            Start-Sleep -Seconds 10
             & choco @arguments
             $installExitCode = $LASTEXITCODE
         }
-        # Chocolatey needs an elevated shell to write under ProgramData. Say so
-        # rather than leaving the tool check below to report a missing binary.
         if ($installExitCode -ne 0) {
-            throw "Installing $($package.Name) failed. Chocolatey needs an elevated shell; re-run this script as Administrator."
+            throw "Chocolatey failed to install $($package.Name) (exit $installExitCode). See the installation output above."
         }
         Add-ToolDirectoriesToPath
     }

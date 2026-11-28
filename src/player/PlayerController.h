@@ -299,7 +299,7 @@ public:
     void clearSyncPlaybackSpeed();
     void setSubtitlePreferences(const Spool::SubtitlePreferences& preferences);
     void previewSubtitlePreferences(const Spool::SubtitlePreferences& preferences);
-    void setDemuxerBudget(const QByteArray& maxBytes, const QByteArray& maxBackBytes);
+    void setDemuxerBudget(StreamingCacheTarget target);
     void setForwardCacheSizeMiB(int sizeMiB);
     void setThreadedStreaming(bool enabled);
     void setMaxStreamingThreads(int threads);
@@ -568,7 +568,7 @@ private:
     qint64 m_extraMemoryAllowanceBytes = 0;
     qint64 m_committedMemoryExcessBytes = 0;
     StreamingCacheScaler m_demuxerCacheScaler;
-    StreamingCacheTarget m_activeDemuxerTarget {};
+    StreamingCacheTarget m_activeDemuxerTarget { 64LL * 1024 * 1024, 32LL * 1024 * 1024 };
     QTimer m_streamingMemoryTimer;
     std::optional<StreamingCacheTarget> m_appliedDemuxerTarget;
     StreamingCacheTarget m_pendingDemuxerTarget;
@@ -614,8 +614,6 @@ private:
     bool m_syncPlaybackSpeedActive = false;
     QString m_audioOutputMode = QStringLiteral("auto");
     int m_alsaBufferMs = 40;
-    QByteArray m_demuxerMaxBytes = QByteArrayLiteral("64M");
-    QByteArray m_demuxerMaxBackBytes = QByteArrayLiteral("32M");
     MpvConfigPolicy m_mpvConfigPolicy;
     quint64 m_fullscreenSyncSerial = 0;
     bool m_activeUserMpvConfig = false;

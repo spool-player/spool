@@ -48,6 +48,7 @@ playback-epoch stale-controls rejected-controls primary-origin-match
 active-requests peak-active-requests selected-requests requests-per-stream
 range-bytes ring-bytes received-bytes ordered-available-bytes
 consumer-delivered-bytes readable-bytes retained-bytes reorder-bytes
+copy-in-bytes copy-out-bytes reorder-copy-bytes body-callbacks worker-iterations coalesced-wakeups
 started-requests finished-requests failed-requests retry-attempts
 capacity-bytes-per-second capacity-samples ttfb-ms
 average-received-bytes-per-second current-received-bytes-per-second

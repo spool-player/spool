@@ -846,10 +846,11 @@ int main(int argc, char **argv)
 
     const Spool::MemoryBudget memoryBudget = Spool::MemoryBudget::detect();
     window.setSystemMemoryBytes(memoryBudget.memTotalBytes);
-    logLine("memory budget: memTotal=%lld networkDisk=%lld qmlImageDisk=%lld artworkBytes=%d demuxer=%s/%s",
+    logLine("memory budget: memTotal=%lld networkDisk=%lld qmlImageDisk=%lld artworkBytes=%d demuxer=%lld/%lld",
         static_cast<long long>(memoryBudget.memTotalBytes), static_cast<long long>(memoryBudget.networkDiskCacheBytes),
         static_cast<long long>(memoryBudget.qmlImageDiskCacheBytes), memoryBudget.artworkByteCacheBytes,
-        memoryBudget.mpvDemuxerMaxBytes.constData(), memoryBudget.mpvDemuxerMaxBackBytes.constData());
+        static_cast<long long>(memoryBudget.demuxerCache.forwardBytes),
+        static_cast<long long>(memoryBudget.demuxerCache.backBytes));
 
     auto *networkAccessManager = new QNetworkAccessManager(&app);
     auto *diskCache = new QNetworkDiskCache(networkAccessManager);
@@ -960,7 +961,7 @@ int main(int argc, char **argv)
     QObject::connect(artworkService.get(), &Spool::ArtworkService::fetchingChanged, player.get(),
         &Spool::PlayerController::setBackgroundNetwork);
     player->setBackgroundNetwork(artworkService->fetching());
-    player->setDemuxerBudget(memoryBudget.mpvDemuxerMaxBytes, memoryBudget.mpvDemuxerMaxBackBytes);
+    player->setDemuxerBudget(memoryBudget.demuxerCache);
     Spool::ScreenSaverInhibitor screenSaverInhibitor;
     const auto updateScreenSaver = [&screenSaverInhibitor, player = player.get()] {
         bool active = player && player->sessionActive();

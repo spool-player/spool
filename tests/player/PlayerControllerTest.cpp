@@ -9,6 +9,7 @@
 #include <QCoroFuture>
 #include <QCoroTask>
 #include <QDataStream>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QGuiApplication>
@@ -34,6 +35,15 @@ extern "C" {
 
 namespace Spool {
 struct PlayerControllerTestAccess {
+    static int64_t forwardCacheBytes(const PlayerController& player)
+    {
+        int64_t bytes = 0;
+        auto *handle = player.m_mpvLifecycle.handle();
+        SpoolTests::require(handle && mpv_get_property(handle, "demuxer-max-bytes", MPV_FORMAT_INT64, &bytes) >= 0,
+            "the active core reports its forward cache limit");
+        return bytes;
+    }
+
     static void runCacheContract(NativeAppWindow& window)
     {
         using SpoolTests::require;
@@ -482,6 +492,30 @@ void transportLoadLifecycle(const QString& directory, NativeAppWindow& window)
     player.teardownMpv();
 }
 
+#if defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID) && !defined(SPOOL_WEBOS)
+void customCacheBudgetDuringPreparation(const QString& directory, NativeAppWindow& window)
+{
+    const QDir config(QDir(directory).filePath(QStringLiteral("cache-budget")));
+    require(QDir().mkpath(config.absolutePath()), "cache probe directory opens");
+    QFile mpvConfig(config.filePath(QStringLiteral("mpv.conf")));
+    const QByteArray options = QByteArrayLiteral("ao=null\ndemuxer-max-bytes=96MiB\n");
+    require(mpvConfig.open(QIODevice::WriteOnly) && mpvConfig.write(options) == options.size(),
+        "cache probe config writes");
+    mpvConfig.close();
+
+    PlayerController player(&window, nullptr, nullptr, {});
+    player.setMpvConfigPolicy({ MpvConfigPolicy::Mode::Custom, config.absolutePath() });
+    player.play(audioSession(directory, QStringLiteral("cache-budget"), 8));
+    // While preparation is pending, change the app-managed floor. The custom
+    // configuration owns its limit and must not be overwritten on adoption.
+    player.setForwardCacheSizeMiB(1024);
+    waitUntil([&] { return player.fileLoaded(); }, "mpv loads the custom cache fixture");
+    require(PlayerControllerTestAccess::forwardCacheBytes(player) == 96LL * 1024 * 1024,
+        "playback preserves the custom cache limit when the app floor changes during preparation");
+    player.teardownMpv();
+}
+#endif
+
 #if !defined(Q_OS_ANDROID) && !defined(SPOOL_APPLE_MOBILE)
 void localPlaylistLifecycle(const QString& directory, NativeAppWindow& window)
 {
@@ -606,6 +640,9 @@ SPOOL_TEST_MAIN("player-controller")
     player.teardownMpv();
     watchedStopPolicy(directory.path(), window);
     transportLoadLifecycle(directory.path(), window);
+#if defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID) && !defined(SPOOL_WEBOS)
+    customCacheBudgetDuringPreparation(directory.path(), window);
+#endif
 #if !defined(Q_OS_ANDROID) && !defined(SPOOL_APPLE_MOBILE)
     localPlaylistLifecycle(directory.path(), window);
 #endif
