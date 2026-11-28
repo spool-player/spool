@@ -32,6 +32,10 @@ jobs:
           }
           test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$GITHUB_SHA"
           tools/check-release-version.sh "${RELEASE_TAG#v}"
+      - name: Check pinned Nix installer archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash tools/toolchain-versions.sh --check-nix-archives
       - name: Package exact corresponding source
         run: tools/package-release-source.sh release-source
       - name: Upload corresponding source

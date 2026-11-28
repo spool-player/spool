@@ -116,7 +116,6 @@ jobs:
       apple_qt_modules: ${{ steps.versions.outputs.apple_qt_modules }}
       aqt_version: ${{ steps.versions.outputs.aqt_version }}
       android_build_tools: ${{ steps.versions.outputs.android_build_tools }}
-      nix_version: ${{ steps.versions.outputs.nix_version }}
       key_qt: ${{ steps.versions.outputs.key_qt }}
       key_mpv: ${{ steps.versions.outputs.key_mpv }}
       key_streaming: ${{ steps.versions.outputs.key_streaming }}
@@ -154,6 +153,10 @@ jobs:
           persist-credentials: false
           fetch-depth: 2
           submodules: recursive
+      - name: Check pinned Nix installer archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash tools/toolchain-versions.sh --check-nix-archives
       - uses: ./.github/actions/install-nix
         with:
           nix_conf: |
