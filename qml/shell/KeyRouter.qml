@@ -330,7 +330,8 @@ FocusScope {
     function routeBack(phase, repeat) {
         if (repeat)
             return backClaimed === true
-        if (phase === "press" && backClaimed !== null)
+        // webOS can lose the key on release. A fresh press must still work.
+        if (phase === "press" && backClaimed !== null && !webOsScanCodes)
             return backClaimed === true
         if (phase === "release" && backClaimed !== null) {
             const claimed = backClaimed

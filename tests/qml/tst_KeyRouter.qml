@@ -202,6 +202,32 @@ TestCase {
         verify(keyRouter.routeBack("release", false))
     }
 
+    function test_webOSBackClicksWithUnrecognizedReleases() {
+        keyRouter.webOsScanCodes = true
+        routeResult = false
+        const press = {
+            key: Qt.Key_Back,
+            text: "",
+            modifiers: Qt.NoModifier,
+            isAutoRepeat: false
+        }
+        const release = {
+            key: 0,
+            nativeScanCode: 166,
+            nativeVirtualKey: 0,
+            text: "",
+            modifiers: Qt.NoModifier,
+            isAutoRepeat: false
+        }
+        compare(keyRouter.normalizedKey(release), 0)
+        for (let click = 1; click <= 2; ++click) {
+            verify(keyRouter.dispatch(press, "press"))
+            compare(backCalls, click)
+            verify(keyRouter.dispatch(release, "release"))
+            compare(backCalls, click)
+        }
+    }
+
     function test_directionUsesRouterHelper() {
         verify(keyRouter.deliver(target, Qt.Key_Right, "press", false))
         compare(routeCalls, 1)
