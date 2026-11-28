@@ -350,6 +350,7 @@ QJsonObject LocalCommandServer::focusState() const
 QJsonObject LocalCommandServer::state() const
 {
     const auto player = m_app->player();
+    const auto sampledPosition = player->sampledPositionSeconds();
     // Deliberate allowlist: no URLs, provider properties, credentials, logs or arbitrary QML values.
     return { { QStringLiteral("instance"), m_instance }, { QStringLiteral("pid"), QCoreApplication::applicationPid() },
         { QStringLiteral("initialized"), m_app->initialized() }, { QStringLiteral("route"), m_router->route() },
@@ -372,6 +373,8 @@ QJsonObject LocalCommandServer::state() const
                 { QStringLiteral("mpvEndReason"), player->mpvEndReason() },
                 { QStringLiteral("mpvEndError"), player->mpvEndError() },
                 { QStringLiteral("position"), player->positionSeconds() },
+                { QStringLiteral("sampledPosition"),
+                    sampledPosition ? QJsonValue(*sampledPosition) : QJsonValue(QJsonValue::Null) },
                 { QStringLiteral("duration"), player->durationSeconds() },
                 { QStringLiteral("failed"), !player->errorText().isEmpty() },
                 { QStringLiteral("embeddedVideo"), player->embeddedVideoOutput() },

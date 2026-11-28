@@ -2182,8 +2182,9 @@ void PlayerController::applyMpvPauseState(bool paused)
         return;
     qInfo() << "player: pause state changed" << paused;
     m_paused = paused;
-    if (!m_paused)
-        requestMpvPositionRefresh("unpause");
+    // A pause freezes the UI estimate. Read the final playback position even
+    // when mpv has no later frames to trigger a time-pos observation.
+    requestMpvPositionRefresh(paused ? "pause" : "unpause");
     notifyPlaybackStateChanged();
 }
 
