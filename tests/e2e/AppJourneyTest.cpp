@@ -2033,6 +2033,16 @@ SPOOL_TEST_MAIN("app-journey")
         journey.command({ "key", "back" });
         journey.command({ "key", "back" });
         journey.label("Appearance");
+        // Settings sync is independent of playback. Disable it through the
+        // real settings UI so its debounced or periodic requests cannot race
+        // the assertion that offline playback sends no authenticated traffic.
+        journey.click("Sources", true);
+        journey.click("Settings sync", true);
+        journey.click("Sync settings", true);
+        journey.label("Turn on sync");
+        journey.command({ "key", "back" });
+        journey.command({ "key", "back" });
+        journey.label("Appearance");
         journey.click("Downloads", true);
         journey.click("Play saved files offline", true);
         journey.label("Journey Film");
@@ -2098,10 +2108,11 @@ SPOOL_TEST_MAIN("app-journey")
         if (offlineRequests != 0) {
             throw std::runtime_error(
                 QStringLiteral("saved-media playback contacted an unavailable authenticated provider endpoint "
-                               "(total=%1, eventReconnect=%2, progress=%3)")
+                               "(total=%1, eventReconnect=%2, progress=%3, preferences=%4)")
                     .arg(offlineRequests)
                     .arg(fixture.offlineSocketRequests)
                     .arg(fixture.offlineProgressRequests)
+                    .arg(fixture.offlinePreferenceRequests)
                     .toStdString());
         }
 

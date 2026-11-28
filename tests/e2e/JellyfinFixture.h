@@ -31,6 +31,7 @@ public:
     int authenticatedRequests = 0;
     int offlineSocketRequests = 0;
     int offlineProgressRequests = 0;
+    int offlinePreferenceRequests = 0;
     int playbackNegotiations = 0;
     int mediaRequests = 0;
     qint64 mediaBytes = 0;

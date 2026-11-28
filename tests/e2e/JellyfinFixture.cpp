@@ -303,6 +303,8 @@ void JellyfinFixture::handle(QTcpSocket *socket, const QByteArray& header, const
     if (!newRequestsAvailable) {
         if (path.startsWith("/Sessions/Playing"))
             ++offlineProgressRequests;
+        if (path.startsWith("/DisplayPreferences/") || path == "/Users/" + userId)
+            ++offlinePreferenceRequests;
         json(QJsonObject {}, 503);
         return;
     }
