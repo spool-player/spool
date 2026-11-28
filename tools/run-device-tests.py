@@ -1300,7 +1300,8 @@ def export_attempt(private, destination, result):
                     continue
                 if re.fullmatch(r"app-journey-pause: observations=[0-9]+, timeouts=[0-9]+, "
                                 r"position_sample_age_ms=-?[0-9]+, mpv_event_age_ms=-?[0-9]+, "
-                                r"pause_request_age_ms=-?[0-9]+", stripped):
+                                r"pause_request_age_ms=-?[0-9]+, mpv_end_reason=-?[0-9]{1,10}, "
+                                r"mpv_end_error=-?[0-9]{1,10}", stripped):
                     lines.append(stripped)
                     print(stripped, flush=True)
                     continue
