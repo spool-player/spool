@@ -615,7 +615,15 @@ private:
     QDateTime launchTime;
     qint64 deviceLaunchEpoch = 0;
 };
-enum class TextSurface { Window, LibraryRow, RelatedCard, PlayerOptions, PlayerRepeatDetail, PlayerSleepDetail };
+enum class TextSurface {
+    Window,
+    LibraryRow,
+    RelatedCard,
+    DetailPrimaryCaption,
+    PlayerOptions,
+    PlayerRepeatDetail,
+    PlayerSleepDetail
+};
 enum class TextPreprocess { Original, Neutral, Inverse, SmoothInverse, NeutralAdaptive, Positive, Adaptive };
 struct Words {
     QString text;
@@ -1273,7 +1281,9 @@ public:
         QRect found;
         QRect previous;
         QString lastObserved;
-        const bool singleLine = surface == TextSurface::PlayerRepeatDetail || surface == TextSurface::PlayerSleepDetail;
+        const bool primaryCaption = surface == TextSurface::DetailPrimaryCaption;
+        const bool singleLine
+            = primaryCaption || surface == TextSurface::PlayerRepeatDetail || surface == TextSurface::PlayerSleepDetail;
         const std::string failure = "expected user-visible label was not rendered: " + text.toStdString();
         const auto summarize = [](const QList<Words>& lines) {
             QString summary;
@@ -1344,6 +1354,7 @@ public:
                     if (surface != TextSurface::Window) {
                         const QString key = surface == TextSurface::LibraryRow ? QStringLiteral("libraryRow")
                             : surface == TextSurface::RelatedCard              ? QStringLiteral("relatedCard")
+                            : primaryCaption                                   ? QStringLiteral("detailPrimaryCaption")
                             : surface == TextSurface::PlayerRepeatDetail       ? QStringLiteral("playerRepeatDetail")
                             : surface == TextSurface::PlayerSleepDetail        ? QStringLiteral("playerSleepDetail")
                                                                                : QStringLiteral("playerOptions");
@@ -1370,7 +1381,9 @@ public:
                             "actual rendered region could not be read for caption navigation");
                     }
                     if (singleLine) {
-                        const auto lines = words(imagePath, 7, region.topLeft(), TextPreprocess::SmoothInverse);
+                        const auto preprocess
+                            = primaryCaption ? TextPreprocess::Positive : TextPreprocess::SmoothInverse;
+                        const auto lines = words(imagePath, 7, region.topLeft(), preprocess);
                         lastObserved = summarize(lines);
                         found = locate(lines);
                         if (found.isEmpty())
@@ -2202,7 +2215,9 @@ SPOOL_TEST_MAIN("app-journey")
         fixture.setEpisodeDetailsHeld(false);
         journey.await([&] { return fixture.episodeDetailResponses > responsesBeforeRelease; },
             "stale episode detail response was not released");
-        journey.label("Resume");
+        // Read the rendered caption without the accent button's focus outline
+        // or the neighboring Start from beginning action in the OCR region.
+        journey.label("Resume", false, TextSurface::DetailPrimaryCaption);
 
         const auto resumeEpisode = [&](qint64 expectedTicks) {
             fixturePhase = QStringLiteral("episode-resume");
@@ -2212,10 +2227,9 @@ SPOOL_TEST_MAIN("app-journey")
             journey.click("Journey Series");
             journey.await([&] { return fixture.episodeDetailResponses > responsesBeforeReopen; },
                 "reopened episode details did not fetch stale provider UserData");
-            journey.label("Resume");
             const int episodesBeforeResume = fixture.episodeRequests;
             const qsizetype reportsBeforeResume = fixture.reports.size();
-            journey.click("Resume", true);
+            journey.click("Resume", false, false, TextSurface::DetailPrimaryCaption);
             journey.await(
                 [&] {
                     return fixture.episodeRequests > episodesBeforeResume

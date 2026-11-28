@@ -1693,6 +1693,7 @@ FocusScope {
 
                         DetailAction {
                             id: primaryAction
+                            captionObjectName: root.routeActive ? "detailPrimaryCaption" : ""
                             iconName: "play_arrow"
                             label: root.primaryLabel()
                             primary: true
