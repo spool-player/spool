@@ -2183,12 +2183,22 @@ SPOOL_TEST_MAIN("app-journey")
         journey.await(
             [&] {
                 const auto playback = savedPlayback();
-                return !playback["paused"].toBool() && playback["position"].toDouble() > 14.5;
+                // The playing UI extrapolates beyond mpv's most recent
+                // sample. Pause freezes that estimate back at the sample.
+                return !playback["paused"].toBool() && playback["sampledPosition"].toDouble() > 14.5;
             },
             "real media clock did not progress after resume");
         journey.pauseForObservation("saved movie did not pause after its clock advanced");
-        const double stoppedPosition = savedPlayback()["position"].toDouble();
-        require(stoppedPosition > 14.5, "saved movie lost its position before stopping");
+        double stoppedPosition = 0;
+        journey.await(
+            [&] {
+                const auto playback = savedPlayback();
+                const auto sampleAge = playback["positionSampleAgeMs"].toInteger(-1);
+                stoppedPosition = playback["sampledPosition"].toDouble();
+                return playback["paused"].toBool() && sampleAge >= 0
+                    && sampleAge <= playback["pauseRequestAgeMs"].toInteger(-1) && stoppedPosition > 14.5;
+            },
+            "saved movie did not report its advanced position after pause");
         journey.command({ "stop" });
         journey.await(
             [&] { return !journey.state()["playback"].toObject()["active"].toBool(); }, "player did not stop");

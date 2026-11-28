@@ -120,6 +120,12 @@ public:
     {
         return m_pauseCommandState;
     }
+    std::optional<double> sampledPositionSeconds() const
+    {
+        if (!m_fileLoaded || m_pendingSeek || m_seeking || !m_positionTracker.hasPlaybackPosition())
+            return std::nullopt;
+        return m_positionTracker.position();
+    }
     qint64 positionSampleAgeMs() const
     {
         return m_positionTracker.sampleAgeMs();
