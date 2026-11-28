@@ -7,6 +7,6 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/tools/lib/manifest-sources.sh"
 
 case "${1:-}" in
-  ""|--check) exec "$MANIFEST_PYTHON" "$ROOT/tools/toolchain-versions.py" "$@" ;;
+  ""|--check|--check-nix-archives) exec "$MANIFEST_PYTHON" "$ROOT/tools/toolchain-versions.py" "$@" ;;
   *) toolchain_field "$ROOT" "$1" ;;
 esac
