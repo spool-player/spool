@@ -1679,6 +1679,8 @@ void PlayerController::playSession(
     m_mediaKind = nextMediaKind;
     m_statusText = platformPreparingStatus(needsVideoSurface, embeddedVideo);
     m_errorText.clear();
+    m_mpvEndReason = -1;
+    m_mpvEndError = 0;
     const double startSeconds
         = session.startTimeTicks > 0 ? static_cast<double>(session.startTimeTicks) / 10000000.0 : 0.0;
     if (m_trickplay)
@@ -3743,6 +3745,8 @@ void PlayerController::handleMpvEvent(mpv_event *event, quint64 generation, mpv_
         // both success and failure; otherwise a failed manifest stays stuck in
         // the preparing state forever.
         postMpvEvent(generation, [this, generation, failed, endFileReason, endFileError]() {
+            m_mpvEndReason = endFileReason;
+            m_mpvEndError = endFileError;
             if (m_localPlaylist) {
                 if (endFileReason != MPV_END_FILE_REASON_REDIRECT) {
                     const bool completed = PlaybackFailurePolicy::classifyFileEnd(failed, endFileReason,

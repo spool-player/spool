@@ -369,6 +369,8 @@ QJsonObject LocalCommandServer::state() const
                 { QStringLiteral("positionSampleAgeMs"), player->positionSampleAgeMs() },
                 { QStringLiteral("mpvEventAgeMs"), player->mpvEventAgeMs() },
                 { QStringLiteral("pauseRequestAgeMs"), player->pauseRequestAgeMs() },
+                { QStringLiteral("mpvEndReason"), player->mpvEndReason() },
+                { QStringLiteral("mpvEndError"), player->mpvEndError() },
                 { QStringLiteral("position"), player->positionSeconds() },
                 { QStringLiteral("duration"), player->durationSeconds() },
                 { QStringLiteral("failed"), !player->errorText().isEmpty() },
