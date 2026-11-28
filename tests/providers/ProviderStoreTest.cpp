@@ -132,26 +132,30 @@ SPOOL_TEST_MAIN("provider-store")
     QHash<QByteArray, QByteArray> routes;
     QList<QByteArray> requested;
     int requests = 0;
+    std::function<void()> onRequest;
     QTcpServer server;
     require(server.listen(QHostAddress::LocalHost), "fixture server listens");
     QObject::connect(&server, &QTcpServer::newConnection, &app, [&] {
         while (QTcpSocket *socket = server.nextPendingConnection()) {
             QObject::connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
-            QObject::connect(socket, &QTcpSocket::readyRead, socket, [socket, &routes, &requested, &requests] {
-                const QByteArray request = socket->property("request").toByteArray() + socket->readAll();
-                socket->setProperty("request", request);
-                if (!request.contains("\r\n\r\n"))
-                    return;
-                ++requests;
-                const QByteArray path = request.split(' ').value(1);
-                requested.append(path);
-                const bool found = routes.contains(path);
-                const QByteArray body = routes.value(path);
-                socket->write((found ? "HTTP/1.1 200 OK" : "HTTP/1.1 404 Not Found")
-                    + QByteArray("\r\nConnection: close\r\nContent-Length: ") + QByteArray::number(body.size())
-                    + "\r\n\r\n" + body);
-                socket->disconnectFromHost();
-            });
+            QObject::connect(
+                socket, &QTcpSocket::readyRead, socket, [socket, &routes, &requested, &requests, &onRequest] {
+                    const QByteArray request = socket->property("request").toByteArray() + socket->readAll();
+                    socket->setProperty("request", request);
+                    if (!request.contains("\r\n\r\n"))
+                        return;
+                    ++requests;
+                    const QByteArray path = request.split(' ').value(1);
+                    requested.append(path);
+                    if (onRequest)
+                        onRequest();
+                    const bool found = routes.contains(path);
+                    const QByteArray body = routes.value(path);
+                    socket->write((found ? "HTTP/1.1 200 OK" : "HTTP/1.1 404 Not Found")
+                        + QByteArray("\r\nConnection: close\r\nContent-Length: ") + QByteArray::number(body.size())
+                        + "\r\n\r\n" + body);
+                    socket->disconnectFromHost();
+                });
         }
     });
     LocalNetwork network;
@@ -323,6 +327,24 @@ SPOOL_TEST_MAIN("provider-store")
         ProviderStore store(&registry, &database, &network, QUrl(QStringLiteral("https://store.test/")));
         checked(store);
         require(store.updates().size() == 1, "an open build does follow the link, so the check above meant something");
+    }
+
+    // The asynchronous catalogue/feed reply can outlive a closed store.
+    for (const bool fromUrl : { false, true }) {
+        auto store = std::make_unique<ProviderStore>(
+            &registry, &database, &network, QUrl(QStringLiteral("https://store.test/")));
+        onRequest = [&store] { store.reset(); };
+        bool replied = false;
+        const auto connection
+            = QObject::connect(&network, &QNetworkAccessManager::finished, [&replied] { replied = true; });
+        if (fromUrl)
+            store->addFromUrl(QStringLiteral("feed.test"));
+        else
+            store->checkForUpdates(QStringLiteral("ask"));
+        waitUntil([&] { return replied; }, "the request completes after the store has been destroyed");
+        require(!store, "the store was destroyed before the fixture sent its reply");
+        onRequest = {};
+        QObject::disconnect(connection);
     }
 
     // A bundled build has no store and loads nothing from disk, even with
@@ -570,6 +592,8 @@ SPOOL_TEST_MAIN("provider-store")
         const QString root = directory.filePath(QStringLiteral("abandoned-owner"));
         owner->setInstallDirectory(root);
         auto abandoned = owner->install(ProviderFixture::package(QStringLiteral("fixture.abandoned")));
+        auto queued
+            = owner->install(ProviderFixture::package(QStringLiteral("fixture.abandoned"), QStringLiteral("1.1.0")));
         owner.reset();
         cancelled = false;
         try {
@@ -579,6 +603,14 @@ SPOOL_TEST_MAIN("provider-store")
         }
         require(cancelled && !QFileInfo::exists(QDir(root).filePath(QStringLiteral("fixture.abandoned/1.0.0"))),
             "destroying the registry during staging cannot publish a package");
+        cancelled = false;
+        try {
+            QCoro::waitFor(std::move(queued));
+        } catch (const std::exception&) {
+            cancelled = true;
+        }
+        require(cancelled && !QFileInfo::exists(QDir(root).filePath(QStringLiteral("fixture.abandoned/1.1.0"))),
+            "a queued installation cannot begin after the registry is destroyed");
     }
 
     for (ProviderSources policy : { ProviderSources::Curated, ProviderSources::Bundled }) {

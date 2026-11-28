@@ -1310,14 +1310,16 @@ QCoro::Task<void> ProviderRegistry::install(
     turn.start();
     const QFuture<void> previous = std::exchange(m_installTails[id], turn.future());
     const auto releaseTurn = qScopeGuard([&turn] { turn.finish(); });
+    QPointer<ProviderRegistry> guard(this);
     if (previous.isValid())
         co_await qCoro(previous).result();
+    if (!guard)
+        throw std::runtime_error("install_cancelled");
     if (admission && !admission())
         throw std::runtime_error("install_cancelled");
     if (const auto *existing = module(id);
         existing && ProviderPackage::compareVersions(package.manifest.version, existing->manifest.version) <= 0)
         throw std::runtime_error("install_version_not_newer");
-    QPointer<ProviderRegistry> guard(this);
     // Only inert files are written in the worker. Admission and activation
     // share the registry thread, so a concurrent replacement cannot slip
     // between the final revision check and publishing candidate code.

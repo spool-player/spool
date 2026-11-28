@@ -407,15 +407,20 @@ void ProviderStore::addFromUrl(const QString& input)
         return;
     }
     const auto add = [](ProviderStore *self, QUrl feed) -> QCoro::Task<void> {
+        QPointer<ProviderStore> guard(self);
         self->setBusy(QStringLiteral("url"), QStringLiteral("downloading"));
         try {
             const QByteArray data = co_await self->fetch(feed, kCatalogLimit);
+            if (!guard)
+                co_return;
             const QVariantMap entry = QJsonDocument::fromJson(data).object().toVariantMap();
             if (!validEntry(entry))
                 throw std::runtime_error("invalid_feed");
             self->setBusy(QStringLiteral("url"), {});
             co_await self->installEntry(entry, { QStringLiteral("url"), feed });
         } catch (const std::exception& error) {
+            if (!guard)
+                co_return;
             self->setBusy(QStringLiteral("url"), {});
             emit self->problem(QByteArray(error.what()) == "not_found"
                     ? QStringLiteral("No spool-provider.json was found there")
@@ -882,24 +887,30 @@ QCoro::Task<void> ProviderStore::checkAsync(QString policy)
 {
     QPointer<ProviderStore> guard(this);
     co_await loadOrigins();
-    if (!guard)
+    if (!guard || !m_registry)
         co_return;
     const bool wantsCommunity = std::any_of(m_origins.begin(), m_origins.end(),
         [](const Origin& origin) { return origin.channel == QStringLiteral("community"); });
     // One small file for first-party providers; the full index only when
     // something from it is installed.
     try {
-        m_official = co_await fetchCatalog(QStringLiteral("official.json"));
-        if (wantsCommunity && guard)
-            m_community = co_await fetchCatalog(QStringLiteral("index.json"));
+        auto official = co_await fetchCatalog(QStringLiteral("official.json"));
+        if (!guard || !m_registry)
+            co_return;
+        m_official = std::move(official);
+        if (wantsCommunity) {
+            auto community = co_await fetchCatalog(QStringLiteral("index.json"));
+            if (!guard || !m_registry)
+                co_return;
+            m_community = std::move(community);
+        }
     } catch (const std::exception&) {
         co_return; // Offline: nothing to offer, nothing to report.
     }
-    if (!guard)
+    if (!guard || !m_registry)
         co_return;
     QVariantList updates;
     for (const QString& id : m_registry->moduleIds()) {
-        const ProviderModule *module = m_registry->module(id);
         const Origin origin = m_origins.value(id, { QStringLiteral("official"), {} });
         QVariantMap latest;
         if (!allows(origin))
@@ -910,9 +921,11 @@ QCoro::Task<void> ProviderStore::checkAsync(QString policy)
             try {
                 latest = QJsonDocument::fromJson(co_await fetch(origin.feed, kCatalogLimit)).object().toVariantMap();
             } catch (const std::exception&) {
+                if (!guard || !m_registry)
+                    co_return;
                 continue;
             }
-            if (!guard)
+            if (!guard || !m_registry)
                 co_return;
         } else {
             for (const QVariant& value : origin.channel == QStringLiteral("community") ? m_community : m_official) {
@@ -920,6 +933,7 @@ QCoro::Task<void> ProviderStore::checkAsync(QString policy)
                     latest = value.toMap();
             }
         }
+        const auto *module = m_registry->module(id);
         if (module && validEntry(latest) && latest.value(QStringLiteral("format")).toInt() == 3
             && ProviderPackage::compareVersions(text(latest, "version"), module->manifest.version) > 0)
             updates.append(latest);
