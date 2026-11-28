@@ -1429,6 +1429,7 @@ jobs:
           msystem: MSYS
           path-type: inherit
           install: make diffutils pkgconf patch tar curl
+          cache: ${{ env.SPOOL_CACHE_WRITE == 'true' && !inputs.release }}
 
       - name: Install build and packaging tools
         shell: pwsh
