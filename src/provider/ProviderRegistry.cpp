@@ -478,8 +478,7 @@ QCoro::Task<void> ProviderRegistry::restore()
         const QString key = m_networkProfiles.firstKey();
         storeNetworkProfile(key, m_networkProfiles.value(key).toMap());
     }
-    if (m_networkProfiles.size() != savedProfiles)
-        m_networkSaveTimer.start();
+    const bool prunedNetworkProfiles = m_networkProfiles.size() != savedProfiles;
     m_lanApprovedModules = root.value(QStringLiteral("lanApproved")).toVariant().toStringList();
     std::vector<ProviderAccount> accounts;
     for (const QJsonValue& row : root.value(QStringLiteral("accounts")).toArray()) {
@@ -553,6 +552,8 @@ QCoro::Task<void> ProviderRegistry::restore()
     }
     applyStartupChoices();
     m_restored = true;
+    if (prunedNetworkProfiles)
+        m_networkSaveTimer.start();
     // Accounts first: the shell picks its first route when restored changes,
     // from bindings on the account list.
     emit accountsChanged();
