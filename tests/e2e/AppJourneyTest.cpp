@@ -1511,16 +1511,31 @@ public:
     }
     void pauseForObservation(const char *message)
     {
-        await([&] { return state(true)["playback"].toObject()["ready"].toBool(); },
-            "playback did not complete its first renderer restart before pause");
         QJsonObject playback;
         int observations = 0;
         int timeouts = 0;
         QElapsedTimer lastObservation;
         lastObservation.start();
         try {
-            playback = command({ "pause" })["playback"].toObject();
-            require(!playback["failed"].toBool(), "playback had already failed before pause could settle");
+            await(
+                [&] {
+                    playback = state(true)["playback"].toObject();
+                    require(!playback["failed"].toBool(), "playback failed before it could be paused");
+                    if (!playback["active"].toBool() || !playback["ready"].toBool())
+                        return false;
+                    QJsonObject response;
+                    const auto paused = command({ "pause" }, {}, false, {}, &response);
+                    // Ready is a snapshot, not a lease on a session. A repeat
+                    // or renderer replacement can leave a gap between status
+                    // and pause; wait for a real ready session again.
+                    if (response["error"].toObject()["code"] == "no_playback")
+                        return false;
+                    require(response["ok"].toBool(), "pause control request was rejected");
+                    playback = paused["playback"].toObject();
+                    require(!playback["failed"].toBool(), "playback had already failed before pause could settle");
+                    return true;
+                },
+                message);
             await(
                 [&] {
                     const auto observed = state(true)["playback"].toObject();
@@ -1748,6 +1763,7 @@ SPOOL_TEST_MAIN("app-journey")
 #if defined(Q_OS_MACOS)
     std::optional<QTemporaryDir> runtime;
 #endif
+    QString fixturePhase = QStringLiteral("login");
     try {
         QString deviceKind;
         const QStringList arguments = application.arguments().mid(1);
@@ -1793,7 +1809,6 @@ SPOOL_TEST_MAIN("app-journey")
         const QString app = deviceKind.isEmpty() ? executable("SPOOL_E2E_APP", appDefault) : QString();
         const QString control = executable("SPOOL_E2E_SPOOLET", controlDefault);
         AppJourney::JellyfinFixture fixture(media(root.path(), environment));
-        QString fixturePhase = QStringLiteral("login");
         const auto retainFixtureCounters = qScopeGuard([&] {
             const QJsonObject counters { { "format", 1 }, { "phase", fixturePhase },
                 { "successfulLogins", fixture.successfulLogins }, { "rejectedLogins", fixture.rejectedLogins },
@@ -2477,6 +2492,7 @@ SPOOL_TEST_MAIN("app-journey")
             root.setAutoRemove(false);
             std::cerr << "app-journey: private failure artifacts retained at " << root.path().toStdString() << '\n';
         }
+        std::cerr << "app-journey: failure phase " << fixturePhase.toStdString() << '\n';
         std::cerr << "app-journey: " << error.what() << '\n';
         return 1;
     }
