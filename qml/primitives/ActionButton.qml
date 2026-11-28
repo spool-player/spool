@@ -8,6 +8,7 @@ T.Control {
     property string iconName: ""
     property bool pointerHovered: hover.hovered
     property string text: ""
+    property string captionObjectName: ""
     signal clicked
     readonly property color foreground: !enabled ? Theme.textMuted : kind === "primary" || kind === "blue"
                                                    ? Theme.accentText : kind === "danger" ? Theme.errorText :
@@ -90,6 +91,7 @@ T.Control {
 
             AppText {
                 id: buttonLabel
+                objectName: root.captionObjectName
                 anchors.left: buttonIcon.visible ? buttonIcon.right : parent.left
                 anchors.leftMargin: buttonIcon.visible ? Metrics.scaled(8) : 0
                 anchors.right: parent.right
