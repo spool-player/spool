@@ -1571,7 +1571,9 @@ public:
             std::cerr << "app-journey-pause: observations=" << observations << ", timeouts=" << timeouts
                       << ", position_sample_age_ms=" << playback["positionSampleAgeMs"].toInteger(-1)
                       << ", mpv_event_age_ms=" << playback["mpvEventAgeMs"].toInteger(-1)
-                      << ", pause_request_age_ms=" << playback["pauseRequestAgeMs"].toInteger(-1) << '\n';
+                      << ", pause_request_age_ms=" << playback["pauseRequestAgeMs"].toInteger(-1)
+                      << ", mpv_end_reason=" << playback["mpvEndReason"].toInt(-1)
+                      << ", mpv_end_error=" << playback["mpvEndError"].toInt() << '\n';
             throw std::runtime_error(QStringLiteral(
                 "%1 (active=%2, loaded=%3, ready=%4, paused=%5, failed=%6, position=%7, duration=%8, pause=%9, "
                 "observations=%10, timeouts=%11, last_observation_ms=%12, stack_symbols=%13, "
@@ -1862,16 +1864,11 @@ SPOOL_TEST_MAIN("app-journey")
         journey.launch(app, fixture.origin(), deviceKind);
         journey.label("Welcome to Spool");
         journey.assertControlBoundaries();
-        // The first playback phase checks the saved file and its timeline.
-        // Use the inexpensive renderer profile to avoid a quality step-down
-        // during startup on a slow CI display. Apply it before sign-in so a
-        // settings-sync request cannot cross the offline boundary.
-        const QString renderQualityKey = QStringLiteral("playback/renderQuality");
-        const QString initialRenderQuality = journey.command({ "settings", "get", renderQualityKey })["values"]
-                                                 .toObject()[renderQualityKey]
-                                                 .toString();
-        require(journey.command({ "settings", "set", renderQualityKey, "\"fast\"" })["value"] == "fast",
-            "saved-media renderer profile was not applied");
+        // Keep renderer load low for every playback start in this isolated
+        // profile. A quality step-down during a controlled pause can replace
+        // the playback session. Set this before sign-in to avoid settings sync.
+        require(journey.command({ "settings", "set", "playback/renderQuality", "\"fast\"" })["value"] == "fast",
+            "journey renderer profile was not applied");
         const bool television
             = deviceKind == "tvos" || (deviceKind == "android" && qEnvironmentVariable("SPOOL_E2E_ANDROID_TV") == "1");
         journey.click("Jellyfin", true);
@@ -2226,9 +2223,6 @@ SPOOL_TEST_MAIN("app-journey")
         }
 
         fixture.setNewRequestsAvailable(true);
-        require(journey.command({ "settings", "set", renderQualityKey, '"' + initialRenderQuality + '"' })["value"]
-                == initialRenderQuality,
-            "original renderer profile was not restored");
         // Keep server UserData at zero even after accepted stop reports. The
         // real provider must hydrate details/series rows without rolling back
         // the app's newer episode stop state.
@@ -2244,13 +2238,23 @@ SPOOL_TEST_MAIN("app-journey")
         journey.command({ "key", "ok" });
         journey.await(
             [&] {
+                if (fixture.playbackNegotiations <= negotiationsBeforeOnline)
+                    return false;
                 // A single read-only observation can miss its client deadline
                 // while the new renderer surface starts. Keep the enclosing
-                // deadline and require real provider negotiation and playback.
-                return fixture.playbackNegotiations > negotiationsBeforeOnline
-                    && journey.state(true)["playback"].toObject()["loaded"].toBool();
+                // deadline and require real playback.
+                const auto playback = journey.state(true)["playback"].toObject();
+                if (playback["failed"].toBool()) {
+                    throw std::runtime_error(
+                        QStringLiteral("episode playback failed (mpv_end_reason=%1, mpv_end_error=%2)")
+                            .arg(playback["mpvEndReason"].toInt(-1))
+                            .arg(playback["mpvEndError"].toInt())
+                            .toStdString());
+                }
+                return playback["loaded"].toBool();
             },
             "online UI play did not negotiate and load real provider media");
+        journey.pauseForObservation("episode did not pause before the controlled stop position");
         journey.await(
             [&] {
                 return fixture.episodeDetailRequests > detailsBeforePlayback
@@ -2265,7 +2269,6 @@ SPOOL_TEST_MAIN("app-journey")
                     });
             },
             "real provider playback start for the online item was not reported");
-        journey.pauseForObservation("episode did not pause before the controlled stop position");
         journey.command({ "seek", "14" });
         journey.await(
             [&] {
