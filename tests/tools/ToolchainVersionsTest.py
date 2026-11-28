@@ -5,6 +5,7 @@ import importlib.util
 import json
 from pathlib import Path
 import shutil
+import subprocess
 import tempfile
 import unittest
 
@@ -89,6 +90,31 @@ class ToolchainVersionsTest(unittest.TestCase):
         for key in ("key_android_qt", "key_android_deps"):
             self.assertNotEqual(before[key], after[key], key)
         self.assertEqual(before["key_tvos_qt"], after["key_tvos_qt"])
+
+    def test_android_min_sdk_pin_updates_all_apk_deployment_settings(self):
+        for name in ("cmake/platform", "app/android-common", "tests/platform/android"):
+            shutil.copytree(ROOT / name, self.root / name)
+        shutil.copy2(ROOT / "tests/platform/MobileTestBundles.cmake", self.root / "tests/platform")
+        shutil.copy2(Path(__file__).with_name("android-packaging") / "CMakeLists.txt", self.root)
+
+        build = self.root / "build"
+        manifest = self.root / "tools/manifests/toolchain.json"
+        pins = toolchain.load(manifest)
+
+        def check_deployment_settings():
+            for target in ("spool", "spool-tests", "spool-e2e-tests"):
+                settings = toolchain.load(build / f"android-{target}-deployment-settings.json")
+                self.assertEqual(settings["android-min-sdk-version"], pins["android"]["minimumSdk"], target)
+
+        subprocess.run(["cmake", "-S", str(self.root), "-B", str(build)], check=True, stdout=subprocess.PIPE)
+        check_deployment_settings()
+
+        minimum_sdk = int(pins["android"]["minimumSdk"])
+        compile_sdk = int(pins["android"]["compileSdk"])
+        pins["android"]["minimumSdk"] = str(minimum_sdk + 1 if minimum_sdk < compile_sdk else minimum_sdk - 1)
+        manifest.write_text(json.dumps(pins), encoding="utf-8")
+        subprocess.run(["cmake", "--build", str(build)], check=True, stdout=subprocess.PIPE)
+        check_deployment_settings()
 
     def test_guard_rejects_duplicates_literal_versions_and_partial_caches(self):
         android = self.root / "tools/manifests/qt-android.json"

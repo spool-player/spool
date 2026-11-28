@@ -8,6 +8,7 @@ source "$ROOT/tools/lib/manifest-sources.sh"
 source "$ROOT/tools/android/gradle-mirror.sh"
 ABI="${ANDROID_ABI:-x86_64}"
 QT_VERSION="${QT_VERSION:-$(toolchain_field "$ROOT" qt.version)}"
+MINIMUM_SDK="$(toolchain_field "$ROOT" android.minimumSdk)"
 DEPS_PREFIX="${ANDROID_DEPS_PREFIX:-$ROOT/build/android/deps/$ABI}"
 JOBS="${ANDROID_BUILD_JOBS:-$(nproc)}"
 # Emulator CI opts in to actual native test APKs; release packaging stays app-only.
@@ -50,6 +51,11 @@ QT_PREFIX="${QT_ANDROID_PREFIX:-$ROOT/build/android/qt/$QT_VERSION/$QT_ABI_DIR}"
 
 : "${ANDROID_HOME:?run through nix develop .#android}"
 : "${ANDROID_NDK_ROOT:?run through nix develop .#android}"
+AAPT="$ANDROID_HOME/build-tools/$(toolchain_field "$ROOT" android.buildTools)/aapt"
+[[ -x "$AAPT" ]] || {
+  echo "error: Android build tools are missing at $(dirname "$AAPT")" >&2
+  exit 1
+}
 [[ -x "$QT_PREFIX/bin/qt-cmake" ]] || {
   echo "error: Android Qt is not built at $QT_PREFIX" >&2
   exit 1
@@ -94,6 +100,20 @@ build_qcoro() {
   cmake --install "$build"
 }
 
+verify_apk_minimum_sdk() {
+  local apk="$1" badging sdk
+  [[ -f "$apk" ]] || {
+    echo "error: APK was not generated at $apk" >&2
+    exit 1
+  }
+  badging="$("$AAPT" dump badging "$apk")"
+  sdk="$(awk -F "'" '$1 == "sdkVersion:" {print $2}' <<<"$badging")"
+  if [[ "$sdk" != "$MINIMUM_SDK" ]]; then
+    echo "error: $apk advertises minimum SDK ${sdk:-missing}, expected $MINIMUM_SDK" >&2
+    exit 1
+  fi
+}
+
 build_app() {
   local developer="${1:-OFF}"
   local deployment=Release
@@ -125,7 +145,7 @@ build_app() {
     -DQT_ANDROID_DEPLOYMENT_TYPE="$deployment" \
     -DSPOOL_WEBOS=OFF \
     -DANDROID_ABI="$ABI" \
-    -DANDROID_PLATFORM="android-$(toolchain_field "$ROOT" android.minimumSdk)" \
+    -DANDROID_PLATFORM="android-$MINIMUM_SDK" \
     -DANDROID_DEPS_PREFIX="$DEPS_PREFIX" \
     -DQT_ANDROID_SIGN_APK=ON
   # androiddeployqt scans SOURCE_DIR recursively and does not forward
@@ -150,7 +170,6 @@ path.write_text(json.dumps(settings, indent=2) + "\n")
 PY
   done
   configure_android_gradle_mirror
-  local build_apk_target
   build_apk_target() {
     local apk_target="$1"
     local attempt
@@ -180,10 +199,7 @@ PY
     app_package="$build/android-build-spool"
   fi
   local apk="$app_package/spool.apk"
-  [[ -f "$apk" ]] || {
-    echo "error: APK was not generated at $apk" >&2
-    exit 1
-  }
+  verify_apk_minimum_sdk "$apk"
   mkdir -p "$ROOT/dist/android"
   if [[ "$developer" == ON ]]; then
     # Same production app and ID, packaged by Qt's standard developer mode.
@@ -192,10 +208,7 @@ PY
     for target in spool-tests spool-e2e-tests; do
       build_apk_target "${target}_make_apk"
       apk="$build/android-build-${target}/${target}.apk"
-      [[ -f "$apk" ]] || {
-        echo "error: test APK was not generated at $apk" >&2
-        exit 1
-      }
+      verify_apk_minimum_sdk "$apk"
       cp -f "$apk" "$ROOT/dist/android/${target}-${ABI}.apk"
     done
   else

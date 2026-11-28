@@ -77,6 +77,11 @@ function(spool_configure_android_targets native_target core_target)
     file(COPY "${SPOOL_SPLASH_DIR}/res/"
         DESTINATION "${android_package_source}/res")
 
+    set(toolchain_manifest "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../../tools/manifests/toolchain.json")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${toolchain_manifest}")
+    file(READ "${toolchain_manifest}" toolchain_pins)
+    string(JSON android_min_sdk GET "${toolchain_pins}" android minimumSdk)
+
     # Android rejects versioned sonames, so bundle only plain .so files, and only
     # from the Android dependency prefix.
     file(GLOB ANDROID_EXTRA_LIBS "${ANDROID_DEPS_PREFIX}/lib/*.so")
@@ -88,7 +93,7 @@ function(spool_configure_android_targets native_target core_target)
     set_property(TARGET ${native_target} PROPERTY QT_ANDROID_PACKAGE_SOURCE_DIR "${android_package_source}")
     set_property(TARGET ${native_target} PROPERTY QT_ANDROID_PACKAGE_NAME "${android_package_name}")
     set_property(TARGET ${native_target} PROPERTY QT_ANDROID_APP_NAME "Spool")
-    set_property(TARGET ${native_target} PROPERTY QT_ANDROID_MIN_SDK_VERSION 28)
+    set_property(TARGET ${native_target} PROPERTY QT_ANDROID_MIN_SDK_VERSION "${android_min_sdk}")
     set_property(TARGET ${native_target} PROPERTY QT_ANDROID_TARGET_SDK_VERSION 36)
     set_property(TARGET ${native_target} PROPERTY QT_ANDROID_VERSION_NAME "${PROJECT_VERSION}")
     set_property(TARGET ${native_target} PROPERTY QT_ANDROID_VERSION_CODE "${android_version_code}")
