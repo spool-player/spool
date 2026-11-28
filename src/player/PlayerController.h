@@ -46,6 +46,7 @@ class PlatformPerformanceSampler;
 
 class PlayerController final : public QObject {
     Q_OBJECT
+    friend struct AppleMediaControlsTestAccess;
     friend struct PlayerControllerTestAccess;
     Q_PROPERTY(bool visible READ visible NOTIFY visibleChanged)
     Q_PROPERTY(QVariantMap transportCapabilities READ transportCapabilities NOTIFY transportCapabilitiesChanged)

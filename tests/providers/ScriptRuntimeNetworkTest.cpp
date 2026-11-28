@@ -18,6 +18,8 @@
 #include <QTimer>
 
 #include <algorithm>
+#include <chrono>
+#include <utility>
 
 namespace {
 using SpoolTests::require;
@@ -317,16 +319,14 @@ SPOOL_TEST_MAIN("script-runtime-network")
     require(server.listen(QHostAddress::LocalHost), "loopback server starts");
     const QString origin = QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort());
     int requests = 0;
-    int dripActive = 0;
-    int dripMaximum = 0;
-    QEventLoop *dripDrain = nullptr;
-    std::function<void()> onDrip;
+    constexpr qsizetype probeConcurrency = 4;
+    QList<QTcpSocket *> dripSockets;
+    std::function<void()> onDripBatch;
     QObject::connect(&server, &QTcpServer::newConnection, &app, [&] {
         while (auto *socket = server.nextPendingConnection()) {
-            QObject::connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
-            QObject::connect(socket, &QTcpSocket::disconnected, &app, [&, socket] {
-                if (socket->property("drip").toBool() && --dripActive == 0 && dripDrain)
-                    dripDrain->quit();
+            QObject::connect(socket, &QTcpSocket::disconnected, socket, [socket] {
+                if (!socket->property("drip").toBool())
+                    socket->deleteLater();
             });
             QObject::connect(socket, &QTcpSocket::readyRead, socket, [&, socket] {
                 QByteArray request = socket->property("request").toByteArray() + socket->readAll();
@@ -339,13 +339,22 @@ SPOOL_TEST_MAIN("script-runtime-network")
                     "probe never sends credentials or cached cookies");
                 if (request.startsWith("GET /drip ")) {
                     socket->setProperty("drip", true);
-                    dripMaximum = std::max(dripMaximum, ++dripActive);
+                    dripSockets.append(socket);
+                    require(dripSockets.size() <= probeConcurrency, "incomplete replies occupy at most four slots");
                     socket->write("HTTP/1.1 200 OK\r\nContent-Length: 10000\r\n\r\nx");
                     auto *timer = new QTimer(socket);
                     QObject::connect(timer, &QTimer::timeout, socket, [socket] { socket->write("x"); });
+                    QObject::connect(socket, &QTcpSocket::disconnected, timer, &QTimer::stop);
                     timer->start(40);
-                    if (onDrip)
-                        onDrip();
+                    if (dripSockets.size() == probeConcurrency) {
+                        require(std::all_of(dripSockets.cbegin(), dripSockets.cend(),
+                                    [](const QTcpSocket *peer) {
+                                        return peer->state() == QAbstractSocket::ConnectedState;
+                                    }),
+                            "four incomplete replies are in flight concurrently");
+                        if (onDripBatch)
+                            onDripBatch();
+                    }
                     return;
                 }
                 QByteArray body = "public-info";
@@ -497,18 +506,41 @@ SPOOL_TEST_MAIN("script-runtime-network")
     const auto drip = QCoro::waitFor(runtime.call("draft", "probe", probe));
     require(elapsed.elapsed() < 5000 && drip.value("responses").toList().isEmpty() && !drip.value("exhausted").toBool(),
         "wall deadline aborts incomplete drip feeds and retains unstarted targets for continuation");
-    require(dripMaximum == 4, "at most four local HTTP requests run concurrently");
-    const auto drained = [&] {
-        if (dripActive > 0) {
+    const auto requireDrained = [&](const char *message) {
+        require(dripSockets.size() == probeConcurrency, "each cleanup case reaches a full batch of incomplete replies");
+        const auto disconnected = [&] {
+            return std::all_of(dripSockets.cbegin(), dripSockets.cend(),
+                [](const QTcpSocket *socket) { return socket->state() == QAbstractSocket::UnconnectedState; });
+        };
+        if (!disconnected()) {
             QEventLoop loop;
-            dripDrain = &loop;
-            QTimer::singleShot(5000, &loop, &QEventLoop::quit);
+            QTimer check;
+            QObject::connect(&check, &QTimer::timeout, &loop, [&] {
+                // Probe readiness directly as well as dispatching socket notifications.
+                // A missed notification can leave Qt's state stale after the peer closes.
+                for (auto *socket : std::as_const(dripSockets)) {
+                    if (socket->state() == QAbstractSocket::ConnectedState)
+                        socket->waitForDisconnected(0);
+                }
+                if (disconnected())
+                    loop.quit();
+            });
+            check.start(20);
+            QTimer::singleShot(std::chrono::seconds(5), Qt::PreciseTimer, &loop, &QEventLoop::quit);
             loop.exec();
-            dripDrain = nullptr;
         }
-        require(dripActive == 0, "deadline and cancellation close every incomplete reply");
+        for (auto *socket : std::as_const(dripSockets)) {
+            bool closedByPeer = socket->error() == QAbstractSocket::RemoteHostClosedError;
+#ifdef Q_OS_WIN
+            // Qt reports a reset observed during a drip write as NetworkError on Windows.
+            closedByPeer = closedByPeer || socket->error() == QAbstractSocket::NetworkError;
+#endif
+            require(socket->state() == QAbstractSocket::UnconnectedState && closedByPeer, message);
+            socket->deleteLater();
+        }
+        dripSockets.clear();
     };
-    drained();
+    requireDrained("LAN probe deadline closes every incomplete reply");
     const QString stale = drip.value("cursor").toString();
     runtime.cancelLanDiscovery("draft");
     rejects(runtime.call("draft", "probe", probe), "discovery_denied");
@@ -516,18 +548,16 @@ SPOOL_TEST_MAIN("script-runtime-network")
     probe["cursor"] = stale;
     rejects(runtime.call("draft", "probe", probe), "invalid_cursor");
     probe.remove("cursor");
-    onDrip = [&] { runtime.cancelScope("draft", "lan"); };
+    onDripBatch = [&] { runtime.cancelScope("draft", "lan"); };
     rejects(runtime.call("draft", "probe", probe, "lan"), "action_cancelled");
-    onDrip = {};
-    drained();
-    onDrip = [&] { runtime.cancelLanDiscovery("draft"); };
+    requireDrained("scope cancellation closes every incomplete LAN reply");
+    onDripBatch = [&] { runtime.cancelLanDiscovery("draft"); };
     rejects(runtime.call("draft", "probe", probe), "action_cancelled");
-    onDrip = {};
-    drained();
-    onDrip = [&] { runtime.removeSource("other"); };
+    requireDrained("discovery cancellation closes every incomplete LAN reply");
+    onDripBatch = [&] { runtime.removeSource("other"); };
     rejects(runtime.call("other", "probe", probe), "source_removed");
-    onDrip = {};
-    drained();
+    requireDrained("source removal closes every incomplete LAN reply");
+    onDripBatch = {};
     // A worker round-trip observes completed cancellation; no real interface enumeration occurred.
     QCoro::waitFor(runtime.call("draft", "state"));
     runtime.cancelLanDiscovery("draft");

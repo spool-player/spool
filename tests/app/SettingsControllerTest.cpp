@@ -59,6 +59,33 @@ SPOOL_TEST_MAIN("settings-controller")
     SettingsController settings(&database, nullptr, &artwork);
     QCoro::waitFor(settings.loadLocalAsync());
 
+    const QString systemDialogs = QStringLiteral("appearance/systemFileDialogs");
+    const QString systemMediaControls = QStringLiteral("appearance/appleMediaControls");
+    const QString navigateMenu = QStringLiteral("appearance/macOSNavigateMenu");
+#if defined(Q_OS_MACOS)
+    constexpr bool mediaControlsDefault = false;
+#else
+    constexpr bool mediaControlsDefault = true;
+#endif
+    require(settings.value(systemDialogs).toBool(), "system file dialogs must start enabled");
+    require(settings.value(systemMediaControls).toBool() == mediaControlsDefault,
+        "system playback controls must use the platform-preserving default");
+    require(!settings.value(navigateMenu).toBool(), "the macOS menu must be opt-in");
+    QCoro::waitFor(settings.applyValues({ { systemDialogs, false } }, Spool::ChangeOrigin::User));
+    SettingsController restoredDialogs(&database, nullptr, &artwork);
+    QCoro::waitFor(restoredDialogs.loadLocalAsync());
+    require(!restoredDialogs.value(systemDialogs).toBool(), "file dialog preference must survive profile reload");
+    require(restoredDialogs.value(systemMediaControls).toBool() == mediaControlsDefault,
+        "file dialog mode must leave the playback controls preference alone");
+    QCoro::waitFor(settings.applyValues(
+        { { systemDialogs, true }, { systemMediaControls, !mediaControlsDefault }, { navigateMenu, true } },
+        Spool::ChangeOrigin::User));
+    QCoro::waitFor(restoredDialogs.loadLocalAsync());
+    require(restoredDialogs.value(systemDialogs).toBool()
+            && restoredDialogs.value(systemMediaControls).toBool() != mediaControlsDefault,
+        "Apple file dialogs and system playback controls must persist independently");
+    require(restoredDialogs.value(navigateMenu).toBool(), "the optional macOS menu must survive profile reload");
+
     // Automatic encoding is part of the device contract, not an expected value
     // obtained from the policy being tested. Native Apple TV keeps WebP; only
     // webOS and Android televisions choose JPEG.
@@ -93,15 +120,19 @@ SPOOL_TEST_MAIN("settings-controller")
     // and keep the bitrate toggle/value together when reverting to defaults.
     {
         const QString first = QStringLiteral("12345678-aaaa-bbbb-cccc-dddddddddddd");
-        const QString second = QStringLiteral("87654321-aaaa-bbbb-cccc-dddddddddddd");
+        const QString second = QStringLiteral("12345678-ffff-bbbb-cccc-dddddddddddd");
         const QString http = QStringLiteral("playback/streamingHttpVersion");
+        database.saveSetting(QStringLiteral("playback/serverOverrides-v1"),
+            QStringLiteral(R"({"12345678":{"playback/streamingHttpVersion":"tcp"}})"));
+        QCoro::waitFor(settings.loadLocalAsync());
+        require(settings.serverOverrides().isEmpty(), "ambiguous prefix-keyed overrides are reset");
         settings.setServerValue(http, QStringLiteral("http1"), first);
         require(settings.effectiveValue(http, first).toString() == QLatin1String("http1")
                 && settings.effectiveValue(http, second).toString() == QLatin1String("auto")
                 && settings.value(http).toString() == QLatin1String("auto"),
             "a server HTTP restriction must not affect global defaults or another server");
-        require(settings.effectiveValue(http, QStringLiteral("12345678:item")).toString() == QLatin1String("http1"),
-            "scoped item IDs must resolve the same account override");
+        require(settings.effectiveValue(http, QStringLiteral("12345678:item")).toString() == QLatin1String("auto"),
+            "settings must not resolve scoped media IDs");
         QCoro::waitFor(settings.applyValues({ { http, QStringLiteral("tcp") } }, Spool::ChangeOrigin::User));
         require(settings.effectiveValue(http, first).toString() == QLatin1String("http1")
                 && settings.effectiveValue(http, second).toString() == QLatin1String("tcp"),
@@ -116,20 +147,24 @@ SPOOL_TEST_MAIN("settings-controller")
         require(settings.hasServerOverride(QStringLiteral("playback/maxStreamingBitrateMbps"), first),
             "manual bitrate and its value must become one server override");
         settings.setServerValue(QStringLiteral("playback/maxStreamingBitrateMbps"), 200, first);
+        settings.setServerValue(http, QStringLiteral("tcp"), second);
         SettingsController restored(&database, nullptr, &artwork);
         QCoro::waitFor(restored.loadLocalAsync());
         require(restored.effectiveValue(http, first).toString() == QLatin1String("http1")
+                && restored.effectiveValue(http, second).toString() == QLatin1String("tcp")
                 && restored.effectiveValue(QStringLiteral("playback/maxStreamingBitrateMbps"), first).toInt() == 200,
-            "server playback overrides must survive a settings-controller reload");
-        require(!restored.values().contains(QStringLiteral("playback/serverOverrides-v1")),
+            "accounts sharing a prefix must reload their own playback overrides");
+        require(!restored.values().contains(QStringLiteral("playback/serverOverrides-v2")),
             "device account overrides must never enter the global syncable value map");
+        require(restored.serverOverrides().keys() == QStringList { first, second },
+            "override keys must contain the full account IDs");
         settings.resetServerValue(QStringLiteral("playback/maxStreamingBitrateMbps"), first);
         require(!settings.hasServerOverride(QStringLiteral("playback/manualStreamingBitrate"), first)
                 && !settings.hasServerOverride(QStringLiteral("playback/maxStreamingBitrateMbps"), first),
             "Use default must reset the entire manual bitrate override");
-        settings.setServerValue(http, QStringLiteral("tcp"), second);
         settings.retainServerOverrides({ second });
-        require(!settings.hasServerOverride(http, first) && settings.hasServerOverride(http, second),
+        require(!settings.hasServerOverride(http, first)
+                && settings.effectiveValue(http, second).toString() == QLatin1String("tcp"),
             "removing an account must delete only that account's playback overrides");
         settings.removeServerOverrides(second);
         require(settings.serverOverrides().isEmpty()

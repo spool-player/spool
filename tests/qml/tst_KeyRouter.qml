@@ -19,6 +19,7 @@ TestCase {
 
     property bool lastRouteRepeat: false
     property string lastRoutePhase: ""
+
     Item {
         // Reproduces AppShell's route property, which previously shadowed the
         // router's unqualified route() helper at runtime.
@@ -87,7 +88,7 @@ TestCase {
         lastRoutePhase = ""
         keyRouter.pressedDirectionKey = 0
         keyRouter.clearAccept()
-        keyRouter.backClaimed = false
+        keyRouter.backClaimed = null
         keyRouter.typeAheadKey = 0
         keyRouter.textInputActive = false
         keyRouter.backspaceNavigatesInTextInput = false
@@ -141,7 +142,90 @@ TestCase {
             "isAutoRepeat": false
         }
         verify(!keyRouter.dispatch(event, "press"))
+        // A new app target can appear before UIKit sends the release.
+        keyRouter.activeTarget = target
         verify(!keyRouter.dispatch(event, "release"))
+        compare(routeCalls, 0)
+        compare(backCalls, 0)
+    }
+
+    function test_backHoldCannotDismissTheNextTarget() {
+        let modalDismissals = 0
+        keyRouter.activeTarget = {
+            back: function () {
+                ++modalDismissals
+                keyRouter.activeTarget = target
+                return true
+            }
+        }
+        routeResult = false
+        const event = {
+            key: Qt.Key_Escape,
+            text: "",
+            modifiers: Qt.NoModifier,
+            isAutoRepeat: false
+        }
+        verify(keyRouter.dispatch(event, "press"))
+        compare(modalDismissals, 1)
+
+        event.isAutoRepeat = true
+        verify(keyRouter.dispatch(event, "release"))
+        verify(keyRouter.dispatch(event, "press"))
+        compare(routeCalls, 0)
+        compare(backCalls, 0)
+
+        event.isAutoRepeat = false
+        verify(keyRouter.dispatch(event, "release"))
+        compare(backCalls, 0)
+        verify(keyRouter.dispatch(event, "press"))
+        compare(backCalls, 1)
+        verify(keyRouter.dispatch(event, "release"))
+    }
+
+    function test_unflaggedBackPressRetainsOwnershipAfterTargetDisappears() {
+        let dismissals = 0
+        keyRouter.activeTarget = {
+            back: function () {
+                ++dismissals
+                keyRouter.activeTarget = target
+                return true
+            }
+        }
+        routeResult = false
+        verify(keyRouter.routeBack("press", false))
+        verify(keyRouter.routeBack("press", false))
+        compare(dismissals, 1)
+        compare(backCalls, 0)
+        verify(keyRouter.routeBack("release", false))
+        verify(keyRouter.routeBack("press", false))
+        compare(backCalls, 1)
+        verify(keyRouter.routeBack("release", false))
+    }
+
+    function test_webOSBackClicksWithUnrecognizedReleases() {
+        keyRouter.webOsScanCodes = true
+        routeResult = false
+        const press = {
+            key: Qt.Key_Back,
+            text: "",
+            modifiers: Qt.NoModifier,
+            isAutoRepeat: false
+        }
+        const release = {
+            key: 0,
+            nativeScanCode: 166,
+            nativeVirtualKey: 0,
+            text: "",
+            modifiers: Qt.NoModifier,
+            isAutoRepeat: false
+        }
+        compare(keyRouter.normalizedKey(release), 0)
+        for (let click = 1; click <= 2; ++click) {
+            verify(keyRouter.dispatch(press, "press"))
+            compare(backCalls, click)
+            verify(keyRouter.dispatch(release, "release"))
+            compare(backCalls, click)
+        }
     }
 
     function test_directionUsesRouterHelper() {

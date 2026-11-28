@@ -96,11 +96,6 @@ FocusScope {
             return false
         if (kind !== "download" && !choosing)
             return false
-        if (InputKeys.isBack(key, false, false)) {
-            if (phase === "release")
-                provider.close()
-            return true
-        }
         const view = kind === "download" ? downloadList : list
         if (InputKeys.isAccept(key))
             return true

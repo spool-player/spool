@@ -205,6 +205,10 @@ namespace {
             return QStringLiteral("webos");
         case SettingPlatform::Android:
             return QStringLiteral("android");
+        case SettingPlatform::MacOS:
+            return QStringLiteral("macOS");
+        case SettingPlatform::Apple:
+            return QStringLiteral("Apple");
         }
         return QStringLiteral("all");
     }
@@ -287,6 +291,20 @@ SettingSpec SettingSpec::onAndroid() const
     return spec;
 }
 
+SettingSpec SettingSpec::onMacOS() const
+{
+    auto spec = *this;
+    spec.platform = SettingPlatform::MacOS;
+    return spec;
+}
+
+SettingSpec SettingSpec::onApple() const
+{
+    auto spec = *this;
+    spec.platform = SettingPlatform::Apple;
+    return spec;
+}
+
 SettingSpec SettingSpec::whenSetTo(const char *otherKey, const char *otherValue) const
 {
     SettingSpec spec = *this;
@@ -307,6 +325,11 @@ SettingSpec SettingSpec::duringHdrPlayback() const
 const QVector<SettingSpec>& settingSpecs()
 {
     const PlatformAudioOutputPolicy& audioOutput = platformAudioOutputPolicy();
+#if defined(Q_OS_MACOS)
+    constexpr bool systemMediaControlsDefault = false;
+#else
+    constexpr bool systemMediaControlsDefault = true;
+#endif
     static const QVector<SettingSpec> specs = [&] {
         QVector<SettingSpec> rows {
 
@@ -316,6 +339,16 @@ const QVector<SettingSpec>& settingSpecs()
                 nullptr, 0, SettingTarget::Locale),
             selectSpec("theme/accent", "Appearance", "Accent colour", "", "0", kAccentChoices, SettingTarget::External),
             toggleSpec("theme/reducedMotion", "Appearance", "Reduced motion", "", false, SettingTarget::External),
+            toggleSpec("appearance/systemFileDialogs", "Appearance", "macOS file and folder dialogs",
+                "Turn off to use Spool's file and folder dialogs", true, SettingTarget::External)
+                .onMacOS(),
+            toggleSpec("appearance/macOSNavigateMenu", "Appearance", "macOS Navigate menu",
+                "Add Open Files, Search, and Settings to the system menu bar", false, SettingTarget::External)
+                .onMacOS(),
+            toggleSpec("appearance/appleMediaControls", "Appearance", "System playback controls",
+                "Show what is playing and allow playback control through the system", systemMediaControlsDefault,
+                SettingTarget::External)
+                .onApple(),
             selectSpec("theme/technicalMetadata", "Appearance", "Technical details",
                 "Codec, resolution, and audio format", "Always", kTechnicalMetadataChoices, SettingTarget::External)
                 .advanced(),
@@ -882,6 +915,14 @@ bool settingSupportedOnPlatform(const SettingSpec& spec)
 {
     if (spec.platform == SettingPlatform::All)
         return true;
+#ifdef Q_OS_MACOS
+    if (spec.platform == SettingPlatform::MacOS)
+        return true;
+#endif
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_TVOS)
+    if (spec.platform == SettingPlatform::Apple)
+        return true;
+#endif
 #if defined(SPOOL_WEBOS)
     return spec.platform == SettingPlatform::WebOS;
 #elif defined(Q_OS_ANDROID)

@@ -114,6 +114,10 @@ public:
     {
         return m_settings;
     }
+    SettingsSyncController *settingsSync()
+    {
+        return m_settingsSync;
+    }
     GroupPlaybackController *group()
     {
         return m_group;

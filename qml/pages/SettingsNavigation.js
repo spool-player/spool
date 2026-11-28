@@ -12,6 +12,10 @@ function platformSupported(row, platform) {
         return false
     if (row.platform === "android" && !platform.isAndroid)
         return false
+    if (row.platform === "macOS" && Qt.platform.os !== "osx")
+        return false
+    if (row.platform === "Apple" && !["osx", "ios", "tvos"].includes(Qt.platform.os))
+        return false
     return true
 }
 

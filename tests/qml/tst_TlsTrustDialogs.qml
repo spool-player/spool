@@ -1,5 +1,6 @@
 import QtQuick
 import QtTest
+import Spool as AppUi
 import "../../qml/shell" as Shell
 
 TestCase {
@@ -7,11 +8,13 @@ TestCase {
     name: "TlsTrustDialogs"
     width: 1280
     height: 720
+    visible: true
     when: windowShown
 
     property int cancelCalls: 0
     property int onceCalls: 0
     property int rememberCalls: 0
+    property int fallbackCalls: 0
     property string removedKey: ""
 
     QtObject {
@@ -48,6 +51,7 @@ TestCase {
         ]
         function cancel() {
             ++testCase.cancelCalls
+            decisionDialog.visible = false
         }
         function trustOnce() {
             ++testCase.onceCalls
@@ -60,18 +64,28 @@ TestCase {
         }
     }
 
-    Shell.TlsTrustDialog {
+    Shell.KeyRouter {
+        id: keyRouter
+        activeTarget: managerDialog.visible ? managerDialog : decisionDialog.visible ? decisionDialog : null
+        backHandler: function () {
+            ++testCase.fallbackCalls
+            return true
+        }
+    }
+
+    AppUi.TlsTrustDialog {
         id: decisionDialog
         visible: true
         trustController: trustStub
         inputKeys: inputKeysStub
     }
 
-    Shell.RememberedCertificatesDialog {
+    AppUi.RememberedCertificatesDialog {
         id: managerDialog
         visible: false
         trustController: trustStub
         inputKeys: inputKeysStub
+        onDismissed: visible = false
     }
 
     SignalSpy {
@@ -84,12 +98,22 @@ TestCase {
         cancelCalls = 0
         onceCalls = 0
         rememberCalls = 0
+        fallbackCalls = 0
         removedKey = ""
         dismissedSpy.clear()
         managerDialog.visible = false
         decisionDialog.visible = false
         decisionDialog.visible = true
         wait(0)
+    }
+
+    function dispatchBack(phase) {
+        verify(keyRouter.dispatch({
+                                      key: Qt.Key_Back,
+                                      text: "",
+                                      modifiers: Qt.NoModifier,
+                                      isAutoRepeat: false
+                                  }, phase))
     }
 
     function test_decisionActionsAndBack() {
@@ -106,9 +130,10 @@ TestCase {
         decisionDialog.activate()
         compare(rememberCalls, 1)
 
-        verify(decisionDialog.routeKey(Qt.Key_Back, "press", false))
-        verify(decisionDialog.routeKey(Qt.Key_Back, "release", false))
+        dispatchBack("press")
+        dispatchBack("release")
         compare(cancelCalls, 1)
+        compare(fallbackCalls, 0)
     }
 
     function test_managerForgetsSelectedCertificate() {
@@ -121,13 +146,13 @@ TestCase {
         compare(removedKey, "tls/trusted/example")
     }
 
-    function test_managerBackDismissesOnRelease() {
+    function test_managerBackDismissesOnce() {
         decisionDialog.visible = false
         managerDialog.visible = true
         wait(0)
-        verify(managerDialog.routeKey(Qt.Key_Back, "press", false))
-        compare(dismissedSpy.count, 0)
-        verify(managerDialog.routeKey(Qt.Key_Back, "release", false))
+        dispatchBack("press")
+        dispatchBack("release")
         compare(dismissedSpy.count, 1)
+        compare(fallbackCalls, 0)
     }
 }

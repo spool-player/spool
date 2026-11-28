@@ -3,7 +3,38 @@ import QtTest
 import "../../qml/pages/SettingsNavigation.js" as SettingsNavigation
 
 TestCase {
+    id: testCase
     name: "SettingsNavigation"
+    width: 1000
+    height: 720
+    when: windowShown
+
+    function test_folderPickerReopensWithItsNewBackend() {
+        if (Qt.platform.os !== "linux")
+            skip("Run the Qt Quick picker check on the Linux test host")
+        const component = Qt.createComponent("../../qml/pages/DesktopFolderDialog.qml")
+        compare(component.status, Component.Ready, component.errorString())
+        const picker = createTemporaryObject(component, testCase, {
+                                                 useSystemDialog: true
+                                             })
+        verify(picker)
+        picker.open()
+        const loader = picker.children[0]
+        const firstDialog = loader.item
+        verify(firstDialog.visible)
+        compare(firstDialog.options, 0)
+        firstDialog.reject()
+        picker.open()
+        compare(loader.item, firstDialog)
+        firstDialog.reject()
+
+        picker.useSystemDialog = false
+        picker.open()
+        verify(loader.item.visible)
+        verify(loader.item !== firstDialog)
+        verify(loader.item.options !== 0)
+        loader.item.reject()
+    }
 
     function valueLookup(values) {
         return function (key) {
@@ -76,6 +107,14 @@ TestCase {
         verify(!SettingsNavigation.rowAvailable({
                                                     "platform": "android"
                                                 }, desktop, false, lookup))
+        compare(SettingsNavigation.rowAvailable({
+                                                    "platform": "macOS"
+                                                }, desktop, false, lookup), Qt.platform.os === "osx")
+        compare(SettingsNavigation.rowAvailable({
+                                                    "platform": "Apple"
+                                                }, desktop, false, lookup), ["osx", "ios", "tvos"].includes(
+                    Qt.platform.os))
+
         verify(SettingsNavigation.rowAvailable({
                                                    "dependsOnKey": "playback/mpvConfigMode",
                                                    "dependsOnValue": "custom"

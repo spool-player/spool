@@ -32,8 +32,8 @@ QJsonObject help()
                                              "[--timeout MS] COMMAND [ARGS]") },
                 { QStringLiteral("commands"),
                     QJsonArray { QStringLiteral("help | instances | status | state"),
-                        QStringLiteral(
-                            "navigate home|search|settings | home | back | key up|down|left|right|ok|back|space"),
+                        QStringLiteral("navigate home|search|settings|settingsSync | home | back | key "
+                                       "up|down|left|right|ok|back|space"),
                         QStringLiteral("navigate providerDetails MODULE_ID | navigate subtitleSettings [SETTING_KEY]"),
                         QStringLiteral("items [browse|libraries|resume|next-up] [OFFSET] [LIMIT] | library "
                                        "QUALIFIED_ID | load-more"),

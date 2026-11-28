@@ -16,6 +16,7 @@ function(spool_configure_apple_mobile_targets native_target core_target)
         src/platform/apple/AppleMobilePaths.mm
         src/platform/apple/AppleMobilePlatform.mm
         src/platform/apple/AppleMobileApplicationServices.mm
+        src/platform/apple/AppleSystemMediaControls.mm
         src/platform/desktop/UnsupportedPerformanceSampler.cpp
         src/platform/desktop/DesktopNativeAppWindow.cpp
         src/platform/desktop/DesktopMpvConfigPolicy.cpp
@@ -28,6 +29,7 @@ function(spool_configure_apple_mobile_targets native_target core_target)
     set_source_files_properties(
         src/platform/apple/AppleCredentialStore.mm src/platform/apple/AppleMobilePaths.mm
         src/platform/apple/AppleMobilePlatform.mm src/platform/apple/AppleMobileApplicationServices.mm
+        src/platform/apple/AppleSystemMediaControls.mm
         PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
     target_link_libraries(${core_target} PUBLIC PkgConfig::MPV
         "-framework Security" "-framework UIKit" "-framework AVFoundation" "-framework MediaPlayer")

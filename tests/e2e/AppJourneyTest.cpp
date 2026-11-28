@@ -2045,7 +2045,7 @@ SPOOL_TEST_MAIN("app-journey")
         require(
             !jobId.isEmpty() && fixture.mediaBytes >= fixture.mediaSize(), "download never fetched the fixture media");
         journey.label("Downloaded");
-        journey.click("Close");
+        journey.command({ "key", "back" });
 
         journey.command({ "navigate", "settings" });
         journey.label("Appearance");
@@ -2066,6 +2066,20 @@ SPOOL_TEST_MAIN("app-journey")
             },
             "settings UI toggle did not commit its public value");
         journey.command({ "key", "back" });
+        journey.command({ "key", "back" });
+        journey.label("Appearance");
+        // Disable settings sync before checking that offline playback sends
+        // no authenticated traffic.
+        journey.command({ "settings", "set", "settingsSync/enabled", "false" });
+        journey.await(
+            [&] {
+                return journey.command({ "settings", "get", "settingsSync/status" })["values"]
+                           .toObject()["settingsSync/status"]
+                    == "off";
+            },
+            "settings sync did not turn off");
+        journey.command({ "navigate", "settingsSync" });
+        journey.label("Turn on sync");
         journey.command({ "key", "back" });
         journey.label("Appearance");
         journey.click("Downloads", true);
@@ -2200,10 +2214,11 @@ SPOOL_TEST_MAIN("app-journey")
         if (offlineRequests != 0) {
             throw std::runtime_error(
                 QStringLiteral("saved-media playback contacted an unavailable authenticated provider endpoint "
-                               "(total=%1, eventReconnect=%2, progress=%3)")
+                               "(total=%1, eventReconnect=%2, progress=%3, preferences=%4)")
                     .arg(offlineRequests)
                     .arg(fixture.offlineSocketRequests)
                     .arg(fixture.offlineProgressRequests)
+                    .arg(fixture.offlinePreferenceRequests)
                     .toStdString());
         }
 

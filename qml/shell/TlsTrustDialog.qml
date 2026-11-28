@@ -13,12 +13,8 @@ FocusScope {
     focus: visible
 
     function routeKey(key, phase, repeat) {
-        if (root.inputKeys.isBack(key, false, false)) {
-            // Back claims both phases; only the release dismisses.
-            if (phase === "release")
-                root.trustController.cancel()
-            return true
-        }
+        if (root.inputKeys.isBack(key, false, false))
+            return false
         if (!root.inputKeys.isDirection(key))
             return true
         if (phase === "press" && root.inputKeys.isHorizontal(key)) {

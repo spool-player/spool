@@ -376,7 +376,8 @@ void syncPolicyRejectsUnsafeAndUnsupportedValues()
         QStringLiteral("bundled font values should be portable"));
     for (const QString& key : { QStringLiteral("appearance/uiScalePercent"), QStringLiteral("remote/acceptCommands"),
              QStringLiteral("playback/mpvConfigMode"), QStringLiteral("playback/mpvConfigDirectory"),
-             QStringLiteral("action/accounts") }) {
+             QStringLiteral("appearance/systemFileDialogs"), QStringLiteral("appearance/macOSNavigateMenu"),
+             QStringLiteral("appearance/appleMediaControls"), QStringLiteral("action/accounts") }) {
         const auto& spec = requiredSpec(key);
         require(
             spec.syncPolicy == SettingSyncPolicy::Never && !settingAcceptsRemoteValue(spec, settingDefaultValue(spec)),

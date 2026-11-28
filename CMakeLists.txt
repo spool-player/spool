@@ -922,6 +922,13 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
             macos-titlebar tests/platform/MacOSTitlebarTest.mm
         )
     endif()
+    if(APPLE AND NOT SPOOL_APPLE_MOBILE)
+        list(APPEND SPOOL_TESTS_platform
+            macos-native-menu tests/platform/MacOSMenuTest.mm
+            apple-media-controls tests/platform/AppleMediaControlsTest.mm)
+        set_source_files_properties(tests/platform/MacOSMenuTest.mm tests/platform/AppleMediaControlsTest.mm
+            PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    endif()
     set(SPOOL_TESTS_providers
         local-provider tests/providers/LocalProviderTest.cpp
         script-runtime tests/providers/ScriptRuntimeTest.cpp
@@ -941,6 +948,13 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
         stream-quality-control tests/providers/StreamQualityControlTest.cpp
         live-jellyfin tests/providers/LiveJellyfinTest.cpp
     )
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        list(APPEND SPOOL_TESTS_providers
+            emby-provider-compatibility tests/providers/EmbyCompatibilityTest.cpp
+            open-movies-provider tests/providers/OpenMoviesCompatibilityTest.cpp
+            plex-provider-compatibility tests/providers/PlexCompatibilityTest.cpp
+            stremio-addon-provider tests/providers/StremioAddonTest.cpp)
+    endif()
     set(SPOOL_TESTS_player
         playback-timeline tests/player/PlaybackTimelineTest.cpp
         playback-track-parser tests/player/PlaybackTrackParserTest.cpp
@@ -1166,6 +1180,11 @@ if(BUILD_TESTING AND NOT SPOOL_WEBOS)
     add_test(NAME streaming-candidates
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/StreamingCandidatesTest.py")
 
+    foreach(policy_test IN ITEMS ArtifactWorkflowPolicy ProviderCompatibilityRunner)
+        add_test(NAME ${policy_test} COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/${policy_test}Test.py")
+        set_tests_properties(${policy_test} PROPERTIES LABELS traditional TIMEOUT 30)
+    endforeach()
     add_test(NAME network-shaper
         COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/NetworkShaperTest.py"
