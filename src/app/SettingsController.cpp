@@ -26,7 +26,7 @@ namespace Spool {
 
 namespace {
 
-    constexpr auto kServerOverridesKey = "playback/serverOverrides-v1";
+    constexpr auto kServerOverridesKey = "playback/serverOverrides-v2";
     constexpr auto kPlayerControlTooltipSessionsKey = "player/controlTooltipSessions";
     constexpr int kPlayerControlTooltipSessionLimit = 3;
 
@@ -221,11 +221,6 @@ QVariant SettingsController::value(const QString& key) const
 }
 
 namespace {
-    QString serverKey(QString id)
-    {
-        // SourceHub scopes media with the first eight UUID hex digits.
-        return id.remove(QLatin1Char('-')).section(QLatin1Char(':'), 0, 0).left(8).toLower();
-    }
     QStringList overrideGroup(const QString& key)
     {
         if (key == QLatin1String("playback/manualStreamingBitrate")
@@ -236,54 +231,51 @@ namespace {
     }
 }
 
-QVariant SettingsController::effectiveValue(const QString& key, const QString& sourceId) const
+QVariant SettingsController::effectiveValue(const QString& key, const QString& accountId) const
 {
-    const auto rows = m_serverOverrides.value(serverKey(sourceId)).toMap();
+    const auto rows = m_serverOverrides.value(accountId).toMap();
     return rows.contains(key) ? rows.value(key) : value(key);
 }
 
-bool SettingsController::hasServerOverride(const QString& key, const QString& sourceId) const
+bool SettingsController::hasServerOverride(const QString& key, const QString& accountId) const
 {
-    return m_serverOverrides.value(serverKey(sourceId)).toMap().contains(key);
+    return m_serverOverrides.value(accountId).toMap().contains(key);
 }
 
-void SettingsController::setServerValue(const QString& key, const QVariant& newValue, const QString& sourceId)
+void SettingsController::setServerValue(const QString& key, const QVariant& newValue, const QString& accountId)
 {
     const auto *spec = findSettingSpec(key);
-    const QString server = serverKey(sourceId);
-    if (server.size() != 8 || !spec || !spec->serverOverridable || !settingAcceptsValue(*spec, newValue))
+    if (accountId.isEmpty() || !spec || !spec->serverOverridable || !settingAcceptsValue(*spec, newValue))
         return;
-    auto rows = m_serverOverrides.value(server).toMap();
+    auto rows = m_serverOverrides.value(accountId).toMap();
     for (const auto& member : overrideGroup(key))
-        rows.insert(member, member == key ? normalizedSettingValue(*spec, newValue) : effectiveValue(member, sourceId));
-    m_serverOverrides.insert(server, rows);
+        rows.insert(
+            member, member == key ? normalizedSettingValue(*spec, newValue) : effectiveValue(member, accountId));
+    m_serverOverrides.insert(accountId, rows);
     persistServerOverrides();
 }
 
-void SettingsController::resetServerValue(const QString& key, const QString& sourceId)
+void SettingsController::resetServerValue(const QString& key, const QString& accountId)
 {
-    const QString server = serverKey(sourceId);
-    auto rows = m_serverOverrides.value(server).toMap();
+    auto rows = m_serverOverrides.value(accountId).toMap();
     for (const auto& member : overrideGroup(key))
         rows.remove(member);
     if (rows.isEmpty())
-        m_serverOverrides.remove(server);
+        m_serverOverrides.remove(accountId);
     else
-        m_serverOverrides.insert(server, rows);
+        m_serverOverrides.insert(accountId, rows);
     persistServerOverrides();
 }
 
-void SettingsController::removeServerOverrides(const QString& sourceId)
+void SettingsController::removeServerOverrides(const QString& accountId)
 {
-    if (m_serverOverrides.remove(serverKey(sourceId)))
+    if (m_serverOverrides.remove(accountId))
         persistServerOverrides();
 }
 
 void SettingsController::retainServerOverrides(const QStringList& accountIds)
 {
-    QSet<QString> retained;
-    for (const auto& id : accountIds)
-        retained.insert(serverKey(id));
+    const QSet<QString> retained(accountIds.cbegin(), accountIds.cend());
     bool changed = false;
     for (auto it = m_serverOverrides.begin(); it != m_serverOverrides.end();) {
         if (!retained.contains(it.key())) {
@@ -304,9 +296,9 @@ void SettingsController::persistServerOverrides()
     emit serverOverridesChanged();
 }
 
-QString SettingsController::serverPlaybackSummary(const QString& sourceId) const
+QString SettingsController::serverPlaybackSummary(const QString& accountId) const
 {
-    const auto rows = m_serverOverrides.value(serverKey(sourceId)).toMap();
+    const auto rows = m_serverOverrides.value(accountId).toMap();
     if (rows.isEmpty())
         return QStringLiteral("Using your defaults");
     QStringList labels;
@@ -314,7 +306,7 @@ QString SettingsController::serverPlaybackSummary(const QString& sourceId) const
         const QString key = keyString(spec);
         if (!rows.contains(key))
             continue;
-        const bool manual = effectiveValue(QStringLiteral("playback/manualStreamingBitrate"), sourceId).toBool();
+        const bool manual = effectiveValue(QStringLiteral("playback/manualStreamingBitrate"), accountId).toBool();
         if ((key == QLatin1String("playback/maxStreamingBitrateMbps") && !manual)
             || (key == QLatin1String("playback/manualStreamingBitrate") && manual))
             continue;
@@ -336,11 +328,11 @@ QString SettingsController::serverPlaybackSummary(const QString& sourceId) const
     return labels.isEmpty() ? QStringLiteral("Custom playback settings") : labels.join(QStringLiteral(", "));
 }
 
-void SettingsController::preparePlayback(const QString& sourceId)
+void SettingsController::preparePlayback(const QString& accountId)
 {
     if (!m_player)
         return;
-    const auto get = [&](const char *key) { return effectiveValue(QString::fromLatin1(key), sourceId); };
+    const auto get = [&](const char *key) { return effectiveValue(QString::fromLatin1(key), accountId); };
     m_player->setForwardCacheSizeMiB(get("playback/forwardCacheSizeMiB").toInt());
     m_player->setThreadedStreaming(get("playback/threadedStreaming").toBool());
     m_player->setMaxStreamingThreads(get("playback/maxStreamingThreads").toInt());

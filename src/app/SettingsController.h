@@ -93,14 +93,14 @@ public:
     {
         return m_serverOverrides;
     }
-    Q_INVOKABLE QVariant effectiveValue(const QString& key, const QString& sourceId = {}) const;
-    Q_INVOKABLE bool hasServerOverride(const QString& key, const QString& sourceId) const;
-    Q_INVOKABLE void setServerValue(const QString& key, const QVariant& value, const QString& sourceId);
-    Q_INVOKABLE void resetServerValue(const QString& key, const QString& sourceId);
-    Q_INVOKABLE void removeServerOverrides(const QString& sourceId);
-    Q_INVOKABLE QString serverPlaybackSummary(const QString& sourceId) const;
+    Q_INVOKABLE QVariant effectiveValue(const QString& key, const QString& accountId = {}) const;
+    Q_INVOKABLE bool hasServerOverride(const QString& key, const QString& accountId) const;
+    Q_INVOKABLE void setServerValue(const QString& key, const QVariant& value, const QString& accountId);
+    Q_INVOKABLE void resetServerValue(const QString& key, const QString& accountId);
+    Q_INVOKABLE void removeServerOverrides(const QString& accountId);
+    Q_INVOKABLE QString serverPlaybackSummary(const QString& accountId) const;
     void retainServerOverrides(const QStringList& accountIds);
-    void preparePlayback(const QString& sourceId);
+    void preparePlayback(const QString& accountId);
     bool playerControlTooltipsEnabled() const
     {
         return m_playerControlTooltipSessions < 3;
