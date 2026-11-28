@@ -8,6 +8,7 @@ function(spool_add_mobile_test_bundles)
     if(ANDROID)
         # Qt requires this in the cache to keep three APK deployment trees apart.
         set(QT_USE_TARGET_ANDROID_BUILD_DIR TRUE CACHE BOOL "Separate Android deployment trees" FORCE)
+        get_target_property(android_min_sdk spool QT_ANDROID_MIN_SDK_VERSION)
     endif()
 
     set(traditional_sources ${SPOOL_TRADITIONAL_TEST_SOURCES})
@@ -120,7 +121,7 @@ function(spool_add_mobile_test_bundles)
                 QT_ANDROID_PACKAGE_SOURCE_DIR "${package_dir}"
                 QT_ANDROID_PACKAGE_NAME "${SPOOL_MOBILE_TEST_IDENTIFIER}"
                 QT_ANDROID_APP_NAME "${SPOOL_MOBILE_TEST_NAME}"
-                QT_ANDROID_MIN_SDK_VERSION 28
+                QT_ANDROID_MIN_SDK_VERSION "${android_min_sdk}"
                 QT_ANDROID_TARGET_SDK_VERSION 36
                 QT_ANDROID_VERSION_NAME "${PROJECT_VERSION}"
                 QT_ANDROID_VERSION_CODE 1
