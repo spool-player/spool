@@ -1862,6 +1862,16 @@ SPOOL_TEST_MAIN("app-journey")
         journey.launch(app, fixture.origin(), deviceKind);
         journey.label("Welcome to Spool");
         journey.assertControlBoundaries();
+        // The first playback phase checks the saved file and its timeline.
+        // Use the inexpensive renderer profile to avoid a quality step-down
+        // during startup on a slow CI display. Apply it before sign-in so a
+        // settings-sync request cannot cross the offline boundary.
+        const QString renderQualityKey = QStringLiteral("playback/renderQuality");
+        const QString initialRenderQuality = journey.command({ "settings", "get", renderQualityKey })["values"]
+                                                 .toObject()[renderQualityKey]
+                                                 .toString();
+        require(journey.command({ "settings", "set", renderQualityKey, "\"fast\"" })["value"] == "fast",
+            "saved-media renderer profile was not applied");
         const bool television
             = deviceKind == "tvos" || (deviceKind == "android" && qEnvironmentVariable("SPOOL_E2E_ANDROID_TV") == "1");
         journey.click("Jellyfin", true);
@@ -2065,6 +2075,27 @@ SPOOL_TEST_MAIN("app-journey")
         journey.click("Play saved files offline", true);
         journey.label("Journey Film");
         journey.label("Downloaded");
+        QString savedItemId;
+        journey.await(
+            [&] {
+                const auto libraries = journey.command({ "items", "libraries" })["items"].toArray();
+                for (const auto& value : libraries) {
+                    const auto library = value.toObject();
+                    if (library["title"] != "Downloads")
+                        continue;
+                    const auto files
+                        = journey.command({ "catalog", library["id"].toString(), "0", "1" })["items"].toArray();
+                    if (files.isEmpty())
+                        return false;
+                    const auto file = files[0].toObject();
+                    require(file["title"] == "Journey Film" && file["playable"].toBool(),
+                        "completed download was not published as the playable saved movie");
+                    savedItemId = file["id"].toString();
+                    return !savedItemId.isEmpty();
+                }
+                return false;
+            },
+            "download never appeared in the local catalogue");
         fixturePhase = QStringLiteral("movie-offline");
         // Every new authenticated request is unavailable, including playback
         // negotiation, metadata and media. The pre-existing idle event socket
@@ -2077,47 +2108,83 @@ SPOOL_TEST_MAIN("app-journey")
         // activate that focused button through the normal keyboard/remote path.
         journey.click("Journey Film");
         journey.command({ "key", "ok" });
+        const auto savedPlayback = [&] {
+            const auto playback = journey.state(true)["playback"].toObject();
+            const int endReason = playback["mpvEndReason"].toInt(-1);
+            if (playback["failed"].toBool() || endReason >= 0) {
+                throw std::runtime_error(QStringLiteral("saved movie ended early (failed=%1, reason=%2, error=%3)")
+                        .arg(playback["failed"].toBool())
+                        .arg(endReason)
+                        .arg(playback["mpvEndError"].toInt())
+                        .toStdString());
+            }
+            return playback;
+        };
+        const auto savedPlaybackCommand = [&](const QStringList& args) {
+            QJsonObject response;
+            try {
+                journey.command(args, {}, true, {}, &response);
+            } catch (const std::exception&) {
+                if (response["error"].toObject()["code"] == "no_playback")
+                    savedPlayback();
+                throw;
+            }
+        };
         journey.await(
             [&] {
-                const auto playback = journey.state()["playback"].toObject();
-                require(!playback["failed"].toBool(), "saved-media playback failed");
-                return playback["loaded"].toBool() && playback["embeddedVideo"].toBool()
+                const auto playback = savedPlayback();
+                return playback["active"].toBool() && playback["title"] == "Journey Film";
+            },
+            "the Play offline action did not start the saved movie");
+        // Request pause during startup. The player carries the intent into
+        // loadfile if the renderer is still being prepared.
+        savedPlaybackCommand({ "pause" });
+        journey.await(
+            [&] {
+                const auto playback = savedPlayback();
+                return playback["active"].toBool() && playback["loaded"].toBool() && playback["ready"].toBool()
+                    && playback["paused"].toBool() && playback["embeddedVideo"].toBool()
                     && playback["duration"].toDouble() > 29;
             },
-            "saved download did not enter real embedded playback");
-        journey.pauseForObservation("asynchronous pause did not settle before exact paused-frame seeking");
-        journey.command({ "seek", "2" });
+            "saved movie did not become ready for exact paused-frame seeking");
+        savedPlaybackCommand({ "seek", "2" });
         journey.await(
             [&] {
-                const auto frame = journey.capture(true);
-                const double position = journey.state()["playback"].toObject()["position"].toDouble();
-                return position > 1.5 && position < 2.5 && frameHasBands(frame, 0);
+                const auto playback = savedPlayback();
+                const double position = playback["position"].toDouble();
+                return playback["paused"].toBool() && position > 1.5 && position < 2.5
+                    && frameHasBands(journey.capture(true), 0);
             },
             "exact seek to 2 seconds did not render upright red-over-blue bands");
-        journey.command({ "seek", "14" });
-        double seekPosition = 0;
-        bool greenFrame = false;
-        try {
-            journey.await(
-                [&] {
-                    greenFrame = frameHasBands(journey.capture(true), 1);
-                    seekPosition = journey.state()["playback"].toObject()["position"].toDouble();
-                    return seekPosition > 12 && greenFrame;
-                },
-                "seek did not deliver the requested decoded frame");
-        } catch (const std::exception&) {
-            throw std::runtime_error(QStringLiteral("exact seek14 failed: public position=%1, green-over-blue=%2")
-                    .arg(seekPosition)
-                    .arg(greenFrame)
-                    .toStdString());
-        }
-        journey.command({ "resume" });
-        const double before = journey.state()["playback"].toObject()["position"].toDouble();
-        journey.await([&] { return journey.state()["playback"].toObject()["position"].toDouble() > before + 0.5; },
+        savedPlaybackCommand({ "seek", "14" });
+        journey.await(
+            [&] {
+                const auto playback = savedPlayback();
+                const double position = playback["position"].toDouble();
+                return playback["paused"].toBool() && position > 13.5 && position < 14.5
+                    && frameHasBands(journey.capture(true), 1);
+            },
+            "exact seek to 14 seconds did not render upright green-over-blue bands");
+        savedPlaybackCommand({ "resume" });
+        journey.await(
+            [&] {
+                const auto playback = savedPlayback();
+                return !playback["paused"].toBool() && playback["position"].toDouble() > 14.5;
+            },
             "real media clock did not progress after resume");
+        journey.pauseForObservation("saved movie did not pause after its clock advanced");
+        const double stoppedPosition = savedPlayback()["position"].toDouble();
+        require(stoppedPosition > 14.5, "saved movie lost its position before stopping");
         journey.command({ "stop" });
         journey.await(
             [&] { return !journey.state()["playback"].toObject()["active"].toBool(); }, "player did not stop");
+        journey.await(
+            [&] {
+                const auto savedItem = journey.command({ "item-state", savedItemId });
+                return !savedItem["played"].toBool()
+                    && std::abs(savedItem["positionSeconds"].toDouble() - stoppedPosition) < 0.5;
+            },
+            "stopping the movie did not save its paused position in the offline library");
         require(fixture.playbackNegotiations == negotiationsBeforeOffline,
             "saved-media playback renegotiated against the unavailable provider");
         require(fixture.mediaRequests == remoteRequests,
@@ -2134,6 +2201,9 @@ SPOOL_TEST_MAIN("app-journey")
         }
 
         fixture.setNewRequestsAvailable(true);
+        require(journey.command({ "settings", "set", renderQualityKey, '"' + initialRenderQuality + '"' })["value"]
+                == initialRenderQuality,
+            "original renderer profile was not restored");
         // Keep server UserData at zero even after accepted stop reports. The
         // real provider must hydrate details/series rows without rolling back
         // the app's newer episode stop state.

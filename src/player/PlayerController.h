@@ -127,6 +127,14 @@ public:
     {
         return m_mpvEventClock.isValid() ? m_mpvEventClock.elapsed() : -1;
     }
+    int mpvEndReason() const
+    {
+        return m_mpvEndReason;
+    }
+    int mpvEndError() const
+    {
+        return m_mpvEndError;
+    }
     qint64 pauseRequestAgeMs() const
     {
         return m_pauseRequestClock.isValid() ? m_pauseRequestClock.elapsed() : -1;
@@ -583,6 +591,8 @@ private:
     QString m_title;
     QString m_statusText = QStringLiteral("Ready");
     QString m_errorText;
+    int m_mpvEndReason = -1;
+    int m_mpvEndError = 0;
     QString m_mediaKind = QStringLiteral("none");
     std::atomic_bool m_nightModeEnabled = false;
     std::atomic_bool m_toneMappingVisualizationEnabled = false;
